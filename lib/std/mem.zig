@@ -1156,6 +1156,55 @@ pub fn findSentinel(comptime T: type, comptime sentinel: T, p: [*:sentinel]const
                     i += block_len;
                 }
             },
+            .riscv64 => if (comptime builtin.cpu.has(.riscv, .v) and switch (@bitSizeOf(T)) {
+                8, 16, 32, 64 => true,
+                else => false,
+            }) {
+                const clobber: std.builtin.assembly.Clobbers = .{
+                    .x11 = true, // a1
+                    .x12 = true, // a2
+                    .x13 = true, // a3
+                    .x14 = true, // a4
+                    .v0 = true,
+                    .v1 = true,
+                    .v2 = true,
+                    .v3 = true,
+                    .v4 = true,
+                    .v5 = true,
+                    .v6 = true,
+                    .v7 = true,
+                    .v8 = true,
+                    .v9 = true,
+                    .v10 = true,
+                    .v11 = true,
+                    .v12 = true,
+                    .v13 = true,
+                    .v14 = true,
+                    .v15 = true,
+                    .v16 = true,
+                };
+                return asm (
+                    \\  mv a3, %[ptr]                           # Save start
+                    \\  vsetvli a1, zero, e%[size], m8, ta, ma  # Vector of bytes of maximum length
+                    \\
+                    \\1:
+                    \\  vle%[size]ff.v     v8, (a3)       # Load bytes
+                    \\  li           a1, %[sentinel]      # Load sentinel into register
+                    \\  vmseq.vx     v0, v8, a1           # Set v0[i] where v8[i] = sentinel
+                    \\  csrr         a1, vl               # Get bytes read
+                    \\  vfirst.m     a2, v0               # Find first set bit
+                    \\  add          a3, a3, a1           # Bump pointer
+                    \\  bltz         a2, 1b               # Not found?
+                    \\
+                    \\  add a4,        %[ptr], a1         # Sum start + bump
+                    \\  add a3,        a3,     a2         # Add index
+                    \\  sub %[result], a3,     a4         # Subtract start address + bump
+                    : [result] "=r" (-> usize),
+                    : [ptr] "r" (p),
+                      [sentinel] "i" (sentinel),
+                      [size] "X" (@bitSizeOf(T)),
+                    : clobber);
+            },
             else => {},
         }
     }
