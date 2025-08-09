@@ -3293,11 +3293,10 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) u16 {
             .longdouble => return 128,
         },
 
+        // OpenGL has no well defined C ABI, we do this to prevent panic when using floating point types.
         .opengl => switch (c_type) {
-            .char => return 8,
-            .short, .ushort => return 16,
-            .int, .uint, .float => return 32,
-            .long, .ulong, .longlong, .ulonglong, .double, .longdouble => return 64,
+            .char, .short, .ushort, .int, .uint, .float, .long, .ulong, .longlong, .ulonglong => return 32,
+            .double, .longdouble => return 64,
         },
 
         .opencl, .vulkan => switch (c_type) {
@@ -3335,8 +3334,8 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) u16 {
         },
 
         .ps3,
+        .managarm,
         .contiki,
-        .opengl,
         => @panic("specify the C integer and float type sizes for this OS"),
     }
 }
