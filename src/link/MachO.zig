@@ -3310,8 +3310,9 @@ pub fn closeDebugInfo(self: *MachO) bool {
     return true;
 }
 
-pub fn reopenDebugInfo(self: *MachO) !void {
-    assert(self.d_sym.?.file == null);
+pub fn ensureOpenDebugInfo(self: *MachO) !void {
+    if (self.d_sym == null) return;
+    if (self.d_sym.?.file != null) return;
 
     assert(!self.base.comp.config.use_llvm);
     assert(self.base.comp.config.debug_format == .dwarf);
@@ -3401,7 +3402,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
                 .allocator = gpa,
                 .file = null,
             };
-            try self.reopenDebugInfo();
+            try self.ensureOpenDebugInfo();
             try self.d_sym.?.initMetadata(self);
             try dwarf.initMetadata();
         }

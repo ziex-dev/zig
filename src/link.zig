@@ -608,6 +608,7 @@ pub const File = struct {
             .elf, .macho, .wasm => {
                 dev.checkAny(&.{ .coff_linker, .elf_linker, .macho_linker, .plan9_linker, .wasm_linker });
                 if (base.file != null) return;
+                try base.ensureOpenDebugInfo();
                 const emit = base.emit;
                 if (base.child_pid) |pid| {
                     if (builtin.os.tag == .windows) {
@@ -670,18 +671,59 @@ pub const File = struct {
         }
     }
 
+    /// We might need to temporarily close the output binary when moving the compilation result
+    /// directory due to the host OS or filesystem not allowing moving a file/directory while a
+    /// handle remains open.
+    /// Returns `true` if a file was closed. In that case, `reopenBin` may be called.
+    pub fn closeBin(base: *File) bool {
+        const comp = base.comp;
+        const io = comp.io;
+        const f = base.file orelse return false;
+        switch (base.tag) {
+            .elf2, .coff2 => {
+                const mf = if (base.cast(.elf2)) |elf|
+                    &elf.mf
+                else if (base.cast(.coff2)) |coff|
+                    &coff.mf
+                else
+                    unreachable;
+                mf.unmap();
+            },
+            else => {},
+        }
+        f.close(io);
+        base.file = null;
+        _ = base.closeDebugInfo();
+        return true;
+    }
+
+    pub fn reopenBin(base: *File, reopen: bool) !void {
+        const comp = base.comp;
+        const io = comp.io;
+        try base.makeWritable();
+        if (reopen) {
+            switch (base.tag) {
+                .c, .spirv => {
+                    const emit = base.emit;
+                    base.file = try emit.root_dir.handle.openFile(io, emit.sub_path, .{ .mode = .read_write });
+                },
+                else => {},
+            }
+        }
+    }
+
     /// Some linkers create a separate file for debug info, which we might need to temporarily close
     /// when moving the compilation result directory due to the host OS not allowing moving a
     /// file/directory while a handle remains open.
-    /// Returns `true` if a debug info file was closed. In that case, `reopenDebugInfo` may be called.
+    /// Returns `true` if a debug info file was closed. In that case, `ensureOpenDebugInfo` must be called.
     pub fn closeDebugInfo(base: *File) bool {
         const macho = base.cast(.macho) orelse return false;
         return macho.closeDebugInfo();
     }
 
-    pub fn reopenDebugInfo(base: *File) !void {
-        const macho = base.cast(.macho).?;
-        return macho.reopenDebugInfo();
+    pub fn ensureOpenDebugInfo(base: *File) !void {
+        const macho = base.cast(.macho) orelse return;
+        return macho.ensureOpenDebugInfo();
     }
 
     pub fn makeExecutable(base: *File) !void {
