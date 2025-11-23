@@ -188552,9 +188552,9 @@ const Select = struct {
                                         (@as(u64, std.math.maxInt(u64)) >> @intCast(res_scalar_info.bits - scalar_info.bits))),
                                     .@"0x1p63_mem" => switch (res_scalar_info.bits) {
                                         else => unreachable,
-                                        16 => @as(i64, @as(i16, @bitCast(@as(f16, 0x1p63)))) << 64 - 16,
-                                        32 => @as(i64, @as(i32, @bitCast(@as(f32, 0x1p63)))) << 64 - 32,
-                                        64 => @as(i64, @as(i64, @bitCast(@as(f64, 0x1p63)))) << 64 - 64,
+                                        16 => @as(i64, @as(i16, @bitCast(@as(f16, 0x1p63)))) << (64 - 16),
+                                        32 => @as(i64, @as(i32, @bitCast(@as(f32, 0x1p63)))) << (64 - 32),
+                                        64 => @as(i64, @as(i64, @bitCast(@as(f64, 0x1p63)))) << (64 - 64),
                                     },
                                 };
                                 const shift: u6 = @intCast(64 - res_scalar_info.bits);
@@ -189917,8 +189917,8 @@ const Select = struct {
                     @as(SignedImm, @intCast(s.cg.nonBoolScalarBitSize(op.flags.base.ref.typeOf(s)))),
                 .log2_src0_elem_size => @intCast(std.math.log2(Select.Operand.Ref.src0.typeOf(s).elemType2(s.cg.pt.zcu).abiSize(s.cg.pt.zcu))),
                 .elem_mask => @as(u8, std.math.maxInt(u8)) >> @intCast(
-                    8 - ((s.cg.unalignedSize(op.flags.base.ref.typeOf(s)) - 1) %
-                        @divExact(op.flags.base.size.bitSize(s.cg.target), 8) + 1 >>
+                    8 - (((s.cg.unalignedSize(op.flags.base.ref.typeOf(s)) - 1) %
+                        @divExact(op.flags.base.size.bitSize(s.cg.target), 8) + 1) >>
                         op.flags.index.scale.toLog2()),
                 ),
                 inline .smin, .smax, .umax, .smin_shr_src1, .smax_shr_src1, .umax_shr_src1 => |adjust| switch (op.flags.base.size) {
