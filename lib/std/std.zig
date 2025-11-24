@@ -129,6 +129,18 @@ pub const Options = struct {
         args: anytype,
     ) void = log.defaultLog,
 
+    /// Per-span userdata. Copied on every span/executor context change; keep it small.
+    SpanUserdata: type = void,
+
+    traceFn: fn (
+        comptime level: log.Level,
+        comptime scope: @EnumLiteral(),
+        comptime src: builtin.SourceLocation,
+        comptime event: log.SpanEvent,
+        executor: log.Executor,
+        span: *anyopaque,
+    ) void = log.defaultTrace,
+
     /// Overrides `std.heap.page_size_min`.
     page_size_min: ?usize = null,
     /// Overrides `std.heap.page_size_max`.
