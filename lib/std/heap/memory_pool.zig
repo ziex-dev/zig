@@ -60,6 +60,8 @@ pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
 
         const Node = std.SinglyLinkedList.Node;
         const ItemPtr = *align(item_alignment.toByteUnits()) Item;
+        const Unit = [item_alignment.forward(item_size)]u8;
+        const unit_al_bytes = item_alignment.toByteUnits();
 
         /// A MemoryPool containing no elements.
         pub const empty: Pool = .{
@@ -78,9 +80,9 @@ pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
         }
 
         /// Destroys the memory pool and frees all allocated memory.
-        pub fn deinit(pool: *Pool, allocator: Allocator) void {
-            pool.arena_state.promote(allocator).deinit();
-            pool.* = undefined;
+        pub fn deinit(self: *Pool, allocator: Allocator) void {
+            self.arena_state.promote(allocator).deinit();
+            self.* = undefined;
         }
 
         pub fn toManaged(pool: Pool, allocator: Allocator) ExtraManaged(Item, pool_options) {
@@ -93,15 +95,26 @@ pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
         /// Pre-allocates `num` items and adds them to the memory pool.
         /// This allows at least `num` active allocations before an
         /// `OutOfMemory` error might happen when calling `create()`.
-        pub fn addCapacity(pool: *Pool, allocator: Allocator, num: usize) Allocator.Error!void {
-            var i: usize = 0;
-            while (i < num) : (i += 1) {
-                const memory = try pool.allocNew(allocator);
-                pool.free_list.prepend(@ptrCast(memory));
-            }
+        pub fn addCapacity(self: *Pool, allocator: Allocator, num: usize) Allocator.Error!void {
+            const raw_mem = try self.allocNew(allocator, num);
+            const uni_slc = raw_mem[0..num];
+            for (uni_slc) |*unit| self.free_list.prepend(@ptrCast(unit));
         }
 
-        pub const ResetMode = std.heap.ArenaAllocator.ResetMode;
+        pub const ResetMode = union(enum) {
+            /// Releases all allocated memory in the memory pool.
+            free_all,
+            /// This will pre-heat the memory pool for future allocations by allocating a
+            /// large enough buffer to accomodate the highest amount of actively allocated items
+            /// in the past. Preheating will speed up the allocation process by invoking the
+            /// backing allocator less often than before. If `reset()` is used in a loop, this
+            /// means if the highest amount of actively allocated items is never being surpassed,
+            /// no memory allocations are performed anymore.
+            retain_capacity,
+            /// This is the same as `retain_capacity`, but the memory will be shrunk to
+            /// only hold at most this value of items.
+            retain_with_limit: usize,
+        };
 
         /// Resets the memory pool and destroys all allocated items.
         /// This can be used to batch-destroy all objects without invalidating the memory pool.
@@ -112,26 +125,33 @@ pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
         /// be slower.
         ///
         /// NOTE: If `mode` is `free_all`, the function will always return `true`.
-        pub fn reset(pool: *Pool, allocator: Allocator, mode: ResetMode) bool {
-            // TODO: Potentially store all allocated objects in a list as well, allowing to
-            //       just move them into the free list instead of actually releasing the memory.
-
-            var arena = pool.arena_state.promote(allocator);
-            defer pool.arena_state = arena.state;
-
-            const reset_successful = arena.reset(mode);
-            pool.free_list = .{};
-
-            return reset_successful;
+        pub fn reset(self: *Pool, allocator: Allocator, mode: ResetMode) bool {
+            self.free_list = .{};
+            var arena = self.arena_state.promote(allocator);
+            const arena_mode: std.heap.ArenaAllocator.ResetMode = switch (mode) {
+                .free_all => .free_all,
+                .retain_capacity => .retain_capacity,
+                .retain_with_limit => |limit| .{ .retain_with_limit = limit * item_size },
+            };
+            const arena_result = arena.reset(arena_mode);
+            self.arena_state = arena.state;
+            if (!arena_result) return false;
+            // When the backing arena allocator is being reset to
+            // a capacity greater than 0, then its internals consist
+            // of a *single* buffer node of said capacity. This means,
+            // we can safely pre-heat without causing additional allocations.
+            const arena_capacity = arena.queryCapacity() / item_size;
+            if (arena_capacity != 0) self.addCapacity(arena_capacity) catch unreachable;
+            return true;
         }
 
         /// Creates a new item and adds it to the memory pool.
         /// `allocator` may be `undefined` if pool is not `growable`.
-        pub fn create(pool: *Pool, allocator: Allocator) Allocator.Error!ItemPtr {
-            const ptr: ItemPtr = if (pool.free_list.popFirst()) |node|
+        pub fn create(self: *Pool, allocator: Allocator) Allocator.Error!ItemPtr {
+            const ptr: ItemPtr = if (self.free_list.popFirst()) |node|
                 @ptrCast(@alignCast(node))
             else if (pool_options.growable)
-                @ptrCast(try pool.allocNew(allocator))
+                @ptrCast(try self.allocNew(allocator, 1))
             else
                 return error.OutOfMemory;
 
@@ -141,16 +161,16 @@ pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
 
         /// Destroys a previously created item.
         /// Only pass items to `ptr` that were previously created with `create()` of the same memory pool!
-        pub fn destroy(pool: *Pool, ptr: ItemPtr) void {
+        pub fn destroy(self: *Pool, ptr: ItemPtr) void {
             ptr.* = undefined;
-            pool.free_list.prepend(@ptrCast(ptr));
+            self.free_list.prepend(@ptrCast(ptr));
         }
 
-        fn allocNew(pool: *Pool, allocator: Allocator) Allocator.Error!*align(item_alignment.toByteUnits()) [item_size]u8 {
-            var arena = pool.arena_state.promote(allocator);
-            defer pool.arena_state = arena.state;
-            const memory = try arena.allocator().alignedAlloc(u8, item_alignment, item_size);
-            return memory[0..item_size];
+        fn allocNew(self: *Pool, allocator: Allocator, num: usize) Allocator.Error![*]align(unit_al_bytes) Unit {
+            var arena = self.arena_state.promote(allocator);
+            defer self.arena_state = arena.state;
+            const memory = try arena.allocator().alignedAlloc(Unit, item_alignment, num);
+            return memory.ptr;
         }
     };
 }
@@ -175,6 +195,8 @@ pub fn ExtraManaged(comptime Item: type, comptime pool_options: Options) type {
         pub const item_alignment = Unmanaged.item_alignment;
 
         const ItemPtr = Unmanaged.ItemPtr;
+        const Unit = Unmanaged.Unit;
+        const unit_al_bytes = Unmanaged.unit_al_bytes;
 
         /// Creates a new memory pool.
         pub fn init(allocator: Allocator) Pool {
@@ -189,16 +211,16 @@ pub fn ExtraManaged(comptime Item: type, comptime pool_options: Options) type {
         }
 
         /// Destroys the memory pool and frees all allocated memory.
-        pub fn deinit(pool: *Pool) void {
-            pool.unmanaged.deinit(pool.allocator);
-            pool.* = undefined;
+        pub fn deinit(self: *Pool) void {
+            self.unmanaged.deinit(self.allocator);
+            self.* = undefined;
         }
 
         /// Pre-allocates `num` items and adds them to the memory pool.
         /// This allows at least `num` active allocations before an
         /// `OutOfMemory` error might happen when calling `create()`.
-        pub fn addCapacity(pool: *Pool, num: usize) Allocator.Error!void {
-            return pool.unmanaged.addCapacity(pool.allocator, num);
+        pub fn addCapacity(self: *Pool, num: usize) Allocator.Error!void {
+            return self.unmanaged.addCapacity(self.allocator, num);
         }
 
         pub const ResetMode = Unmanaged.ResetMode;
@@ -212,23 +234,19 @@ pub fn ExtraManaged(comptime Item: type, comptime pool_options: Options) type {
         /// be slower.
         ///
         /// NOTE: If `mode` is `free_all`, the function will always return `true`.
-        pub fn reset(pool: *Pool, mode: ResetMode) bool {
-            return pool.unmanaged.reset(pool.allocator, mode);
+        pub fn reset(self: *Pool, mode: ResetMode) bool {
+            return self.unmanaged.reset(self.allocator, mode);
         }
 
         /// Creates a new item and adds it to the memory pool.
-        pub fn create(pool: *Pool) Allocator.Error!ItemPtr {
-            return pool.unmanaged.create(pool.allocator);
+        pub fn create(self: *Pool) Allocator.Error!ItemPtr {
+            return self.unmanaged.create(self.allocator);
         }
 
         /// Destroys a previously created item.
         /// Only pass items to `ptr` that were previously created with `create()` of the same memory pool!
-        pub fn destroy(pool: *Pool, ptr: ItemPtr) void {
-            return pool.unmanaged.destroy(ptr);
-        }
-
-        fn allocNew(pool: *Pool) Allocator.Error!*align(item_alignment) [item_size]u8 {
-            return pool.unmanaged.allocNew(pool.allocator);
+        pub fn destroy(self: *Pool, ptr: ItemPtr) void {
+            return self.unmanaged.destroy(ptr);
         }
     };
 }
@@ -377,4 +395,26 @@ test "greater than pointer manual alignment" {
         const foo: *align(16) Foo = try pool.create();
         pool.destroy(foo);
     }
+}
+
+test "reset" {
+    const a = std.testing.allocator;
+    var pool: MemoryPool(u32) = .empty;
+    defer pool.deinit(a);
+
+    try std.testing.expect(pool.create(a) != error.OutOfMemory);
+    try std.testing.expect(pool.create(a) != error.OutOfMemory);
+    try std.testing.expect(pool.create(a) != error.OutOfMemory);
+    try std.testing.expect(pool.create(a) == error.OutOfMemory);
+
+    try std.testing.expect(pool.reset(a, .{ .retain_with_limit = 2 }));
+
+    try std.testing.expect(pool.create(a) != error.OutOfMemory);
+    try std.testing.expect(pool.create(a) != error.OutOfMemory);
+    try std.testing.expect(pool.create(a) == error.OutOfMemory);
+
+    try std.testing.expect(pool.reset(a, .{ .retain_with_limit = 1 }));
+
+    try std.testing.expect(pool.create(a) != error.OutOfMemory);
+    try std.testing.expect(pool.create(a) == error.OutOfMemory);
 }
