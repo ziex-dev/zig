@@ -4898,9 +4898,15 @@ test isAligned {
     try testing.expect(!isAligned(4, 16));
 }
 
-test "freeing empty string with null-terminated sentinel" {
-    const empty_string = try testing.allocator.dupeZ(u8, "");
-    testing.allocator.free(empty_string);
+test "freeing empty slices with sentinel termination" {
+    const gpa = testing.allocator;
+
+    const empty_string = try gpa.dupeZ(u8, "");
+    gpa.free(empty_string);
+    const empty_integers = try gpa.dupeSentinel(u4, &.{}, 0xf);
+    gpa.free(empty_integers);
+    const empty_pointers = try gpa.dupeSentinel(?*anyopaque, &.{}, null);
+    gpa.free(empty_pointers);
 }
 
 /// Returns a slice with the given new alignment,
