@@ -660,12 +660,21 @@ pub fn order(comptime T: type, lhs: []const T, rhs: []const T) math.Order {
     return math.order(lhs.len, rhs.len);
 }
 
-/// Compares two many-item pointers with NUL-termination lexicographically.
-pub fn orderZ(comptime T: type, lhs: [*:0]const T, rhs: [*:0]const T) math.Order {
-    if (lhs == rhs) return .eq;
+/// Compares two many-item pointers with sentinel-termination lexicographically.
+pub fn orderSentinel(comptime T: type, comptime sentinel: T, lhs: [*:sentinel]const T, rhs: [*:sentinel]const T) math.Order {
     var i: usize = 0;
-    while (lhs[i] == rhs[i] and lhs[i] != 0) : (i += 1) {}
-    return math.order(lhs[i], rhs[i]);
+    while (lhs[i] == rhs[i] and lhs[i] != sentinel) : (i += 1) {}
+    if (lhs[i] == sentinel) {
+        return if (rhs[i] == sentinel) .eq else .lt;
+    } else if (rhs[i] == sentinel) {
+        return .gt;
+    } else {
+        return math.order(lhs[i], rhs[i]);
+    }
+}
+/// Deprecated in favor of `orderSentinel`.
+pub fn orderZ(comptime T: type, lhs: [*:0]const T, rhs: [*:0]const T) math.Order {
+    return orderSentinel(T, 0, lhs, rhs);
 }
 
 test order {
@@ -674,21 +683,26 @@ test order {
     try testing.expect(order(u8, "abc", "abc0") == .lt);
     try testing.expect(order(u8, "", "") == .eq);
     try testing.expect(order(u8, "", "a") == .lt);
+    try testing.expect(order(i8, &.{ -1, -2 }, &.{ -1, -2, -3 }) == .lt);
 
     const s: []const u8 = "abc";
     try testing.expect(order(u8, s, s) == .eq);
     try testing.expect(order(u8, s[0..2], s) == .lt);
 }
 
-test orderZ {
-    try testing.expect(orderZ(u8, "abcd", "bee") == .lt);
-    try testing.expect(orderZ(u8, "abc", "abc") == .eq);
-    try testing.expect(orderZ(u8, "abc", "abc0") == .lt);
-    try testing.expect(orderZ(u8, "", "") == .eq);
-    try testing.expect(orderZ(u8, "", "a") == .lt);
+test orderSentinel {
+    try testing.expect(orderSentinel(u8, 0, "abcd", "bee") == .lt);
+    try testing.expect(orderSentinel(u8, 0, "abc", "abc") == .eq);
+    try testing.expect(orderSentinel(u8, 0, "abc", "abc0") == .lt);
+    try testing.expect(orderSentinel(u8, 0, "", "") == .eq);
+    try testing.expect(orderSentinel(u8, 0, "", "a") == .lt);
+    try testing.expect(orderSentinel(i8, 0, &.{ -1, -2 }, &.{ -1, -2, -3 }) == .lt);
+    try testing.expect(orderSentinel(u4, 4, &.{ 1, 2, 3 }, &.{ 1, 2, 3 }) == .eq);
+    try testing.expect(orderSentinel(u4, 4, &.{ 1, 2, 3 }, &.{ 1, 2 }) == .gt);
+    try testing.expect(orderSentinel(u4, 4, &.{ 1, 2, 3 }, &.{ 1, 2, 3, 5 }) == .lt);
 
     const s: [*:0]const u8 = "abc";
-    try testing.expect(orderZ(u8, s, s) == .eq);
+    try testing.expect(orderSentinel(u8, 0, s, s) == .eq);
 }
 
 /// Returns true if lhs < rhs, false otherwise

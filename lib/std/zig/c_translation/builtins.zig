@@ -277,7 +277,7 @@ pub inline fn sqrt(val: f64) f64 {
 }
 
 pub inline fn strcmp(s1: [*c]const u8, s2: [*c]const u8) c_int {
-    return switch (std.mem.orderZ(u8, s1, s2)) {
+    return switch (std.mem.orderSentinel(u8, 0, s1, s2)) {
         .lt => -1,
         .eq => 0,
         .gt => 1,
