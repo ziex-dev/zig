@@ -97,7 +97,7 @@ create_no_window: bool = false,
 /// requested statistics may or may not be available. If they are
 /// available, then the `resource_usage_statistics` field will be populated
 /// after calling `wait`.
-/// On Linux and Darwin, this obtains rusage statistics from wait4().
+/// On Linux and Darwin, this obtains rusage statistics from waitid/wait4.
 request_resource_usage_statistics: bool = false,
 
 /// This is available after calling wait if
@@ -497,6 +497,13 @@ fn waitUnwrappedWindows(self: *ChildProcess) WaitError!void {
 }
 
 fn waitUnwrappedPosix(self: *ChildProcess) void {
+    defer self.cleanupStreams();
+
+    if (native_os == .linux) {
+        self.waitUnwrappedLinux();
+        return;
+    }
+
     const res: posix.WaitPidResult = res: {
         if (self.request_resource_usage_statistics) {
             switch (native_os) {
@@ -505,7 +512,6 @@ fn waitUnwrappedPosix(self: *ChildProcess) void {
                 .netbsd,
                 .openbsd,
                 .illumos,
-                .linux,
                 .serenity,
                 .driverkit,
                 .ios,
@@ -526,13 +532,35 @@ fn waitUnwrappedPosix(self: *ChildProcess) void {
 
         break :res posix.waitpid(self.id, 0);
     };
-    const status = res.status;
-    self.cleanupStreams();
-    self.handleWaitResult(status);
+    self.term = statusToTerm(res.status);
 }
 
-fn handleWaitResult(self: *ChildProcess, status: u32) void {
-    self.term = statusToTerm(status);
+fn waitUnwrappedLinux(self: *ChildProcess) void {
+    var info: linux.siginfo_t = undefined;
+    var rusage: linux.rusage = undefined;
+    const rusage_ptr = if (self.request_resource_usage_statistics) &rusage else null;
+    while (true) {
+        switch (linux.errno(linux.waitid(.PID, self.id, &info, linux.W.EXITED, rusage_ptr))) {
+            .SUCCESS => break,
+            .CHILD => return, // child process does not exist, we're done
+            .INTR => continue, // interrupted, wait again
+            else => unreachable,
+        }
+    }
+
+    const status: u32 = @bitCast(info.fields.common.second.sigchld.status);
+    self.term = switch (info.code) {
+        // CLD_EXITED
+        1 => .{ .Exited = @truncate(status) },
+        // CLD_KILLED, CLD_DUMPED
+        2, 3 => .{ .Signal = status },
+        // CLD_TRAPPED, CLD_STOPPED
+        4, 5 => .{ .Stopped = status },
+        else => .{ .Unknown = status },
+    };
+    if (self.request_resource_usage_statistics) {
+        self.resource_usage_statistics.rusage = rusage;
+    }
 }
 
 fn cleanupStreams(self: *ChildProcess) void {

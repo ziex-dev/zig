@@ -1585,22 +1585,23 @@ pub fn unlinkat(dirfd: i32, path: [*:0]const u8, flags: u32) usize {
     return syscall3(.unlinkat, @as(usize, @bitCast(@as(isize, dirfd))), @intFromPtr(path), flags);
 }
 
-pub fn waitpid(pid: pid_t, status: *u32, flags: u32) usize {
+pub fn waitpid(pid: pid_t, status: ?*u32, flags: u32) usize {
     return syscall4(.wait4, @as(usize, @bitCast(@as(isize, pid))), @intFromPtr(status), flags, 0);
 }
 
-pub fn wait4(pid: pid_t, status: *u32, flags: u32, usage: ?*rusage) usize {
-    return syscall4(
-        .wait4,
-        @as(usize, @bitCast(@as(isize, pid))),
-        @intFromPtr(status),
+pub fn wait4(pid: pid_t, status: ?*u32, flags: u32, usage: ?*rusage) usize {
+    return syscall4(.wait4, @as(usize, @bitCast(@as(isize, pid))), @intFromPtr(status), flags, @intFromPtr(usage));
+}
+
+pub fn waitid(id_type: P, id: pid_t, infop: *siginfo_t, flags: u32, usage: ?*rusage) usize {
+    return syscall5(
+        .waitid,
+        @intFromEnum(id_type),
+        @as(usize, @bitCast(@as(isize, id))),
+        @intFromPtr(infop),
         flags,
         @intFromPtr(usage),
     );
-}
-
-pub fn waitid(id_type: P, id: i32, infop: *siginfo_t, flags: u32) usize {
-    return syscall5(.waitid, @intFromEnum(id_type), @as(usize, @bitCast(@as(isize, id))), @intFromPtr(infop), flags, 0);
 }
 
 pub const F = struct {
