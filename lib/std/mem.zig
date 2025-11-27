@@ -662,6 +662,7 @@ pub fn order(comptime T: type, lhs: []const T, rhs: []const T) math.Order {
 
 /// Compares two many-item pointers with sentinel-termination lexicographically.
 pub fn orderSentinel(comptime T: type, comptime sentinel: T, lhs: [*:sentinel]const T, rhs: [*:sentinel]const T) math.Order {
+    if (lhs == rhs) return .eq;
     var i: usize = 0;
     while (lhs[i] == rhs[i] and lhs[i] != sentinel) : (i += 1) {}
     if (lhs[i] == sentinel) {
