@@ -9560,6 +9560,15 @@ pub const PERF = struct {
         };
     };
 
+    pub const FORMAT = struct {
+        pub const TOTAL_TIME_ENABLED = 1 << 0;
+        pub const TOTAL_TIME_RUNNING = 1 << 1;
+        pub const ID = 1 << 2;
+        pub const GROUP = 1 << 3;
+        pub const LOST = 1 << 4;
+        pub const MAX = 1 << 5;
+    };
+
     pub const RECORD = enum(u32) {
         MMAP = 1,
         LOST = 2,
