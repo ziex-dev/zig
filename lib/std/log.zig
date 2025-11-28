@@ -121,11 +121,11 @@ fn trace(
     comptime scope: @EnumLiteral(),
     comptime src: SourceLocation,
     comptime event: SpanEvent,
-    executor: Executor,
     span_: *Span,
+    prev: ?*const Span,
 ) void {
     if (comptime !logEnabled(level, scope)) return;
-    std.options.traceFn(level, scope, src, event, executor, @ptrCast(span_));
+    std.options.traceFn(level, scope, src, event, @ptrCast(span_), @ptrCast(prev));
 }
 
 pub fn defaultTrace(
@@ -133,126 +133,29 @@ pub fn defaultTrace(
     comptime scope: @EnumLiteral(),
     comptime src: SourceLocation,
     comptime event: SpanEvent,
-    executor: Executor,
-    any_span: *anyopaque,
+    span_: *anyopaque,
+    prev: ?*const anyopaque,
 ) void {
     _ = level;
     _ = scope;
     _ = src;
     _ = event;
-    _ = executor;
-    _ = any_span;
+    _ = span_;
+    _ = prev;
 }
 
-pub threadlocal var current_executor: Executor = .none;
 pub threadlocal var current_span: Span = .none;
 
-/// An executor can be a thread, fiber, or whatever the std.Io implementation
-/// decides it is. Internally it is represented by a monotonically increasing
-/// integer, but that is an implementation detail, and should not be relied
-/// upon.
-pub const Executor = enum(u64) {
-    none = std.math.maxInt(u64),
-    _,
-
-    var next_id: std.atomic.Value(u64) = .init(0);
-
-    pub fn create() Executor {
-        return @enumFromInt(next_id.fetchAdd(1, .monotonic));
-    }
-
-    /// Link the work happening on the current thread to the span that
-    /// originally created it.
-    pub fn link(self: Executor, span_: *Span) void {
-        if (span_.id == .none) return;
-        span_.vtable.linkFn(span_, self);
-    }
-
-    /// Unlink the work happening on the current thread from the span that
-    /// originally created it.
-    pub fn unlink(self: Executor, span_: *Span) void {
-        if (span_.id == .none) return;
-        span_.vtable.unlinkFn(span_, self);
-    }
-};
-
-/// An code execution span.
 pub const Span = struct {
-    id: SpanId,
-    vtable: *const VTable,
-    userdata: SpanUserdata,
+    src: ?*const SourceLocation = null,
+    userdata: SpanUserdata = if (SpanUserdata == void) {} else .{},
 
-    pub const none: Span = .{
-        .id = .none,
-        .vtable = undefined,
-        .userdata = undefined,
-    };
-
-    pub const VTable = struct {
-        suspendFn: *const fn (self: *Span) Span,
-        resumeFn: *const fn (self: Span) void,
-        linkFn: *const fn (self: *Span, executor: Executor) void,
-        unlinkFn: *const fn (self: *Span, executor: Executor) void,
-    };
-
-    /// Marks the span as suspended on the current thread. This method assumes
-    /// ownership of the returned span -- an implementor of `std.Io` should hold
-    /// on to it until it `resume`s.
-    pub fn @"suspend"(self: *Span) Span {
-        if (self.id == .none) return none;
-        return self.vtable.suspendFn(self);
-    }
-
-    /// Marks the span as resumed on the current thread. Takes ownership of the
-    /// span, placing it in `current_thread` as the active span.
-    pub fn @"resume"(self: Span) void {
-        if (self.id == .none) return;
-        self.vtable.resumeFn(self);
-    }
+    pub const none: Span = .{};
 };
 
-/// Internally this is represented by a monotonically increasing integer, but
-/// that is an implementation detail, and should not be relied upon.
-pub const SpanId = enum(u64) {
-    none = std.math.maxInt(u64),
-    _,
+pub const SpanEvent = enum { begin, end };
 
-    var next_id: std.atomic.Value(u64) = .init(0);
-
-    pub fn createNext() SpanId {
-        return @enumFromInt(next_id.fetchAdd(1, .monotonic));
-    }
-};
-
-/// A tracing span that is generic over the log level, scope, and source location.
-/// When the scope or level has been disabled via `std.Options`, this type becomes
-/// zero sized, and all methods become no-ops, allowing the traces to be optimized
-/// away by the compiler.
-///
-/// ```zig
-/// const span = log.span(.info, @src());
-/// defer span.end();
-/// ```
-///
-/// When multithreading, to properly track spans across threads, you must create an
-/// executor and link it to this span, the unlink when the thread is no longer handling
-/// the span's work.
-///
-/// ```zig
-/// std.thread.Spawn(.{}, struct {
-///     fn myFn(span: *AnySpan) void {
-///        const executor = std.log.Executor.create();
-///        executor.link(span);
-///        defer executor.unlink(span);
-///
-///       // new spans on this thread are now linked to the original
-///     }
-/// }.myFn, .{ &span.any });
-/// ```
-///
-/// When dealing with suspendable fibers, you must suspend and resume the span
-/// from the thread that is executing the fiber.
-pub fn ScopedSpan(comptime level: Level, comptime scope: @EnumLiteral(), comptime src: std.builtin.SourceLocation) type {
+pub fn GenericSpan(comptime level: Level, comptime scope: @EnumLiteral(), comptime src: SourceLocation) type {
     return if (!logEnabled(level, scope)) struct {
         const Self = @This();
 
@@ -263,86 +166,23 @@ pub fn ScopedSpan(comptime level: Level, comptime scope: @EnumLiteral(), comptim
     } else struct {
         const Self = @This();
 
-        id: SpanId,
-        prev: Span,
+        prev: Span = .none,
 
-        /// Begins a new span on the current thread.
         pub fn begin() Self {
-            const id: SpanId = .createNext();
             const prev = current_span;
-            current_span = .{
-                .id = id,
-                .vtable = &.{
-                    .suspendFn = @"suspend",
-                    .resumeFn = @"resume",
-                    .linkFn = link,
-                    .unlinkFn = unlink,
-                },
-                .userdata = undefined,
-            };
-            trace(level, scope, src, .begin, current_executor, &current_span);
-            return .{ .id = id, .prev = prev };
+            current_span = .{ .src = &src };
+            trace(level, scope, src, .begin, &current_span, &prev);
+            return .{ .prev = prev };
         }
 
         pub fn end(self: *Self) void {
-            // Swap the previous span, that we stored from begin,
-            assert(current_span.id != .none);
-            assert(current_span.id == self.id);
-            trace(level, scope, src, .end, current_executor, &current_span);
+            assert(current_span.src == &src);
+            trace(level, scope, src, .end, &current_span, &self.prev);
             current_span = self.prev;
             self.* = undefined;
         }
-
-        fn @"suspend"(span_: *Span) Span {
-            assert(span_.id != .none);
-            assert(current_span.id != .none);
-            assert(current_span.id == span_.id);
-            trace(level, scope, src, .@"suspend", current_executor, &current_span);
-            const suspended = span_.*;
-            current_span = .none;
-            return suspended;
-        }
-
-        fn @"resume"(span_: Span) void {
-            assert(span_.id != .none);
-            assert(current_span.id == .none);
-            current_span = span_;
-            trace(level, scope, src, .@"resume", current_executor, &current_span);
-        }
-
-        fn link(span_: *Span, executor: Executor) void {
-            assert(executor != .none);
-            assert(span_.id != .none);
-            assert(current_executor == .none);
-            assert(current_span.id == .none);
-            current_executor = executor;
-            trace(level, scope, src, .link, current_executor, span_);
-        }
-
-        fn unlink(span_: *Span, executor: Executor) void {
-            assert(current_executor != .none);
-            assert(current_executor == executor);
-            assert(current_span.id == .none);
-            trace(level, scope, src, .unlink, current_executor, span_);
-            current_executor = .none;
-        }
     };
 }
-
-pub const SpanEvent = enum {
-    /// An executor has begun work on this span.
-    begin,
-    /// An executor has completed work on this span.
-    end,
-    /// An executor has suspended work on this span.
-    @"suspend",
-    /// An executor has resumed work on this span.
-    @"resume",
-    /// An executor has started work requested within the span.
-    link,
-    /// An executor has stopped work requested within the span.
-    unlink,
-};
 
 /// Returns a scoped logging namespace that logs all messages using the scope
 /// provided here.
@@ -387,12 +227,12 @@ pub fn scoped(comptime scope: @EnumLiteral()) type {
             log(.debug, scope, format, args);
         }
 
-        /// Initialize a new tracing span. The span must be explicitly begun
-        /// and ended after initialization.
+        /// Initialize a new tracing span. The returned span must be ended before any
+        /// spans that were created before it.
         pub fn span(
             comptime level: Level,
             comptime src: SourceLocation,
-        ) ScopedSpan(level, scope, src) {
+        ) GenericSpan(level, scope, src) {
             return .begin();
         }
     };
@@ -421,6 +261,6 @@ pub const info = default.info;
 /// be used for messages which are only useful for debugging.
 pub const debug = default.debug;
 
-/// Initialize a new tracing span using the default scope. The span must be
-/// explicitly begun and ended after initialization.
+/// Initialize a new tracing span using the default scope. The returned span must
+/// be ended before any spans that were created before it.
 pub const span = default.span;

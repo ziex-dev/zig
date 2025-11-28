@@ -18,7 +18,6 @@ const assert = std.debug.assert;
 const posix = std.posix;
 const log = std.log;
 const Span = std.log.Span;
-const Executor = std.log.Executor;
 
 /// Thread-safe.
 allocator: Allocator,
@@ -207,8 +206,6 @@ fn join(t: *Threaded) void {
 fn worker(t: *Threaded) void {
     defer t.wait_group.finish();
 
-    const executor: Executor = .create();
-
     t.mutex.lock();
     defer t.mutex.unlock();
 
@@ -216,9 +213,10 @@ fn worker(t: *Threaded) void {
         while (t.run_queue.popFirst()) |closure_node| {
             t.mutex.unlock();
             const closure: *Closure = @fieldParentPtr("node", closure_node);
-            executor.link(&closure.span);
+            const prev_span = log.current_span;
+            log.current_span = closure.span;
             closure.start(closure);
-            executor.unlink(&closure.span);
+            log.current_span = prev_span;
             t.mutex.lock();
             t.busy_count -= 1;
         }
