@@ -14,7 +14,7 @@ test {
     _ = @import("crc/test.zig");
 }
 
-pub const Crc32Iscsi = switch (builtin.cpu.hasAll(.x86, &.{ .@"64bit", .crc32 }) and builtin.zig_backend == .stage2_llvm) {
+pub const Crc32Iscsi = switch (builtin.cpu.hasAll(.x86, &.{ .@"64bit", .crc32 })) {
     true => @import("crc/crc32c.zig").Wrapper,
     else => Crc(u32, .{
         .polynomial = 0x1edc6f41,
