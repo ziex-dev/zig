@@ -5478,14 +5478,16 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
             // for the string, we still use the next u32 for the null terminator.
             extra_i += (constraint.len + name.len + (2 + 3)) / 4;
 
-            if (constraint.len < 2 or constraint[0] != '=' or
-                (constraint[1] == '{' and constraint[constraint.len - 1] != '}'))
-            {
-                return f.fail("CBE: constraint not supported: '{s}'", .{constraint});
-            }
+            // +constraint
+            // =constraint
+            if (constraint.len > 1 and
+                (constraint[0] == '=' or constraint[0] == '+') and
+                constraint[1] != '{') continue;
 
-            const is_reg = constraint[1] == '{';
-            if (is_reg) {
+            // ={reg}
+            if (std.mem.startsWith(u8, constraint, "={") and
+                std.mem.endsWith(u8, constraint, "}"))
+            {
                 const output_ty = if (output == .none) inst_ty else f.typeOf(output).childType(zcu);
                 try w.writeAll("register ");
                 const output_local = try f.allocLocalValue(.{
@@ -5503,7 +5505,7 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
                 }
                 try w.writeByte(';');
                 try f.object.newline();
-            }
+            } else return f.fail("CBE: constraint not supported: '{s}'", .{constraint});
         }
         for (inputs) |input| {
             const extra_bytes = mem.sliceAsBytes(f.air.extra.items[extra_i..]);
