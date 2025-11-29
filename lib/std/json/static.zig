@@ -255,10 +255,12 @@ pub fn innerParse(
                 },
             }
         },
-        .@"enum" => {
+        .@"enum" => |enumInfo| {
             if (std.meta.hasFn(T, "jsonParse")) {
                 return T.jsonParse(allocator, source, options);
             }
+
+            if (enumInfo.fields.len == 0) return error.UnexpectedToken;
 
             const token = try source.nextAllocMax(allocator, .alloc_if_needed, options.max_value_len.?);
             defer freeAllocated(allocator, token);
@@ -274,6 +276,7 @@ pub fn innerParse(
             }
 
             if (unionInfo.tag_type == null) @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
+            if (unionInfo.fields.len == 0) return error.UnexpectedToken;
 
             if (.object_begin != try source.next()) return error.UnexpectedToken;
 
@@ -512,6 +515,7 @@ pub fn innerParse(
                 else => @compileError("Unable to parse into type '" ++ @typeName(T) ++ "'"),
             }
         },
+        .noreturn => return error.UnexpectedToken,
         else => @compileError("Unable to parse into type '" ++ @typeName(T) ++ "'"),
     }
     unreachable;
@@ -587,10 +591,12 @@ pub fn innerParseFromValue(
                 else => return try innerParseFromValue(optionalInfo.child, allocator, source, options),
             }
         },
-        .@"enum" => {
+        .@"enum" => |enumInfo| {
             if (std.meta.hasFn(T, "jsonParseFromValue")) {
                 return T.jsonParseFromValue(allocator, source, options);
             }
+
+            if (enumInfo.fields.len == 0) return error.UnexpectedToken;
 
             switch (source) {
                 .float => return error.InvalidEnumTag,
@@ -605,6 +611,7 @@ pub fn innerParseFromValue(
             }
 
             if (unionInfo.tag_type == null) @compileError("Unable to parse into untagged union '" ++ @typeName(T) ++ "'");
+            if (unionInfo.fields.len == 0) return error.UnexpectedToken;
 
             if (source != .object) return error.UnexpectedToken;
             if (source.object.count() != 1) return error.UnexpectedToken;

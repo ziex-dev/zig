@@ -400,6 +400,9 @@ pub fn write(self: *Stringify, v: anytype) Error!void {
             if (std.meta.hasFn(T, "jsonStringify")) {
                 return v.jsonStringify(self);
             }
+            if (enum_info.fields.len == 0) {
+                unreachable;
+            }
 
             if (!enum_info.is_exhaustive) {
                 inline for (enum_info.fields) |field| {
@@ -416,9 +419,12 @@ pub fn write(self: *Stringify, v: anytype) Error!void {
         .enum_literal => {
             return self.stringValue(@tagName(v));
         },
-        .@"union" => {
+        .@"union" => |union_info| {
             if (std.meta.hasFn(T, "jsonStringify")) {
                 return v.jsonStringify(self);
+            }
+            if (union_info.fields.len == 0) {
+                unreachable;
             }
 
             const info = @typeInfo(T).@"union";
@@ -951,6 +957,20 @@ test "stringify array of structs" {
         MyStruct{ .foo = 100 },
         MyStruct{ .foo = 1000 },
     }, .{});
+}
+
+// TODO: add tests for `noreturn` if https://github.com/ziglang/zig/issues/15909 gets completed
+test "stringify optionals/slices of valueless types" {
+    const MyStruct = struct {
+        opt_enum: ?enum {} = null,
+        opt_union: ?union(enum) {} = null,
+        slice_enum: []enum {} = &.{},
+        slice_union: []union(enum) {} = &.{},
+    };
+    const expected =
+        \\{"opt_enum":null,"opt_union":null,"slice_enum":[],"slice_union":[]}
+    ;
+    try testStringify(expected, MyStruct{}, .{});
 }
 
 test "stringify struct with custom stringifier" {

@@ -939,3 +939,19 @@ test "parse with zero-bit field" {
 
     try testAllParseFunctions(Inner, expected, str);
 }
+
+// TODO: add tests for `noreturn` if https://github.com/ziglang/zig/issues/15909 gets completed
+test "parse optionals and slices of valueless types" {
+    const Enum = ?enum {};
+    const Union = ?union(enum) {};
+    try testAllParseFunctions(Enum, null, "null");
+    try testAllParseFunctions(Union, null, "null");
+    try testAllParseFunctions([]Enum, &.{}, "[]");
+    try testAllParseFunctions([]Union, &.{}, "[]");
+}
+
+// TODO: add tests for `noreturn` if https://github.com/ziglang/zig/issues/15909 gets completed
+test "parse errors when trying to assign a value to a valueless type" {
+    try std.testing.expectError(error.UnexpectedToken, parseFromSlice(enum {}, std.testing.allocator, "0", .{}));
+    try std.testing.expectError(error.UnexpectedToken, parseFromSlice(union(enum) {}, std.testing.allocator, "0", .{}));
+}

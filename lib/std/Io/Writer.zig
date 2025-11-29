@@ -1268,6 +1268,11 @@ pub fn printValue(
         .@"enum" => |info| {
             if (!is_any and fmt.len != 0) invalidFmtError(fmt, value);
             optionsForbidden(options);
+
+            if (info.fields.len == 0) {
+                unreachable;
+            }
+
             if (info.is_exhaustive) {
                 return printEnumExhaustive(w, value);
             } else {
@@ -1283,6 +1288,10 @@ pub fn printValue(
                 try w.writeAll(".{ ... }");
                 return;
             }
+            if (info.fields.len == 0) {
+                unreachable;
+            }
+
             if (info.tag_type) |UnionTagType| {
                 try w.writeAll(".{ .");
                 try w.writeAll(@tagName(@as(UnionTagType, value)));
@@ -2157,6 +2166,15 @@ fn testPrintIntCase(expected: []const u8, value: anytype, base: u8, case: std.fm
     var w: Writer = .fixed(&buffer);
     try w.printInt(value, base, case, options);
     try testing.expectEqualStrings(expected, w.buffered());
+}
+
+// TODO: add tests for `noreturn` if https://github.com/ziglang/zig/issues/15909 gets completed
+test "print optionals/slices of valueless types" {
+    try testing.expectFmt("null", "{?}", .{@as(?enum {}, null)});
+    try testing.expectFmt("null", "{?}", .{@as(?union(enum) {}, null)});
+
+    try testing.expectFmt("{  }", "{any}", .{@as([]enum {}, &.{})});
+    try testing.expectFmt("{  }", "{any}", .{@as([]union(enum) {}, &.{})});
 }
 
 test printByteSize {
