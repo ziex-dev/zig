@@ -20,25 +20,25 @@ fn usage() noreturn {
 }
 
 pub fn main() !void {
-    var   arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var   general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
     const gpa = general_purpose_allocator.allocator();
 
-    var   Io_manager: std.Io.Threaded = .init( gpa );
+    var Io_manager: std.Io.Threaded = .init(gpa);
     defer Io_manager.deinit();
     const net_Io = Io_manager.io();
 
-    var   argv = try std.process.argsWithAllocator(arena);
+    var argv = try std.process.argsWithAllocator(arena);
     defer argv.deinit();
     assert(argv.skip());
     const zig_lib_directory = argv.next().?;
     const zig_exe_path = argv.next().?;
     const global_cache_path = argv.next().?;
 
-    var   lib_dir = try std.fs.cwd().openDir(zig_lib_directory, .{});
+    var lib_dir = try std.fs.cwd().openDir(zig_lib_directory, .{});
     defer lib_dir.close();
 
     var listen_port: u16 = 0;
@@ -62,9 +62,9 @@ pub fn main() !void {
     }
     const should_open_browser = force_open_browser orelse (listen_port == 0);
 
-    const address = std.Io.net.IpAddress.parse( "127.0.0.1", listen_port ) catch unreachable;
-    var http_server: std.Io.net.Server = try address.listen( net_Io, .{
-      .reuse_address = true,
+    const address = std.Io.net.IpAddress.parse("127.0.0.1", listen_port) catch unreachable;
+    var http_server: std.Io.net.Server = try address.listen(net_Io, .{
+        .reuse_address = true,
     });
     const port = http_server.socket.address.getPort();
     const url_with_newline = try std.fmt.allocPrint(arena, "http://127.0.0.1:{d}/\n", .{port});
@@ -84,23 +84,23 @@ pub fn main() !void {
     };
 
     while (true) {
-        const connection = try http_server.accept( net_Io );
+        const connection = try http_server.accept(net_Io);
         _ = std.Thread.spawn(.{}, accept, .{ &context, connection, net_Io }) catch |err| {
             std.log.err("unable to accept connection: {s}", .{@errorName(err)});
-            connection.socket.close( net_Io );
+            connection.socket.close(net_Io);
             continue;
         };
     }
 }
 
-fn accept(context: *Context, connection: std.Io.net.Stream, io: std.Io ) void {
-    defer connection.close( io );
+fn accept(context: *Context, connection: std.Io.net.Stream, io: std.Io) void {
+    defer connection.close(io);
 
     var recv_buffer: [4000]u8 = undefined;
     var send_buffer: [4000]u8 = undefined;
-    var conn_reader = connection.reader( io, &recv_buffer);
-    var conn_writer = connection.writer( io, &send_buffer);
-    var server = std.http.Server.init( &conn_reader.interface, &conn_writer.interface);
+    var conn_reader = connection.reader(io, &recv_buffer);
+    var conn_writer = connection.writer(io, &send_buffer);
+    var server = std.http.Server.init(&conn_reader.interface, &conn_writer.interface);
     while (server.reader.state == .ready) {
         var request = server.receiveHead() catch |err| switch (err) {
             error.HttpConnectionClosing => return,
@@ -109,7 +109,7 @@ fn accept(context: *Context, connection: std.Io.net.Stream, io: std.Io ) void {
                 return;
             },
         };
-      serveRequest(&request, context, io) catch |err| switch (err) {
+        serveRequest(&request, context, io) catch |err| switch (err) {
             error.WriteFailed => {
                 if (conn_writer.err) |e| {
                     std.log.err("unable to serve {s}: {s}", .{ request.head.target, @errorName(e) });
@@ -139,19 +139,19 @@ fn serveRequest(request: *std.http.Server.Request, context: *Context, io: std.Io
         std.mem.eql(u8, request.head.target, "/debug") or
         std.mem.eql(u8, request.head.target, "/debug/"))
     {
-      try serveDocsFile(request, context, "docs/index.html", "text/html");
+        try serveDocsFile(request, context, "docs/index.html", "text/html");
     } else if (std.mem.eql(u8, request.head.target, "/main.js") or
         std.mem.eql(u8, request.head.target, "/debug/main.js"))
     {
         try serveDocsFile(request, context, "docs/main.js", "application/javascript");
     } else if (std.mem.eql(u8, request.head.target, "/main.wasm")) {
-      try serveWasm(request, context, .ReleaseFast, io);
+        try serveWasm(request, context, .ReleaseFast, io);
     } else if (std.mem.eql(u8, request.head.target, "/debug/main.wasm")) {
-      try serveWasm(request, context, .Debug, io);
+        try serveWasm(request, context, .Debug, io);
     } else if (std.mem.eql(u8, request.head.target, "/sources.tar") or
         std.mem.eql(u8, request.head.target, "/debug/sources.tar"))
     {
-      try serveSourcesTar(request, context, io);
+        try serveSourcesTar(request, context, io);
     } else {
         try request.respond("not found", .{
             .status = .not_found,
@@ -223,7 +223,7 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context, io: std
         defer file.close();
         const stat = try file.stat();
         var file_reader: std.fs.File.Reader = .{
-            .file = std.fs.File.adaptToNewApi( file ),
+            .file = std.fs.File.adaptToNewApi(file),
             .interface = std.fs.File.Reader.initInterface(&.{}),
             .size = stat.size,
             .io = io,
