@@ -482,7 +482,7 @@ const use_trap_panic = switch (builtin.zig_backend) {
     else => false,
 };
 
-/// Dumps a stack trace to standard error, then aborts.
+/// Dumps a description of the panic, then aborts.
 pub fn defaultPanic(
     msg: []const u8,
     first_trace_addr: ?usize,
@@ -544,30 +544,7 @@ pub fn defaultPanic(
         0 => {
             panic_stage = 1;
             _ = panicking.fetchAdd(1, .seq_cst);
-
-            trace: {
-                const stderr, const tty_config = lockStderrWriter(&.{});
-                defer unlockStderrWriter();
-
-                if (builtin.single_threaded) {
-                    stderr.print("panic: ", .{}) catch break :trace;
-                } else {
-                    const current_thread_id = std.Thread.getCurrentId();
-                    stderr.print("thread {d} panic: ", .{current_thread_id}) catch break :trace;
-                }
-                stderr.print("{s}\n", .{msg}) catch break :trace;
-
-                if (@errorReturnTrace()) |t| if (t.index > 0) {
-                    stderr.writeAll("error return context:\n") catch break :trace;
-                    writeStackTrace(t, stderr, tty_config) catch break :trace;
-                    stderr.writeAll("\nstack trace:\n") catch break :trace;
-                };
-                writeCurrentStackTrace(.{
-                    .first_address = first_trace_addr orelse @returnAddress(),
-                    .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                }, stderr, tty_config) catch break :trace;
-            }
-
+            dumpPanic(msg, first_trace_addr);
             waitForOtherThreadToFinishPanicking();
         },
         1 => {
@@ -581,6 +558,53 @@ pub fn defaultPanic(
     }
 
     posix.abort();
+}
+
+/// Dumps panic information.
+pub inline fn dumpPanic(
+    msg: []const u8,
+    first_trace_addr: ?usize,
+) void {
+    if (@hasDecl(root, "debug") and @hasDecl(root.debug, "dumpPanic")) {
+        return @call(.always_inline, root.debug.dumpPanic, .{ msg, first_trace_addr });
+    }
+
+    defaultDumpPanic(msg, first_trace_addr);
+}
+
+/// Dumps panic information to stderr.
+pub inline fn defaultDumpPanic(msg: []const u8, first_trace_addr: ?usize) void {
+    const stderr, const tty_config = lockStderrWriter(&.{});
+    defer unlockStderrWriter();
+    writePanic(stderr, tty_config, msg, first_trace_addr);
+}
+
+/// Writes panic information to the given writer.
+pub inline fn writePanic(
+    writer: *Writer,
+    tty_config: tty.Config,
+    msg: []const u8,
+    first_trace_addr: ?usize,
+) void {
+    defer writer.flush() catch {};
+
+    if (builtin.single_threaded) {
+        writer.print("panic: ", .{}) catch return;
+    } else {
+        const current_thread_id = std.Thread.getCurrentId();
+        writer.print("thread {d} panic: ", .{current_thread_id}) catch return;
+    }
+    writer.print("{s}\n", .{msg}) catch return;
+
+    if (@errorReturnTrace()) |t| if (t.index > 0) {
+        writer.writeAll("error return context:\n") catch return;
+        writeStackTrace(t, writer, tty_config) catch return;
+        writer.writeAll("\nstack trace:\n") catch return;
+    };
+    writeCurrentStackTrace(.{
+        .first_address = first_trace_addr orelse @returnAddress(),
+        .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
+    }, writer, tty_config) catch return;
 }
 
 /// Must be called only after adding 1 to `panicking`. There are three callsites.
@@ -1561,23 +1585,7 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
         0 => {
             panic_stage = 1;
             _ = panicking.fetchAdd(1, .seq_cst);
-
-            trace: {
-                const stderr, const tty_config = lockStderrWriter(&.{});
-                defer unlockStderrWriter();
-
-                if (addr) |a| {
-                    stderr.print("{s} at address 0x{x}\n", .{ name, a }) catch break :trace;
-                } else {
-                    stderr.print("{s} (no address available)\n", .{name}) catch break :trace;
-                }
-                if (opt_ctx) |context| {
-                    writeCurrentStackTrace(.{
-                        .context = context,
-                        .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
-                    }, stderr, tty_config) catch break :trace;
-                }
-            }
+            dumpSegfault(addr, name, opt_ctx);
         },
         1 => {
             panic_stage = 2;
@@ -1593,6 +1601,42 @@ pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContex
     // again, the memory may be mapped and undefined behavior would occur rather than repeating
     // the segfault. So we simply abort here.
     posix.abort();
+}
+
+pub fn dumpSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContextPtr) void {
+    if (@hasDecl(root, "debug") and @hasDecl(root.debug, "dumpSegfault")) {
+        return @call(.always_inline, root.debug.dumpSegfault, .{ addr, name, opt_ctx });
+    }
+
+    defaultDumpSegfault(addr, name, opt_ctx);
+}
+
+pub inline fn defaultDumpSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContextPtr) void {
+    const stderr, const tty_config = lockStderrWriter(&.{});
+    defer unlockStderrWriter();
+    writeSegfault(stderr, tty_config, addr, name, opt_ctx);
+}
+
+pub inline fn writeSegfault(
+    writer: *Writer,
+    tty_config: tty.Config,
+    addr: ?usize,
+    name: []const u8,
+    opt_ctx: ?CpuContextPtr,
+) void {
+    defer writer.flush() catch {};
+
+    if (addr) |a| {
+        writer.print("{s} at address 0x{x}\n", .{ name, a }) catch return;
+    } else {
+        writer.print("{s} (no address available)\n", .{name}) catch return;
+    }
+    if (opt_ctx) |context| {
+        writeCurrentStackTrace(.{
+            .context = context,
+            .allow_unsafe_unwind = true, // we're crashing anyway, give it our all!
+        }, writer, tty_config) catch return;
+    }
 }
 
 pub fn dumpStackPointerAddr(prefix: []const u8) void {
