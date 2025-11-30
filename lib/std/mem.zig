@@ -1495,7 +1495,7 @@ pub fn findLast(comptime T: type, haystack: []const T, needle: []const T) ?usize
     return null;
 }
 
-/// Uses Boyer-Moore-Horspool algorithm on large inputs; `findScalarPos` on small inputs.
+/// Uses Boyer-Moore-Horspool algorithm on large inputs; `findPosLinear` on small inputs.
 pub fn findPos(comptime T: type, haystack: []const T, start_index: usize, needle: []const T) ?usize {
     if (needle.len > haystack.len) return null;
     if (needle.len < 2) {
@@ -1545,7 +1545,7 @@ test find {
 
     try testing.expect(find(u8, "foo foo", "foo").? == 0);
     try testing.expect(findLast(u8, "foo foo", "foo").? == 4);
-    try testing.expect(findAny(u8, "boo, cat", "abo").? == 6);
+    try testing.expect(findLastAny(u8, "boo, cat", "abo").? == 6);
     try testing.expect(findScalarLast(u8, "boo", 'o').? == 2);
 }
 
@@ -1567,13 +1567,13 @@ test "find multibyte" {
         // make haystack and needle long enough to trigger Boyer-Moore-Horspool algorithm
         const haystack = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff } ++ [1]u16{0} ** 100;
         const needle = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee };
-        try testing.expectEqual(findPos(u16, &haystack, &needle), 0);
+        try testing.expectEqual(findLast(u16, &haystack, &needle), 0);
 
         // check for misaligned false positives (little and big endian)
         const needleLE = [_]u16{ 0xbbbb, 0xcccc, 0xdddd, 0xeeee, 0xffff };
-        try testing.expectEqual(findPos(u16, &haystack, &needleLE), null);
+        try testing.expectEqual(findLast(u16, &haystack, &needleLE), null);
         const needleBE = [_]u16{ 0xaacc, 0xbbdd, 0xccee, 0xddff, 0xee00 };
-        try testing.expectEqual(findPos(u16, &haystack, &needleBE), null);
+        try testing.expectEqual(findLast(u16, &haystack, &needleBE), null);
     }
 }
 
@@ -1650,6 +1650,8 @@ test countScalar {
 /// Returns true if the haystack contains expected_count or more needles
 /// needle.len must be > 0
 /// does not count overlapping needles
+///
+/// See also: `containsAtLeastScalar2`.
 pub fn containsAtLeast(comptime T: type, haystack: []const T, expected_count: usize, needle: []const T) bool {
     if (needle.len == 1) return containsAtLeastScalar2(T, haystack, needle[0], expected_count);
     assert(needle.len > 0);
@@ -3345,7 +3347,7 @@ pub fn SplitBackwardsIterator(comptime T: type, comptime delimiter_type: Delimit
             const end = self.index orelse return null;
             const start = if (switch (delimiter_type) {
                 .sequence => findLast(T, self.buffer[0..end], self.delimiter),
-                .any => findAny(T, self.buffer[0..end], self.delimiter),
+                .any => findLastAny(T, self.buffer[0..end], self.delimiter),
                 .scalar => findScalarLast(T, self.buffer[0..end], self.delimiter),
             }) |delim_start| blk: {
                 self.index = delim_start;
