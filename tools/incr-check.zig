@@ -390,7 +390,7 @@ const Eval = struct {
 
         // We need to replace backslashes for consistency between platforms.
         const filename = name: {
-            if (std.mem.indexOfScalar(u8, raw_filename, '\\') == null) break :name raw_filename;
+            if (std.mem.findScalar(u8, raw_filename, '\\') == null) break :name raw_filename;
             const copied = try eval.arena.dupe(u8, raw_filename);
             std.mem.replaceScalar(u8, copied, '\\', '/');
             break :name copied;
@@ -680,7 +680,7 @@ const Case = struct {
                 if (val.len == 0) {
                     fatal("line {d}: missing value", .{line_n});
                 } else if (std.mem.eql(u8, key, "target")) {
-                    const split_idx = std.mem.lastIndexOfScalar(u8, val, '-') orelse
+                    const split_idx = std.mem.findScalarLast(u8, val, '-') orelse
                         fatal("line {d}: target does not include backend", .{line_n});
 
                     const query = val[0..split_idx];
@@ -705,7 +705,7 @@ const Case = struct {
                         .backend = backend,
                     });
                 } else if (std.mem.eql(u8, key, "module")) {
-                    const split_idx = std.mem.indexOfScalar(u8, val, '=') orelse
+                    const split_idx = std.mem.findScalar(u8, val, '=') orelse
                         fatal("line {d}: module does not include file", .{line_n});
                     const name = val[0..split_idx];
                     const file = val[split_idx + 1 ..];

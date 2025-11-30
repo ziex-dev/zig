@@ -153,7 +153,7 @@ const Executable = struct {
                 "incompatible existing coverage file '{s}' (differing pcs length: {} != {})",
                 .{ &coverage_file_name, seen_pcs_header.pcs_len, pcs.len },
             );
-            if (mem.indexOfDiff(usize, seen_pcs_header.pcAddrs(), pcs)) |i| panic(
+            if (mem.findDiff(usize, seen_pcs_header.pcAddrs(), pcs)) |i| panic(
                 "incompatible existing coverage file '{s}' (differing pc at index {d}: {x} != {x})",
                 .{ &coverage_file_name, i, seen_pcs_header.pcAddrs()[i], pcs[i] },
             );

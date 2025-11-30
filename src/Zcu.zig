@@ -597,7 +597,7 @@ pub const BuiltinDecl = enum {
         return switch (decl) {
             inline else => |tag| {
                 const name = @tagName(tag);
-                const split = (comptime std.mem.lastIndexOfScalar(u8, name, '.')) orelse return .{ .direct = name };
+                const split = (comptime std.mem.findScalarLast(u8, name, '.')) orelse return .{ .direct = name };
                 const parent = @field(BuiltinDecl, name[0..split]);
                 comptime assert(@intFromEnum(parent) < @intFromEnum(tag)); // dependencies ordered correctly
                 return .{ .nested = .{ parent, name[split + 1 ..] } };
@@ -4111,7 +4111,7 @@ fn resolveReferencesInner(zcu: *Zcu) !std.AutoArrayHashMapUnmanaged(AnalUnit, ?R
                         const fqn_slice = nav.fqn.toSlice(ip);
                         if (comp.test_filters.len > 0) {
                             for (comp.test_filters) |test_filter| {
-                                if (std.mem.indexOf(u8, fqn_slice, test_filter) != null) break;
+                                if (std.mem.find(u8, fqn_slice, test_filter) != null) break;
                             } else break :a false;
                         }
                         break :a true;

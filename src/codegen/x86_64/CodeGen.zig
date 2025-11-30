@@ -177421,7 +177421,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
         else if (std.mem.endsWith(u8, mnem_str, "l"))
             .dword
         else if (std.mem.endsWith(u8, mnem_str, "q") and
-            (std.mem.indexOfScalar(u8, "vp", mnem_str[0]) == null or !std.mem.endsWith(u8, mnem_str, "dq")))
+            (std.mem.findScalar(u8, "vp", mnem_str[0]) == null or !std.mem.endsWith(u8, mnem_str, "dq")))
             .qword
         else if (std.mem.endsWith(u8, mnem_str, "t"))
             .tbyte
@@ -177466,8 +177466,8 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
         next_op: for (&ops, 0..) |*op, op_index| {
             const op_str = while (!last_op) {
                 const full_str = op_it.next() orelse break :next_op;
-                const code_str = if (std.mem.indexOfScalar(u8, full_str, '#') orelse
-                    std.mem.indexOf(u8, full_str, "//")) |comment|
+                const code_str = if (std.mem.findScalar(u8, full_str, '#') orelse
+                    std.mem.find(u8, full_str, "//")) |comment|
                 code: {
                     last_op = true;
                     break :code full_str[0..comment];
@@ -177476,7 +177476,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                 if (trim_str.len > 0) break trim_str;
             } else break;
             if (std.mem.startsWith(u8, op_str, "%%")) {
-                const colon = std.mem.indexOfScalarPos(u8, op_str, "%%".len + 2, ':');
+                const colon = std.mem.findScalarPos(u8, op_str, "%%".len + 2, ':');
                 const reg = parseRegName(op_str["%%".len .. colon orelse op_str.len]) orelse
                     return self.fail("invalid register: '{s}'", .{op_str});
                 if (colon) |colon_pos| {
@@ -177496,7 +177496,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                     op.* = .{ .reg = reg };
                 }
             } else if (std.mem.startsWith(u8, op_str, "%[") and std.mem.endsWith(u8, op_str, "]")) {
-                const colon = std.mem.indexOfScalarPos(u8, op_str, "%[".len, ':');
+                const colon = std.mem.findScalarPos(u8, op_str, "%[".len, ':');
                 const modifier = if (colon) |colon_pos|
                     op_str[colon_pos + ":".len .. op_str.len - "]".len]
                 else
@@ -177572,7 +177572,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                 else |_|
                     return self.fail("invalid immediate: '{s}'", .{op_str});
             } else if (std.mem.endsWith(u8, op_str, ")")) {
-                const open = std.mem.indexOfScalar(u8, op_str, '(') orelse
+                const open = std.mem.findScalar(u8, op_str, '(') orelse
                     return self.fail("invalid operand: '{s}'", .{op_str});
                 var sib_it = std.mem.splitScalar(u8, op_str[open + "(".len .. op_str.len - ")".len], ',');
                 const base_str = sib_it.next() orelse
@@ -177631,7 +177631,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                         .disp = if (std.mem.startsWith(u8, op_str[0..open], "%[") and
                             std.mem.endsWith(u8, op_str[0..open], "]"))
                         disp: {
-                            const colon = std.mem.indexOfScalarPos(u8, op_str[0..open], "%[".len, ':');
+                            const colon = std.mem.findScalarPos(u8, op_str[0..open], "%[".len, ':');
                             const modifier = if (colon) |colon_pos|
                                 op_str[colon_pos + ":".len .. open - "]".len]
                             else
@@ -177697,14 +177697,14 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
             .{ ._, .pseudo }
         else for (std.enums.values(Mir.Inst.Fixes)) |fixes| {
             const fixes_name = @tagName(fixes);
-            const space_index = std.mem.indexOfScalar(u8, fixes_name, ' ');
+            const space_index = std.mem.findScalar(u8, fixes_name, ' ');
             const fixes_prefix = if (space_index) |index|
                 std.meta.stringToEnum(encoder.Instruction.Prefix, fixes_name[0..index]).?
             else
                 .none;
             if (fixes_prefix != prefix) continue;
             const pattern = fixes_name[if (space_index) |index| index + " ".len else 0..];
-            const wildcard_index = std.mem.indexOfScalar(u8, pattern, '_').?;
+            const wildcard_index = std.mem.findScalar(u8, pattern, '_').?;
             const mnem_prefix = pattern[0..wildcard_index];
             const mnem_suffix = pattern[wildcard_index + "_".len ..];
             if (!std.mem.startsWith(u8, mnem_name, mnem_prefix)) continue;
@@ -177956,11 +177956,11 @@ fn moveStrategy(cg: *CodeGen, ty: Type, class: Register.Class, aligned: bool) !M
         .sse => switch (ty.zigTypeTag(zcu)) {
             else => {
                 const classes = std.mem.sliceTo(&abi.classifySystemV(ty, zcu, cg.target, .other), .none);
-                assert(std.mem.indexOfNone(abi.Class, classes, &.{
+                assert(std.mem.findNone(abi.Class, classes, &.{
                     .integer, .sse, .sseup, .memory, .float, .float_combine,
                 }) == null);
                 const abi_size = ty.abiSize(zcu);
-                if (abi_size < 4 or std.mem.indexOfScalar(abi.Class, classes, .integer) != null) switch (abi_size) {
+                if (abi_size < 4 or std.mem.findScalar(abi.Class, classes, .integer) != null) switch (abi_size) {
                     1 => return if (cg.hasFeature(.avx)) .{ .vex_insert_extract = .{
                         .insert = .{ .vp_b, .insr },
                         .extract = .{ .vp_b, .extr },
@@ -182757,8 +182757,8 @@ const Temp = struct {
             const class = classes[class_index];
             next_class_index = @intCast(switch (class) {
                 .integer, .memory, .float, .float_combine => class_index + 1,
-                .sse => std.mem.indexOfNonePos(abi.Class, classes, class_index + 1, &.{.sseup}) orelse classes.len,
-                .x87 => std.mem.indexOfNonePos(abi.Class, classes, class_index + 1, &.{.x87up}) orelse classes.len,
+                .sse => std.mem.findNonePos(abi.Class, classes, class_index + 1, &.{.sseup}) orelse classes.len,
+                .x87 => std.mem.findNonePos(abi.Class, classes, class_index + 1, &.{.x87up}) orelse classes.len,
                 .sseup, .x87up, .none, .win_i128, .integer_per_element => unreachable,
             });
             const part_size = switch (class) {
@@ -187641,7 +187641,7 @@ const Select = struct {
             s.cg.asmOps(mir_tag, mir_ops) catch |err| switch (err) {
                 error.InvalidInstruction => {
                     const fixes = @tagName(mir_tag[0]);
-                    const fixes_blank = std.mem.indexOfScalar(u8, fixes, '_').?;
+                    const fixes_blank = std.mem.findScalar(u8, fixes, '_').?;
                     return s.cg.fail("invalid instruction: '{s}{s}{s} {s} {s} {s} {s}'", .{
                         fixes[0..fixes_blank],
                         @tagName(mir_tag[1]),
@@ -187721,7 +187721,7 @@ const Select = struct {
                 .add, .com, .comi, .div, .divr, .mul, .st, .sub, .subr, .ucom, .ucomi => s.top +%= 1,
                 else => {
                     const fixes = @tagName(mir_tag[0]);
-                    const fixes_blank = std.mem.indexOfScalar(u8, fixes, '_').?;
+                    const fixes_blank = std.mem.findScalar(u8, fixes, '_').?;
                     std.debug.panic("{s}: {s}{s}{s}\n", .{
                         @src().fn_name,
                         fixes[0..fixes_blank],

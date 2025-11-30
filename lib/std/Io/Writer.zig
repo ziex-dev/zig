@@ -1702,7 +1702,7 @@ pub fn printFloatHex(w: *Writer, value: anytype, case: std.fmt.Case, opt_precisi
 
     try w.writeAll("0x");
     try w.writeByte(buf[0]);
-    const trimmed = std.mem.trimRight(u8, buf[1..], "0");
+    const trimmed = std.mem.trimEnd(u8, buf[1..], "0");
     if (opt_precision) |precision| {
         if (precision > 0) try w.writeAll(".");
     } else if (trimmed.len > 0) {

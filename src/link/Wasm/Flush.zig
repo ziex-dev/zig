@@ -1253,7 +1253,7 @@ fn emitProducerSection(gpa: Allocator, binary_bytes: *ArrayList(u8)) !void {
 
 fn splitSegmentName(name: []const u8) struct { []const u8, []const u8 } {
     const start = @intFromBool(name.len >= 1 and name[0] == '.');
-    const pivot = mem.indexOfScalarPos(u8, name, start, '.') orelse name.len;
+    const pivot = mem.findScalarPos(u8, name, start, '.') orelse name.len;
     return .{ name[0..pivot], name[pivot..] };
 }
 
@@ -1442,7 +1442,7 @@ fn emitTagNameTable(
     const ptr_size_bytes = @divExact(@bitSizeOf(Int), 8);
     try code.ensureUnusedCapacity(gpa, ptr_size_bytes * 2 * tag_name_offs.len);
     for (tag_name_offs) |off| {
-        const name_len: u32 = @intCast(mem.indexOfScalar(u8, tag_name_bytes[off..], 0).?);
+        const name_len: u32 = @intCast(mem.findScalar(u8, tag_name_bytes[off..], 0).?);
         mem.writeInt(Int, code.addManyAsArrayAssumeCapacity(ptr_size_bytes), base + off, .little);
         mem.writeInt(Int, code.addManyAsArrayAssumeCapacity(ptr_size_bytes), name_len, .little);
     }

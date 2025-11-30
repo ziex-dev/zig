@@ -258,7 +258,7 @@ pub const ImportTable = struct {
         }
 
         pub fn hash(_: Adapter, key: []const u8) u32 {
-            assert(std.mem.indexOfScalar(u8, key, 0) == null);
+            assert(std.mem.findScalar(u8, key, 0) == null);
             return std.array_hash_map.hashString(key);
         }
     };
@@ -302,7 +302,7 @@ pub const String = enum(u32) {
 
     pub fn toSlice(s: String, coff: *Coff) [:0]const u8 {
         const slice = coff.string_bytes.items[@intFromEnum(s)..];
-        return slice[0..std.mem.indexOfScalar(u8, slice, 0).? :0];
+        return slice[0..std.mem.findScalar(u8, slice, 0).? :0];
     }
 
     pub fn toOptional(s: String) String.Optional {
@@ -1427,7 +1427,7 @@ fn objectSectionMapIndex(
         try coff.ensureUnusedStringCapacity(name.toSlice(coff).len);
         const name_slice = name.toSlice(coff);
         const parent = (try coff.pseudoSectionMapIndex(coff.getOrPutStringAssumeCapacity(
-            name_slice[0 .. std.mem.indexOfScalar(u8, name_slice, '$') orelse name_slice.len],
+            name_slice[0 .. std.mem.findScalar(u8, name_slice, '$') orelse name_slice.len],
         ), alignment, attributes)).symbol(coff);
         try coff.nodes.ensureUnusedCapacity(gpa, 1);
         try coff.symbol_table.ensureUnusedCapacity(gpa, 1);
@@ -2176,7 +2176,7 @@ fn flushMoved(coff: *Coff, ni: MappedFile.Node.Index) !void {
             var import_hint_name_index: u32 = 0;
             for (0..import_entry.len) |import_symbol_index| {
                 import_hint_name_index = @intCast(import_hint_name_align.forward(
-                    std.mem.indexOfScalarPos(
+                    std.mem.findScalarPos(
                         u8,
                         import_hint_name_slice,
                         import_hint_name_index,

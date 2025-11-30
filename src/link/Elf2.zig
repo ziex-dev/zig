@@ -598,7 +598,7 @@ pub const StringTable = struct {
         }
 
         pub fn hash(_: Adapter, key: []const u8) u64 {
-            assert(std.mem.indexOfScalar(u8, key, 0) == null);
+            assert(std.mem.findScalar(u8, key, 0) == null);
             return std.hash_map.hashString(key);
         }
     };
@@ -2654,7 +2654,7 @@ fn sectionName(elf: *Elf, si: Symbol.Index) [:0]const u8 {
     const name = elf.si.shstrtab.node(elf).slice(&elf.mf)[switch (elf.shdrPtr(si.shndx(elf))) {
         inline else => |shdr| elf.targetLoad(&shdr.name),
     }..];
-    return name[0..std.mem.indexOfScalar(u8, name, 0).? :0];
+    return name[0..std.mem.findScalar(u8, name, 0).? :0];
 }
 
 fn string(elf: *Elf, comptime section: enum { shstrtab, strtab, dynstr }, key: []const u8) !u32 {

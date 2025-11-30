@@ -606,7 +606,7 @@ test "@errorName sentinel length matches slice length" {
 
     const name = testBuiltinErrorName(error.FooBar);
     const length: usize = 6;
-    try expect(length == std.mem.indexOfSentinel(u8, 0, name.ptr));
+    try expect(length == std.mem.findSentinel(u8, 0, name.ptr));
     try expect(length == name.len);
 }
 

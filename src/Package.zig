@@ -83,7 +83,7 @@ pub const Hash = struct {
         const their_multihash_func = std.fmt.parseInt(u8, h.bytes[0..2], 16) catch return false;
         if (@as(MultihashFunction, @enumFromInt(their_multihash_func)) != multihash_function) return false;
         if (h.toSlice().len != multihash_hex_digest_len) return false;
-        return std.mem.indexOfScalar(u8, &h.bytes, '-') == null;
+        return std.mem.findScalar(u8, &h.bytes, '-') == null;
     }
 
     test isOld {

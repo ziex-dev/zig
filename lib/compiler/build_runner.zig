@@ -145,7 +145,7 @@ pub fn main() !void {
             const option_contents = arg[2..];
             if (option_contents.len == 0)
                 fatalWithHint("expected option name after '-D'", .{});
-            if (mem.indexOfScalar(u8, option_contents, '=')) |name_end| {
+            if (mem.findScalar(u8, option_contents, '=')) |name_end| {
                 const option_name = option_contents[0..name_end];
                 const option_value = option_contents[name_end + 1 ..];
                 if (try builder.addUserInputOption(option_name, option_value))
@@ -1498,7 +1498,7 @@ pub fn printErrorMessages(
         try ttyconf.setColor(stderr, .red);
         try stderr.writeAll("error:");
         try ttyconf.setColor(stderr, .reset);
-        if (std.mem.indexOfScalar(u8, msg, '\n') == null) {
+        if (std.mem.findScalar(u8, msg, '\n') == null) {
             try stderr.print(" {s}\n", .{msg});
         } else switch (multiline_errors) {
             .indent => {

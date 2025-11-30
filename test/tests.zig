@@ -1990,10 +1990,10 @@ pub fn addStandaloneTests(
             .enable_ios_sdk = enable_ios_sdk,
             .enable_macos_sdk = enable_macos_sdk,
             .enable_symlinks_windows = enable_symlinks_windows,
-            .simple_skip_debug = mem.indexOfScalar(OptimizeMode, optimize_modes, .Debug) == null,
-            .simple_skip_release_safe = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseSafe) == null,
-            .simple_skip_release_fast = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseFast) == null,
-            .simple_skip_release_small = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseSmall) == null,
+            .simple_skip_debug = mem.findScalar(OptimizeMode, optimize_modes, .Debug) == null,
+            .simple_skip_release_safe = mem.findScalar(OptimizeMode, optimize_modes, .ReleaseSafe) == null,
+            .simple_skip_release_fast = mem.findScalar(OptimizeMode, optimize_modes, .ReleaseFast) == null,
+            .simple_skip_release_small = mem.findScalar(OptimizeMode, optimize_modes, .ReleaseSmall) == null,
         });
         const test_cases_dep_step = test_cases_dep.builder.default_step;
         test_cases_dep_step.name = b.dupe(test_cases_dep_name);
@@ -2296,7 +2296,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
-                if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+                if (std.mem.find(u8, triple_txt, filter) != null) break;
             } else continue;
         }
 
@@ -2553,7 +2553,7 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
 
             if (options.test_target_filters.len > 0) {
                 for (options.test_target_filters) |filter| {
-                    if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
+                    if (std.mem.find(u8, triple_txt, filter) != null) break;
                 } else continue;
             }
 

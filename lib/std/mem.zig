@@ -231,31 +231,6 @@ test "Allocator alloc and remap with zero-bit type" {
     try testing.expectEqual(200, values.len);
 }
 
-/// Copy all of source into dest at position 0.
-/// dest.len must be >= source.len.
-/// If the slices overlap, dest.ptr must be <= src.ptr.
-/// This function is deprecated; use @memmove instead.
-pub fn copyForwards(comptime T: type, dest: []T, source: []const T) void {
-    for (dest[0..source.len], source) |*d, s| d.* = s;
-}
-
-/// Copy all of source into dest at position 0.
-/// dest.len must be >= source.len.
-/// If the slices overlap, dest.ptr must be >= src.ptr.
-/// This function is deprecated; use @memmove instead.
-pub fn copyBackwards(comptime T: type, dest: []T, source: []const T) void {
-    // TODO instead of manually doing this check for the whole array
-    // and turning off runtime safety, the compiler should detect loops like
-    // this and automatically omit safety checks for loops
-    @setRuntimeSafety(false);
-    assert(dest.len >= source.len);
-    var i = source.len;
-    while (i > 0) {
-        i -= 1;
-        dest[i] = source[i];
-    }
-}
-
 /// Generally, Zig users are encouraged to explicitly initialize all fields of a struct explicitly rather than using this function.
 /// However, it is recognized that there are sometimes use cases for initializing all fields to a "zero" value. For example, when
 /// interfacing with a C API where this practice is more common and relied upon. If you are performing code review and see this
@@ -816,9 +791,6 @@ fn eqlBytes(a: []const u8, b: []const u8) bool {
     return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
 }
 
-/// Deprecated in favor of `findDiff`.
-pub const indexOfDiff = findDiff;
-
 /// Compares two slices and returns the index of the first inequality.
 /// Returns null if the slices are equal.
 pub fn findDiff(comptime T: type, a: []const T, b: []const T) ?usize {
@@ -998,7 +970,7 @@ fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
                 .array => |array_info| {
                     if (array_info.sentinel()) |s| {
                         if (s == end) {
-                            return indexOfSentinel(array_info.child, end, ptr);
+                            return findSentinel(array_info.child, end, ptr);
                         }
                     }
                     return findScalar(array_info.child, ptr, end) orelse array_info.len;
@@ -1007,7 +979,7 @@ fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
             },
             .many => if (ptr_info.sentinel()) |s| {
                 if (s == end) {
-                    return indexOfSentinel(ptr_info.child, end, ptr);
+                    return findSentinel(ptr_info.child, end, ptr);
                 }
                 // We're looking for something other than the sentinel,
                 // but iterating past the sentinel would be a bug so we need
@@ -1018,12 +990,12 @@ fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
             },
             .c => {
                 assert(ptr != null);
-                return indexOfSentinel(ptr_info.child, end, ptr);
+                return findSentinel(ptr_info.child, end, ptr);
             },
             .slice => {
                 if (ptr_info.sentinel()) |s| {
                     if (s == end) {
-                        return indexOfSentinel(ptr_info.child, s, ptr);
+                        return findSentinel(ptr_info.child, s, ptr);
                     }
                 }
                 return findScalar(ptr_info.child, ptr, end) orelse ptr.len;
@@ -1076,11 +1048,11 @@ pub fn len(value: anytype) usize {
             .many => {
                 const sentinel = info.sentinel() orelse
                     @compileError("invalid type given to std.mem.len: " ++ @typeName(@TypeOf(value)));
-                return indexOfSentinel(info.child, sentinel, value);
+                return findSentinel(info.child, sentinel, value);
             },
             .c => {
                 assert(value != null);
-                return indexOfSentinel(info.child, 0, value);
+                return findSentinel(info.child, 0, value);
             },
             else => @compileError("invalid type given to std.mem.len: " ++ @typeName(@TypeOf(value))),
         },
@@ -1095,9 +1067,6 @@ test len {
     const c_ptr = @as([*c]u16, ptr);
     try testing.expect(len(c_ptr) == 2);
 }
-
-/// Deprecated in favor of `findSentinel`.
-pub const indexOfSentinel = findSentinel;
 
 /// Returns the index of the sentinel value in a sentinel-terminated pointer.
 /// Linear search through memory until the sentinel is found.
@@ -1166,7 +1135,7 @@ pub fn findSentinel(comptime T: type, comptime sentinel: T, p: [*:sentinel]const
     return i;
 }
 
-test "indexOfSentinel vector paths" {
+test "findSentinel vector paths" {
     const Types = [_]type{ u8, u16, u32, u64 };
     const allocator = std.testing.allocator;
     const page_size = std.heap.page_size_min;
@@ -1189,7 +1158,7 @@ test "indexOfSentinel vector paths" {
         const search_len = page_size / @sizeOf(T);
         memory[start + search_len] = 0;
         for (0..block_len) |offset| {
-            try testing.expectEqual(search_len - offset, indexOfSentinel(T, 0, @ptrCast(&memory[start + offset])));
+            try testing.expectEqual(search_len - offset, findSentinel(T, 0, @ptrCast(&memory[start + offset])));
         }
         memory[start + search_len] = 0xaa;
 
@@ -1197,7 +1166,7 @@ test "indexOfSentinel vector paths" {
         const start_page_boundary = start + (page_size / @sizeOf(T));
         memory[start_page_boundary + block_len] = 0;
         for (0..block_len) |offset| {
-            try testing.expectEqual(2 * block_len - offset, indexOfSentinel(T, 0, @ptrCast(&memory[start_page_boundary - block_len + offset])));
+            try testing.expectEqual(2 * block_len - offset, findSentinel(T, 0, @ptrCast(&memory[start_page_boundary - block_len + offset])));
         }
     }
 }
@@ -1221,9 +1190,6 @@ test trimStart {
     try testing.expectEqualSlices(u8, "foo\n ", trimStart(u8, " foo\n ", " \n"));
 }
 
-/// Deprecated: use `trimStart` instead.
-pub const trimLeft = trimStart;
-
 /// Remove a set of values from the end of a slice.
 pub fn trimEnd(comptime T: type, slice: []const T, values_to_strip: []const T) []const T {
     var end: usize = slice.len;
@@ -1234,9 +1200,6 @@ pub fn trimEnd(comptime T: type, slice: []const T, values_to_strip: []const T) [
 test trimEnd {
     try testing.expectEqualSlices(u8, " foo", trimEnd(u8, " foo\n ", " \n"));
 }
-
-/// Deprecated: use `trimEnd` instead.
-pub const trimRight = trimEnd;
 
 /// Remove a set of values from the beginning and end of a slice.
 pub fn trim(comptime T: type, slice: []const T, values_to_strip: []const T) []const T {
@@ -1252,16 +1215,10 @@ test trim {
     try testing.expectEqualSlices(u8, "foo", trim(u8, "foo", " \n"));
 }
 
-/// Deprecated in favor of `findScalar`.
-pub const indexOfScalar = findScalar;
-
 /// Linear search for the index of a scalar value inside a slice.
 pub fn findScalar(comptime T: type, slice: []const T, value: T) ?usize {
-    return indexOfScalarPos(T, slice, 0, value);
+    return findScalarPos(T, slice, 0, value);
 }
-
-/// Deprecated in favor of `findScalarLast`.
-pub const lastIndexOfScalar = findScalarLast;
 
 /// Linear search for the last index of a scalar value inside a slice.
 pub fn findScalarLast(comptime T: type, slice: []const T, value: T) ?usize {
@@ -1272,9 +1229,6 @@ pub fn findScalarLast(comptime T: type, slice: []const T, value: T) ?usize {
     }
     return null;
 }
-
-/// Deprecated in favor of `findScalarPos`.
-pub const indexOfScalarPos = findScalarPos;
 
 /// Linear search for the index of a scalar value inside a slice, starting from a given position.
 /// Returns null if the value is not found.
@@ -1340,7 +1294,7 @@ pub fn findScalarPos(comptime T: type, slice: []const T, start_index: usize, val
     return null;
 }
 
-test indexOfScalarPos {
+test findScalarPos {
     const Types = [_]type{ u8, u16, u32, u64 };
 
     inline for (Types) |T| {
@@ -1349,22 +1303,16 @@ test indexOfScalarPos {
         memory[memory.len - 1] = 0;
 
         for (0..memory.len) |i| {
-            try testing.expectEqual(memory.len - i - 1, indexOfScalarPos(T, memory[i..], 0, 0).?);
+            try testing.expectEqual(memory.len - i - 1, findScalarPos(T, memory[i..], 0, 0).?);
         }
     }
 }
 
-/// Deprecated in favor of `findAny`.
-pub const indexOfAny = findAny;
-
 /// Linear search for the index of any value in the provided list inside a slice.
 /// Returns null if no values are found.
 pub fn findAny(comptime T: type, slice: []const T, values: []const T) ?usize {
-    return indexOfAnyPos(T, slice, 0, values);
+    return findAnyPos(T, slice, 0, values);
 }
-
-/// Deprecated in favor of `findLastAny`.
-pub const lastIndexOfAny = findLastAny;
 
 /// Linear search for the last index of any value in the provided list inside a slice.
 /// Returns null if no values are found.
@@ -1379,9 +1327,6 @@ pub fn findLastAny(comptime T: type, slice: []const T, values: []const T) ?usize
     return null;
 }
 
-/// Deprecated in favor of `findAnyPos`.
-pub const indexOfAnyPos = findAnyPos;
-
 /// Linear search for the index of any value in the provided list inside a slice, starting from a given position.
 /// Returns null if no values are found.
 pub fn findAnyPos(comptime T: type, slice: []const T, start_index: usize, values: []const T) ?usize {
@@ -1394,14 +1339,11 @@ pub fn findAnyPos(comptime T: type, slice: []const T, start_index: usize, values
     return null;
 }
 
-/// Deprecated in favor of `findNone`.
-pub const indexOfNone = findNone;
-
 /// Find the first item in `slice` which is not contained in `values`.
 ///
 /// Comparable to `strspn` in the C standard library.
 pub fn findNone(comptime T: type, slice: []const T, values: []const T) ?usize {
-    return indexOfNonePos(T, slice, 0, values);
+    return findNonePos(T, slice, 0, values);
 }
 
 test findNone {
@@ -1412,11 +1354,8 @@ test findNone {
     try testing.expect(findNone(u8, "123123", "123") == null);
     try testing.expect(findNone(u8, "333333", "123") == null);
 
-    try testing.expect(indexOfNonePos(u8, "abc123", 3, "321") == null);
+    try testing.expect(findNonePos(u8, "abc123", 3, "321") == null);
 }
-
-/// Deprecated in favor of `findLastNone`.
-pub const lastIndexOfNone = findLastNone;
 
 /// Find the last item in `slice` which is not contained in `values`.
 ///
@@ -1433,8 +1372,6 @@ pub fn findLastNone(comptime T: type, slice: []const T, values: []const T) ?usiz
     return null;
 }
 
-pub const indexOfNonePos = findNonePos;
-
 /// Find the first item in `slice[start_index..]` which is not contained in `values`.
 /// The returned index will be relative to the start of `slice`, and never less than `start_index`.
 ///
@@ -1450,22 +1387,16 @@ pub fn findNonePos(comptime T: type, slice: []const T, start_index: usize, value
     return null;
 }
 
-/// Deprecated in favor of `find`.
-pub const indexOf = find;
-
 /// Search for needle in haystack and return the index of the first occurrence.
 /// Uses Boyer-Moore-Horspool algorithm on large inputs; linear search on small inputs.
 /// Returns null if needle is not found.
 pub fn find(comptime T: type, haystack: []const T, needle: []const T) ?usize {
-    return indexOfPos(T, haystack, 0, needle);
+    return findPos(T, haystack, 0, needle);
 }
-
-/// Deprecated in favor of `findLastLinear`.
-pub const lastIndexOfLinear = findLastLinear;
 
 /// Find the index in a slice of a sub-slice, searching from the end backwards.
 /// To start looking at a different index, slice the haystack first.
-/// Consider using `lastIndexOf` instead of this, which will automatically use a
+/// Consider using `findLast` instead of this, which will automatically use a
 /// more sophisticated algorithm on larger inputs.
 pub fn findLastLinear(comptime T: type, haystack: []const T, needle: []const T) ?usize {
     if (needle.len > haystack.len) return null;
@@ -1476,9 +1407,7 @@ pub fn findLastLinear(comptime T: type, haystack: []const T, needle: []const T) 
     }
 }
 
-pub const indexOfPosLinear = findPosLinear;
-
-/// Consider using `indexOfPos` instead of this, which will automatically use a
+/// Consider using `findPos` instead of this, which will automatically use a
 /// more sophisticated algorithm on larger inputs.
 pub fn findPosLinear(comptime T: type, haystack: []const T, start_index: usize, needle: []const T) ?usize {
     if (needle.len > haystack.len) return null;
@@ -1536,19 +1465,16 @@ fn boyerMooreHorspoolPreprocess(pattern: []const u8, table: *[256]usize) void {
     }
 }
 
-/// Deprecated in favor of `find`.
-pub const lastIndexOf = findLast;
-
 /// Find the index in a slice of a sub-slice, searching from the end backwards.
 /// To start looking at a different index, slice the haystack first.
 /// Uses the Reverse Boyer-Moore-Horspool algorithm on large inputs;
-/// `lastIndexOfLinear` on small inputs.
+/// `findLastLinear` on small inputs.
 pub fn findLast(comptime T: type, haystack: []const T, needle: []const T) ?usize {
     if (needle.len > haystack.len) return null;
     if (needle.len == 0) return haystack.len;
 
     if (!std.meta.hasUniqueRepresentation(T) or haystack.len < 52 or needle.len <= 4)
-        return lastIndexOfLinear(T, haystack, needle);
+        return findLastLinear(T, haystack, needle);
 
     const haystack_bytes = sliceAsBytes(haystack);
     const needle_bytes = sliceAsBytes(needle);
@@ -1569,20 +1495,17 @@ pub fn findLast(comptime T: type, haystack: []const T, needle: []const T) ?usize
     return null;
 }
 
-/// Deprecated in favor of `findPos`.
-pub const indexOfPos = findPos;
-
-/// Uses Boyer-Moore-Horspool algorithm on large inputs; `indexOfPosLinear` on small inputs.
+/// Uses Boyer-Moore-Horspool algorithm on large inputs; `findScalarPos` on small inputs.
 pub fn findPos(comptime T: type, haystack: []const T, start_index: usize, needle: []const T) ?usize {
     if (needle.len > haystack.len) return null;
     if (needle.len < 2) {
         if (needle.len == 0) return start_index;
-        // indexOfScalarPos is significantly faster than indexOfPosLinear
-        return indexOfScalarPos(T, haystack, start_index, needle[0]);
+        // findScalarPos is significantly faster than findPosLinear
+        return findScalarPos(T, haystack, start_index, needle[0]);
     }
 
     if (!std.meta.hasUniqueRepresentation(T) or haystack.len < 52 or needle.len <= 4)
-        return indexOfPosLinear(T, haystack, start_index, needle);
+        return findPosLinear(T, haystack, start_index, needle);
 
     const haystack_bytes = sliceAsBytes(haystack);
     const needle_bytes = sliceAsBytes(needle);
@@ -1601,61 +1524,61 @@ pub fn findPos(comptime T: type, haystack: []const T, start_index: usize, needle
     return null;
 }
 
-test indexOf {
-    try testing.expect(indexOf(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
-    try testing.expect(indexOf(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
+test find {
+    try testing.expect(find(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
+    try testing.expect(find(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
 
-    try testing.expect(indexOf(u8, "one two three four five six seven eight nine ten", "").? == 0);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten", "").? == 48);
+    try testing.expect(find(u8, "one two three four five six seven eight nine ten", "").? == 0);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten", "").? == 48);
 
-    try testing.expect(indexOf(u8, "one two three four", "four").? == 14);
-    try testing.expect(lastIndexOf(u8, "one two three two four", "two").? == 14);
-    try testing.expect(indexOf(u8, "one two three four", "gour") == null);
-    try testing.expect(lastIndexOf(u8, "one two three four", "gour") == null);
-    try testing.expect(indexOf(u8, "foo", "foo").? == 0);
-    try testing.expect(lastIndexOf(u8, "foo", "foo").? == 0);
-    try testing.expect(indexOf(u8, "foo", "fool") == null);
-    try testing.expect(lastIndexOf(u8, "foo", "lfoo") == null);
-    try testing.expect(lastIndexOf(u8, "foo", "fool") == null);
+    try testing.expect(find(u8, "one two three four", "four").? == 14);
+    try testing.expect(findLast(u8, "one two three two four", "two").? == 14);
+    try testing.expect(find(u8, "one two three four", "gour") == null);
+    try testing.expect(findLast(u8, "one two three four", "gour") == null);
+    try testing.expect(find(u8, "foo", "foo").? == 0);
+    try testing.expect(findLast(u8, "foo", "foo").? == 0);
+    try testing.expect(find(u8, "foo", "fool") == null);
+    try testing.expect(findLast(u8, "foo", "lfoo") == null);
+    try testing.expect(findLast(u8, "foo", "fool") == null);
 
-    try testing.expect(indexOf(u8, "foo foo", "foo").? == 0);
-    try testing.expect(lastIndexOf(u8, "foo foo", "foo").? == 4);
-    try testing.expect(lastIndexOfAny(u8, "boo, cat", "abo").? == 6);
+    try testing.expect(find(u8, "foo foo", "foo").? == 0);
+    try testing.expect(findLast(u8, "foo foo", "foo").? == 4);
+    try testing.expect(findAny(u8, "boo, cat", "abo").? == 6);
     try testing.expect(findScalarLast(u8, "boo", 'o').? == 2);
 }
 
-test "indexOf multibyte" {
+test "find multibyte" {
     {
         // make haystack and needle long enough to trigger Boyer-Moore-Horspool algorithm
         const haystack = [1]u16{0} ** 100 ++ [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff };
         const needle = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee };
-        try testing.expectEqual(indexOfPos(u16, &haystack, 0, &needle), 100);
+        try testing.expectEqual(findPos(u16, &haystack, 0, &needle), 100);
 
         // check for misaligned false positives (little and big endian)
         const needleLE = [_]u16{ 0xbbbb, 0xcccc, 0xdddd, 0xeeee, 0xffff };
-        try testing.expectEqual(indexOfPos(u16, &haystack, 0, &needleLE), null);
+        try testing.expectEqual(findPos(u16, &haystack, 0, &needleLE), null);
         const needleBE = [_]u16{ 0xaacc, 0xbbdd, 0xccee, 0xddff, 0xee00 };
-        try testing.expectEqual(indexOfPos(u16, &haystack, 0, &needleBE), null);
+        try testing.expectEqual(findPos(u16, &haystack, 0, &needleBE), null);
     }
 
     {
         // make haystack and needle long enough to trigger Boyer-Moore-Horspool algorithm
         const haystack = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff } ++ [1]u16{0} ** 100;
         const needle = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needle), 0);
+        try testing.expectEqual(findPos(u16, &haystack, &needle), 0);
 
         // check for misaligned false positives (little and big endian)
         const needleLE = [_]u16{ 0xbbbb, 0xcccc, 0xdddd, 0xeeee, 0xffff };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needleLE), null);
+        try testing.expectEqual(findPos(u16, &haystack, &needleLE), null);
         const needleBE = [_]u16{ 0xaacc, 0xbbdd, 0xccee, 0xddff, 0xee00 };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needleBE), null);
+        try testing.expectEqual(findPos(u16, &haystack, &needleBE), null);
     }
 }
 
-test "indexOfPos empty needle" {
-    try testing.expectEqual(indexOfPos(u8, "abracadabra", 5, ""), 5);
+test "findPos empty needle" {
+    try testing.expectEqual(findPos(u8, "abracadabra", 5, ""), 5);
 }
 
 /// Returns the number of needles inside the haystack
@@ -1667,7 +1590,7 @@ pub fn count(comptime T: type, haystack: []const T, needle: []const T) usize {
     var i: usize = 0;
     var found: usize = 0;
 
-    while (indexOfPos(T, haystack, i, needle)) |idx| {
+    while (findPos(T, haystack, i, needle)) |idx| {
         i = idx + needle.len;
         found += 1;
     }
@@ -1727,17 +1650,15 @@ test countScalar {
 /// Returns true if the haystack contains expected_count or more needles
 /// needle.len must be > 0
 /// does not count overlapping needles
-//
-/// See also: `containsAtLeastScalar`
 pub fn containsAtLeast(comptime T: type, haystack: []const T, expected_count: usize, needle: []const T) bool {
-    if (needle.len == 1) return containsAtLeastScalar(T, haystack, expected_count, needle[0]);
+    if (needle.len == 1) return containsAtLeastScalar2(T, haystack, needle[0], expected_count);
     assert(needle.len > 0);
     if (expected_count == 0) return true;
 
     var i: usize = 0;
     var found: usize = 0;
 
-    while (indexOfPos(T, haystack, i, needle)) |idx| {
+    while (findPos(T, haystack, i, needle)) |idx| {
         i = idx + needle.len;
         found += 1;
         if (found == expected_count) return true;
@@ -1759,11 +1680,6 @@ test containsAtLeast {
 
     try testing.expect(containsAtLeast(u8, "   radar      radar   ", 2, "radar"));
     try testing.expect(!containsAtLeast(u8, "   radar      radar   ", 3, "radar"));
-}
-
-/// Deprecated in favor of `containsAtLeastScalar2`.
-pub fn containsAtLeastScalar(comptime T: type, list: []const T, minimum: usize, element: T) bool {
-    return containsAtLeastScalar2(T, list, element, minimum);
 }
 
 /// Returns true if `element` appears at least `minimum` number of times in `list`.
@@ -3362,9 +3278,9 @@ pub fn SplitIterator(comptime T: type, comptime delimiter_type: DelimiterType) t
         pub fn next(self: *Self) ?[]const T {
             const start = self.index orelse return null;
             const end = if (switch (delimiter_type) {
-                .sequence => indexOfPos(T, self.buffer, start, self.delimiter),
-                .any => indexOfAnyPos(T, self.buffer, start, self.delimiter),
-                .scalar => indexOfScalarPos(T, self.buffer, start, self.delimiter),
+                .sequence => findPos(T, self.buffer, start, self.delimiter),
+                .any => findAnyPos(T, self.buffer, start, self.delimiter),
+                .scalar => findScalarPos(T, self.buffer, start, self.delimiter),
             }) |delim_start| blk: {
                 self.index = delim_start + switch (delimiter_type) {
                     .sequence => self.delimiter.len,
@@ -3383,9 +3299,9 @@ pub fn SplitIterator(comptime T: type, comptime delimiter_type: DelimiterType) t
         pub fn peek(self: *Self) ?[]const T {
             const start = self.index orelse return null;
             const end = if (switch (delimiter_type) {
-                .sequence => indexOfPos(T, self.buffer, start, self.delimiter),
-                .any => indexOfAnyPos(T, self.buffer, start, self.delimiter),
-                .scalar => indexOfScalarPos(T, self.buffer, start, self.delimiter),
+                .sequence => findPos(T, self.buffer, start, self.delimiter),
+                .any => findAnyPos(T, self.buffer, start, self.delimiter),
+                .scalar => findScalarPos(T, self.buffer, start, self.delimiter),
             }) |delim_start| delim_start else self.buffer.len;
             return self.buffer[start..end];
         }
@@ -3428,8 +3344,8 @@ pub fn SplitBackwardsIterator(comptime T: type, comptime delimiter_type: Delimit
         pub fn next(self: *Self) ?[]const T {
             const end = self.index orelse return null;
             const start = if (switch (delimiter_type) {
-                .sequence => lastIndexOf(T, self.buffer[0..end], self.delimiter),
-                .any => lastIndexOfAny(T, self.buffer[0..end], self.delimiter),
+                .sequence => findLast(T, self.buffer[0..end], self.delimiter),
+                .any => findAny(T, self.buffer[0..end], self.delimiter),
                 .scalar => findScalarLast(T, self.buffer[0..end], self.delimiter),
             }) |delim_start| blk: {
                 self.index = delim_start;
@@ -3744,9 +3660,6 @@ test minMax {
     }
 }
 
-/// Deprecated in favor of `findMin`.
-pub const indexOfMin = findMin;
-
 /// Returns the index of the smallest number in a slice. O(n).
 /// `slice` must not be empty.
 pub fn findMin(comptime T: type, slice: []const T) usize {
@@ -3768,8 +3681,6 @@ test findMin {
     try testing.expectEqual(findMin(u8, "a"), 0);
 }
 
-pub const indexOfMax = findMax;
-
 /// Returns the index of the largest number in a slice. O(n).
 /// `slice` must not be empty.
 pub fn findMax(comptime T: type, slice: []const T) usize {
@@ -3790,9 +3701,6 @@ test findMax {
     try testing.expectEqual(findMax(u8, "gabcdef"), 0);
     try testing.expectEqual(findMax(u8, "a"), 0);
 }
-
-/// Deprecated in favor of `findMinMax`.
-pub const indexOfMinMax = findMinMax;
 
 /// Finds the indices of the smallest and largest number in a slice. O(n).
 /// Returns the indices of the smallest and largest numbers in that order.

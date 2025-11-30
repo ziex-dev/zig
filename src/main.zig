@@ -2056,7 +2056,7 @@ fn buildOutputType(
                                 preprocessor_arg[0] == '-' and
                                 preprocessor_arg[2] != '-')
                             {
-                                if (mem.indexOfScalar(u8, preprocessor_arg, '=')) |equals_pos| {
+                                if (mem.findScalar(u8, preprocessor_arg, '=')) |equals_pos| {
                                     const key = preprocessor_arg[0..equals_pos];
                                     const value = preprocessor_arg[equals_pos + 1 ..];
                                     try preprocessor_args.append(key);
@@ -2076,7 +2076,7 @@ fn buildOutputType(
                                 linker_arg[0] == '-' and
                                 linker_arg[2] != '-')
                             {
-                                if (mem.indexOfScalar(u8, linker_arg, '=')) |equals_pos| {
+                                if (mem.findScalar(u8, linker_arg, '=')) |equals_pos| {
                                     const key = linker_arg[0..equals_pos];
                                     const value = linker_arg[equals_pos + 1 ..];
                                     if (mem.eql(u8, key, "--build-id")) {

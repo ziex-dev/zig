@@ -554,7 +554,7 @@ fn renderOpcodes(
 
         const existing = instructions[result.value_ptr.*];
 
-        const tag_index = std.mem.indexOfDiff(u8, inst.opname, existing.opname).?;
+        const tag_index = std.mem.findDiff(u8, inst.opname, existing.opname).?;
         const inst_priority = tagPriorityScore(inst.opname[tag_index..]);
         const existing_priority = tagPriorityScore(existing.opname[tag_index..]);
 
@@ -668,7 +668,7 @@ fn renderValueEnum(
 
         const existing = enumerants[result.value_ptr.*];
 
-        const tag_index = std.mem.indexOfDiff(u8, enumerant.enumerant, existing.enumerant).?;
+        const tag_index = std.mem.findDiff(u8, enumerant.enumerant, existing.enumerant).?;
         const enum_priority = tagPriorityScore(enumerant.enumerant[tag_index..]);
         const existing_priority = tagPriorityScore(existing.enumerant[tag_index..]);
 
@@ -747,7 +747,7 @@ fn renderBitEnum(
 
         const bitpos = std.math.log2_int(u32, value);
         if (flags_by_bitpos[bitpos]) |*existing| {
-            const tag_index = std.mem.indexOfDiff(u8, enumerant.enumerant, enumerants[existing.*].enumerant).?;
+            const tag_index = std.mem.findDiff(u8, enumerant.enumerant, enumerants[existing.*].enumerant).?;
             const enum_priority = tagPriorityScore(enumerant.enumerant[tag_index..]);
             const existing_priority = tagPriorityScore(enumerants[existing.*].enumerant[tag_index..]);
 

@@ -1055,7 +1055,7 @@ pub const supported_targets = struct {
         };
         comptime {
             for (@typeInfo(Arch).@"enum".fields) |enum_field| {
-                _ = std.mem.indexOfScalar(Arch, ordered_for_display, @enumFromInt(enum_field.value)) orelse {
+                _ = std.mem.findScalar(Arch, ordered_for_display, @enumFromInt(enum_field.value)) orelse {
                     @compileError(std.fmt.comptimePrint("'{s}' missing from ordered_for_display", .{enum_field.name}));
                 };
             }

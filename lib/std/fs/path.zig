@@ -402,9 +402,9 @@ pub fn windowsParsePath(path: []const u8) WindowsPath {
 
     if (path.len >= 2 and PathType.windows.isSep(u8, path[0]) and PathType.windows.isSep(u8, path[1])) {
         const root_end = root_end: {
-            var server_end = mem.indexOfAnyPos(u8, path, 2, "/\\") orelse break :root_end path.len;
+            var server_end = mem.findAnyPos(u8, path, 2, "/\\") orelse break :root_end path.len;
             while (server_end < path.len and PathType.windows.isSep(u8, path[server_end])) server_end += 1;
-            break :root_end mem.indexOfAnyPos(u8, path, server_end, "/\\") orelse path.len;
+            break :root_end mem.findAnyPos(u8, path, server_end, "/\\") orelse path.len;
         };
         return WindowsPath{
             .is_abs = true,
@@ -722,7 +722,7 @@ fn parseUNC(comptime T: type, path: []const T) WindowsUNC(T) {
     // For the server, the first path separator after the initial two is always
     // the terminator of the server name, even if that means the server name is
     // zero-length.
-    const server_end = mem.indexOfAnyPos(T, path, 2, any_sep) orelse return .{
+    const server_end = mem.findAnyPos(T, path, 2, any_sep) orelse return .{
         .server = path[2..path.len],
         .sep_after_server = false,
         .share = path[path.len..path.len],
@@ -1819,7 +1819,7 @@ fn testRelativeWindows(from: []const u8, to: []const u8, expected_output: []cons
 /// pointer address range of `path`, even if it is length zero.
 pub fn extension(path: []const u8) []const u8 {
     const filename = basename(path);
-    const index = mem.lastIndexOfScalar(u8, filename, '.') orelse return path[path.len..];
+    const index = mem.findScalarLast(u8, filename, '.') orelse return path[path.len..];
     if (index == 0) return path[path.len..];
     return filename[index..];
 }
@@ -1876,7 +1876,7 @@ test extension {
 /// - "hello/world/lib"        ⇒ "lib"
 pub fn stem(path: []const u8) []const u8 {
     const filename = basename(path);
-    const index = mem.lastIndexOfScalar(u8, filename, '.') orelse return filename[0..];
+    const index = mem.findScalarLast(u8, filename, '.') orelse return filename[0..];
     if (index == 0) return path;
     return filename[0..index];
 }

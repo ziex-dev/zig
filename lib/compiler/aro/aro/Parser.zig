@@ -747,7 +747,7 @@ fn pragma(p: *Parser) Compilation.Error!bool {
         const name_tok = p.tok_i;
         const name = p.tokSlice(name_tok);
 
-        const end_idx = mem.indexOfScalarPos(Token.Id, p.tok_ids, p.tok_i, .nl).?;
+        const end_idx = mem.findScalarPos(Token.Id, p.tok_ids, p.tok_i, .nl).?;
         const pragma_len = @as(TokenIndex, @intCast(end_idx)) - p.tok_i;
         defer p.tok_i += pragma_len + 1; // skip past .nl as well
         if (p.comp.getPragma(name)) |prag| {
@@ -10395,7 +10395,7 @@ fn getExponent(p: *Parser, buf: []const u8, prefix: NumberPrefix, tok_i: TokenIn
         }
     } else buf.len;
     const exponent = buf[0..end];
-    if (std.mem.indexOfAny(u8, exponent, "0123456789") == null) {
+    if (std.mem.findAny(u8, exponent, "0123456789") == null) {
         try p.err(tok_i, .exponent_has_no_digits, .{});
         return error.ParsingFailed;
     }

@@ -507,7 +507,7 @@ pub fn formatArgs(w: *std.Io.Writer, fmt: []const u8, args: anytype) std.Io.Writ
 }
 
 pub fn templateIndex(w: *std.Io.Writer, fmt: []const u8, template: []const u8) std.Io.Writer.Error!usize {
-    const i = std.mem.indexOf(u8, fmt, template) orelse {
+    const i = std.mem.find(u8, fmt, template) orelse {
         if (@import("builtin").mode == .Debug) {
             std.debug.panic("template `{s}` not found in format string `{s}`", .{ template, fmt });
         }

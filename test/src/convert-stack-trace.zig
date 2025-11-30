@@ -59,24 +59,24 @@ pub fn main() !void {
             continue;
         }
 
-        const src_col_end = std.mem.indexOf(u8, in_line, ": 0x") orelse {
+        const src_col_end = std.mem.find(u8, in_line, ": 0x") orelse {
             try w.writeAll(in_line);
             continue;
         };
-        const src_row_end = std.mem.lastIndexOfScalar(u8, in_line[0..src_col_end], ':') orelse {
+        const src_row_end = std.mem.findScalarLast(u8, in_line[0..src_col_end], ':') orelse {
             try w.writeAll(in_line);
             continue;
         };
-        const src_path_end = std.mem.lastIndexOfScalar(u8, in_line[0..src_row_end], ':') orelse {
+        const src_path_end = std.mem.findScalarLast(u8, in_line[0..src_row_end], ':') orelse {
             try w.writeAll(in_line);
             continue;
         };
 
-        const addr_end = std.mem.indexOfPos(u8, in_line, src_col_end, " in ") orelse {
+        const addr_end = std.mem.findPos(u8, in_line, src_col_end, " in ") orelse {
             try w.writeAll(in_line);
             continue;
         };
-        const symbol_end = std.mem.indexOfPos(u8, in_line, addr_end, " (") orelse {
+        const symbol_end = std.mem.findPos(u8, in_line, addr_end, " (") orelse {
             try w.writeAll(in_line);
             continue;
         };
@@ -96,7 +96,7 @@ pub fn main() !void {
         // ...with that first '_' being replaced by its basename.
 
         const src_path = in_line[0..src_path_end];
-        const basename_start = if (std.mem.lastIndexOfAny(u8, src_path, "/\\")) |i| i + 1 else 0;
+        const basename_start = if (std.mem.findLastAny(u8, src_path, "/\\")) |i| i + 1 else 0;
         const symbol_start = addr_end + " in ".len;
         try w.writeAll(in_line[basename_start..src_col_end]);
         try w.writeAll(": [address] in ");

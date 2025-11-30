@@ -5513,7 +5513,7 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
             // for the string, we still use the next u32 for the null terminator.
             extra_i += (constraint.len + name.len + (2 + 3)) / 4;
 
-            if (constraint.len < 1 or mem.indexOfScalar(u8, "=+&%", constraint[0]) != null or
+            if (constraint.len < 1 or mem.findScalar(u8, "=+&%", constraint[0]) != null or
                 (constraint[0] == '{' and constraint[constraint.len - 1] != '}'))
             {
                 return f.fail("CBE: constraint not supported: '{s}'", .{constraint});
@@ -5577,7 +5577,7 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
                 }
 
                 const desc = mem.sliceTo(asm_source[src_i..], ']');
-                if (mem.indexOfScalar(u8, desc, ':')) |colon| {
+                if (mem.findScalar(u8, desc, ':')) |colon| {
                     const name = desc[0..colon];
                     const modifier = desc[colon + 1 ..];
 

@@ -156,7 +156,7 @@ test whitespace {
 
     var i: u8 = 0;
     while (isAscii(i)) : (i += 1) {
-        if (isWhitespace(i)) try std.testing.expect(std.mem.indexOfScalar(u8, &whitespace, i) != null);
+        if (isWhitespace(i)) try std.testing.expect(std.mem.findScalar(u8, &whitespace, i) != null);
     }
 }
 

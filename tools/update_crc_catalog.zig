@@ -106,7 +106,7 @@ pub fn main() anyerror!void {
 
         var it = mem.splitSequence(u8, line, "  ");
         while (it.next()) |property| {
-            const i = mem.indexOf(u8, property, "=").?;
+            const i = mem.find(u8, property, "=").?;
             const key = property[0..i];
             const value = property[i + 1 ..];
             if (mem.eql(u8, key, "width")) {

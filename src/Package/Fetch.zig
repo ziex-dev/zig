@@ -359,7 +359,7 @@ pub fn run(f: *Fetch) RunError!void {
                 const parent_sub_path = f.parent_package_root.sub_path;
                 const end = find_end: {
                     if (parent_sub_path.len > prefix_len) {
-                        // Use `isSep` instead of `indexOfScalarPos` to account for
+                        // Use `isSep` instead of `findScalarPos` to account for
                         // Windows accepting both `\` and `/` as path separators.
                         for (parent_sub_path[prefix_len..], prefix_len..) |c, i| {
                             if (std.fs.path.isSep(c)) break :find_end i;
@@ -962,7 +962,7 @@ const FileType = enum {
         if (cd_header[value_start] != '=') return null;
         value_start += 1;
 
-        var value_end = std.mem.indexOfPos(u8, cd_header, value_start, ";") orelse cd_header.len;
+        var value_end = std.mem.findPos(u8, cd_header, value_start, ";") orelse cd_header.len;
         if (cd_header[value_end - 1] == '\"') {
             value_end -= 1;
         }
@@ -1142,7 +1142,7 @@ fn unpackResource(
                 return f.fail(f.location_tok, try eb.addString("missing 'Content-Type' header"));
 
             // Extract the MIME type, ignoring charset and boundary directives
-            const mime_type_end = std.mem.indexOf(u8, content_type, ";") orelse content_type.len;
+            const mime_type_end = std.mem.find(u8, content_type, ";") orelse content_type.len;
             const mime_type = content_type[0..mime_type_end];
 
             if (ascii.eqlIgnoreCase(mime_type, "application/x-tar"))

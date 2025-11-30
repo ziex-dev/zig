@@ -96,13 +96,13 @@ pub const Request = struct {
             if (first_line.len < 10)
                 return error.HttpHeadersInvalid;
 
-            const method_end = mem.indexOfScalar(u8, first_line, ' ') orelse
+            const method_end = mem.findScalar(u8, first_line, ' ') orelse
                 return error.HttpHeadersInvalid;
 
             const method = std.meta.stringToEnum(http.Method, first_line[0..method_end]) orelse
                 return error.UnknownHttpMethod;
 
-            const version_start = mem.lastIndexOfScalar(u8, first_line, ' ') orelse
+            const version_start = mem.findScalarLast(u8, first_line, ' ') orelse
                 return error.HttpHeadersInvalid;
             if (version_start == method_end) return error.HttpHeadersInvalid;
 
@@ -338,9 +338,9 @@ pub const Request = struct {
         if (std.debug.runtime_safety) {
             for (options.extra_headers) |header| {
                 assert(header.name.len != 0);
-                assert(std.mem.indexOfScalar(u8, header.name, ':') == null);
-                assert(std.mem.indexOfPosLinear(u8, header.name, 0, "\r\n") == null);
-                assert(std.mem.indexOfPosLinear(u8, header.value, 0, "\r\n") == null);
+                assert(std.mem.findScalar(u8, header.name, ':') == null);
+                assert(std.mem.findPosLinear(u8, header.name, 0, "\r\n") == null);
+                assert(std.mem.findPosLinear(u8, header.value, 0, "\r\n") == null);
             }
         }
         try writeExpectContinue(request);

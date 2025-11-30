@@ -358,10 +358,10 @@ pub const Parsed = struct {
             const wildcard_suffix = dns_name[2..];
 
             // No additional wildcards allowed in the suffix
-            if (mem.indexOf(u8, wildcard_suffix, "*") != null) return false;
+            if (mem.find(u8, wildcard_suffix, "*") != null) return false;
 
             // Find the first dot in hostname to split first label from rest
-            const dot_pos = mem.indexOf(u8, host_name, ".") orelse return false;
+            const dot_pos = mem.find(u8, host_name, ".") orelse return false;
 
             // Wildcard matches exactly one label, so compare the rest
             const host_suffix = host_name[dot_pos + 1 ..];
@@ -1060,9 +1060,9 @@ pub const rsa = struct {
             }
             var m_p_buf: [8 + Hash.digest_length + Hash.digest_length]u8 = undefined;
             var m_p = m_p_buf[0 .. 8 + Hash.digest_length + sLen];
-            std.mem.copyForwards(u8, m_p, &([_]u8{0} ** 8));
-            std.mem.copyForwards(u8, m_p[8..], &mHash);
-            std.mem.copyForwards(u8, m_p[(8 + Hash.digest_length)..], salt);
+            @memmove(m_p, &([_]u8{0} ** 8));
+            @memmove(m_p[8..], &mHash);
+            @memmove(m_p[(8 + Hash.digest_length)..], salt);
 
             // 13.  Let H' = Hash(M'), an octet string of length hLen.
             var h_p: [Hash.digest_length]u8 = undefined;

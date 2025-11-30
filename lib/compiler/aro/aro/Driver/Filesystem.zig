@@ -17,7 +17,7 @@ fn readFileFake(entries: []const Filesystem.Entry, path: []const u8, buf: []u8) 
 
 fn findProgramByNameFake(entries: []const Filesystem.Entry, name: []const u8, path: ?[]const u8, buf: []u8) ?[]const u8 {
     @branchHint(.cold);
-    if (mem.indexOfScalar(u8, name, '/') != null) {
+    if (mem.findScalar(u8, name, '/') != null) {
         @memcpy(buf[0..name.len], name);
         return buf[0..name.len];
     }
@@ -78,7 +78,7 @@ fn findProgramByNameWindows(allocator: std.mem.Allocator, name: []const u8, path
 
 /// TODO: does WASI need special handling?
 fn findProgramByNamePosix(name: []const u8, path: ?[]const u8, buf: []u8) ?[]const u8 {
-    if (mem.indexOfScalar(u8, name, '/') != null) {
+    if (mem.findScalar(u8, name, '/') != null) {
         @memcpy(buf[0..name.len], name);
         return buf[0..name.len];
     }
@@ -128,7 +128,7 @@ pub const Filesystem = union(enum) {
                     if (entry.path.len == self.base.len) continue;
                     if (std.mem.startsWith(u8, entry.path, self.base)) {
                         const remaining = entry.path[self.base.len + 1 ..];
-                        if (std.mem.indexOfScalar(u8, remaining, std.fs.path.sep) != null) continue;
+                        if (std.mem.findScalar(u8, remaining, std.fs.path.sep) != null) continue;
                         const extension = std.fs.path.extension(remaining);
                         const kind: std.fs.Dir.Entry.Kind = if (extension.len == 0) .directory else .file;
                         return .{ .name = remaining, .kind = kind };

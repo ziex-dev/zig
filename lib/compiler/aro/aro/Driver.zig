@@ -322,7 +322,7 @@ pub fn parseArgs(
                     macro = args[i];
                 }
                 var value: []const u8 = "1";
-                if (mem.indexOfScalar(u8, macro, '=')) |some| {
+                if (mem.findScalar(u8, macro, '=')) |some| {
                     value = macro[some + 1 ..];
                     macro = macro[0..some];
                 }
