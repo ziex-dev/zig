@@ -1197,7 +1197,7 @@ fn windowsCreateProcessPathExt(
 
             const is_bat_or_cmd = bat_or_cmd: {
                 const app_name = app_buf.items[0..app_name_len];
-                const ext_start = std.mem.lastIndexOfScalar(u16, app_name, '.') orelse break :bat_or_cmd false;
+                const ext_start = std.mem.findScalarLast(u16, app_name, '.') orelse break :bat_or_cmd false;
                 const ext = app_name[ext_start..];
                 const ext_enum = windowsCreateProcessSupportsExtension(ext) orelse break :bat_or_cmd false;
                 switch (ext_enum) {
@@ -1225,7 +1225,7 @@ fn windowsCreateProcessPathExt(
                     // it's treated as an unrecoverable error. Otherwise, it'll be
                     // skipped as normal.
                     const app_name = app_buf.items[0..app_name_len];
-                    const ext_start = std.mem.lastIndexOfScalar(u16, app_name, '.') orelse break :unappended err;
+                    const ext_start = std.mem.findScalarLast(u16, app_name, '.') orelse break :unappended err;
                     const ext = app_name[ext_start..];
                     if (windows.eqlIgnoreCaseWtf16(ext, unicode.utf8ToUtf16LeStringLiteral(".EXE"))) {
                         return error.UnrecoverableInvalidExe;
