@@ -401,7 +401,7 @@ pub fn write(self: *Stringify, v: anytype) Error!void {
                 return v.jsonStringify(self);
             }
             if (enum_info.fields.len == 0) {
-                unreachable;
+                unreachable; // the only possible value is `undefined`
             }
 
             if (!enum_info.is_exhaustive) {
@@ -424,7 +424,7 @@ pub fn write(self: *Stringify, v: anytype) Error!void {
                 return v.jsonStringify(self);
             }
             if (union_info.fields.len == 0) {
-                unreachable;
+                unreachable; // the only possible value is `undefined`
             }
 
             const info = @typeInfo(T).@"union";

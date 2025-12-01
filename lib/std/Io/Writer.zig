@@ -1270,7 +1270,7 @@ pub fn printValue(
             optionsForbidden(options);
 
             if (info.fields.len == 0) {
-                unreachable;
+                unreachable; // the only possible value is `undefined`
             }
 
             if (info.is_exhaustive) {
@@ -1289,7 +1289,7 @@ pub fn printValue(
                 return;
             }
             if (info.fields.len == 0) {
-                unreachable;
+                unreachable; // the only possible value is `undefined`
             }
 
             if (info.tag_type) |UnionTagType| {

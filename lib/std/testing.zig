@@ -856,7 +856,9 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
 
             try expectEqual(expectedTag, actualTag);
 
-            if (union_info.fields.len == 0) unreachable;
+            if (union_info.fields.len == 0) {
+                unreachable; // the only possible value is `undefined`
+            }
 
             // we only reach this switch if the tags are equal
             switch (expected) {
