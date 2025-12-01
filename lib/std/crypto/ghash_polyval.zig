@@ -6,6 +6,15 @@ const mem = std.mem;
 
 const Precomp = u128;
 
+/// R/F precomputation for a single key power.
+/// Based on "Efficient GHASH and POLYVAL Implementation" (Kurdi & Möller, 2025).
+const RFPrecomp = struct {
+    /// pack1[127:64] = H1, pack1[63:0] = D1 (for computing R)
+    pack1: u128,
+    /// pack2[127:64] = H0, pack2[63:0] = D0 (for computing F)
+    pack2: u128,
+};
+
 /// GHASH is a universal hash function that uses multiplication by a fixed
 /// parameter within a Galois field.
 ///
@@ -43,7 +52,12 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
         // 3 multiplications with extra shifts and additions.
         const mul_algorithm = if (builtin.cpu.arch == .x86) .karatsuba else .schoolbook;
 
+        // P1 = x^63 + x^62 + x^57 - the reduction polynomial helper for R/F algorithm.
+        // This is (x^127 + x^126 + x^121) >> 64, used for efficient reduction.
+        const p1: u64 = (@as(u64, 1) << 63) | (@as(u64, 1) << 62) | (@as(u64, 1) << 57);
+
         hx: [pc_count]Precomp,
+        rf_hx: [pc_count]RFPrecomp,
         acc: u128 = 0,
 
         leftover: usize = 0,
@@ -58,27 +72,46 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
                 h = (h << 1) ^ carry;
             }
             var hx: [pc_count]Precomp = undefined;
+            var rf_hx: [pc_count]RFPrecomp = undefined;
             hx[0] = h;
             hx[1] = reduce(clsq128(hx[0])); // h^2
+            if (use_rf) {
+                rf_hx[0] = initRFKey(hx[0]);
+                rf_hx[1] = initRFKey(hx[1]);
+            }
 
             if (builtin.mode != .ReleaseSmall) {
                 hx[2] = reduce(clmul128(hx[1], h)); // h^3
                 hx[3] = reduce(clsq128(hx[1])); // h^4 = h^2^2
+                if (use_rf) {
+                    rf_hx[2] = initRFKey(hx[2]);
+                    rf_hx[3] = initRFKey(hx[3]);
+                }
                 if (block_count >= agg_8_threshold) {
                     hx[4] = reduce(clmul128(hx[3], h)); // h^5
                     hx[5] = reduce(clsq128(hx[2])); // h^6 = h^3^2
                     hx[6] = reduce(clmul128(hx[5], h)); // h^7
                     hx[7] = reduce(clsq128(hx[3])); // h^8 = h^4^2
+                    if (use_rf) {
+                        rf_hx[4] = initRFKey(hx[4]);
+                        rf_hx[5] = initRFKey(hx[5]);
+                        rf_hx[6] = initRFKey(hx[6]);
+                        rf_hx[7] = initRFKey(hx[7]);
+                    }
                 }
                 if (block_count >= agg_16_threshold) {
                     var i: usize = 8;
                     while (i < 16) : (i += 2) {
                         hx[i] = reduce(clmul128(hx[i - 1], h));
                         hx[i + 1] = reduce(clsq128(hx[i / 2]));
+                        if (use_rf) {
+                            rf_hx[i] = initRFKey(hx[i]);
+                            rf_hx[i + 1] = initRFKey(hx[i + 1]);
+                        }
                     }
                 }
             }
-            return Self{ .hx = hx };
+            return Self{ .hx = hx, .rf_hx = rf_hx };
         }
 
         /// Initialize the GHASH state with a key.
@@ -296,57 +329,94 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
             break :impl clmulSoft;
         };
 
+        // Use R/F algorithm only when hardware CLMUL is available.
+        const use_rf = (builtin.cpu.arch == .x86_64 and builtin.zig_backend != .stage2_c and has_pclmul and has_avx) or
+            (builtin.cpu.arch == .aarch64 and builtin.zig_backend != .stage2_c and has_armaes);
+
+        // Initialize R/F precomputation for a single key power.
+        // Computes D0, D1 values that enable efficient multiplication and reduction.
+        fn initRFKey(h: u128) RFPrecomp {
+            const h0: u64 = @truncate(h);
+            const h1: u64 = @truncate(h >> 64);
+
+            // C = H0 * P1 (128-bit product)
+            const c = clmul(@as(u128, h0), @as(u128, p1), .lo);
+            const c0: u64 = @truncate(c);
+            const c1: u64 = @truncate(c >> 64);
+
+            // D0 = C0 ^ H1, D1 = C1 ^ H0
+            const d0 = c0 ^ h1;
+            const d1 = c1 ^ h0;
+
+            return .{
+                .pack1 = (@as(u128, h1) << 64) | d1,
+                .pack2 = (@as(u128, h0) << 64) | d0,
+            };
+        }
+
+        // R/F multiplication - returns intermediate R and F values.
+        // R = M0×D1 ⊕ M1×H1, F = M0×D0 ⊕ M1×H0
+        fn rfMul(m: u128, key: RFPrecomp) struct { r: u128, f: u128 } {
+            return .{
+                .r = clmul(m, key.pack1, .lo) ^ clmul(m, key.pack1, .hi),
+                .f = clmul(m, key.pack2, .lo) ^ clmul(m, key.pack2, .hi),
+            };
+        }
+
+        // R/F final reduction - uses only 1 clmul instead of 2.
+        // Result = R ⊕ F1 ⊕ (x^64×F0) ⊕ (P1×F0)
+        fn rfReduce(r: u128, f: u128) u128 {
+            const f1: u64 = @truncate(f >> 64);
+            const f0: u64 = @truncate(f);
+            const pf = clmul(@as(u128, f0), @as(u128, p1), .lo);
+            return r ^ @as(u128, f1) ^ (@as(u128, f0) << 64) ^ pf;
+        }
+
+        // Aggregate N blocks and reduce.
+        fn aggregate(comptime n: usize, comptime rf: bool, acc: u128, st: *const Self, msg: []const u8) u128 {
+            if (rf) {
+                const rf0 = rfMul(acc ^ mem.readInt(u128, msg[0..16], endian), st.rf_hx[n - 1]);
+                var r = rf0.r;
+                var f = rf0.f;
+                inline for (1..n) |j| {
+                    const rfj = rfMul(mem.readInt(u128, msg[j * 16 ..][0..16], endian), st.rf_hx[n - 1 - j]);
+                    r ^= rfj.r;
+                    f ^= rfj.f;
+                }
+                return rfReduce(r, f);
+            } else {
+                var u = clmul128(acc ^ mem.readInt(u128, msg[0..16], endian), st.hx[n - 1]);
+                inline for (1..n) |j| {
+                    xor256(&u, clmul128(mem.readInt(u128, msg[j * 16 ..][0..16], endian), st.hx[n - 1 - j]));
+                }
+                return reduce(u);
+            }
+        }
+
         // Process 16 byte blocks.
         fn blocks(st: *Self, msg: []const u8) void {
-            assert(msg.len % 16 == 0); // GHASH blocks() expects full blocks
+            assert(msg.len % 16 == 0);
             var acc = st.acc;
-
             var i: usize = 0;
 
             if (builtin.mode != .ReleaseSmall and msg.len >= agg_16_threshold * block_length) {
-                // 16-blocks aggregated reduction
                 while (i + 256 <= msg.len) : (i += 256) {
-                    var u = clmul128(acc ^ mem.readInt(u128, msg[i..][0..16], endian), st.hx[15 - 0]);
-                    comptime var j = 1;
-                    inline while (j < 16) : (j += 1) {
-                        xor256(&u, clmul128(mem.readInt(u128, msg[i..][j * 16 ..][0..16], endian), st.hx[15 - j]));
-                    }
-                    acc = reduce(u);
+                    acc = aggregate(16, use_rf, acc, st, msg[i..]);
                 }
             } else if (builtin.mode != .ReleaseSmall and msg.len >= agg_8_threshold * block_length) {
-                // 8-blocks aggregated reduction
                 while (i + 128 <= msg.len) : (i += 128) {
-                    var u = clmul128(acc ^ mem.readInt(u128, msg[i..][0..16], endian), st.hx[7 - 0]);
-                    comptime var j = 1;
-                    inline while (j < 8) : (j += 1) {
-                        xor256(&u, clmul128(mem.readInt(u128, msg[i..][j * 16 ..][0..16], endian), st.hx[7 - j]));
-                    }
-                    acc = reduce(u);
+                    acc = aggregate(8, use_rf, acc, st, msg[i..]);
                 }
             } else if (builtin.mode != .ReleaseSmall and msg.len >= agg_4_threshold * block_length) {
-                // 4-blocks aggregated reduction
                 while (i + 64 <= msg.len) : (i += 64) {
-                    var u = clmul128(acc ^ mem.readInt(u128, msg[i..][0..16], endian), st.hx[3 - 0]);
-                    comptime var j = 1;
-                    inline while (j < 4) : (j += 1) {
-                        xor256(&u, clmul128(mem.readInt(u128, msg[i..][j * 16 ..][0..16], endian), st.hx[3 - j]));
-                    }
-                    acc = reduce(u);
+                    acc = aggregate(4, use_rf, acc, st, msg[i..]);
                 }
             }
-            // 2-blocks aggregated reduction
             while (i + 32 <= msg.len) : (i += 32) {
-                var u = clmul128(acc ^ mem.readInt(u128, msg[i..][0..16], endian), st.hx[1 - 0]);
-                comptime var j = 1;
-                inline while (j < 2) : (j += 1) {
-                    xor256(&u, clmul128(mem.readInt(u128, msg[i..][j * 16 ..][0..16], endian), st.hx[1 - j]));
-                }
-                acc = reduce(u);
+                acc = aggregate(2, use_rf, acc, st, msg[i..]);
             }
-            // remaining blocks
             if (i < msg.len) {
-                const u = clmul128(acc ^ mem.readInt(u128, msg[i..][0..16], endian), st.hx[0]);
-                acc = reduce(u);
+                acc = aggregate(1, use_rf, acc, st, msg[i..]);
                 i += 16;
             }
             assert(i == msg.len);
