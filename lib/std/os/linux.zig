@@ -9566,7 +9566,6 @@ pub const PERF = struct {
         pub const ID = 1 << 2;
         pub const GROUP = 1 << 3;
         pub const LOST = 1 << 4;
-        pub const MAX = 1 << 5;
     };
 
     pub const RECORD = enum(u32) {
