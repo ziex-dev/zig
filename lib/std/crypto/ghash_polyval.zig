@@ -54,7 +54,7 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
 
         // P1 = x^63 + x^62 + x^57 - the reduction polynomial helper for R/F algorithm.
         // This is (x^127 + x^126 + x^121) >> 64, used for efficient reduction.
-        const p1: u64 = (@as(u64, 1) << 63) | (@as(u64, 1) << 62) | (@as(u64, 1) << 57);
+        const p1: u64 = ((1 << 127) | (1 << 126) | (1 << 121)) >> 64;
 
         hx: [pc_count]Precomp,
         rf_hx: [pc_count]RFPrecomp,
