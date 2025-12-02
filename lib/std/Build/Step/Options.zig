@@ -445,6 +445,9 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
     const io = b.graph.io;
     const options: *Options = @fieldParentPtr("step", step);
 
+    // There might be content already, for example from previous run in watch mode
+    options.contents.clearRetainingCapacity();
+
     for (options.args.items) |item| {
         options.addOption(
             []const u8,
