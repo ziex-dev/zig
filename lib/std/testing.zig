@@ -1197,13 +1197,13 @@ pub fn refAllDecls(comptime T: type) void {
 pub fn refAllDeclsRecursive(comptime T: type) void {
     if (!builtin.is_test) return;
     inline for (comptime std.meta.declarations(T)) |decl| {
-        if (@TypeOf(@field(T, decl.name)) == type) {
+        const decl_ref = &@field(T, decl.name);
+        if (@typeInfo(@TypeOf(decl_ref)).pointer.child == type) {
             switch (@typeInfo(@field(T, decl.name))) {
                 .@"struct", .@"enum", .@"union", .@"opaque" => refAllDeclsRecursive(@field(T, decl.name)),
                 else => {},
             }
         }
-        _ = &@field(T, decl.name);
     }
 }
 
