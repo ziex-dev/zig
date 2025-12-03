@@ -86,23 +86,15 @@ pub const Month = enum(u4) {
 };
 
 /// Get the number of days in the given month and year
-pub fn getDaysInMonth(year: Year, month: Month) u5 {
+pub fn getDaysInMonth(year: Year, month: u4) u5 {
     return switch (month) {
-        .jan => 31,
-        .feb => @as(u5, switch (isLeapYear(year)) {
+        1, 3, 5, 7, 8, 10, 12 => 31,
+        4, 6, 9, 11 => 30,
+        2 => switch (isLeapYear(year)) {
             true => 29,
             false => 28,
-        }),
-        .mar => 31,
-        .apr => 30,
-        .may => 31,
-        .jun => 30,
-        .jul => 31,
-        .aug => 31,
-        .sep => 30,
-        .oct => 31,
-        .nov => 30,
-        .dec => 31,
+        },
+        else => unreachable,
     };
 }
 
@@ -112,16 +104,16 @@ pub const YearAndDay = struct {
     day: u9,
 
     pub fn calculateMonthDay(self: YearAndDay) MonthAndDay {
-        var month: Month = .jan;
+        var month: u4 = 1;
         var days_left = self.day;
         while (true) {
             const days_in_month = getDaysInMonth(self.year, month);
             if (days_left < days_in_month)
                 break;
             days_left -= days_in_month;
-            month = @as(Month, @enumFromInt(@intFromEnum(month) + 1));
+            month += 1;
         }
-        return .{ .month = month, .day_index = @as(u5, @intCast(days_left)) };
+        return .{ .month = @as(Month, @enumFromInt(month)), .day_index = @as(u5, @intCast(days_left)) };
     }
 };
 
@@ -221,4 +213,9 @@ test "epoch decoding" {
         .month = .jul,
         .day_index = 0,
     }, .{ .hours_into_day = 17, .minutes_into_hour = 11, .seconds_into_minute = 13 });
+
+    try testEpoch(1582934400, .{ .year = 2020, .day = 31 + 28 }, .{
+        .month = .feb,
+        .day_index = 28,
+    }, .{ .hours_into_day = 0, .minutes_into_hour = 0, .seconds_into_minute = 0 });
 }
