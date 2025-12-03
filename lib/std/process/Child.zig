@@ -198,7 +198,8 @@ pub const SpawnError = error{
     posix.ChangeCurDirError ||
     windows.CreateProcessError ||
     windows.GetProcessMemoryInfoError ||
-    windows.WaitForSingleObjectError;
+    windows.WaitForSingleObjectError ||
+    windows.GetFinalPathNameByHandleError;
 
 pub const Term = union(enum) {
     Exited: u8,
@@ -867,7 +868,25 @@ fn spawnWindows(self: *ChildProcess) SpawnError!void {
     };
     var piProcInfo: windows.PROCESS_INFORMATION = undefined;
 
-    const cwd_w = if (self.cwd) |cwd| try unicode.wtf8ToWtf16LeAllocZ(self.allocator, cwd) else null;
+    const cwd_w = cwd_w: {
+        if (self.cwd_dir) |cwd_dir| {
+            var dir_path_buffer = try self.allocator.alloc(u16, windows.PATH_MAX_WIDE + 1);
+            errdefer self.allocator.free(dir_path_buffer);
+            const dir_path = try windows.GetFinalPathNameByHandle(
+                cwd_dir.fd,
+                .{},
+                dir_path_buffer[0..windows.PATH_MAX_WIDE],
+            );
+            dir_path_buffer[dir_path.len] = 0;
+            // Shrink the allocation down to just the path buffer + sentinel
+            dir_path_buffer = try self.allocator.realloc(dir_path_buffer, dir_path.len + 1);
+            break :cwd_w dir_path_buffer[0..dir_path.len :0];
+        } else if (self.cwd) |cwd| {
+            break :cwd_w try unicode.wtf8ToWtf16LeAllocZ(self.allocator, cwd);
+        } else {
+            break :cwd_w null;
+        }
+    };
     defer if (cwd_w) |cwd| self.allocator.free(cwd);
     const cwd_w_ptr = if (cwd_w) |cwd| cwd.ptr else null;
 
@@ -887,9 +906,8 @@ fn spawnWindows(self: *ChildProcess) SpawnError!void {
             cwd_path_w_needs_free = true;
             const dir = fs.path.dirname(app_name_wtf8).?;
             break :x try unicode.wtf8ToWtf16LeAllocZ(self.allocator, dir);
-        } else if (self.cwd) |cwd| {
-            cwd_path_w_needs_free = true;
-            break :x try unicode.wtf8ToWtf16LeAllocZ(self.allocator, cwd);
+        } else if (cwd_w) |cwd| {
+            break :x cwd;
         } else {
             break :x &[_:0]u16{}; // empty for cwd
         }
