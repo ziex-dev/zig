@@ -900,7 +900,7 @@ pub const Timestamp = struct {
     pub fn toMicroseconds(t: Timestamp) i64 {
         return @intCast(@divTrunc(t.nanoseconds, std.time.ns_per_us));
     }
-    
+
     pub fn toMilliseconds(t: Timestamp) i64 {
         return @intCast(@divTrunc(t.nanoseconds, std.time.ns_per_ms));
     }
