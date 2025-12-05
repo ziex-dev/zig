@@ -439,29 +439,49 @@ pub fn Min(comptime A: type, comptime B: type) type {
 ///         |
 /// ```
 /// Limit x to the half-open interval [-r, r).
-pub fn wrap(x: anytype, r: @TypeOf(x)) @TypeOf(x) {
+pub fn wrap(x: anytype, r: anytype) @TypeOf(x) {
     const X = @TypeOf(x);
+    const R = @TypeOf(r);
+
     switch (@typeInfo(X)) {
         .int => |iinfo| {
             if (iinfo.signedness != .signed) @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof.");
+        },
+        .float, .comptime_int, .comptime_float => {},
+        .vector => |vinfo| {
+            if (@typeInfo(R) != .vector or @typeInfo(R).vector.len != vinfo.len) @compileError("incompatible types given to std.math.wrap: " ++ @typeName(X) ++ " and " ++ @typeName(R));
+            switch (@typeInfo(vinfo.child)) {
+                .int => |iinfo| {
+                    if (iinfo.signedness != .signed) @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof.");
+                },
+                .float => {},
+                else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof."),
+            }
+        },
+        else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof."),
+    }
+
+    switch (@typeInfo(R)) {
+        .int => |iinfo| {
             // In the rare usecase of r not being comptime_int or float,
             // take the penalty of having an intermediary type conversion,
             // otherwise the alternative is to unwind iteratively to avoid overflow.
-            const R = @Int(.signed, iinfo.bits + 1);
-            return @intCast(@mod(x - r, 2 * @as(R, r)) - r); // Provably impossible to overflow.
+            const RExtraBitSigned = @Int(.signed, iinfo.bits + 1);
+            const radius: if (iinfo.signedness == .signed) R else RExtraBitSigned = r;
+            return @intCast(@mod(x - radius, 2 * @as(RExtraBitSigned, r)) - r); // Provably impossible to overflow.
         },
         .float, .comptime_int, .comptime_float => return @mod(x - r, 2 * r) - r,
         .vector => |vinfo| switch (@typeInfo(vinfo.child)) {
             .int => |iinfo| {
-                if (iinfo.signedness != .signed) @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof.");
                 // Same as in the scalar integer case.
-                const R = @Vector(vinfo.len, @Int(.signed, iinfo.bits + 1));
-                return @intCast(@mod(x - r, @as(R, @splat(2)) * @as(R, r)) - r);
+                const RExtraBitSigned = @Vector(vinfo.len, @Int(.signed, iinfo.bits + 1));
+                const radius: if (iinfo.signedness == .signed) R else RExtraBitSigned = r;
+                return @intCast(@mod(x - radius, @as(RExtraBitSigned, @splat(2)) * @as(RExtraBitSigned, r)) - r);
             },
-            .float => return @mod(x - r, @as(X, @splat(2)) * r) - r,
-            else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof."),
+            .float => return @mod(x - r, @as(R, @splat(2)) * r) - r,
+            else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(R) ++ ". r must be floating point, signed integer, comptime integer or vector thereof."),
         },
-        else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof."),
+        else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(R) ++ ". r must be floating point, signed integer, comptime integer or vector thereof."),
     }
 }
 test wrap {
