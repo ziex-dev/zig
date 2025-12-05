@@ -439,58 +439,82 @@ pub fn Min(comptime A: type, comptime B: type) type {
 ///         |
 /// ```
 /// Limit x to the half-open interval [-r, r).
-pub fn wrap(x: anytype, r: anytype) @TypeOf(x) {
-    const info_x = @typeInfo(@TypeOf(x));
-    const info_r = @typeInfo(@TypeOf(r));
-    if (info_x == .int and info_x.int.signedness != .signed) {
-        @compileError("x must be floating point, comptime integer, or signed integer.");
-    }
-    switch (info_r) {
-        .int => {
-            // in the rare usecase of r not being comptime_int or float,
+pub fn wrap(x: anytype, r: @TypeOf(x)) @TypeOf(x) {
+    const X = @TypeOf(x);
+    switch (@typeInfo(X)) {
+        .int => |iinfo| {
+            if (iinfo.signedness != .signed) @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof.");
+            // In the rare usecase of r not being comptime_int or float,
             // take the penalty of having an intermediary type conversion,
-            // otherwise the alternative is to unwind iteratively to avoid overflow
-            const R = @Int(.signed, info_r.int.bits + 1);
-            const radius: if (info_r.int.signedness == .signed) @TypeOf(r) else R = r;
-            return @intCast(@mod(x - radius, 2 * @as(R, r)) - r); // provably impossible to overflow
+            // otherwise the alternative is to unwind iteratively to avoid overflow.
+            const R = @Int(.signed, iinfo.bits + 1);
+            return @intCast(@mod(x - r, 2 * @as(R, r)) - r); // Provably impossible to overflow.
         },
-        else => {
-            return @mod(x - r, 2 * r) - r;
+        .float, .comptime_int, .comptime_float => return @mod(x - r, 2 * r) - r,
+        .vector => |vinfo| switch (@typeInfo(vinfo.child)) {
+            .int => |iinfo| {
+                if (iinfo.signedness != .signed) @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof.");
+                // Same as in the scalar integer case.
+                const R = @Vector(vinfo.len, @Int(.signed, iinfo.bits + 1));
+                return @intCast(@mod(x - r, @as(R, @splat(2)) * @as(R, r)) - r);
+            },
+            .float => return @mod(x - r, @as(X, @splat(2)) * r) - r,
+            else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof."),
         },
+        else => @compileError("invalid type given to std.math.wrap: " ++ @typeName(X) ++ ". x must be floating point, signed integer, comptime integer or vector thereof."),
     }
 }
 test wrap {
+    const Vi32 = @Vector(4, i32);
+    const Vf32 = @Vector(4, f32);
+
     // Within range
     try testing.expect(wrap(@as(i32, -75), @as(i32, 180)) == -75);
     try testing.expect(wrap(@as(i32, -75), @as(i32, -180)) == -75);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-75)), @as(Vi32, @splat(180))) == @as(Vi32, @splat(-75))));
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-75)), @as(Vi32, @splat(-180))) == @as(Vi32, @splat(-75))));
     // Below
     try testing.expect(wrap(@as(i32, -225), @as(i32, 180)) == 135);
     try testing.expect(wrap(@as(i32, -225), @as(i32, -180)) == 135);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-225)), @as(Vi32, @splat(180))) == @as(Vi32, @splat(135))));
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-225)), @as(Vi32, @splat(-180))) == @as(Vi32, @splat(135))));
     // Above
     try testing.expect(wrap(@as(i32, 361), @as(i32, 180)) == 1);
     try testing.expect(wrap(@as(i32, 361), @as(i32, -180)) == 1);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(361)), @as(Vi32, @splat(180))) == @as(Vi32, @splat(1))));
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(361)), @as(Vi32, @splat(-180))) == @as(Vi32, @splat(1))));
 
     // One period, right limit, positive r
     try testing.expect(wrap(@as(i32, 180), @as(i32, 180)) == -180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(180)), @as(Vi32, @splat(180))) == @as(Vi32, @splat(-180))));
     // One period, left limit, positive r
     try testing.expect(wrap(@as(i32, -180), @as(i32, 180)) == -180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-180)), @as(Vi32, @splat(180))) == @as(Vi32, @splat(-180))));
     // One period, right limit, negative r
     try testing.expect(wrap(@as(i32, 180), @as(i32, -180)) == 180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(180)), @as(Vi32, @splat(-180))) == @as(Vi32, @splat(180))));
     // One period, left limit, negative r
     try testing.expect(wrap(@as(i32, -180), @as(i32, -180)) == 180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-180)), @as(Vi32, @splat(-180))) == @as(Vi32, @splat(180))));
 
     // Two periods, right limit, positive r
     try testing.expect(wrap(@as(i32, 540), @as(i32, 180)) == -180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(540)), @as(Vi32, @splat(180))) == @as(Vi32, @splat(-180))));
     // Two periods, left limit, positive r
     try testing.expect(wrap(@as(i32, -540), @as(i32, 180)) == -180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-540)), @as(Vi32, @splat(180))) == @as(Vi32, @splat(-180))));
     // Two periods, right limit, negative r
     try testing.expect(wrap(@as(i32, 540), @as(i32, -180)) == 180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(540)), @as(Vi32, @splat(-180))) == @as(Vi32, @splat(180))));
     // Two periods, left limit, negative r
     try testing.expect(wrap(@as(i32, -540), @as(i32, -180)) == 180);
+    try testing.expect(@reduce(.And, wrap(@as(Vi32, @splat(-540)), @as(Vi32, @splat(-180))) == @as(Vi32, @splat(180))));
 
     // Floating point
     try testing.expect(wrap(@as(f32, 1.125), @as(f32, 1.0)) == -0.875);
     try testing.expect(wrap(@as(f32, -127.5), @as(f32, 180)) == -127.5);
+    try testing.expect(@reduce(.And, wrap(@as(Vf32, @splat(1.125)), @as(Vf32, @splat(1.0))) == @as(Vf32, @splat(-0.875))));
+    try testing.expect(@reduce(.And, wrap(@as(Vf32, @splat(-127.5)), @as(Vf32, @splat(180))) == @as(Vf32, @splat(-127.5))));
 
     // Mix of comptime and non-comptime
     var i: i32 = 1;
