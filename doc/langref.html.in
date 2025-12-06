@@ -2071,17 +2071,30 @@ or
 
       {#see_also|Optional Pointers|@ptrFromInt|@intFromPtr|C Pointers#}
       {#header_open|volatile#}
-      <p>Loads and stores are assumed to not have side effects. If a given load or store
-      should have side effects, such as Memory Mapped Input/Output (MMIO), use {#syntax#}volatile{#endsyntax#}.
-      In the following code, loads and stores with {#syntax#}mmio_ptr{#endsyntax#} are guaranteed to all happen
-      and in the same order as in source code:</p>
-      {#code|test_volatile.zig#}
+      <p>By default, memory loads and stores are assumed to have no side
+      effects. This allows the compiler (both the frontend and the backend) to
+      optimize the code by removing or reordering instructions. For example,
+      the Zig compiler may remove the redundant load and store in the code
+      below:</p>
+      {#code|non_volatile_load_store.zig#}
 
-      <p>
-      Note that {#syntax#}volatile{#endsyntax#} is unrelated to concurrency and {#link|Atomics#}.
-      If you see code that is using {#syntax#}volatile{#endsyntax#} for something other than Memory Mapped
-      Input/Output, it is probably a bug.
-      </p>
+      <p>However, if the memory address being referenced actually maps to a
+      hardware register (as in Memory Mapped Input/Output - MMIO), then the
+      optimizations are not correct, because every access is intended to
+      trigger some action in the hardware. In this case, use the
+      {#syntax#}volatile{#endsyntax#} keyword to tell the compiler not to
+      remove or reorder the operations. In the following example, all loads
+      and stores through {#syntax#}mmio_ptr{#endsyntax#} are guaranteed to
+      appear in the compiled code, and in the same order (relative to other
+      volatile operations) as in the source code:</p>
+      {#code|volatile_load_store.zig#}
+
+      <p>Note that {#syntax#}volatile{#endsyntax#} is unrelated to concurrency
+      and {#link|Atomics#}. It only affects the compiler optimizations. Memory
+      accesses through volatile pointers are not guaranteed to be atomic, and
+      different threads may observe the stores in different orders. If you see
+      code that is using {#syntax#}volatile{#endsyntax#} for something other
+      than MMIO, it is probably a bug.</p>
       {#header_close#}
 
       {#header_open|Alignment#}
