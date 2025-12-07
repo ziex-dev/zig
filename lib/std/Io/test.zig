@@ -110,6 +110,39 @@ test "setEndPos" {
     try expect((try file.getPos()) == 100);
 }
 
+test "File discardAll EOF" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        var file = try tmp.dir.createFile("tmp_test_discard.txt", .{});
+        defer file.close();
+
+        var w = file.writer(&.{});
+        try w.interface.writeAll("This is a test");
+    }
+
+    {
+        var file = try tmp.dir.openFile("tmp_test_discard.txt", .{});
+        defer file.close();
+
+        var r = file.reader(io, &.{});
+        try expectError(error.EndOfStream, r.interface.discardAll(1024));
+        try expect(r.atEnd());
+    }
+
+    {
+        var file = try tmp.dir.openFile("tmp_test_discard.txt", .{});
+        defer file.close();
+
+        var r = file.reader(io, &.{});
+        try r.interface.discardAll(4);
+        try expect(r.logicalPos() == 4);
+    }
+}
+
 test "updateTimes" {
     var tmp = tmpDir(.{});
     defer tmp.cleanup();

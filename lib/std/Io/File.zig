@@ -587,7 +587,13 @@ pub const Reader = struct {
                     return 0;
                 };
                 const logical_pos = logicalPos(r);
-                const delta = @min(@intFromEnum(limit), size - logical_pos);
+                const remaining = size - logical_pos;
+                if (remaining == 0) {
+                    @branchHint(.unlikely);
+                    return error.EndOfStream;
+                }
+
+                const delta = @min(@intFromEnum(limit), remaining);
                 setLogicalPos(r, logical_pos + delta);
                 return delta;
             },
