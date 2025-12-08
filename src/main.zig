@@ -1235,6 +1235,7 @@ fn buildOutputType(
                             .query = .{
                                 .needed = true,
                                 .weak = false,
+                                .must_link = true,
                                 .preferred_mode = lib_preferred_mode,
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
@@ -1721,6 +1722,7 @@ fn buildOutputType(
                             .query = .{
                                 .needed = true,
                                 .weak = false,
+                                .must_link = true,
                                 .preferred_mode = lib_preferred_mode,
                                 .search_strategy = lib_search_strategy,
                                 .allow_so_scripts = allow_so_scripts,
@@ -2732,6 +2734,7 @@ fn buildOutputType(
                         .query = .{
                             .weak = false,
                             .needed = true,
+                            .must_link = true,
                             .preferred_mode = lib_preferred_mode,
                             .search_strategy = lib_search_strategy,
                             .allow_so_scripts = allow_so_scripts,
