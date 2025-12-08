@@ -115,32 +115,33 @@ pub fn pbkdf2(dk: []u8, password: []const u8, salt: []const u8, rounds: u32, com
 
     var block: u32 = 0;
     while (block < blocks_count) : (block += 1) {
-        var prev_block: [h_len]u8 = undefined;
-        var new_block: [h_len]u8 = undefined;
+        var blocks: [2][h_len]u8 = undefined;
 
         // U_1 = PRF (P, S || INT (i))
         const block_index = mem.toBytes(mem.nativeToBig(u32, block + 1)); // Block index starts at 0001
-        var ctx = Prf.init(password);
+        const ctx0 = Prf.init(password);
+        var ctx = ctx0;
         ctx.update(salt);
         ctx.update(block_index[0..]);
-        ctx.final(prev_block[0..]);
+        ctx.final(blocks[0][0..]);
 
         // Choose portion of DK to write into (T_n) and initialize
         const offset = block * h_len;
         const block_len = if (block != blocks_count - 1) h_len else r;
         const dk_block: []u8 = dk[offset..][0..block_len];
-        @memcpy(dk_block, prev_block[0..dk_block.len]);
+        @memcpy(dk_block, blocks[0][0..dk_block.len]);
 
-        var i: u32 = 1;
-        while (i < rounds) : (i += 1) {
+        var flipped: u1 = 0;
+        for (1..rounds) |_| {
+            flipped ^= 1;
+
             // U_c = PRF (P, U_{c-1})
-            Prf.create(&new_block, prev_block[0..], password);
-            prev_block = new_block;
+            ctx = ctx0;
+            ctx.update(blocks[flipped ^ 1][0..]);
+            ctx.final(blocks[flipped][0..]);
 
             // F (P, S, c, i) = U_1 \xor U_2 \xor ... \xor U_c
-            for (dk_block, 0..) |_, j| {
-                dk_block[j] ^= new_block[j];
-            }
+            for (dk_block, blocks[flipped]) |*x, y| x.* ^= y;
         }
     }
 }
