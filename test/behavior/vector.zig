@@ -739,28 +739,28 @@ test "vector shift operators" {
             }
         }
         fn doTheTest() !void {
-            try doTheTestShift([_]u8{ 0, 2, 4, math.maxInt(u8) }, [_]u3{ 2, 0, 2, 7 });
-            try doTheTestShift([_]u16{ 0, 2, 4, math.maxInt(u16) }, [_]u4{ 2, 0, 2, 15 });
-            try doTheTestShift([_]u24{ 0, 2, 4, math.maxInt(u24) }, [_]u5{ 2, 0, 2, 23 });
-            try doTheTestShift([_]u32{ 0, 2, 4, math.maxInt(u32) }, [_]u5{ 2, 0, 2, 31 });
-            try doTheTestShift([_]u64{ 0xfe, math.maxInt(u64) }, [_]u6{ 0, 63 });
+            try doTheTestShift([_]u8{ 0, 2, 4, math.intMax(u8) }, [_]u3{ 2, 0, 2, 7 });
+            try doTheTestShift([_]u16{ 0, 2, 4, math.intMax(u16) }, [_]u4{ 2, 0, 2, 15 });
+            try doTheTestShift([_]u24{ 0, 2, 4, math.intMax(u24) }, [_]u5{ 2, 0, 2, 23 });
+            try doTheTestShift([_]u32{ 0, 2, 4, math.intMax(u32) }, [_]u5{ 2, 0, 2, 31 });
+            try doTheTestShift([_]u64{ 0xfe, math.intMax(u64) }, [_]u6{ 0, 63 });
 
-            try doTheTestShift([_]i8{ 0, 2, 4, math.maxInt(i8) }, [_]u3{ 2, 0, 2, 7 });
-            try doTheTestShift([_]i16{ 0, 2, 4, math.maxInt(i16) }, [_]u4{ 2, 0, 2, 7 });
-            try doTheTestShift([_]i24{ 0, 2, 4, math.maxInt(i24) }, [_]u5{ 2, 0, 2, 7 });
-            try doTheTestShift([_]i32{ 0, 2, 4, math.maxInt(i32) }, [_]u5{ 2, 0, 2, 7 });
-            try doTheTestShift([_]i64{ 0xfe, math.maxInt(i64) }, [_]u6{ 0, 63 });
+            try doTheTestShift([_]i8{ 0, 2, 4, math.intMax(i8) }, [_]u3{ 2, 0, 2, 7 });
+            try doTheTestShift([_]i16{ 0, 2, 4, math.intMax(i16) }, [_]u4{ 2, 0, 2, 7 });
+            try doTheTestShift([_]i24{ 0, 2, 4, math.intMax(i24) }, [_]u5{ 2, 0, 2, 7 });
+            try doTheTestShift([_]i32{ 0, 2, 4, math.intMax(i32) }, [_]u5{ 2, 0, 2, 7 });
+            try doTheTestShift([_]i64{ 0xfe, math.intMax(i64) }, [_]u6{ 0, 63 });
 
-            try doTheTestShiftExact([_]u8{ 0, 1, 1 << 7, math.maxInt(u8) ^ 1 }, [_]u3{ 4, 0, 7, 1 }, .Right);
-            try doTheTestShiftExact([_]u16{ 0, 1, 1 << 15, math.maxInt(u16) ^ 1 }, [_]u4{ 4, 0, 15, 1 }, .Right);
-            try doTheTestShiftExact([_]u24{ 0, 1, 1 << 23, math.maxInt(u24) ^ 1 }, [_]u5{ 4, 0, 23, 1 }, .Right);
-            try doTheTestShiftExact([_]u32{ 0, 1, 1 << 31, math.maxInt(u32) ^ 1 }, [_]u5{ 4, 0, 31, 1 }, .Right);
+            try doTheTestShiftExact([_]u8{ 0, 1, 1 << 7, math.intMax(u8) ^ 1 }, [_]u3{ 4, 0, 7, 1 }, .Right);
+            try doTheTestShiftExact([_]u16{ 0, 1, 1 << 15, math.intMax(u16) ^ 1 }, [_]u4{ 4, 0, 15, 1 }, .Right);
+            try doTheTestShiftExact([_]u24{ 0, 1, 1 << 23, math.intMax(u24) ^ 1 }, [_]u5{ 4, 0, 23, 1 }, .Right);
+            try doTheTestShiftExact([_]u32{ 0, 1, 1 << 31, math.intMax(u32) ^ 1 }, [_]u5{ 4, 0, 31, 1 }, .Right);
             try doTheTestShiftExact([_]u64{ 1 << 63, 1 }, [_]u6{ 63, 0 }, .Right);
 
-            try doTheTestShiftExact([_]u8{ 0, 1, 1, math.maxInt(u8) ^ (1 << 7) }, [_]u3{ 4, 0, 7, 1 }, .Left);
-            try doTheTestShiftExact([_]u16{ 0, 1, 1, math.maxInt(u16) ^ (1 << 15) }, [_]u4{ 4, 0, 15, 1 }, .Left);
-            try doTheTestShiftExact([_]u24{ 0, 1, 1, math.maxInt(u24) ^ (1 << 23) }, [_]u5{ 4, 0, 23, 1 }, .Left);
-            try doTheTestShiftExact([_]u32{ 0, 1, 1, math.maxInt(u32) ^ (1 << 31) }, [_]u5{ 4, 0, 31, 1 }, .Left);
+            try doTheTestShiftExact([_]u8{ 0, 1, 1, math.intMax(u8) ^ (1 << 7) }, [_]u3{ 4, 0, 7, 1 }, .Left);
+            try doTheTestShiftExact([_]u16{ 0, 1, 1, math.intMax(u16) ^ (1 << 15) }, [_]u4{ 4, 0, 15, 1 }, .Left);
+            try doTheTestShiftExact([_]u24{ 0, 1, 1, math.intMax(u24) ^ (1 << 23) }, [_]u5{ 4, 0, 23, 1 }, .Left);
+            try doTheTestShiftExact([_]u32{ 0, 1, 1, math.intMax(u32) ^ (1 << 31) }, [_]u5{ 4, 0, 31, 1 }, .Left);
             try doTheTestShiftExact([_]u64{ 1 << 63, 1 }, [_]u6{ 0, 63 }, .Left);
         }
     };
@@ -963,8 +963,8 @@ test "saturating add" {
             try testElemType(u64);
         }
         fn testElemType(comptime Elem: type) !void {
-            const min = std.math.minInt(Elem);
-            const max = std.math.maxInt(Elem);
+            const min = std.math.intMin(Elem);
+            const max = std.math.intMax(Elem);
 
             var v: @Vector(4, Elem) = .{ 0, 1, 0, 1 };
             v +|= .{ 0, 0, 1, 1 };
@@ -1056,8 +1056,8 @@ test "saturating subtraction" {
             try testElemType(u64);
         }
         fn testElemType(comptime Elem: type) !void {
-            const min = std.math.minInt(Elem);
-            const max = std.math.maxInt(Elem);
+            const min = std.math.intMin(Elem);
+            const max = std.math.intMax(Elem);
 
             var v: @Vector(4, Elem) = .{ 0, 1, 0, 1 };
             v -|= .{ 0, 0, 1, 1 };

@@ -35,11 +35,11 @@ fn divwide_generic(comptime T: type, _u1: T, _u0: T, v_: T, r: *T) T {
 
     // Break divisor up into two 32-bit digits
     const vn1 = v >> (@bitSizeOf(T) / 2);
-    const vn0 = v & std.math.maxInt(HalfT);
+    const vn0 = v & std.math.intMax(HalfT);
 
     // Break right half of dividend into two digits
     const un1 = un10 >> (@bitSizeOf(T) / 2);
-    const un0 = un10 & std.math.maxInt(HalfT);
+    const un0 = un10 & std.math.intMax(HalfT);
 
     // Compute the first quotient digit, q1
     var q1 = un64 / vn1;

@@ -139,7 +139,7 @@ branch_hint: ?std.builtin.BranchHint = null,
 
 const RuntimeIndex = enum(u32) {
     zero = 0,
-    comptime_field_ptr = std.math.maxInt(u32),
+    comptime_field_ptr = std.math.intMax(u32),
     _,
 
     pub fn increment(ri: *RuntimeIndex) void {
@@ -11814,8 +11814,8 @@ fn zirSwitchBlock(sema: *Sema, block: *Block, inst: Zir.Inst.Index, operand_is_r
 
             check_range: {
                 if (cond_ty.zigTypeTag(zcu) == .int) {
-                    const min_int = try cond_ty.minInt(pt, cond_ty);
-                    const max_int = try cond_ty.maxInt(pt, cond_ty);
+                    const min_int = try cond_ty.intMin(pt, cond_ty);
+                    const max_int = try cond_ty.intMax(pt, cond_ty);
                     if (try range_set.spans(min_int.toIntern(), max_int.toIntern())) {
                         if (has_else) {
                             return sema.fail(
@@ -12150,7 +12150,7 @@ fn zirSwitchBlock(sema: *Sema, block: *Block, inst: Zir.Inst.Index, operand_is_r
     if (special_members_only != null) gen: {
         assert(cond_ty.isNonexhaustiveEnum(zcu));
 
-        var min_i: usize = math.maxInt(usize);
+        var min_i: usize = math.intMax(usize);
         var max_i: usize = 0;
         var seen_field_count: usize = 0;
         for (seen_enum_fields, 0..) |seen, enum_i| {
@@ -13255,8 +13255,8 @@ const RangeSetUnhandledIterator = struct {
         const needed_limbs = math.big.int.calcTwosCompLimbCount(int_type.bits);
         return .{
             .pt = pt,
-            .cur = (try ty.minInt(pt, ty)).toIntern(),
-            .max = (try ty.maxInt(pt, ty)).toIntern(),
+            .cur = (try ty.intMin(pt, ty)).toIntern(),
+            .max = (try ty.intMax(pt, ty)).toIntern(),
             .range_i = 0,
             .ranges = range_set.ranges.items,
             .limbs = if (needed_limbs > preallocated_limbs)
@@ -15483,7 +15483,7 @@ fn addDivIntOverflowSafety(
         return;
     }
 
-    const min_int = try resolved_type.minInt(pt, resolved_type);
+    const min_int = try resolved_type.intMin(pt, resolved_type);
     const neg_one_scalar = try pt.intValue(lhs_scalar_ty, -1);
     const neg_one = try sema.splat(resolved_type, neg_one_scalar);
 
@@ -24817,7 +24817,7 @@ fn analyzeMinMax(
             /// If this is still `true` at the end, we will just use a `comptime_int`.
             all_comptime_int: bool,
             // These two fields tells us about the *result* type, which is refined based on operand types.
-            // e.g. `@max(u32, i64)` results in a `u63`, because the result is >=0 and <=maxInt(i64).
+            // e.g. `@max(u32, i64)` results in a `u63`, because the result is >=0 and <=intMax(i64).
             result_min: Value,
             result_max: Value,
             // These two fields tell us the *intermediate* type to use for actually computing the min/max.
@@ -24848,7 +24848,7 @@ fn analyzeMinMax(
                 // If the *value* is comptime-known, we will use that to get tighter bounds. If #3806
                 // is accepted and implemented, so that integer literals have a tightly-bounded ranged
                 // integer type (and `comptime_int` ceases to exist), this block should probably go away
-                // (replaced with just the simple calls to `Type.minInt`/`Type.maxInt`) so that we only
+                // (replaced with just the simple calls to `Type.intMin`/`Type.intMax`) so that we only
                 // use the input *types* to determine the result type.
                 const min: Value, const max: Value = bounds: {
                     if (try sema.resolveValueResolveLazy(operand)) |operand_val| {
@@ -24870,8 +24870,8 @@ fn analyzeMinMax(
                         }
                     }
                     break :bounds .{
-                        try operand_scalar_ty.minInt(pt, operand_scalar_ty),
-                        try operand_scalar_ty.maxInt(pt, operand_scalar_ty),
+                        try operand_scalar_ty.intMin(pt, operand_scalar_ty),
+                        try operand_scalar_ty.intMax(pt, operand_scalar_ty),
                     };
                 };
                 break :s .{ .int = .{
@@ -32545,8 +32545,8 @@ fn compareIntsOnlyPossibleResult(
     const pt = sema.pt;
     const zcu = pt.zcu;
 
-    const min_rhs = try rhs_ty.minInt(pt, rhs_ty);
-    const max_rhs = try rhs_ty.maxInt(pt, rhs_ty);
+    const min_rhs = try rhs_ty.intMin(pt, rhs_ty);
+    const max_rhs = try rhs_ty.intMax(pt, rhs_ty);
 
     if (min_rhs.toIntern() == max_rhs.toIntern()) {
         // RHS is effectively comptime-known.
@@ -34491,7 +34491,7 @@ pub fn resolveStructLayout(sema: *Sema, ty: Type) SemaError!void {
         const msg = try sema.errMsg(
             ty.srcLoc(zcu),
             "struct layout requires size {d}, this compiler implementation supports up to {d}",
-            .{ big_align.forward(offset), std.math.maxInt(u32) },
+            .{ big_align.forward(offset), std.math.intMax(u32) },
         );
         return sema.failWithOwnedErrorMsg(null, msg);
     };
@@ -34575,7 +34575,7 @@ fn backingIntType(
         try sema.checkBackingIntType(&block, backing_int_src, backing_int_ty, fields_bit_sum);
         struct_type.setBackingIntType(ip, backing_int_ty.toIntern());
     } else {
-        if (fields_bit_sum > std.math.maxInt(u16)) {
+        if (fields_bit_sum > std.math.intMax(u16)) {
             return sema.fail(&block, block.nodeOffset(.zero), "size of packed struct '{d}' exceeds maximum bit width of 65535", .{fields_bit_sum});
         }
         const backing_int_ty = try pt.intType(.unsigned, @intCast(fields_bit_sum));
@@ -34788,7 +34788,7 @@ pub fn resolveUnionLayout(sema: *Sema, ty: Type) SemaError!void {
         const msg = try sema.errMsg(
             ty.srcLoc(pt.zcu),
             "union layout requires size {d}, this compiler implementation supports up to {d}",
-            .{ size, std.math.maxInt(u32) },
+            .{ size, std.math.intMax(u32) },
         );
         return sema.failWithOwnedErrorMsg(null, msg);
     };
@@ -35643,7 +35643,7 @@ fn unionFields(
         try field_aligns.ensureTotalCapacityPrecise(sema.arena, fields_len);
 
     var max_bits: u64 = 0;
-    var min_bits: u64 = std.math.maxInt(u64);
+    var min_bits: u64 = std.math.intMax(u64);
     var max_bits_src: LazySrcLoc = undefined;
     var min_bits_src: LazySrcLoc = undefined;
     var max_bits_ty: Type = undefined;

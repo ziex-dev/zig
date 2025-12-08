@@ -473,7 +473,7 @@ pub fn parseArgs(
                     continue;
                 };
 
-                if (limit == 0) limit = std.math.maxInt(u32);
+                if (limit == 0) limit = std.math.intMax(u32);
                 d.diagnostics.macro_backtrace_limit = limit;
             } else if (mem.eql(u8, arg, "-fnative-half-type")) {
                 d.comp.langopts.use_native_half_type = true;
@@ -1115,7 +1115,7 @@ pub fn main(d: *Driver, tc: *Toolchain, args: []const []const u8, comptime fast_
             error.OutOfMemory => return error.OutOfMemory,
             error.FatalError => return error.FatalError,
         }) return;
-        if (macro_buf.items.len > std.math.maxInt(u32)) {
+        if (macro_buf.items.len > std.math.intMax(u32)) {
             return d.fatal("user provided macro source exceeded max size", .{});
         }
         const contents = try macro_buf.toOwnedSlice(d.comp.gpa);

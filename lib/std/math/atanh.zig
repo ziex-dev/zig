@@ -8,7 +8,7 @@ const std = @import("../std.zig");
 const math = std.math;
 const mem = std.mem;
 const expect = std.testing.expect;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 /// Returns the hyperbolic arc-tangent of x.
 ///
@@ -60,7 +60,7 @@ fn atanh_64(x: f64) f64 {
     const e = (u >> 52) & 0x7FF;
     const s = u >> 63;
 
-    var y: f64 = @bitCast(u & (maxInt(u64) >> 1)); // |x|
+    var y: f64 = @bitCast(u & (intMax(u64) >> 1)); // |x|
 
     if (y == 1.0) {
         return math.copysign(math.inf(f64), x);

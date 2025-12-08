@@ -402,7 +402,7 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                             mem.toBytes(big(message_len));
                         const record_iv = record_decoder.array(P.record_iv_length).*;
                         const masked_read_seq = read_seq &
-                            comptime std.math.shl(u64, std.math.maxInt(u64), 8 * P.record_iv_length);
+                            comptime std.math.shl(u64, std.math.intMax(u64), 8 * P.record_iv_length);
                         const nonce: [P.AEAD.nonce_length]u8 = nonce: {
                             const V = @Vector(P.AEAD.nonce_length, u8);
                             const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);
@@ -1171,7 +1171,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                     mem.toBytes(big(message_len));
                 const record_iv = (input.takeArray(P.record_iv_length) catch unreachable).*; // already peeked
                 const masked_read_seq = c.read_seq &
-                    comptime std.math.shl(u64, std.math.maxInt(u64), 8 * P.record_iv_length);
+                    comptime std.math.shl(u64, std.math.intMax(u64), 8 * P.record_iv_length);
                 const nonce: [P.AEAD.nonce_length]u8 = nonce: {
                     const V = @Vector(P.AEAD.nonce_length, u8);
                     const pad = [1]u8{0} ** (P.AEAD.nonce_length - 8);

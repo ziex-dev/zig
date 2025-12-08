@@ -403,7 +403,7 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
         /// Invalidates element pointers if additional memory is needed.
         pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) Allocator.Error!void {
             if (@sizeOf(T) == 0) {
-                self.capacity = math.maxInt(usize);
+                self.capacity = math.intMax(usize);
                 return;
             }
 
@@ -419,7 +419,7 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
         /// Invalidates element pointers if additional memory is needed.
         pub fn ensureTotalCapacityPrecise(self: *Self, new_capacity: usize) Allocator.Error!void {
             if (@sizeOf(T) == 0) {
-                self.capacity = math.maxInt(usize);
+                self.capacity = math.intMax(usize);
                 return;
             }
 
@@ -1172,7 +1172,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         /// Invalidates element pointers if additional memory is needed.
         pub fn ensureTotalCapacityPrecise(self: *Self, gpa: Allocator, new_capacity: usize) Allocator.Error!void {
             if (@sizeOf(T) == 0) {
-                self.capacity = math.maxInt(usize);
+                self.capacity = math.intMax(usize);
                 return;
             }
 
@@ -2305,9 +2305,9 @@ test "return OutOfMemory when capacity would exceed maximum usize integer value"
     {
         var list: ArrayList(u32) = .{
             .items = undefined,
-            .capacity = math.maxInt(usize) - 1,
+            .capacity = math.intMax(usize) - 1,
         };
-        list.items.len = math.maxInt(usize) - 1;
+        list.items.len = math.intMax(usize) - 1;
 
         try testing.expectError(error.OutOfMemory, list.appendSlice(a, items));
         try testing.expectError(error.OutOfMemory, list.appendNTimes(a, new_item, 2));
@@ -2322,10 +2322,10 @@ test "return OutOfMemory when capacity would exceed maximum usize integer value"
     {
         var list: Managed(u32) = .{
             .items = undefined,
-            .capacity = math.maxInt(usize) - 1,
+            .capacity = math.intMax(usize) - 1,
             .allocator = a,
         };
-        list.items.len = math.maxInt(usize) - 1;
+        list.items.len = math.intMax(usize) - 1;
 
         try testing.expectError(error.OutOfMemory, list.appendSlice(items));
         try testing.expectError(error.OutOfMemory, list.appendNTimes(new_item, 2));

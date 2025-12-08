@@ -98,7 +98,7 @@ pub fn main() anyerror!void {
 
     var sdk_dir = try std.fs.cwd().openDir(sysroot_path, .{});
     defer sdk_dir.close();
-    const sdk_info = try sdk_dir.readFileAlloc("SDKSettings.json", allocator, .limited(std.math.maxInt(u32)));
+    const sdk_info = try sdk_dir.readFileAlloc("SDKSettings.json", allocator, .limited(std.math.intMax(u32)));
 
     const parsed_json = try std.json.parseFromSlice(struct {
         DefaultProperties: struct { MACOSX_DEPLOYMENT_TARGET: []const u8 },

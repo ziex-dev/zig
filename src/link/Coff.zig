@@ -285,7 +285,7 @@ pub const String = enum(u32) {
         @".rdata" = @intFromEnum(String.@".rdata"),
         @".text" = @intFromEnum(String.@".text"),
         @".tls$" = @intFromEnum(String.@".tls$"),
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn unwrap(os: String.Optional) ?String {
@@ -425,7 +425,7 @@ pub const Reloc = extern struct {
     };
 
     pub const Index = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn get(si: Reloc.Index, coff: *Coff) *Reloc {

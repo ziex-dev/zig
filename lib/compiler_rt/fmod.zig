@@ -193,8 +193,8 @@ pub fn fmodq(a: f128, b: f128) callconv(.c) f128 {
     }
 
     // OR in extra non-stored mantissa digit
-    var highA: u64 = (aPtr_u64[high_index] & (std.math.maxInt(u64) >> 16)) | 1 << 48;
-    const highB: u64 = (bPtr_u64[high_index] & (std.math.maxInt(u64) >> 16)) | 1 << 48;
+    var highA: u64 = (aPtr_u64[high_index] & (std.math.intMax(u64) >> 16)) | 1 << 48;
+    const highB: u64 = (bPtr_u64[high_index] & (std.math.intMax(u64) >> 16)) | 1 << 48;
     var lowA: u64 = aPtr_u64[low_index];
     const lowB: u64 = bPtr_u64[low_index];
 
@@ -294,7 +294,7 @@ inline fn generic_fmod(comptime T: type, x: T, y: T) T {
         }) {}
         ux <<= @intCast(@as(u32, @bitCast(-ex + 1)));
     } else {
-        ux &= math.maxInt(uint) >> exp_bits;
+        ux &= math.intMax(uint) >> exp_bits;
         ux |= 1 << digits;
     }
     if (ey == 0) {
@@ -305,7 +305,7 @@ inline fn generic_fmod(comptime T: type, x: T, y: T) T {
         }) {}
         uy <<= @intCast(@as(u32, @bitCast(-ey + 1)));
     } else {
-        uy &= math.maxInt(uint) >> exp_bits;
+        uy &= math.intMax(uint) >> exp_bits;
         uy |= 1 << digits;
     }
 

@@ -70,7 +70,7 @@ fn AesCcm(comptime BlockCipher: type, comptime tag_len: usize, comptime nonce_le
             assert(c.len == m.len);
 
             // Validate message length fits in L bytes
-            const max_msg_len: u64 = if (L >= 8) std.math.maxInt(u64) else (@as(u64, 1) << @as(u6, @intCast(L * 8))) - 1;
+            const max_msg_len: u64 = if (L >= 8) std.math.intMax(u64) else (@as(u64, 1) << @as(u6, @intCast(L * 8))) - 1;
             assert(m.len <= max_msg_len);
 
             const cipher_ctx = BlockCipher.initEnc(key);
@@ -240,7 +240,7 @@ fn AesCcm(comptime BlockCipher: type, comptime tag_len: usize, comptime nonce_le
                 // Encode as 2 bytes
                 mem.writeInt(u16, buf[0..2], @as(u16, @intCast(ad_len)), .big);
                 return 2;
-            } else if (ad_len <= std.math.maxInt(u32)) {
+            } else if (ad_len <= std.math.intMax(u32)) {
                 // Encode as 0xff || 0xfe || 4 bytes
                 buf[0] = 0xff;
                 buf[1] = 0xfe;

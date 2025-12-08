@@ -2000,10 +2000,10 @@ pub const Instruction = packed union {
                 const s = bitmask.imms & levels;
                 const r = bitmask.immr & levels;
                 const d = (s -% r) & levels;
-                const welem = @as(u64, std.math.maxInt(u64)) >> (63 - s);
-                const telem = @as(u64, std.math.maxInt(u64)) >> (63 - d);
-                const emask = @as(u64, std.math.maxInt(u64)) >> @intCast(64 - esize);
-                const rmask = @divExact(std.math.maxInt(u64), emask);
+                const welem = @as(u64, std.math.intMax(u64)) >> (63 - s);
+                const telem = @as(u64, std.math.intMax(u64)) >> (63 - d);
+                const emask = @as(u64, std.math.intMax(u64)) >> @intCast(64 - esize);
+                const rmask = @divExact(std.math.intMax(u64), emask);
                 const wmask = std.math.rotr(u64, welem * rmask, r);
                 const tmask = telem * rmask;
                 return switch (sf) {

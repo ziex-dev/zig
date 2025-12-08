@@ -238,12 +238,12 @@ pub const Symbol = struct {
             pub const LORESERVE: Shndx = .fromSection(std.elf.SHN_LORESERVE);
             pub const HIRESERVE: Shndx = .fromSection(std.elf.SHN_HIRESERVE);
             comptime {
-                assert(@intFromEnum(HIRESERVE) == std.math.maxInt(Tag));
+                assert(@intFromEnum(HIRESERVE) == std.math.intMax(Tag));
             }
 
             fn reserve(sec: std.elf.Section) Tag {
                 assert(sec >= std.elf.SHN_LORESERVE and sec <= std.elf.SHN_HIRESERVE);
-                return @as(Tag, std.math.maxInt(Tag) - std.elf.SHN_HIRESERVE) + sec;
+                return @as(Tag, std.math.intMax(Tag) - std.elf.SHN_HIRESERVE) + sec;
             }
 
             pub fn fromSection(sec: std.elf.Section) Shndx {
@@ -635,7 +635,7 @@ pub const StringTable = struct {
 };
 
 pub const GotIndex = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn wrap(i: ?u32) GotIndex {
@@ -715,7 +715,7 @@ pub const Reloc = extern struct {
     };
 
     pub const Index = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn get(si: Reloc.Index, elf: *Elf) *Reloc {

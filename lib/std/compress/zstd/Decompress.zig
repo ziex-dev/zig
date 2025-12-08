@@ -175,7 +175,7 @@ fn discardIndirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
             else => |e| return e,
         };
     }
-    const n = limit.minInt(r.end - r.seek);
+    const n = limit.intMin(r.end - r.seek);
     r.seek += n;
     return n;
 }
@@ -678,7 +678,7 @@ pub const Frame = struct {
                     },
                     .fse => {
                         const max_table_size = 2048;
-                        const peek_len: usize = remaining.minInt(max_table_size);
+                        const peek_len: usize = remaining.intMin(max_table_size);
                         if (in.buffer.len < peek_len) return error.InputBufferUndersize;
                         const limited_buffer = try in.peek(peek_len);
                         var bit_reader: BitReader = .{ .bytes = limited_buffer };

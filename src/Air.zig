@@ -1413,7 +1413,7 @@ pub const ShuffleOneMask = packed struct(u32) {
 /// Used by `Inst.Tag.shuffle_two`. Represents a mask element which either indexes into one
 /// of two runtime-known vectors, or is undefined.
 pub const ShuffleTwoMask = enum(u32) {
-    undef = std.math.maxInt(u32),
+    undef = std.math.intMax(u32),
     _,
     pub fn aElem(idx: u32) ShuffleTwoMask {
         return @enumFromInt(idx << 1);
@@ -1825,7 +1825,7 @@ pub fn value(air: Air, inst: Inst.Ref, pt: Zcu.PerThread) !?Value {
 }
 
 pub const NullTerminatedString = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn toSlice(nts: NullTerminatedString, air: Air) [:0]const u8 {

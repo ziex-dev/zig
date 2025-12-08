@@ -369,7 +369,7 @@ fn parseCNumLit(mt: *MacroTranslator) ParseError!ZigNode {
             .ULL => "c_ulonglong",
             else => unreachable,
         });
-        const value = std.fmt.parseInt(i128, bytes.items, 0) catch math.maxInt(i128);
+        const value = std.fmt.parseInt(i128, bytes.items, 0) catch math.intMax(i128);
 
         // make the output less noisy by skipping promoteIntLiteral where
         // it's guaranteed to not be required because of C standard type constraints
@@ -1024,7 +1024,7 @@ fn parseCNumericType(mt: *MacroTranslator) ParseError!ZigNode {
     var kw = KwCounter{};
     // prevent overflow
     var i: u8 = 0;
-    while (i < math.maxInt(u8)) : (i += 1) {
+    while (i < math.intMax(u8)) : (i += 1) {
         switch (mt.peek()) {
             .keyword_double => kw.double += 1,
             .keyword_long => kw.long += 1,

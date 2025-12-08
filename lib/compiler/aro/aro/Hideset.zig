@@ -49,7 +49,7 @@ const Item = struct {
 };
 
 pub const Index = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 };
 

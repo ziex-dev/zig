@@ -79,8 +79,8 @@ pub fn RegisterManager(
             @setEvalBranchQuota(3000);
 
             const Id = @TypeOf(reg.id());
-            comptime var min_id: Id = std.math.maxInt(Id);
-            comptime var max_id: Id = std.math.minInt(Id);
+            comptime var min_id: Id = std.math.intMax(Id);
+            comptime var max_id: Id = std.math.intMin(Id);
             inline for (set) |elem| {
                 const elem_id = comptime elem.id();
                 min_id = @min(elem_id, min_id);

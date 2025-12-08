@@ -1770,7 +1770,7 @@ fn evalZigTest(
 
                 // Report an error if the child terminated uncleanly or if we were still trying to run more tests.
                 run.step.result_stderr = stderr_owned;
-                const tests_done = result.test_metadata != null and result.test_metadata.?.next_index == std.math.maxInt(u32);
+                const tests_done = result.test_metadata != null and result.test_metadata.?.next_index == std.math.intMax(u32);
                 if (!tests_done or !termMatches(.{ .Exited = 0 }, term)) {
                     try run.step.addError("test process unexpectedly {f}", .{fmtTerm(term)});
                 }
@@ -1968,7 +1968,7 @@ fn pollZigTest(
                     .next_index = 0,
                     .prog_node = options.progress_node,
                 };
-                @memset(opt_metadata.*.?.ns_per_test, std.math.maxInt(u64));
+                @memset(opt_metadata.*.?.ns_per_test, std.math.intMax(u64));
 
                 active_test_index = null;
                 if (timer) |*t| t.reset();
@@ -2107,7 +2107,7 @@ fn requestNextTest(in: fs.File, metadata: *TestMetadata, sub_prog_node: *?std.Pr
         try sendRunTestMessage(in, .run_test, i);
         return;
     } else {
-        metadata.next_index = std.math.maxInt(u32); // indicate that all tests are done
+        metadata.next_index = std.math.intMax(u32); // indicate that all tests are done
         try sendMessage(in, .exit);
     }
 }

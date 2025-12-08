@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 test "@intCast i32 to u7" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
@@ -10,7 +10,7 @@ test "@intCast i32 to u7" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    var x: u128 = maxInt(u128);
+    var x: u128 = intMax(u128);
     var y: i32 = 120;
     _ = .{ &x, &y };
     const z = x >> @as(u7, @intCast(y));

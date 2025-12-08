@@ -76,10 +76,10 @@ test "fixint.i3" {
 }
 
 test "fixint.i32" {
-    try test__fixint(f64, i32, -math.inf(f64), math.minInt(i32));
-    try test__fixint(f64, i32, -math.floatMax(f64), math.minInt(i32));
-    try test__fixint(f64, i32, @as(f64, math.minInt(i32)), math.minInt(i32));
-    try test__fixint(f64, i32, @as(f64, math.minInt(i32)) + 1, math.minInt(i32) + 1);
+    try test__fixint(f64, i32, -math.inf(f64), math.intMin(i32));
+    try test__fixint(f64, i32, -math.floatMax(f64), math.intMin(i32));
+    try test__fixint(f64, i32, @as(f64, math.intMin(i32)), math.intMin(i32));
+    try test__fixint(f64, i32, @as(f64, math.intMin(i32)) + 1, math.intMin(i32) + 1);
     try test__fixint(f64, i32, -2.0, -2);
     try test__fixint(f64, i32, -1.9, -1);
     try test__fixint(f64, i32, -1.1, -1);
@@ -93,18 +93,18 @@ test "fixint.i32" {
     try test__fixint(f64, i32, 0.1, 0);
     try test__fixint(f64, i32, 0.9, 0);
     try test__fixint(f64, i32, 1.0, 1);
-    try test__fixint(f64, i32, @as(f64, math.maxInt(i32)) - 1, math.maxInt(i32) - 1);
-    try test__fixint(f64, i32, @as(f64, math.maxInt(i32)), math.maxInt(i32));
-    try test__fixint(f64, i32, math.floatMax(f64), math.maxInt(i32));
-    try test__fixint(f64, i32, math.inf(f64), math.maxInt(i32));
+    try test__fixint(f64, i32, @as(f64, math.intMax(i32)) - 1, math.intMax(i32) - 1);
+    try test__fixint(f64, i32, @as(f64, math.intMax(i32)), math.intMax(i32));
+    try test__fixint(f64, i32, math.floatMax(f64), math.intMax(i32));
+    try test__fixint(f64, i32, math.inf(f64), math.intMax(i32));
 }
 
 test "fixint.i64" {
-    try test__fixint(f64, i64, -math.inf(f64), math.minInt(i64));
-    try test__fixint(f64, i64, -math.floatMax(f64), math.minInt(i64));
-    try test__fixint(f64, i64, @as(f64, math.minInt(i64)), math.minInt(i64));
-    try test__fixint(f64, i64, @as(f64, math.minInt(i64)) + 1, math.minInt(i64));
-    try test__fixint(f64, i64, @as(f64, math.minInt(i64) / 2), math.minInt(i64) / 2);
+    try test__fixint(f64, i64, -math.inf(f64), math.intMin(i64));
+    try test__fixint(f64, i64, -math.floatMax(f64), math.intMin(i64));
+    try test__fixint(f64, i64, @as(f64, math.intMin(i64)), math.intMin(i64));
+    try test__fixint(f64, i64, @as(f64, math.intMin(i64)) + 1, math.intMin(i64));
+    try test__fixint(f64, i64, @as(f64, math.intMin(i64) / 2), math.intMin(i64) / 2);
     try test__fixint(f64, i64, -2.0, -2);
     try test__fixint(f64, i64, -1.9, -1);
     try test__fixint(f64, i64, -1.1, -1);
@@ -118,17 +118,17 @@ test "fixint.i64" {
     try test__fixint(f64, i64, 0.1, 0);
     try test__fixint(f64, i64, 0.9, 0);
     try test__fixint(f64, i64, 1.0, 1);
-    try test__fixint(f64, i64, @as(f64, math.maxInt(i64)) - 1, math.maxInt(i64));
-    try test__fixint(f64, i64, @as(f64, math.maxInt(i64)), math.maxInt(i64));
-    try test__fixint(f64, i64, math.floatMax(f64), math.maxInt(i64));
-    try test__fixint(f64, i64, math.inf(f64), math.maxInt(i64));
+    try test__fixint(f64, i64, @as(f64, math.intMax(i64)) - 1, math.intMax(i64));
+    try test__fixint(f64, i64, @as(f64, math.intMax(i64)), math.intMax(i64));
+    try test__fixint(f64, i64, math.floatMax(f64), math.intMax(i64));
+    try test__fixint(f64, i64, math.inf(f64), math.intMax(i64));
 }
 
 test "fixint.i128" {
-    try test__fixint(f64, i128, -math.inf(f64), math.minInt(i128));
-    try test__fixint(f64, i128, -math.floatMax(f64), math.minInt(i128));
-    try test__fixint(f64, i128, @as(f64, math.minInt(i128)), math.minInt(i128));
-    try test__fixint(f64, i128, @as(f64, math.minInt(i128)) + 1, math.minInt(i128));
+    try test__fixint(f64, i128, -math.inf(f64), math.intMin(i128));
+    try test__fixint(f64, i128, -math.floatMax(f64), math.intMin(i128));
+    try test__fixint(f64, i128, @as(f64, math.intMin(i128)), math.intMin(i128));
+    try test__fixint(f64, i128, @as(f64, math.intMin(i128)) + 1, math.intMin(i128));
     try test__fixint(f64, i128, -2.0, -2);
     try test__fixint(f64, i128, -1.9, -1);
     try test__fixint(f64, i128, -1.1, -1);
@@ -142,8 +142,8 @@ test "fixint.i128" {
     try test__fixint(f64, i128, 0.1, 0);
     try test__fixint(f64, i128, 0.9, 0);
     try test__fixint(f64, i128, 1.0, 1);
-    try test__fixint(f64, i128, @as(f64, math.maxInt(i128)) - 1, math.maxInt(i128));
-    try test__fixint(f64, i128, @as(f64, math.maxInt(i128)), math.maxInt(i128));
-    try test__fixint(f64, i128, math.floatMax(f64), math.maxInt(i128));
-    try test__fixint(f64, i128, math.inf(f64), math.maxInt(i128));
+    try test__fixint(f64, i128, @as(f64, math.intMax(i128)) - 1, math.intMax(i128));
+    try test__fixint(f64, i128, @as(f64, math.intMax(i128)), math.intMax(i128));
+    try test__fixint(f64, i128, math.floatMax(f64), math.intMax(i128));
+    try test__fixint(f64, i128, math.inf(f64), math.intMax(i128));
 }

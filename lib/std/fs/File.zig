@@ -13,7 +13,7 @@ const math = std.math;
 const assert = std.debug.assert;
 const linux = std.os.linux;
 const windows = std.os.windows;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const Alignment = std.mem.Alignment;
 
 /// The OS-specific file descriptor or file handle.
@@ -522,12 +522,12 @@ pub fn updateTimes(
     }
     const times = [2]posix.timespec{
         posix.timespec{
-            .sec = math.cast(isize, @divFloor(atime.nanoseconds, std.time.ns_per_s)) orelse maxInt(isize),
-            .nsec = math.cast(isize, @mod(atime.nanoseconds, std.time.ns_per_s)) orelse maxInt(isize),
+            .sec = math.cast(isize, @divFloor(atime.nanoseconds, std.time.ns_per_s)) orelse intMax(isize),
+            .nsec = math.cast(isize, @mod(atime.nanoseconds, std.time.ns_per_s)) orelse intMax(isize),
         },
         posix.timespec{
-            .sec = math.cast(isize, @divFloor(mtime.nanoseconds, std.time.ns_per_s)) orelse maxInt(isize),
-            .nsec = math.cast(isize, @mod(mtime.nanoseconds, std.time.ns_per_s)) orelse maxInt(isize),
+            .sec = math.cast(isize, @divFloor(mtime.nanoseconds, std.time.ns_per_s)) orelse intMax(isize),
+            .nsec = math.cast(isize, @mod(mtime.nanoseconds, std.time.ns_per_s)) orelse intMax(isize),
         },
     };
     try posix.futimens(self.handle, &times);
@@ -655,7 +655,7 @@ pub const CopyRangeError = posix.CopyFileRangeError;
 
 /// Deprecated in favor of `Writer`.
 pub fn copyRange(in: File, in_offset: u64, out: File, out_offset: u64, len: u64) CopyRangeError!u64 {
-    const adjusted_len = math.cast(usize, len) orelse maxInt(usize);
+    const adjusted_len = math.cast(usize, len) orelse intMax(usize);
     const result = try posix.copy_file_range(in.handle, in_offset, out.handle, out_offset, adjusted_len, 0);
     return result;
 }
@@ -956,7 +956,7 @@ pub const Writer = struct {
                 break :b &hdtr_data;
             };
             var sbytes: std.c.off_t = undefined;
-            const nbytes: usize = @min(file_limit, maxInt(usize));
+            const nbytes: usize = @min(file_limit, intMax(usize));
             const flags = 0;
             switch (posix.errno(std.c.sendfile(in_fd, out_fd, offset, nbytes, hdtr, &sbytes, flags))) {
                 .SUCCESS, .INTR => {},
@@ -1014,7 +1014,7 @@ pub const Writer = struct {
                 };
                 break :b &hdtr_data;
             };
-            const max_count = maxInt(i32); // Avoid EINVAL.
+            const max_count = intMax(i32); // Avoid EINVAL.
             var len: std.c.off_t = @min(file_limit, max_count);
             const flags = 0;
             switch (posix.errno(std.c.sendfile(in_fd, out_fd, offset, &len, hdtr, flags))) {
@@ -1065,7 +1065,7 @@ pub const Writer = struct {
                     off = std.math.cast(std.os.linux.off_t, file_reader.pos) orelse return error.ReadFailed;
                     break :o .{ &off, @min(@intFromEnum(limit), size - file_reader.pos, max_count) };
                 },
-                .streaming => .{ null, limit.minInt(max_count) },
+                .streaming => .{ null, limit.intMin(max_count) },
                 .streaming_reading, .positional_reading => break :sf,
                 .failure => return error.ReadFailed,
             };

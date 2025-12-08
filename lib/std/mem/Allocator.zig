@@ -164,7 +164,7 @@ pub inline fn rawFree(a: Allocator, memory: []u8, alignment: Alignment, ret_addr
 /// Call `destroy` with the result to free the memory.
 pub fn create(a: Allocator, comptime T: type) Error!*T {
     if (@sizeOf(T) == 0) {
-        const ptr = comptime std.mem.alignBackward(usize, math.maxInt(usize), @alignOf(T));
+        const ptr = comptime std.mem.alignBackward(usize, math.intMax(usize), @alignOf(T));
         return @ptrFromInt(ptr);
     }
     const ptr: *T = @ptrCast(try a.allocBytesWithAlignment(.of(T), @sizeOf(T), @returnAddress()));
@@ -289,7 +289,7 @@ fn allocBytesWithAlignment(
     return_address: usize,
 ) Error![*]align(alignment.toByteUnits()) u8 {
     if (byte_count == 0) {
-        const ptr = comptime alignment.backward(math.maxInt(usize));
+        const ptr = comptime alignment.backward(math.intMax(usize));
         return @as([*]align(alignment.toByteUnits()) u8, @ptrFromInt(ptr));
     }
 
@@ -409,7 +409,7 @@ pub fn reallocAdvanced(
     }
     if (new_n == 0) {
         self.free(old_mem);
-        const ptr = comptime std.mem.alignBackward(usize, math.maxInt(usize), Slice.alignment);
+        const ptr = comptime std.mem.alignBackward(usize, math.intMax(usize), Slice.alignment);
         return @as([*]align(Slice.alignment) T, @ptrFromInt(ptr))[0..0];
     }
 

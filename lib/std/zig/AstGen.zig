@@ -11945,7 +11945,7 @@ const GenZir = struct {
     // Set if this GenZir is a defer or it is inside a defer.
     any_defer_node: Ast.Node.OptionalIndex = .none,
 
-    const unstacked_top = std.math.maxInt(usize);
+    const unstacked_top = std.math.intMax(usize);
     /// Call unstack before adding any new instructions to containing GenZir.
     fn unstack(self: *GenZir) void {
         if (self.instructions_top != unstacked_top) {

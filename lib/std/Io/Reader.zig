@@ -591,7 +591,7 @@ pub fn discardAll(r: *Reader, n: usize) Error!void {
 pub fn discardAll64(r: *Reader, n: u64) Error!void {
     var remaining: u64 = n;
     while (remaining > 0) {
-        const limited_remaining = std.math.cast(usize, remaining) orelse std.math.maxInt(usize);
+        const limited_remaining = std.math.cast(usize, remaining) orelse std.math.intMax(usize);
         try discardAll(r, limited_remaining);
         remaining -= limited_remaining;
     }
@@ -1926,9 +1926,9 @@ pub fn writableVectorWsa(
                 n += len;
                 continue;
             }
-            buffer[i] = .{ .buf = buf.ptr, .len = std.math.maxInt(u32) };
+            buffer[i] = .{ .buf = buf.ptr, .len = std.math.intMax(u32) };
             i += 1;
-            n += std.math.maxInt(u32);
+            n += std.math.intMax(u32);
             return .{ i, n };
         }
         const buf = r.buffer;
@@ -1938,14 +1938,14 @@ pub fn writableVectorWsa(
             if (std.math.cast(u32, buf.len)) |len| {
                 buffer[i] = .{ .buf = buf.ptr, .len = len };
             } else {
-                buffer[i] = .{ .buf = buf.ptr, .len = std.math.maxInt(u32) };
+                buffer[i] = .{ .buf = buf.ptr, .len = std.math.intMax(u32) };
             }
             i += 1;
         }
     } else {
         buffer[i] = .{
             .buf = r.buffer.ptr + r.end,
-            .len = @min(std.math.maxInt(u32), r.buffer.len - r.end),
+            .len = @min(std.math.intMax(u32), r.buffer.len - r.end),
         };
         i += 1;
     }

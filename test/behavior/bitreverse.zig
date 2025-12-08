@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const expect = std.testing.expect;
-const minInt = std.math.minInt;
+const intMin = std.math.intMin;
 
 test "@bitReverse large exotic integer" {
     try expect(@bitReverse(@as(u95, 0x123456789abcdef111213141)) == 0x4146424447bd9eac8f351624);

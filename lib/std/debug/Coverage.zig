@@ -82,7 +82,7 @@ pub const File = extern struct {
     basename: String,
 
     pub const Index = enum(u32) {
-        invalid = std.math.maxInt(u32),
+        invalid = std.math.intMax(u32),
         _,
     };
 

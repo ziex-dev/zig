@@ -230,7 +230,7 @@ inline fn sincos_generic(comptime F: type, x: F, r_sin: *F, r_cos: *F) void {
     const sc1pio4: F = 1.0 * math.pi / 4.0;
     const bits = @typeInfo(F).float.bits;
     const I = std.meta.Int(.unsigned, bits);
-    const ix = @as(I, @bitCast(x)) & (math.maxInt(I) >> 1);
+    const ix = @as(I, @bitCast(x)) & (math.intMax(I) >> 1);
     const se: u16 = @truncate(ix >> (bits - 16));
 
     if (se == 0x7fff) {

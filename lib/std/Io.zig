@@ -11,18 +11,18 @@ const Alignment = std.mem.Alignment;
 
 pub const Limit = enum(usize) {
     nothing = 0,
-    unlimited = std.math.maxInt(usize),
+    unlimited = std.math.intMax(usize),
     _,
 
-    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
+    /// `std.math.intMax(usize)` is interpreted to mean `.unlimited`.
     pub fn limited(n: usize) Limit {
         return @enumFromInt(n);
     }
 
-    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
+    /// Any value grater than `std.math.intMax(usize)` is interpreted to mean
     /// `.unlimited`.
     pub fn limited64(n: u64) Limit {
-        return @enumFromInt(@min(n, std.math.maxInt(usize)));
+        return @enumFromInt(@min(n, std.math.intMax(usize)));
     }
 
     pub fn countVec(data: []const []const u8) Limit {
@@ -35,20 +35,20 @@ pub const Limit = enum(usize) {
         return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
     }
 
-    pub fn minInt(l: Limit, n: usize) usize {
+    pub fn intMin(l: Limit, n: usize) usize {
         return @min(n, @intFromEnum(l));
     }
 
-    pub fn minInt64(l: Limit, n: u64) usize {
+    pub fn intMin64(l: Limit, n: u64) usize {
         return @min(n, @intFromEnum(l));
     }
 
     pub fn slice(l: Limit, s: []u8) []u8 {
-        return s[0..l.minInt(s.len)];
+        return s[0..l.intMin(s.len)];
     }
 
     pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
-        return s[0..l.minInt(s.len)];
+        return s[0..l.intMin(s.len)];
     }
 
     pub fn toInt(l: Limit) ?usize {
@@ -306,7 +306,7 @@ pub fn Poller(comptime StreamEnum: type) type {
             const err_mask = posix.POLL.ERR | posix.POLL.NVAL | posix.POLL.HUP;
 
             const events_len = try posix.poll(&self.poll_fds, if (nanoseconds) |ns|
-                std.math.cast(i32, ns / std.time.ns_per_ms) orelse std.math.maxInt(i32)
+                std.math.cast(i32, ns / std.time.ns_per_ms) orelse std.math.intMax(i32)
             else
                 -1);
             if (events_len == 0) {
@@ -401,7 +401,7 @@ pub fn Poller(comptime StreamEnum: type) type {
             while (true) {
                 const fifo_read_pending = while (true) {
                     const buf = try writableSliceGreedyAlloc(r, gpa, bump_amt);
-                    const buf_len = math.cast(u32, buf.len) orelse math.maxInt(u32);
+                    const buf_len = math.cast(u32, buf.len) orelse math.intMax(u32);
 
                     if (0 == windows.kernel32.ReadFile(
                         handle,
@@ -923,7 +923,7 @@ pub const Duration = struct {
     nanoseconds: i96,
 
     pub const zero: Duration = .{ .nanoseconds = 0 };
-    pub const max: Duration = .{ .nanoseconds = std.math.maxInt(i96) };
+    pub const max: Duration = .{ .nanoseconds = std.math.intMax(i96) };
 
     pub fn fromNanoseconds(x: i96) Duration {
         return .{ .nanoseconds = x };

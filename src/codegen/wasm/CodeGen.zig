@@ -6887,8 +6887,8 @@ fn airSatBinOp(cg: *CodeGen, inst: Air.Inst.Index, op: Op) InnerError!void {
         _ = try cg.cmp(bin_result, imm_val, ty, .lt);
     } else {
         switch (wasm_bits) {
-            32 => try cg.addImm32(if (op == .add) std.math.maxInt(u32) else 0),
-            64 => try cg.addImm64(if (op == .add) std.math.maxInt(u64) else 0),
+            32 => try cg.addImm32(if (op == .add) std.math.intMax(u32) else 0),
+            64 => try cg.addImm64(if (op == .add) std.math.intMax(u64) else 0),
             else => unreachable,
         }
         try cg.emitWValue(bin_result);
@@ -6987,21 +6987,21 @@ fn airShlSat(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
         switch (wasm_bits) {
             32 => blk: {
                 if (!is_signed) {
-                    try cg.addImm32(std.math.maxInt(u32));
+                    try cg.addImm32(std.math.intMax(u32));
                     break :blk;
                 }
-                try cg.addImm32(@bitCast(@as(i32, std.math.minInt(i32))));
-                try cg.addImm32(@bitCast(@as(i32, std.math.maxInt(i32))));
+                try cg.addImm32(@bitCast(@as(i32, std.math.intMin(i32))));
+                try cg.addImm32(@bitCast(@as(i32, std.math.intMax(i32))));
                 _ = try cg.cmp(lhs, .{ .imm32 = 0 }, ty, .lt);
                 try cg.addTag(.select);
             },
             64 => blk: {
                 if (!is_signed) {
-                    try cg.addImm64(std.math.maxInt(u64));
+                    try cg.addImm64(std.math.intMax(u64));
                     break :blk;
                 }
-                try cg.addImm64(@bitCast(@as(i64, std.math.minInt(i64))));
-                try cg.addImm64(@bitCast(@as(i64, std.math.maxInt(i64))));
+                try cg.addImm64(@bitCast(@as(i64, std.math.intMin(i64))));
+                try cg.addImm64(@bitCast(@as(i64, std.math.intMax(i64))));
                 _ = try cg.cmp(lhs, .{ .imm64 = 0 }, ty, .lt);
                 try cg.addTag(.select);
             },
@@ -7030,23 +7030,23 @@ fn airShlSat(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
         switch (wasm_bits) {
             32 => blk: {
                 if (!is_signed) {
-                    try cg.addImm32(std.math.maxInt(u32));
+                    try cg.addImm32(std.math.intMax(u32));
                     break :blk;
                 }
 
-                try cg.addImm32(@bitCast(@as(i32, std.math.minInt(i32))));
-                try cg.addImm32(@bitCast(@as(i32, std.math.maxInt(i32))));
+                try cg.addImm32(@bitCast(@as(i32, std.math.intMin(i32))));
+                try cg.addImm32(@bitCast(@as(i32, std.math.intMax(i32))));
                 _ = try cg.cmp(shl_res, .{ .imm32 = 0 }, ext_ty, .lt);
                 try cg.addTag(.select);
             },
             64 => blk: {
                 if (!is_signed) {
-                    try cg.addImm64(std.math.maxInt(u64));
+                    try cg.addImm64(std.math.intMax(u64));
                     break :blk;
                 }
 
-                try cg.addImm64(@bitCast(@as(i64, std.math.minInt(i64))));
-                try cg.addImm64(@bitCast(@as(i64, std.math.maxInt(i64))));
+                try cg.addImm64(@bitCast(@as(i64, std.math.intMin(i64))));
+                try cg.addImm64(@bitCast(@as(i64, std.math.intMax(i64))));
                 _ = try cg.cmp(shl_res, .{ .imm64 = 0 }, ext_ty, .lt);
                 try cg.addTag(.select);
             },

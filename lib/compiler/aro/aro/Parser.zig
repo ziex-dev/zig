@@ -2340,7 +2340,7 @@ fn typeSpec(p: *Parser, builder: *TypeStore.Builder) Error!bool {
                 } else if (res.val.compare(.lte, .zero, p.comp)) {
                     bits = 0;
                 } else {
-                    bits = res.val.toInt(u64, p.comp) orelse std.math.maxInt(u64);
+                    bits = res.val.toInt(u64, p.comp) orelse std.math.intMax(u64);
                 }
 
                 try builder.combine(.{ .bit_int = bits }, bit_int_tok);
@@ -2709,7 +2709,7 @@ fn recordDecl(p: *Parser) Error!bool {
 
             // incomplete size error is reported later
             const bit_size = qt.bitSizeofOrNull(p.comp) orelse break :bits;
-            const bits_unchecked = res.val.toInt(u32, p.comp) orelse std.math.maxInt(u32);
+            const bits_unchecked = res.val.toInt(u32, p.comp) orelse std.math.intMax(u32);
             if (bits_unchecked > bit_size) {
                 try p.err(name_tok, .bitfield_too_big, .{});
                 break :bits;
@@ -3254,12 +3254,12 @@ fn enumerator(p: *Parser, e: *Enumerator) Error!?EnumFieldAndNode {
     if (prev_total == p.diagnostics.total) {
         // only do these warnings if we didn't already warn about overflow or non-representable values
         if (e.val.compare(.lt, .zero, p.comp)) {
-            const min_val = try Value.minInt(.int, p.comp);
+            const min_val = try Value.intMin(.int, p.comp);
             if (e.val.compare(.lt, min_val, p.comp)) {
                 try p.err(name_tok, .enumerator_too_small, .{e});
             }
         } else {
-            const max_val = try Value.maxInt(.int, p.comp);
+            const max_val = try Value.intMax(.int, p.comp);
             if (e.val.compare(.gt, max_val, p.comp)) {
                 try p.err(name_tok, .enumerator_too_large, .{e});
             }
@@ -3733,7 +3733,7 @@ fn directDeclarator(
                     return error.ParsingFailed;
                 }
 
-                const len = size.val.toInt(u64, p.comp) orelse std.math.maxInt(u64);
+                const len = size.val.toInt(u64, p.comp) orelse std.math.intMax(u64);
                 const array_qt = try p.comp.type_store.put(gpa, .{ .array = .{
                     .elem = outer,
                     .len = if (static != null)
@@ -4113,9 +4113,9 @@ fn designation(p: *Parser, il: *InitList, init_qt: QualType, index_list: *IndexL
 
             const max_len = switch (array_ty.len) {
                 .fixed, .static => |len| len,
-                else => std.math.maxInt(u64),
+                else => std.math.intMax(u64),
             };
-            const index_int = index_res.val.toInt(u64, p.comp) orelse std.math.maxInt(u64);
+            const index_int = index_res.val.toInt(u64, p.comp) orelse std.math.intMax(u64);
             if (index_int >= max_len) {
                 try p.err(l_bracket + 1, .oob_array_designator, .{index_res});
                 return error.ParsingFailed;
@@ -4251,7 +4251,7 @@ fn findScalarInitializer(
         .array => |array_ty| {
             const max_len = switch (array_ty.len) {
                 .fixed, .static => |len| len,
-                else => std.math.maxInt(u64),
+                else => std.math.intMax(u64),
             };
             if (max_len == 0) {
                 try p.err(first_tok, .empty_aggregate_init_braces, .{});
@@ -4418,7 +4418,7 @@ fn findBracedInitializer(
 
             const max_len = switch (array_ty.len) {
                 .fixed, .static => |len| len,
-                else => std.math.maxInt(u64),
+                else => std.math.intMax(u64),
             };
             if (index < max_len) {
                 index_list.items[0] = index + 1;
@@ -4643,7 +4643,7 @@ fn convertInitList(p: *Parser, il: InitList, init_qt: QualType) Error!Node.Index
                     .last_tok = p.tok_i,
                     .qt = init_qt,
                 } }),
-                else => std.math.maxInt(u64),
+                else => std.math.intMax(u64),
             };
             var start: u64 = 0;
             for (il.list.items) |*init| {
@@ -7205,8 +7205,8 @@ pub const Result = struct {
     }
 
     fn intFitsInType(res: Result, p: *Parser, ty: QualType) !bool {
-        const max_int = try Value.maxInt(ty, p.comp);
-        const min_int = try Value.minInt(ty, p.comp);
+        const max_int = try Value.intMax(ty, p.comp);
+        const min_int = try Value.intMin(ty, p.comp);
         return res.val.compare(.lte, max_int, p.comp) and
             (res.qt.signedness(p.comp) == .unsigned or res.val.compare(.gte, min_int, p.comp));
     }
@@ -9073,7 +9073,7 @@ fn fieldAccess(
             .access_tok = access_tok,
             .qt = .invalid,
             .base = lhs.node,
-            .member_index = std.math.maxInt(u32),
+            .member_index = std.math.intMax(u32),
         };
         return .{
             .qt = .invalid,
@@ -9322,7 +9322,7 @@ fn callExpr(p: *Parser, lhs: Result) Error!Result {
     const func_qt, const params_len, const func_kind = blk: {
         var base_qt = lhs.qt;
         if (base_qt.get(p.comp, .pointer)) |pointer_ty| base_qt = pointer_ty.child;
-        if (base_qt.isInvalid()) break :blk .{ base_qt, std.math.maxInt(usize), undefined };
+        if (base_qt.isInvalid()) break :blk .{ base_qt, std.math.intMax(usize), undefined };
 
         const func_type_qt = base_qt.base(p.comp);
         if (func_type_qt.type != .func) {
@@ -9453,7 +9453,7 @@ fn checkArrayBounds(p: *Parser, index: Result, array: Result, tok: TokenIndex) !
             }
         }
     }
-    const index_int = index.val.toInt(u64, p.comp) orelse std.math.maxInt(u64);
+    const index_int = index.val.toInt(u64, p.comp) orelse std.math.intMax(u64);
     if (index.qt.signedness(p.comp) == .unsigned) {
         if (index_int >= array_len) {
             try p.err(tok, .array_after, .{index});
@@ -10248,7 +10248,7 @@ fn fixedSizeInt(p: *Parser, base: u8, buf: []const u8, suffix: NumberSuffix, tok
     }
     const interned_val = try Value.int(val, p.comp);
     if (suffix.isSignedInteger() and base == 10) {
-        const max_int = try Value.maxInt(p.comp.type_store.intmax, p.comp);
+        const max_int = try Value.intMax(p.comp.type_store.intmax, p.comp);
         if (interned_val.compare(.gt, max_int, p.comp)) {
             try p.err(tok_i, .implicitly_unsigned_literal, .{});
         }
@@ -10274,7 +10274,7 @@ fn fixedSizeInt(p: *Parser, base: u8, buf: []const u8, suffix: NumberSuffix, tok
     for (qts) |qt| {
         res.qt = qt;
         if (res.qt.intRankOrder(suffix_qt, p.comp).compare(.lt)) continue;
-        const max_int = try Value.maxInt(res.qt, p.comp);
+        const max_int = try Value.intMax(res.qt, p.comp);
         if (interned_val.compare(.lte, max_int, p.comp)) break;
     } else {
         if (p.comp.langopts.emulate == .gcc) {

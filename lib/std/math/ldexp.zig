@@ -129,19 +129,19 @@ test ldexp {
         try expect(ldexp(-math.floatTrueMin(T), max_exponent + exponent_bias + fractional_bits) == -math.inf(T));
 
         // infinity -> infinity
-        try expect(ldexp(math.inf(T), math.maxInt(i32)) == math.inf(T));
-        try expect(ldexp(math.inf(T), math.minInt(i32)) == math.inf(T));
+        try expect(ldexp(math.inf(T), math.intMax(i32)) == math.inf(T));
+        try expect(ldexp(math.inf(T), math.intMin(i32)) == math.inf(T));
         try expect(ldexp(math.inf(T), max_exponent) == math.inf(T));
         try expect(ldexp(math.inf(T), min_exponent) == math.inf(T));
-        try expect(ldexp(-math.inf(T), math.maxInt(i32)) == -math.inf(T));
-        try expect(ldexp(-math.inf(T), math.minInt(i32)) == -math.inf(T));
+        try expect(ldexp(-math.inf(T), math.intMax(i32)) == -math.inf(T));
+        try expect(ldexp(-math.inf(T), math.intMin(i32)) == -math.inf(T));
 
         // extremely large n
-        try expect(ldexp(math.floatMax(T), math.maxInt(i32)) == math.inf(T));
-        try expect(ldexp(math.floatMax(T), -math.maxInt(i32)) == 0.0);
-        try expect(ldexp(math.floatMax(T), math.minInt(i32)) == 0.0);
-        try expect(ldexp(math.floatTrueMin(T), math.maxInt(i32)) == math.inf(T));
-        try expect(ldexp(math.floatTrueMin(T), -math.maxInt(i32)) == 0.0);
-        try expect(ldexp(math.floatTrueMin(T), math.minInt(i32)) == 0.0);
+        try expect(ldexp(math.floatMax(T), math.intMax(i32)) == math.inf(T));
+        try expect(ldexp(math.floatMax(T), -math.intMax(i32)) == 0.0);
+        try expect(ldexp(math.floatMax(T), math.intMin(i32)) == 0.0);
+        try expect(ldexp(math.floatTrueMin(T), math.intMax(i32)) == math.inf(T));
+        try expect(ldexp(math.floatTrueMin(T), -math.intMax(i32)) == 0.0);
+        try expect(ldexp(math.floatTrueMin(T), math.intMin(i32)) == 0.0);
     }
 }

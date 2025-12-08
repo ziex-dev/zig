@@ -17,7 +17,7 @@ pub fn SbrkAllocator(comptime sbrk: *const fn (n: usize) usize) type {
 
         pub const Error = Allocator.Error;
 
-        const max_usize = math.maxInt(usize);
+        const max_usize = math.intMax(usize);
         const ushift = math.Log2Int(usize);
         const bigpage_size = 64 * 1024;
         const pages_per_bigpage = bigpage_size / heap.pageSize();

@@ -349,10 +349,10 @@ test parseInt {
     try std.testing.expectEqual(0, try parseInt(u8, "-0", 10));
     try std.testing.expectEqual(0, try parseInt(u8, "+0", 10));
 
-    // ensure minInt is parsed correctly
-    try std.testing.expectEqual(math.minInt(i1), try parseInt(i1, "-1", 10));
-    try std.testing.expectEqual(math.minInt(i8), try parseInt(i8, "-128", 10));
-    try std.testing.expectEqual(math.minInt(i43), try parseInt(i43, "-4398046511104", 10));
+    // ensure intMin is parsed correctly
+    try std.testing.expectEqual(math.intMin(i1), try parseInt(i1, "-1", 10));
+    try std.testing.expectEqual(math.intMin(i8), try parseInt(i8, "-128", 10));
+    try std.testing.expectEqual(math.intMin(i43), try parseInt(i43, "-4398046511104", 10));
 
     // empty string or bare +- is invalid
     try std.testing.expectError(error.InvalidCharacter, parseInt(u32, "", 10));

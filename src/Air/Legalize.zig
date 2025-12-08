@@ -1821,18 +1821,18 @@ fn scalarizeReduceBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index, optimize
         },
         // identity for AND is all 1 bits
         .And => switch (scalar_ty.intInfo(zcu).signedness) {
-            .unsigned => try scalar_ty.maxIntScalar(pt, scalar_ty),
+            .unsigned => try scalar_ty.intMaxScalar(pt, scalar_ty),
             .signed => try pt.intValue(scalar_ty, -1),
         },
         // identity for @min is maximum value
         .Min => switch (scalar_ty.zigTypeTag(zcu)) {
-            .int => try scalar_ty.maxIntScalar(pt, scalar_ty),
+            .int => try scalar_ty.intMaxScalar(pt, scalar_ty),
             .float => try pt.floatValue(scalar_ty, std.math.inf(f32)),
             else => unreachable,
         },
         // identity for @max is minimum value
         .Max => switch (scalar_ty.zigTypeTag(zcu)) {
-            .int => try scalar_ty.minIntScalar(pt, scalar_ty),
+            .int => try scalar_ty.intMinScalar(pt, scalar_ty),
             .float => try pt.floatValue(scalar_ty, -std.math.inf(f32)),
             else => unreachable,
         },
@@ -2007,11 +2007,11 @@ fn safeIntcastBlockPayload(l: *Legalize, orig_inst: Air.Inst.Index) Error!Air.In
         const condbr = &condbr_buf[condbr_idx];
         condbr_idx += 1;
         const below_min_inst: Air.Inst.Index = if (have_min_check) inst: {
-            const min_val_ref = Air.internedToRef((try dest_int_ty.minInt(pt, operand_ty)).toIntern());
+            const min_val_ref = Air.internedToRef((try dest_int_ty.intMin(pt, operand_ty)).toIntern());
             break :inst try cur_block.addCmp(l, .lt, operand_ref, min_val_ref, .{ .vector = is_vector });
         } else undefined;
         const above_max_inst: Air.Inst.Index = if (have_max_check) inst: {
-            const max_val_ref = Air.internedToRef((try dest_int_ty.maxInt(pt, operand_ty)).toIntern());
+            const max_val_ref = Air.internedToRef((try dest_int_ty.intMax(pt, operand_ty)).toIntern());
             break :inst try cur_block.addCmp(l, .gt, operand_ref, max_val_ref, .{ .vector = is_vector });
         } else undefined;
         const out_of_range_inst: Air.Inst.Index = inst: {

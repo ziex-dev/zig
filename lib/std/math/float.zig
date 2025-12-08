@@ -84,7 +84,7 @@ pub fn FloatRepr(comptime Float: type) type {
                         .exponent = @as(Normalized.Exponent, comptime BiasedExponent.min_normal.unbias()) - shift,
                     } };
                 },
-                else => if (repr.mantissa <= std.math.maxInt(Normalized.Fraction)) .{ .normalized = .{
+                else => if (repr.mantissa <= std.math.intMax(Normalized.Fraction)) .{ .normalized = .{
                     .fraction = @intCast(repr.mantissa),
                     .exponent = repr.exponent.unbias(),
                 } } else .invalid,

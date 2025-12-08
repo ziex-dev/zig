@@ -202,7 +202,7 @@ pub fn DebugAllocator(comptime config: Config) type {
         const SlotIndex = std.meta.Int(.unsigned, math.log2(page_size) + 1);
 
         const total_requested_bytes_init = if (config.enable_memory_limit) @as(usize, 0) else {};
-        const requested_memory_limit_init = if (config.enable_memory_limit) @as(usize, math.maxInt(usize)) else {};
+        const requested_memory_limit_init = if (config.enable_memory_limit) @as(usize, math.intMax(usize)) else {};
 
         const mutex_init = if (config.MutexType) |T|
             T{}
@@ -1164,7 +1164,7 @@ test "very large allocation" {
     defer std.testing.expect(gpa.deinit() == .ok) catch @panic("leak");
     const allocator = gpa.allocator();
 
-    try std.testing.expectError(error.OutOfMemory, allocator.alloc(u8, math.maxInt(usize)));
+    try std.testing.expectError(error.OutOfMemory, allocator.alloc(u8, math.intMax(usize)));
 }
 
 test "realloc" {

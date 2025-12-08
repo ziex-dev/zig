@@ -30,9 +30,9 @@ fn testAbsIntegers() !void {
         try expect(@abs(x) == 1000);
     }
     {
-        var x: i64 = std.math.minInt(i64);
+        var x: i64 = std.math.intMin(i64);
         _ = &x;
-        try expect(@abs(x) == @as(u64, -std.math.minInt(i64)));
+        try expect(@abs(x) == @as(u64, -std.math.intMin(i64)));
     }
     {
         var x: i5 = -1;
@@ -311,14 +311,14 @@ fn testAbsIntVectors(comptime len: comptime_int) !void {
         try expect(std.mem.eql(u64, &@as([len]u64, y), &@as([len]u64, @abs(x))));
     }
     {
-        var x: I64 = @splat(std.math.minInt(i64));
-        var y: U64 = @splat(-std.math.minInt(i64));
+        var x: I64 = @splat(std.math.intMin(i64));
+        var y: U64 = @splat(-std.math.intMin(i64));
         _ = .{ &x, &y };
         try expect(std.mem.eql(u64, &@as([len]u64, y), &@as([len]u64, @abs(x))));
     }
     {
-        var x = comptime std.simd.repeat(len, @Vector(4, i32){ -2, 5, std.math.minInt(i32), -7 });
-        var y = comptime std.simd.repeat(len, @Vector(4, u32){ 2, 5, -std.math.minInt(i32), 7 });
+        var x = comptime std.simd.repeat(len, @Vector(4, i32){ -2, 5, std.math.intMin(i32), -7 });
+        var y = comptime std.simd.repeat(len, @Vector(4, u32){ 2, 5, -std.math.intMin(i32), 7 });
         _ = .{ &x, &y };
         try expect(std.mem.eql(u32, &@as([len]u32, y), &@as([len]u32, @abs(x))));
     }

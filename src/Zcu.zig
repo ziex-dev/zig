@@ -351,7 +351,7 @@ pub const IncrementalDebugState = struct {
     pub fn getUnitInfo(ids: *IncrementalDebugState, gpa: Allocator, unit: AnalUnit) Allocator.Error!*UnitInfo {
         const gop = try ids.units.getOrPut(gpa, unit);
         if (!gop.found_existing) gop.value_ptr.* = .{
-            .last_update_gen = std.math.maxInt(u32),
+            .last_update_gen = std.math.intMax(u32),
             .deps = .empty,
         };
         return gop.value_ptr;
@@ -743,7 +743,7 @@ pub const CompileLogLine = struct {
             return @enumFromInt(@intFromEnum(idx));
         }
         pub const Optional = enum(u32) {
-            none = std.math.maxInt(u32),
+            none = std.math.intMax(u32),
             _,
             pub fn unwrap(opt: Optional) ?Index {
                 return switch (opt) {
@@ -759,7 +759,7 @@ pub const Reference = struct {
     /// The `AnalUnit` whose semantic analysis was triggered by this reference.
     referenced: AnalUnit,
     /// Index into `all_references` of the next `Reference` triggered by the same `AnalUnit`.
-    /// `std.math.maxInt(u32)` is the sentinel.
+    /// `std.math.intMax(u32)` is the sentinel.
     next: u32,
     /// The source location of the reference.
     src: LazySrcLoc,
@@ -789,7 +789,7 @@ pub const InlineReferenceFrame = struct {
             return @enumFromInt(@intFromEnum(idx));
         }
         pub const Optional = enum(u32) {
-            none = std.math.maxInt(u32),
+            none = std.math.intMax(u32),
             _,
             pub fn unwrap(opt: Optional) ?Index {
                 return switch (opt) {
@@ -805,7 +805,7 @@ pub const TypeReference = struct {
     /// The container type which was referenced.
     referenced: InternPool.Index,
     /// Index into `all_type_references` of the next `TypeReference` triggered by the same `AnalUnit`.
-    /// `std.math.maxInt(u32)` is the sentinel.
+    /// `std.math.intMax(u32)` is the sentinel.
     next: u32,
     /// The source location of the reference.
     src: LazySrcLoc,
@@ -1068,7 +1068,7 @@ pub const File = struct {
             .astgen_failure, .success => {},
         }
 
-        assert(file.stat.size <= std.math.maxInt(u32)); // `PerThread.updateFile` checks this
+        assert(file.stat.size <= std.math.intMax(u32)); // `PerThread.updateFile` checks this
 
         var f = f: {
             const dir, const sub_path = file.path.openInfo(zcu.comp.dirs);
@@ -2649,8 +2649,8 @@ pub const LazySrcLoc = struct {
             kind: enum(u1) { scalar, multi },
             index: u31,
 
-            pub const special_else: SwitchCaseIndex = @bitCast(@as(u32, std.math.maxInt(u32)));
-            pub const special_under: SwitchCaseIndex = @bitCast(@as(u32, std.math.maxInt(u32) - 1));
+            pub const special_else: SwitchCaseIndex = @bitCast(@as(u32, std.math.intMax(u32)));
+            pub const special_under: SwitchCaseIndex = @bitCast(@as(u32, std.math.intMax(u32) - 1));
         };
 
         pub const SwitchItemIndex = packed struct(u32) {
@@ -3619,7 +3619,7 @@ pub fn deleteUnitReferences(zcu: *Zcu, anal_unit: AnalUnit) void {
         const kv = zcu.reference_table.fetchSwapRemove(anal_unit) orelse break :unit_refs;
         var idx = kv.value;
 
-        while (idx != std.math.maxInt(u32)) {
+        while (idx != std.math.intMax(u32)) {
             const ref = zcu.all_references.items[idx];
             zcu.free_references.append(gpa, idx) catch {
                 // This space will be reused eventually, so we need not propagate this error.
@@ -3649,7 +3649,7 @@ pub fn deleteUnitReferences(zcu: *Zcu, anal_unit: AnalUnit) void {
         const kv = zcu.type_reference_table.fetchSwapRemove(anal_unit) orelse break :type_refs;
         var idx = kv.value;
 
-        while (idx != std.math.maxInt(u32)) {
+        while (idx != std.math.intMax(u32)) {
             zcu.free_type_references.append(gpa, idx) catch {
                 // This space will be reused eventually, so we need not propagate this error.
                 // Just leak it for now, and let GC reclaim it later on.
@@ -3709,7 +3709,7 @@ pub fn addUnitReference(
 
     zcu.all_references.items[ref_idx] = .{
         .referenced = referenced_unit,
-        .next = if (gop.found_existing) gop.value_ptr.* else std.math.maxInt(u32),
+        .next = if (gop.found_existing) gop.value_ptr.* else std.math.intMax(u32),
         .src = ref_src,
         .inline_frame = inline_frame,
     };
@@ -3735,7 +3735,7 @@ pub fn addTypeReference(zcu: *Zcu, src_unit: AnalUnit, referenced_type: InternPo
 
     zcu.all_type_references.items[ref_idx] = .{
         .referenced = referenced_type,
-        .next = if (gop.found_existing) gop.value_ptr.* else std.math.maxInt(u32),
+        .next = if (gop.found_existing) gop.value_ptr.* else std.math.intMax(u32),
         .src = ref_src,
     };
 
@@ -4221,9 +4221,9 @@ fn resolveReferencesInner(zcu: *Zcu) !std.AutoArrayHashMapUnmanaged(AnalUnit, ?R
             log.debug("handle unit '{f}'", .{zcu.fmtAnalUnit(unit)});
 
             if (zcu.reference_table.get(unit)) |first_ref_idx| {
-                assert(first_ref_idx != std.math.maxInt(u32));
+                assert(first_ref_idx != std.math.intMax(u32));
                 var ref_idx = first_ref_idx;
-                while (ref_idx != std.math.maxInt(u32)) {
+                while (ref_idx != std.math.intMax(u32)) {
                     const ref = zcu.all_references.items[ref_idx];
                     const gop = try units.getOrPut(gpa, ref.referenced);
                     if (!gop.found_existing) {
@@ -4241,9 +4241,9 @@ fn resolveReferencesInner(zcu: *Zcu) !std.AutoArrayHashMapUnmanaged(AnalUnit, ?R
                 }
             }
             if (zcu.type_reference_table.get(unit)) |first_ref_idx| {
-                assert(first_ref_idx != std.math.maxInt(u32));
+                assert(first_ref_idx != std.math.intMax(u32));
                 var ref_idx = first_ref_idx;
-                while (ref_idx != std.math.maxInt(u32)) {
+                while (ref_idx != std.math.intMax(u32)) {
                     const ref = zcu.all_type_references.items[ref_idx];
                     const gop = try types.getOrPut(gpa, ref.referenced);
                     if (!gop.found_existing) {

@@ -1991,8 +1991,8 @@ pub fn intValueBounds(val: Value, pt: Zcu.PerThread) !?[2]Value {
     const ty = pt.zcu.intern_pool.typeOf(val.toIntern());
     if (ty == .comptime_int_type) return null;
     return .{
-        try Type.fromInterned(ty).minInt(pt, Type.fromInterned(ty)),
-        try Type.fromInterned(ty).maxInt(pt, Type.fromInterned(ty)),
+        try Type.fromInterned(ty).intMin(pt, Type.fromInterned(ty)),
+        try Type.fromInterned(ty).intMax(pt, Type.fromInterned(ty)),
     };
 }
 

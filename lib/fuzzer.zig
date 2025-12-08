@@ -1252,7 +1252,7 @@ const Mutation = enum {
                 const old = mem.readInt(T, in[idx..][0..@sizeOf(T)], endian);
                 const new = switch (op) {
                     .xor => old ^ fewValue(rng, T, xor_bits),
-                    .truncate => old & (@as(T, math.maxInt(T)) >> rng.int(Log2T)),
+                    .truncate => old & (@as(T, math.intMax(T)) >> rng.int(Log2T)),
                     .add => old +% addend: {
                         const val = rng.int(Mutation.AddValue);
                         break :addend if (val == 0) 1 else val;

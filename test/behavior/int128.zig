@@ -1,7 +1,7 @@
 const std = @import("std");
 const expect = std.testing.expect;
-const maxInt = std.math.maxInt;
-const minInt = std.math.minInt;
+const intMax = std.math.intMax;
+const intMin = std.math.intMin;
 const builtin = @import("builtin");
 
 test "uint128" {
@@ -10,8 +10,8 @@ test "uint128" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    var buff: u128 = maxInt(u128);
-    try expect(buff == maxInt(u128));
+    var buff: u128 = intMax(u128);
+    try expect(buff == intMax(u128));
 
     const magic_const = 0x12341234123412341234123412341234;
     buff = magic_const;
@@ -52,7 +52,7 @@ test "int128" {
     try expect(buff < 0 and (buff + 1) == 0);
     try expect(@as(i8, @intCast(buff)) == @as(i8, -1));
 
-    buff = minInt(i128);
+    buff = intMin(i128);
     try expect(buff < 0);
 
     buff = -0x12341234123412341234123412341234;
@@ -71,19 +71,19 @@ test "truncate int128" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     {
-        var buff: u128 = maxInt(u128);
+        var buff: u128 = intMax(u128);
         _ = &buff;
-        try expect(@as(u64, @truncate(buff)) == maxInt(u64));
-        try expect(@as(u90, @truncate(buff)) == maxInt(u90));
-        try expect(@as(u128, @truncate(buff)) == maxInt(u128));
+        try expect(@as(u64, @truncate(buff)) == intMax(u64));
+        try expect(@as(u90, @truncate(buff)) == intMax(u90));
+        try expect(@as(u128, @truncate(buff)) == intMax(u128));
     }
 
     {
-        var buff: i128 = maxInt(i128);
+        var buff: i128 = intMax(i128);
         _ = &buff;
         try expect(@as(i64, @truncate(buff)) == -1);
         try expect(@as(i90, @truncate(buff)) == -1);
-        try expect(@as(i128, @truncate(buff)) == maxInt(i128));
+        try expect(@as(i128, @truncate(buff)) == intMax(i128));
     }
 }
 

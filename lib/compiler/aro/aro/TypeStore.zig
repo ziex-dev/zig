@@ -56,51 +56,51 @@ const Repr = struct {
 const Index = enum(u29) {
     /// A NaN-like poison value
     /// Can only be nested in function types.
-    invalid = std.math.maxInt(u29) - 0,
+    invalid = std.math.intMax(u29) - 0,
     /// GNU auto type
     /// This is a placeholder specifier - it must be replaced by the actual type specifier (determined by the initializer)
     /// Must *NOT* be nested.
-    auto_type = std.math.maxInt(u29) - 1,
+    auto_type = std.math.intMax(u29) - 1,
     /// C23 auto, behaves like auto_type
     /// Must *NOT* be nested.
-    c23_auto = std.math.maxInt(u29) - 2,
-    void = std.math.maxInt(u29) - 3,
-    bool = std.math.maxInt(u29) - 4,
-    nullptr_t = std.math.maxInt(u29) - 5,
-    int_char = std.math.maxInt(u29) - 6,
-    int_schar = std.math.maxInt(u29) - 7,
-    int_uchar = std.math.maxInt(u29) - 8,
-    int_short = std.math.maxInt(u29) - 9,
-    int_ushort = std.math.maxInt(u29) - 10,
-    int_int = std.math.maxInt(u29) - 11,
-    int_uint = std.math.maxInt(u29) - 12,
-    int_long = std.math.maxInt(u29) - 13,
-    int_ulong = std.math.maxInt(u29) - 14,
-    int_long_long = std.math.maxInt(u29) - 15,
-    int_ulong_long = std.math.maxInt(u29) - 16,
-    int_int128 = std.math.maxInt(u29) - 17,
-    int_uint128 = std.math.maxInt(u29) - 18,
-    float_fp16 = std.math.maxInt(u29) - 19,
-    float_float16 = std.math.maxInt(u29) - 20,
-    float_float = std.math.maxInt(u29) - 21,
-    float_double = std.math.maxInt(u29) - 22,
-    float_long_double = std.math.maxInt(u29) - 23,
-    float_float128 = std.math.maxInt(u29) - 24,
-    void_pointer = std.math.maxInt(u29) - 25,
-    char_pointer = std.math.maxInt(u29) - 26,
-    int_pointer = std.math.maxInt(u29) - 27,
+    c23_auto = std.math.intMax(u29) - 2,
+    void = std.math.intMax(u29) - 3,
+    bool = std.math.intMax(u29) - 4,
+    nullptr_t = std.math.intMax(u29) - 5,
+    int_char = std.math.intMax(u29) - 6,
+    int_schar = std.math.intMax(u29) - 7,
+    int_uchar = std.math.intMax(u29) - 8,
+    int_short = std.math.intMax(u29) - 9,
+    int_ushort = std.math.intMax(u29) - 10,
+    int_int = std.math.intMax(u29) - 11,
+    int_uint = std.math.intMax(u29) - 12,
+    int_long = std.math.intMax(u29) - 13,
+    int_ulong = std.math.intMax(u29) - 14,
+    int_long_long = std.math.intMax(u29) - 15,
+    int_ulong_long = std.math.intMax(u29) - 16,
+    int_int128 = std.math.intMax(u29) - 17,
+    int_uint128 = std.math.intMax(u29) - 18,
+    float_fp16 = std.math.intMax(u29) - 19,
+    float_float16 = std.math.intMax(u29) - 20,
+    float_float = std.math.intMax(u29) - 21,
+    float_double = std.math.intMax(u29) - 22,
+    float_long_double = std.math.intMax(u29) - 23,
+    float_float128 = std.math.intMax(u29) - 24,
+    void_pointer = std.math.intMax(u29) - 25,
+    char_pointer = std.math.intMax(u29) - 26,
+    int_pointer = std.math.intMax(u29) - 27,
     /// Special type used when combining declarators.
-    declarator_combine = std.math.maxInt(u29) - 28,
-    float_bf16 = std.math.maxInt(u29) - 29,
-    float_float32 = std.math.maxInt(u29) - 30,
-    float_float64 = std.math.maxInt(u29) - 31,
-    float_float32x = std.math.maxInt(u29) - 32,
-    float_float64x = std.math.maxInt(u29) - 33,
-    float_float128x = std.math.maxInt(u29) - 34,
-    float_dfloat32 = std.math.maxInt(u29) - 35,
-    float_dfloat64 = std.math.maxInt(u29) - 36,
-    float_dfloat128 = std.math.maxInt(u29) - 37,
-    float_dfloat64x = std.math.maxInt(u29) - 38,
+    declarator_combine = std.math.intMax(u29) - 28,
+    float_bf16 = std.math.intMax(u29) - 29,
+    float_float32 = std.math.intMax(u29) - 30,
+    float_float64 = std.math.intMax(u29) - 31,
+    float_float32x = std.math.intMax(u29) - 32,
+    float_float64x = std.math.intMax(u29) - 33,
+    float_float128x = std.math.intMax(u29) - 34,
+    float_dfloat32 = std.math.intMax(u29) - 35,
+    float_dfloat64 = std.math.intMax(u29) - 36,
+    float_dfloat128 = std.math.intMax(u29) - 37,
+    float_dfloat64x = std.math.intMax(u29) - 38,
     _,
 };
 
@@ -1663,7 +1663,7 @@ pub const Type = union(enum) {
             /// zero for anonymous fields
             name_tok: TokenIndex = 0,
             bit_width: enum(u32) {
-                null = std.math.maxInt(u32),
+                null = std.math.intMax(u32),
                 _,
 
                 pub fn unpack(width: @This()) ?u32 {
@@ -1687,7 +1687,7 @@ pub const Type = union(enum) {
                 /// is an unnamed bitfield. There is no way to reference an unnamed bitfield in C, so
                 /// there should be no way to observe these values. If it is used, this value will
                 /// maximize the chance that a safety-checked overflow will occur.
-                const INVALID = std.math.maxInt(u64);
+                const INVALID = std.math.intMax(u64);
 
                 /// The offset of the field, in bits, from the start of the struct.
                 offset_bits: u64 align(4) = INVALID,

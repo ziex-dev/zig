@@ -12,7 +12,7 @@ const Io = std.Io;
 const mem = std.mem;
 const assert = std.debug.assert;
 const math = std.math;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const UnexpectedError = std.posix.UnexpectedError;
 
 test {
@@ -164,7 +164,7 @@ pub const FILE = struct {
             TimeoutSpecified: BOOLEAN,
             Name: [PATH_MAX_WIDE]WCHAR,
 
-            pub const WAIT_FOREVER: LARGE_INTEGER = std.math.minInt(LARGE_INTEGER);
+            pub const WAIT_FOREVER: LARGE_INTEGER = std.math.intMin(LARGE_INTEGER);
 
             pub fn init(opts: struct {
                 Timeout: ?LARGE_INTEGER = null,
@@ -782,7 +782,7 @@ pub const HEAP = opaque {
             CSR_PORT,
             _,
 
-            pub const MASK: CLASS = @enumFromInt(maxInt(@typeInfo(CLASS).@"enum".tag_type));
+            pub const MASK: CLASS = @enumFromInt(intMax(@typeInfo(CLASS).@"enum".tag_type));
         };
 
         pub const CREATE = packed struct(ULONG) {
@@ -1263,7 +1263,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                     .READ_EA = true,
                     .WRITE_EA = true,
                     .EXECUTE = true,
-                    .Reserved6 = maxInt(@FieldType(File, "Reserved6")),
+                    .Reserved6 = intMax(@FieldType(File, "Reserved6")),
                     .READ_ATTRIBUTES = true,
                     .WRITE_ATTRIBUTES = true,
                 } },
@@ -1449,7 +1449,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                 .SPECIFIC = .{ .SYMBOLIC_LINK = .{
                     .QUERY = true,
                     .SET = true,
-                    .Reserved2 = maxInt(@FieldType(SymbolicLink, "Reserved2")),
+                    .Reserved2 = intMax(@FieldType(SymbolicLink, "Reserved2")),
                 } },
             };
         };
@@ -1527,7 +1527,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                     .SUSPEND_RESUME = true,
                     .QUERY_LIMITED_INFORMATION = true,
                     .SET_LIMITED_INFORMATION = true,
-                    .Reserved14 = maxInt(@FieldType(Process, "Reserved14")),
+                    .Reserved14 = intMax(@FieldType(Process, "Reserved14")),
                 } },
             };
         };
@@ -1567,7 +1567,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                     .SET_LIMITED_INFORMATION = true,
                     .QUERY_LIMITED_INFORMATION = true,
                     .RESUME = true,
-                    .Reserved13 = maxInt(@FieldType(Thread, "Reserved13")),
+                    .Reserved13 = intMax(@FieldType(Thread, "Reserved13")),
                 } },
             };
         };
@@ -2002,13 +2002,13 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             pub const ALL_ACCESS: ACCESS_MASK = .{
                 .STANDARD = .{ .RIGHTS = .REQUIRED, .SYNCHRONIZE = true },
                 .SPECIFIC = .{ .IO_COMPLETION = .{
-                    .Reserved0 = maxInt(@FieldType(IoCompletion, "Reserved0")),
+                    .Reserved0 = intMax(@FieldType(IoCompletion, "Reserved0")),
                     .MODIFY_STATE = true,
                 } },
             };
         };
 
-        pub const RIGHTS_ALL: Specific = .{ .bits = maxInt(@FieldType(Specific, "bits")) };
+        pub const RIGHTS_ALL: Specific = .{ .bits = intMax(@FieldType(Specific, "bits")) };
     };
 
     pub const Standard = packed struct(u5) {
@@ -2683,7 +2683,7 @@ pub const RtlGenRandomError = error{
 pub fn RtlGenRandom(output: []u8) RtlGenRandomError!void {
     var total_read: usize = 0;
     var buff: []u8 = output[0..];
-    const max_read_size: ULONG = maxInt(ULONG);
+    const max_read_size: ULONG = intMax(ULONG);
 
     while (total_read < output.len) {
         const to_read: ULONG = @min(buff.len, max_read_size);
@@ -2876,7 +2876,7 @@ pub const ReadFileError = error{
 /// multiple non-atomic reads.
 pub fn ReadFile(in_hFile: HANDLE, buffer: []u8, offset: ?u64) ReadFileError!usize {
     while (true) {
-        const want_read_count: DWORD = @min(@as(DWORD, maxInt(DWORD)), buffer.len);
+        const want_read_count: DWORD = @min(@as(DWORD, intMax(DWORD)), buffer.len);
         var amt_read: DWORD = undefined;
         var overlapped_data: OVERLAPPED = undefined;
         const overlapped: ?*OVERLAPPED = if (offset) |off| blk: {
@@ -2947,7 +2947,7 @@ pub fn WriteFile(
         };
         break :blk &overlapped_data;
     } else null;
-    const adjusted_len = math.cast(u32, bytes.len) orelse maxInt(u32);
+    const adjusted_len = math.cast(u32, bytes.len) orelse intMax(u32);
     if (kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, overlapped) == 0) {
         switch (GetLastError()) {
             .INVALID_USER_BUFFER => return error.SystemResources,
@@ -3591,7 +3591,7 @@ pub fn QueryObjectName(handle: HANDLE, out_buffer: []u16) QueryObjectNameError![
 
     const info = @as(*OBJECT_NAME_INFORMATION, @ptrCast(out_buffer_aligned));
     // buffer size is specified in bytes
-    const out_buffer_len = std.math.cast(ULONG, out_buffer_aligned.len * 2) orelse maxInt(ULONG);
+    const out_buffer_len = std.math.cast(ULONG, out_buffer_aligned.len * 2) orelse intMax(ULONG);
     // last argument would return the length required for full_buffer, not exposed here
     return switch (ntdll.NtQueryObject(handle, .ObjectNameInformation, info, out_buffer_len, null)) {
         .SUCCESS => blk: {
@@ -4496,7 +4496,7 @@ pub fn eqlIgnoreCaseWtf8(a: []const u8, b: []const u8) bool {
         const a_cp = a_wtf8_it.nextCodepoint() orelse break;
         const b_cp = b_wtf8_it.nextCodepoint() orelse return false;
 
-        if (a_cp <= maxInt(u16) and b_cp <= maxInt(u16)) {
+        if (a_cp <= intMax(u16) and b_cp <= intMax(u16)) {
             if (a_cp != b_cp and upcaseImpl(@intCast(a_cp)) != upcaseImpl(@intCast(b_cp))) {
                 return false;
             }
@@ -5107,13 +5107,13 @@ pub const LANG = @import("windows/lang.zig");
 pub const SUBLANG = @import("windows/sublang.zig");
 
 /// The standard input device. Initially, this is the console input buffer, CONIN$.
-pub const STD_INPUT_HANDLE = maxInt(DWORD) - 10 + 1;
+pub const STD_INPUT_HANDLE = intMax(DWORD) - 10 + 1;
 
 /// The standard output device. Initially, this is the active console screen buffer, CONOUT$.
-pub const STD_OUTPUT_HANDLE = maxInt(DWORD) - 11 + 1;
+pub const STD_OUTPUT_HANDLE = intMax(DWORD) - 11 + 1;
 
 /// The standard error device. Initially, this is the active console screen buffer, CONOUT$.
-pub const STD_ERROR_HANDLE = maxInt(DWORD) - 12 + 1;
+pub const STD_ERROR_HANDLE = intMax(DWORD) - 12 + 1;
 
 pub const BOOL = c_int;
 pub const BOOLEAN = BYTE;
@@ -5183,9 +5183,9 @@ pub const PCTSTR = @compileError("Deprecated: choose between `PCSTR` or `PCWSTR`
 pub const TRUE = 1;
 pub const FALSE = 0;
 
-pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(maxInt(usize));
+pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(intMax(usize));
 
-pub const INVALID_FILE_ATTRIBUTES: DWORD = maxInt(DWORD);
+pub const INVALID_FILE_ATTRIBUTES: DWORD = intMax(DWORD);
 
 pub const IO_STATUS_BLOCK = extern struct {
     // "DUMMYUNIONNAME" expands to "u"

@@ -21,10 +21,10 @@ const num_stack_frames = if (std.debug.sys_can_stack_trace) 16 else 0;
 pub const Config = struct {
     /// The number of successful allocations you can expect from this allocator.
     /// The next allocation will fail.
-    fail_index: usize = std.math.maxInt(usize),
+    fail_index: usize = std.math.intMax(usize),
 
     /// Number of successful resizes to expect from this allocator. The next resize will fail.
-    resize_fail_index: usize = std.math.maxInt(usize),
+    resize_fail_index: usize = std.math.intMax(usize),
 };
 
 pub fn init(internal_allocator: mem.Allocator, config: Config) FailingAllocator {

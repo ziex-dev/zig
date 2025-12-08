@@ -17,8 +17,8 @@ pub fn writeCoffArchive(
 ) WriteCoffArchiveError!void {
     // The second linker member of a COFF archive uses a 32-bit integer for the number of members field,
     // but only 16-bit integers for the "array of 1-based indexes that map symbol names to archive
-    // member offsets." This means that the maximum number of *indexable* members is maxInt(u16) - 1.
-    if (members.list.items.len > std.math.maxInt(u16) - 1) return error.TooManyMembers;
+    // member offsets." This means that the maximum number of *indexable* members is intMax(u16) - 1.
+    if (members.list.items.len > std.math.intMax(u16) - 1) return error.TooManyMembers;
 
     try writer.writeAll(archive_start);
 

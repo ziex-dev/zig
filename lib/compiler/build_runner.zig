@@ -516,7 +516,7 @@ pub fn main() !void {
     }
 
     if (run.max_rss == 0) {
-        run.max_rss = process.totalSystemMemory() catch std.math.maxInt(u64);
+        run.max_rss = process.totalSystemMemory() catch std.math.intMax(u64);
         run.max_rss_is_default = true;
     }
 

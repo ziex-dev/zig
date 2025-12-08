@@ -5,7 +5,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualSlices = std.testing.expectEqualSlices;
 const mem = std.mem;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const native_endian = builtin.target.cpu.arch.endian();
 
 test "int to ptr cast" {
@@ -1295,7 +1295,7 @@ test "compile time int to ptr of function" {
 }
 
 // On some architectures function pointers must be aligned.
-const hardcoded_fn_addr = maxInt(usize) & ~@as(usize, 0xf);
+const hardcoded_fn_addr = intMax(usize) & ~@as(usize, 0xf);
 pub const FUNCTION_CONSTANT = @as(PFN_void, @ptrFromInt(hardcoded_fn_addr));
 pub const PFN_void = *const fn (*anyopaque) callconv(.c) void;
 

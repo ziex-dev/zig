@@ -751,7 +751,7 @@ pub const BodyWriter = struct {
     const chunk_header_template = ("0" ** chunk_len_digits) ++ "\r\n";
 
     comptime {
-        assert(max_chunk_len == std.math.maxInt(u32));
+        assert(max_chunk_len == std.math.intMax(u32));
     }
 
     pub const State = union(enum) {
@@ -921,7 +921,7 @@ pub const BodyWriter = struct {
         w.end = 0;
         if (limit == .nothing) return 0;
         if (file_reader.getSize()) |size| {
-            const n = limit.minInt64(size - file_reader.pos);
+            const n = limit.intMin64(size - file_reader.pos);
             if (n == 0) return error.EndOfStream;
             file_reader.seekBy(@intCast(n)) catch return error.Unimplemented;
             switch (bw.state) {

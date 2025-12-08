@@ -118,7 +118,7 @@ pub fn capacity(self: Atom, elf_file: *Elf) u64 {
     const next_addr = if (self.nextAtom(elf_file)) |next_atom|
         next_atom.address(elf_file)
     else
-        std.math.maxInt(u32);
+        std.math.intMax(u32);
     return @intCast(next_addr - self.address(elf_file));
 }
 

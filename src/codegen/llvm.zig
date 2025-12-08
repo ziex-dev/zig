@@ -2814,7 +2814,7 @@ pub const Object = struct {
             for (0..cc_info.inreg_param_count) |param_idx| {
                 try attributes.addParamAttr(param_idx, .inreg, &o.builder);
             }
-            for (cc_info.inreg_param_count..std.math.maxInt(u2)) |param_idx| {
+            for (cc_info.inreg_param_count..std.math.intMax(u2)) |param_idx| {
                 _ = try attributes.removeParamAttr(param_idx, .inreg);
             }
 
@@ -9109,11 +9109,11 @@ pub const FuncGen = struct {
                 );
                 const smin = try o.builder.splatValue(
                     llvm_lhs_ty,
-                    try minIntConst(&o.builder, lhs_ty, llvm_lhs_ty, zcu),
+                    try intMinConst(&o.builder, lhs_ty, llvm_lhs_ty, zcu),
                 );
                 const smax = try o.builder.splatValue(
                     llvm_lhs_ty,
-                    try maxIntConst(&o.builder, lhs_ty, llvm_lhs_ty, zcu),
+                    try intMaxConst(&o.builder, lhs_ty, llvm_lhs_ty, zcu),
                 );
                 const lhs_lt_zero = try self.wip.icmp(.slt, lhs, zero, "");
                 const slimit = try self.wip.select(.normal, lhs_lt_zero, smin, smax, "");
@@ -9224,7 +9224,7 @@ pub const FuncGen = struct {
             const panic_id: Zcu.SimplePanicId = if (dest_is_enum) .invalid_enum_value else .integer_out_of_bounds;
 
             if (have_min_check) {
-                const min_const_scalar = try minIntConst(&o.builder, dest_scalar, operand_scalar_llvm_ty, zcu);
+                const min_const_scalar = try intMinConst(&o.builder, dest_scalar, operand_scalar_llvm_ty, zcu);
                 const min_val = if (is_vector) try o.builder.splatValue(operand_llvm_ty, min_const_scalar) else min_const_scalar.toValue();
                 const ok_maybe_vec = try fg.cmp(.normal, .gte, operand_ty, operand, min_val);
                 const ok = if (is_vector) ok: {
@@ -9244,7 +9244,7 @@ pub const FuncGen = struct {
             }
 
             if (have_max_check) {
-                const max_const_scalar = try maxIntConst(&o.builder, dest_scalar, operand_scalar_llvm_ty, zcu);
+                const max_const_scalar = try intMaxConst(&o.builder, dest_scalar, operand_scalar_llvm_ty, zcu);
                 const max_val = if (is_vector) try o.builder.splatValue(operand_llvm_ty, max_const_scalar) else max_const_scalar.toValue();
                 const ok_maybe_vec = try fg.cmp(.normal, .lte, operand_ty, operand, max_val);
                 const ok = if (is_vector) ok: {
@@ -13106,13 +13106,13 @@ pub fn initializeLLVMTarget(arch: std.Target.Cpu.Arch) void {
     }
 }
 
-fn minIntConst(b: *Builder, min_ty: Type, as_ty: Builder.Type, zcu: *const Zcu) Allocator.Error!Builder.Constant {
+fn intMinConst(b: *Builder, min_ty: Type, as_ty: Builder.Type, zcu: *const Zcu) Allocator.Error!Builder.Constant {
     const info = min_ty.intInfo(zcu);
     if (info.signedness == .unsigned or info.bits == 0) {
         return b.intConst(as_ty, 0);
     }
     if (std.math.cast(u6, info.bits - 1)) |shift| {
-        const min_val: i64 = @as(i64, std.math.minInt(i64)) >> (63 - shift);
+        const min_val: i64 = @as(i64, std.math.intMin(i64)) >> (63 - shift);
         return b.intConst(as_ty, min_val);
     }
     var res: std.math.big.int.Managed = try .init(zcu.gpa);
@@ -13121,7 +13121,7 @@ fn minIntConst(b: *Builder, min_ty: Type, as_ty: Builder.Type, zcu: *const Zcu) 
     return b.bigIntConst(as_ty, res.toConst());
 }
 
-fn maxIntConst(b: *Builder, max_ty: Type, as_ty: Builder.Type, zcu: *const Zcu) Allocator.Error!Builder.Constant {
+fn intMaxConst(b: *Builder, max_ty: Type, as_ty: Builder.Type, zcu: *const Zcu) Allocator.Error!Builder.Constant {
     const info = max_ty.intInfo(zcu);
     switch (info.bits) {
         0 => return b.intConst(as_ty, 0),

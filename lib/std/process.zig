@@ -78,7 +78,7 @@ pub const EnvMap = struct {
 
     pub const EnvNameHashContext = struct {
         fn upcase(c: u21) u21 {
-            if (c <= std.math.maxInt(u16))
+            if (c <= std.math.intMax(u16))
                 return windows.ntdll.RtlUpcaseUnicodeChar(@as(u16, @intCast(c)));
             return c;
         }

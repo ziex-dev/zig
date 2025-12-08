@@ -43,7 +43,7 @@ pub fn truncf(x: f32) callconv(.c) f32 {
         e = 1;
     }
 
-    m = @as(u32, math.maxInt(u32)) >> @intCast(e);
+    m = @as(u32, math.intMax(u32)) >> @intCast(e);
     if (u & m == 0) {
         return x;
     } else {
@@ -64,7 +64,7 @@ pub fn trunc(x: f64) callconv(.c) f64 {
         e = 1;
     }
 
-    m = @as(u64, math.maxInt(u64)) >> @intCast(e);
+    m = @as(u64, math.intMax(u64)) >> @intCast(e);
     if (u & m == 0) {
         return x;
     } else {
@@ -90,7 +90,7 @@ pub fn truncq(x: f128) callconv(.c) f128 {
         e = 1;
     }
 
-    m = @as(u128, math.maxInt(u128)) >> @intCast(e);
+    m = @as(u128, math.intMax(u128)) >> @intCast(e);
     if (u & m == 0) {
         return x;
     } else {

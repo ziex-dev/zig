@@ -421,10 +421,10 @@ pub fn write(
 
 /// Queues (but does not submit) an SQE to perform a `splice(2)`
 /// Either `fd_in` or `fd_out` must be a pipe.
-/// If `fd_in` refers to a pipe, `off_in` is ignored and must be set to std.math.maxInt(u64).
-/// If `fd_in` does not refer to a pipe and `off_in` is maxInt(u64), then `len` are read
+/// If `fd_in` refers to a pipe, `off_in` is ignored and must be set to std.math.intMax(u64).
+/// If `fd_in` does not refer to a pipe and `off_in` is intMax(u64), then `len` are read
 /// from `fd_in` starting from the file offset, which is incremented by the number of bytes read.
-/// If `fd_in` does not refer to a pipe and `off_in` is not maxInt(u64), then the starting offset of `fd_in` will be `off_in`.
+/// If `fd_in` does not refer to a pipe and `off_in` is not intMax(u64), then the starting offset of `fd_in` will be `off_in`.
 /// This splice operation can be used to implement sendfile by splicing to an intermediate pipe first,
 /// then splice to the final destination. In fact, the implementation of sendfile in kernel uses splice internally.
 ///
@@ -2115,7 +2115,7 @@ test "splice/read" {
     _ = try file_src.write(&buffer_write);
 
     const fds = try posix.pipe();
-    const pipe_offset: u64 = std.math.maxInt(u64);
+    const pipe_offset: u64 = std.math.intMax(u64);
 
     const sqe_splice_to_pipe = try ring.splice(0x11111111, fd_src, 0, fds[1], pipe_offset, buffer_write.len);
     try testing.expectEqual(linux.IORING_OP.SPLICE, sqe_splice_to_pipe.opcode);

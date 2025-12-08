@@ -565,7 +565,7 @@ const MachoSymbol = struct {
     addr: u64,
     /// Value may be `unknown_ofile`.
     ofile: u32,
-    const unknown_ofile = std.math.maxInt(u32);
+    const unknown_ofile = std.math.intMax(u32);
     fn addressLessThan(context: void, lhs: MachoSymbol, rhs: MachoSymbol) bool {
         _ = context;
         return lhs.addr < rhs.addr;

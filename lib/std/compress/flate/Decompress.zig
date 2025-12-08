@@ -151,7 +151,7 @@ fn discardIndirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
             else => |e| return e,
         };
     }
-    const n = limit.minInt(r.end - r.seek);
+    const n = limit.intMin(r.end - r.seek);
     r.seek += n;
     return n;
 }

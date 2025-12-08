@@ -1,5 +1,5 @@
 const std = @import("std");
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 pub fn parseU64(buf: []const u8, radix: u8) !u64 {
     var x: u64 = 0;
@@ -29,7 +29,7 @@ fn charToDigit(c: u8) u8 {
         '0'...'9' => c - '0',
         'A'...'Z' => c - 'A' + 10,
         'a'...'z' => c - 'a' + 10,
-        else => maxInt(u8),
+        else => intMax(u8),
     };
 }
 

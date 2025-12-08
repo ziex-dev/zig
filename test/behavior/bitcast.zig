@@ -4,8 +4,8 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const math = std.math;
-const maxInt = std.math.maxInt;
-const minInt = std.math.minInt;
+const intMax = std.math.intMax;
+const intMin = std.math.intMin;
 const native_endian = builtin.target.cpu.arch.endian();
 
 test "@bitCast iX -> uX (32, 64)" {
@@ -53,14 +53,14 @@ fn testBitCast(comptime N: usize) !void {
     const iN = std.meta.Int(.signed, N);
     const uN = std.meta.Int(.unsigned, N);
 
-    try expect(conv_iN(N, -1) == maxInt(uN));
-    try expect(conv_uN(N, maxInt(uN)) == -1);
+    try expect(conv_iN(N, -1) == intMax(uN));
+    try expect(conv_uN(N, intMax(uN)) == -1);
 
-    try expect(conv_iN(N, maxInt(iN)) == maxInt(iN));
-    try expect(conv_uN(N, maxInt(iN)) == maxInt(iN));
+    try expect(conv_iN(N, intMax(iN)) == intMax(iN));
+    try expect(conv_uN(N, intMax(iN)) == intMax(iN));
 
-    try expect(conv_uN(N, 1 << (N - 1)) == minInt(iN));
-    try expect(conv_iN(N, minInt(iN)) == (1 << (N - 1)));
+    try expect(conv_uN(N, 1 << (N - 1)) == intMin(iN));
+    try expect(conv_iN(N, intMin(iN)) == (1 << (N - 1)));
 
     try expect(conv_uN(N, 0) == 0);
     try expect(conv_iN(N, 0) == 0);
@@ -148,7 +148,7 @@ test "nested bitcast" {
 // issue #3010: compiler segfault
 test "bitcast literal [4]u8 param to u32" {
     const ip = @as(u32, @bitCast([_]u8{ 255, 255, 255, 255 }));
-    try expect(ip == maxInt(u32));
+    try expect(ip == intMax(u32));
 }
 
 test "bitcast generates a temporary value" {
@@ -249,7 +249,7 @@ test "implicit cast to error union by returning" {
 
     const S = struct {
         fn entry() !void {
-            try expect((func(-1) catch unreachable) == maxInt(u64));
+            try expect((func(-1) catch unreachable) == intMax(u64));
         }
         pub fn func(sz: i64) anyerror!u64 {
             return @as(u64, @bitCast(sz));

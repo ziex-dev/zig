@@ -764,14 +764,14 @@ fn airAddSubWithOverflow(self: *Self, inst: Air.Inst.Index) !void {
                         // commutative, i.e. we can swap both of the
                         // operands
                         const lhs_immediate_ok = switch (tag) {
-                            .add_with_overflow => lhs == .immediate and lhs.immediate <= std.math.maxInt(u12),
+                            .add_with_overflow => lhs == .immediate and lhs.immediate <= std.math.intMax(u12),
                             .sub_with_overflow => false,
                             else => unreachable,
                         };
                         const rhs_immediate_ok = switch (tag) {
                             .add_with_overflow,
                             .sub_with_overflow,
-                            => rhs == .immediate and rhs.immediate <= std.math.maxInt(u12),
+                            => rhs == .immediate and rhs.immediate <= std.math.intMax(u12),
                             else => unreachable,
                         };
 
@@ -2823,11 +2823,11 @@ fn binOp(
                         // commutative, i.e. we can swap both of the
                         // operands
                         const lhs_immediate_ok = switch (tag) {
-                            .add => lhs == .immediate and lhs.immediate <= std.math.maxInt(u12),
-                            .mul => lhs == .immediate and lhs.immediate <= std.math.maxInt(u12),
-                            .bit_and => lhs == .immediate and lhs.immediate <= std.math.maxInt(u12),
-                            .bit_or => lhs == .immediate and lhs.immediate <= std.math.maxInt(u12),
-                            .xor => lhs == .immediate and lhs.immediate <= std.math.maxInt(u12),
+                            .add => lhs == .immediate and lhs.immediate <= std.math.intMax(u12),
+                            .mul => lhs == .immediate and lhs.immediate <= std.math.intMax(u12),
+                            .bit_and => lhs == .immediate and lhs.immediate <= std.math.intMax(u12),
+                            .bit_or => lhs == .immediate and lhs.immediate <= std.math.intMax(u12),
+                            .xor => lhs == .immediate and lhs.immediate <= std.math.intMax(u12),
                             .sub, .cmp_eq => false,
                             else => unreachable,
                         };
@@ -2839,7 +2839,7 @@ fn binOp(
                             .bit_or,
                             .xor,
                             .cmp_eq,
-                            => rhs == .immediate and rhs.immediate <= std.math.maxInt(u12),
+                            => rhs == .immediate and rhs.immediate <= std.math.intMax(u12),
                             else => unreachable,
                         };
 
@@ -2910,7 +2910,7 @@ fn binOp(
                     const int_info = lhs_ty.intInfo(zcu);
                     if (int_info.bits <= 64) {
                         const rhs_immediate_ok = switch (tag) {
-                            .div_trunc => rhs == .immediate and rhs.immediate <= std.math.maxInt(u12),
+                            .div_trunc => rhs == .immediate and rhs.immediate <= std.math.intMax(u12),
                             else => unreachable,
                         };
 
@@ -3781,7 +3781,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
             });
         },
         .immediate => |x| {
-            if (x <= math.maxInt(u12)) {
+            if (x <= math.intMax(u12)) {
                 _ = try self.addInst(.{
                     .tag = .mov,
                     .data = .{
@@ -3792,7 +3792,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                         },
                     },
                 });
-            } else if (x <= math.maxInt(u32)) {
+            } else if (x <= math.intMax(u32)) {
                 _ = try self.addInst(.{
                     .tag = .sethi,
                     .data = .{
@@ -3814,7 +3814,7 @@ fn genSetReg(self: *Self, ty: Type, reg: Register, mcv: MCValue) InnerError!void
                         },
                     },
                 });
-            } else if (x <= math.maxInt(u44)) {
+            } else if (x <= math.intMax(u44)) {
                 try self.genSetReg(ty, reg, .{ .immediate = @as(u32, @truncate(x >> 12)) });
 
                 _ = try self.addInst(.{

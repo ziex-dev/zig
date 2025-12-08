@@ -58,7 +58,7 @@ pub const Diagnostics = struct {
     /// Instead, this function will error if the index would ever exceed the
     /// smallest FilenameStringIndex of an ErrorDetails type.
     pub fn putString(self: *Diagnostics, str: []const u8) !SmallestStringIndexType {
-        if (self.strings.items.len >= std.math.maxInt(SmallestStringIndexType)) {
+        if (self.strings.items.len >= std.math.intMax(SmallestStringIndexType)) {
             return error.OutOfMemory; // ran out of string indexes
         }
         const dupe = try self.allocator.dupe(u8, str);
@@ -262,7 +262,7 @@ pub const ErrorDetails = struct {
             const struct_info = @typeInfo(ExpectedTypes).@"struct";
             const num_real_fields = struct_info.fields.len - 1;
             const num_padding_bits = @bitSizeOf(ExpectedTypes) - num_real_fields;
-            const mask = std.math.maxInt(struct_info.backing_integer.?) >> num_padding_bits;
+            const mask = std.math.intMax(struct_info.backing_integer.?) >> num_padding_bits;
             const relevant_bits_only = @as(struct_info.backing_integer.?, @bitCast(self)) & mask;
             const num_set_bits = @popCount(relevant_bits_only);
 
@@ -591,7 +591,7 @@ pub const ErrorDetails = struct {
                 .err, .warning => return writer.print("{s} contains too many {s} (max is {})", .{ self.extra.resource.nameForErrorDisplay(), switch (self.extra.resource) {
                     .toolbar => "buttons",
                     else => "controls",
-                }, std.math.maxInt(u16) }),
+                }, std.math.intMax(u16) }),
                 .note => return writer.print("maximum number of {s} exceeded here", .{switch (self.extra.resource) {
                     .toolbar => "buttons",
                     else => "controls",
@@ -694,7 +694,7 @@ pub const ErrorDetails = struct {
                 .hint => return,
             },
             .max_icon_ids_exhausted => switch (self.type) {
-                .err, .warning => try writer.print("maximum global icon/cursor ids exhausted (max is {})", .{std.math.maxInt(u16) - 1}),
+                .err, .warning => try writer.print("maximum global icon/cursor ids exhausted (max is {})", .{std.math.intMax(u16) - 1}),
                 .note => try writer.print("maximum icon/cursor id exceeded at index {} of this {s}", .{ self.extra.icon_dir.index, @tagName(self.extra.icon_dir.icon_type) }),
                 .hint => return,
             },
@@ -720,25 +720,25 @@ pub const ErrorDetails = struct {
                 }
             },
             .resource_header_size_exceeds_max => {
-                try writer.print("resource's header length exceeds maximum of {} bytes", .{std.math.maxInt(u32)});
+                try writer.print("resource's header length exceeds maximum of {} bytes", .{std.math.intMax(u32)});
             },
             .resource_data_size_exceeds_max => switch (self.type) {
-                .err, .warning => return writer.print("resource's data length exceeds maximum of {} bytes", .{std.math.maxInt(u32)}),
+                .err, .warning => return writer.print("resource's data length exceeds maximum of {} bytes", .{std.math.intMax(u32)}),
                 .note => return writer.print("maximum data length exceeded here", .{}),
                 .hint => return,
             },
             .control_extra_data_size_exceeds_max => switch (self.type) {
-                .err, .warning => try writer.print("control data length exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
+                .err, .warning => try writer.print("control data length exceeds maximum of {} bytes", .{std.math.intMax(u16)}),
                 .note => return writer.print("maximum control data length exceeded here", .{}),
                 .hint => return,
             },
             .version_node_size_exceeds_max => switch (self.type) {
-                .err, .warning => return writer.print("version node tree size exceeds maximum of {} bytes", .{std.math.maxInt(u16)}),
+                .err, .warning => return writer.print("version node tree size exceeds maximum of {} bytes", .{std.math.intMax(u16)}),
                 .note => return writer.print("maximum tree size exceeded while writing this child", .{}),
                 .hint => return,
             },
             .fontdir_size_exceeds_max => switch (self.type) {
-                .err, .warning => return writer.print("FONTDIR data length exceeds maximum of {} bytes", .{std.math.maxInt(u32)}),
+                .err, .warning => return writer.print("FONTDIR data length exceeds maximum of {} bytes", .{std.math.intMax(u32)}),
                 .note => return writer.writeAll("this is likely due to the size of the combined lengths of the device/face names of all FONT resources"),
                 .hint => return,
             },

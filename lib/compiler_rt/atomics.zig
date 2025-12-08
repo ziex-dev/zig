@@ -235,7 +235,7 @@ fn wideUpdate(comptime T: type, ptr: *T, val: T, update: anytype) T {
     const inner_offset = addr & (@as(T, smallest_atomic_fetch_exch_size) - 1);
     const inner_shift = @as(std.math.Log2Int(T), @intCast(inner_offset * 8));
 
-    const mask = @as(WideAtomic, std.math.maxInt(T)) << inner_shift;
+    const mask = @as(WideAtomic, std.math.intMax(T)) << inner_shift;
 
     var wide_old = @atomicLoad(WideAtomic, wide_ptr, .seq_cst);
     while (true) {

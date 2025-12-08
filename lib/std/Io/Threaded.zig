@@ -171,10 +171,10 @@ const CancelStatus = enum(usize) {
     none = 0,
     /// Cancellation has been requested and the status will be checked before
     /// entering a blocking syscall.
-    requested = std.math.maxInt(usize) - 1,
+    requested = std.math.intMax(usize) - 1,
     /// Cancellation has been acknowledged and is in progress. Signals should
     /// not be sent.
-    acknowledged = std.math.maxInt(usize),
+    acknowledged = std.math.intMax(usize),
     /// Stores a `Thread.SignaleeId` and indicates that sending a signal to this thread
     /// is needed in order to cancel. This state is set before going into
     /// a blocking operation that needs to get unblocked via signal.
@@ -875,7 +875,7 @@ fn groupAsync(
     // the associated task finishing.
     const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
     const prev_state = group_state.fetchAdd(GroupClosure.sync_one_pending, .monotonic);
-    assert((prev_state / GroupClosure.sync_one_pending) < (std.math.maxInt(usize) / GroupClosure.sync_one_pending));
+    assert((prev_state / GroupClosure.sync_one_pending) < (std.math.intMax(usize) / GroupClosure.sync_one_pending));
 
     t.mutex.unlock();
     t.cond.signal();
@@ -927,7 +927,7 @@ fn groupConcurrent(
     // the associated task finishing.
     const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
     const prev_state = group_state.fetchAdd(GroupClosure.sync_one_pending, .monotonic);
-    assert((prev_state / GroupClosure.sync_one_pending) < (std.math.maxInt(usize) / GroupClosure.sync_one_pending));
+    assert((prev_state / GroupClosure.sync_one_pending) < (std.math.intMax(usize) / GroupClosure.sync_one_pending));
 
     t.cond.signal();
 }
@@ -3126,7 +3126,7 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: Io.File, data: [][]u8) 
     var index: usize = 0;
     while (data[index].len == 0) index += 1;
     const buffer = data[index];
-    const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
+    const want_read_count: DWORD = @min(std.math.intMax(DWORD), buffer.len);
 
     while (true) {
         try current_thread.checkCancel();
@@ -3259,7 +3259,7 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: Io.File, data: [][]u8,
     var index: usize = 0;
     while (data[index].len == 0) index += 1;
     const buffer = data[index];
-    const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
+    const want_read_count: DWORD = @min(std.math.intMax(DWORD), buffer.len);
 
     var overlapped: windows.OVERLAPPED = .{
         .Internal = 0,
@@ -3517,7 +3517,7 @@ fn sleepLinux(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
         .deadline => |d| d.clock,
     });
     const deadline_nanoseconds: i96 = switch (timeout) {
-        .none => std.math.maxInt(i96),
+        .none => std.math.intMax(i96),
         .duration => |duration| duration.raw.nanoseconds,
         .deadline => |deadline| deadline.raw.nanoseconds,
     };
@@ -3555,7 +3555,7 @@ fn sleepWindows(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
     try current_thread.checkCancel();
     const ms = ms: {
         const d = (try timeout.toDurationFromNow(t_io)) orelse
-            break :ms std.math.maxInt(windows.DWORD);
+            break :ms std.math.intMax(windows.DWORD);
         break :ms std.math.lossyCast(windows.DWORD, d.raw.toMilliseconds());
     };
     // TODO: alertable true with checkCancel in a loop plus deadline
@@ -3575,7 +3575,7 @@ fn sleepWasi(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
         .flags = 0,
     } else .{
         .id = .MONOTONIC,
-        .timeout = std.math.maxInt(u64),
+        .timeout = std.math.intMax(u64),
         .precision = 0,
         .flags = 0,
     };
@@ -3602,8 +3602,8 @@ fn sleepPosix(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
 
     var timespec: posix.timespec = t: {
         const d = (try timeout.toDurationFromNow(t_io)) orelse break :t .{
-            .sec = std.math.maxInt(sec_type),
-            .nsec = std.math.maxInt(nsec_type),
+            .sec = std.math.intMax(sec_type),
+            .nsec = std.math.intMax(nsec_type),
         };
         break :t timestampToPosix(d.raw.toNanoseconds());
     };
@@ -4845,9 +4845,9 @@ fn netReadWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, data: [][]u8
                 n += len;
                 continue;
             }
-            iovec_buffer[i] = .{ .buf = buf.ptr, .len = std.math.maxInt(u32) };
+            iovec_buffer[i] = .{ .buf = buf.ptr, .len = std.math.intMax(u32) };
             i += 1;
-            n += std.math.maxInt(u32);
+            n += std.math.intMax(u32);
             break;
         }
 
@@ -5229,7 +5229,7 @@ fn netReceivePosix(
             .AGAIN => while (true) {
                 if (message_i != 0) return .{ null, message_i };
 
-                const max_poll_ms = std.math.maxInt(u31);
+                const max_poll_ms = std.math.intMax(u31);
                 const timeout_ms: u31 = if (deadline) |d| t: {
                     const duration = d.durationFromNow(t_io) catch |err| return .{ err, message_i };
                     if (duration.raw.nanoseconds <= 0) return .{ error.Timeout, message_i };
@@ -5500,7 +5500,7 @@ fn netWriteWindows(
 }
 
 fn addWsaBuf(v: []ws2_32.WSABUF, i: *u32, bytes: []const u8) void {
-    const cap = std.math.maxInt(u32);
+    const cap = std.math.intMax(u32);
     var remaining = bytes;
     while (remaining.len > cap) {
         if (v.len - i.* == 0) return;
@@ -6804,7 +6804,7 @@ pub fn futexWake(ptr: *const std.atomic.Value(u32), max_waiters: u32) void {
             switch (linux.errno(linux.futex_3arg(
                 &ptr.raw,
                 .{ .cmd = .WAKE, .private = true },
-                @min(max_waiters, std.math.maxInt(i32)),
+                @min(max_waiters, std.math.intMax(i32)),
             ))) {
                 .SUCCESS => return, // successful wake up
                 .INVAL => return, // invalid futex_wait() on ptr done elsewhere
@@ -6958,7 +6958,7 @@ const ResetEventFutex = enum(u32) {
             return;
         }
         if (@atomicRmw(ResetEventFutex, ref, .Xchg, .is_set, .release) == .waiting) {
-            futexWake(@ptrCast(ref), std.math.maxInt(u32));
+            futexWake(@ptrCast(ref), std.math.intMax(u32));
         }
     }
 

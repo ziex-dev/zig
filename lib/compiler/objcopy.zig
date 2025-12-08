@@ -666,7 +666,7 @@ const HexWriter = struct {
 };
 
 fn containsValidAddressRange(segments: []*BinaryElfSegment) bool {
-    const max_address = std.math.maxInt(u32);
+    const max_address = std.math.intMax(u32);
     for (segments) |segment| {
         if (segment.fileSize > max_address or
             segment.physicalAddress > max_address - segment.fileSize) return false;
@@ -701,21 +701,21 @@ test "containsValidAddressRange" {
     var buf: [1]*BinaryElfSegment = .{&segment};
 
     // segment too big
-    segment.fileSize = std.math.maxInt(u32) + 1;
+    segment.fileSize = std.math.intMax(u32) + 1;
     try std.testing.expect(!containsValidAddressRange(&buf));
 
     // start address too big
-    segment.physicalAddress = std.math.maxInt(u32) + 1;
+    segment.physicalAddress = std.math.intMax(u32) + 1;
     segment.fileSize = 2;
     try std.testing.expect(!containsValidAddressRange(&buf));
 
     // max address too big
-    segment.physicalAddress = std.math.maxInt(u32) - 1;
+    segment.physicalAddress = std.math.intMax(u32) - 1;
     segment.fileSize = 2;
     try std.testing.expect(!containsValidAddressRange(&buf));
 
     // is ok
-    segment.physicalAddress = std.math.maxInt(u32) - 1;
+    segment.physicalAddress = std.math.intMax(u32) - 1;
     segment.fileSize = 1;
     try std.testing.expect(containsValidAddressRange(&buf));
 }

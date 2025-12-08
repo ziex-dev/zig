@@ -894,7 +894,7 @@ test EnumMultiset {
         try copy.add(.red, 6);
         try testing.expectEqual(copy.getCount(.red), 16);
 
-        try testing.expectError(error.Overflow, copy.add(.red, std.math.maxInt(usize)));
+        try testing.expectError(error.Overflow, copy.add(.red, std.math.intMax(usize)));
     }
 
     {
@@ -932,7 +932,7 @@ test EnumMultiset {
         try testing.expectEqual(copy.getCount(.green), 11);
         try testing.expectEqual(copy.getCount(.blue), 12);
 
-        const full = EnumMultiset(Ball).initWithCount(std.math.maxInt(usize));
+        const full = EnumMultiset(Ball).initWithCount(std.math.intMax(usize));
         try testing.expectError(error.Overflow, copy.addSet(full));
     }
 
@@ -1001,7 +1001,7 @@ test EnumMultiset {
         try testing.expectEqual(result.getCount(.green), 11);
         try testing.expectEqual(result.getCount(.blue), 12);
 
-        const full = EnumMultiset(Ball).initWithCount(std.math.maxInt(usize));
+        const full = EnumMultiset(Ball).initWithCount(std.math.intMax(usize));
         try testing.expectError(error.Overflow, result.plus(full));
     }
 
@@ -1276,11 +1276,11 @@ pub fn EnumIndexer(comptime E: type) type {
             pub const Key: type = E;
 
             const backing_int_sign = @typeInfo(BackingInt).int.signedness;
-            const min_value = std.math.minInt(BackingInt);
-            const max_value = std.math.maxInt(BackingInt);
+            const min_value = std.math.intMin(BackingInt);
+            const max_value = std.math.intMax(BackingInt);
 
             const RangeType = std.meta.Int(.unsigned, @bitSizeOf(BackingInt));
-            pub const count: comptime_int = std.math.maxInt(RangeType) + 1;
+            pub const count: comptime_int = std.math.intMax(RangeType) + 1;
 
             pub fn indexOf(e: E) usize {
                 if (backing_int_sign == .unsigned)
@@ -1385,11 +1385,11 @@ test "EnumIndexer non-exhaustive" {
         };
         const Indexer = EnumIndexer(E);
 
-        const min_tag: E = @enumFromInt(std.math.minInt(BackingInt));
-        const max_tag: E = @enumFromInt(std.math.maxInt(BackingInt));
+        const min_tag: E = @enumFromInt(std.math.intMin(BackingInt));
+        const max_tag: E = @enumFromInt(std.math.intMax(BackingInt));
 
         const RangedType = std.meta.Int(.unsigned, @bitSizeOf(BackingInt));
-        const max_index: comptime_int = std.math.maxInt(RangedType);
+        const max_index: comptime_int = std.math.intMax(RangedType);
         const number_zero_tag_index: usize = switch (@typeInfo(BackingInt).int.signedness) {
             .unsigned => 0,
             .signed => std.math.divCeil(comptime_int, max_index, 2) catch unreachable,

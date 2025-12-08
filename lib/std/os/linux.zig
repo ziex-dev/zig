@@ -6,7 +6,7 @@
 const std = @import("../std.zig");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const elf = std.elf;
 const vdso = @import("linux/vdso.zig");
 const dl = @import("../dynamic_library.zig");
@@ -840,7 +840,7 @@ pub fn getdents(fd: i32, dirp: [*]u8, len: usize) usize {
         .getdents,
         @as(usize, @bitCast(@as(isize, fd))),
         @intFromPtr(dirp),
-        @min(len, maxInt(c_int)),
+        @min(len, intMax(c_int)),
     );
 }
 
@@ -849,7 +849,7 @@ pub fn getdents64(fd: i32, dirp: [*]u8, len: usize) usize {
         .getdents64,
         @as(usize, @bitCast(@as(isize, fd))),
         @intFromPtr(dirp),
-        @min(len, maxInt(c_int)),
+        @min(len, intMax(c_int)),
     );
 }
 
@@ -1830,7 +1830,7 @@ pub fn seteuid(euid: uid_t) usize {
     // id will not be changed. Since uid_t is unsigned, this wraps around to the
     // max value in C.
     comptime assert(@typeInfo(uid_t) == .int and @typeInfo(uid_t).int.signedness == .unsigned);
-    return setresuid(maxInt(uid_t), euid, maxInt(uid_t));
+    return setresuid(intMax(uid_t), euid, intMax(uid_t));
 }
 
 pub fn setegid(egid: gid_t) usize {
@@ -1841,7 +1841,7 @@ pub fn setegid(egid: gid_t) usize {
     // id will not be changed. Since gid_t is unsigned, this wraps around to the
     // max value in C.
     comptime assert(@typeInfo(uid_t) == .int and @typeInfo(uid_t).int.signedness == .unsigned);
-    return setresgid(maxInt(gid_t), egid, maxInt(gid_t));
+    return setresgid(intMax(gid_t), egid, intMax(gid_t));
 }
 
 pub fn getresuid(ruid: *uid_t, euid: *uid_t, suid: *uid_t) usize {
@@ -3683,7 +3683,7 @@ pub const SIG = if (is_mips) enum(u32) {
     pub const UNBLOCK = 2;
     pub const SETMASK = 3;
 
-    pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+    pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
     pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
     pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
 
@@ -3728,7 +3728,7 @@ pub const SIG = if (is_mips) enum(u32) {
     pub const UNBLOCK = 2;
     pub const SETMASK = 4;
 
-    pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+    pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
     pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
     pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
 
@@ -3774,7 +3774,7 @@ pub const SIG = if (is_mips) enum(u32) {
     pub const UNBLOCK = 1;
     pub const SETMASK = 2;
 
-    pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+    pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
     pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
     pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
 
@@ -6293,7 +6293,7 @@ pub const IoUring = @import("linux/IoUring.zig");
 /// in. The picked direct descriptor will be returned in cqe->res, or -ENFILE
 /// if the space is full.
 /// Available since Linux 5.19
-pub const IORING_FILE_INDEX_ALLOC = maxInt(u32);
+pub const IORING_FILE_INDEX_ALLOC = intMax(u32);
 
 pub const IOSQE_BIT = enum(u8) {
     FIXED_FILE,
@@ -8662,7 +8662,7 @@ pub const PR = enum(i32) {
     pub const SET_MM_MAP = 14;
     pub const SET_MM_MAP_SIZE = 15;
 
-    pub const SET_PTRACER_ANY = maxInt(c_ulong);
+    pub const SET_PTRACER_ANY = intMax(c_ulong);
 
     pub const FP_MODE_FR = 1 << 0;
     pub const FP_MODE_FRE = 1 << 1;

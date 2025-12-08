@@ -10,7 +10,7 @@ fn test__negsi2(a: i32, expected: i32) !void {
 }
 
 test "negsi2" {
-    // TODO ensuring that math.minInt(i32); returns error
+    // TODO ensuring that math.intMin(i32); returns error
 
     try test__negsi2(-3, 3);
     try test__negsi2(-2, 2);

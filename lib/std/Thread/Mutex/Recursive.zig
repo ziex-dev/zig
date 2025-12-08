@@ -69,4 +69,4 @@ pub fn unlock(r: *Recursive) void {
 }
 
 /// A value that does not alias any other thread id.
-const invalid_thread_id: std.Thread.Id = std.math.maxInt(std.Thread.Id);
+const invalid_thread_id: std.Thread.Id = std.math.intMax(std.Thread.Id);

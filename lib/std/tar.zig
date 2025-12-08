@@ -494,7 +494,7 @@ const PaxAttributeKind = enum {
     size,
 };
 
-// maxInt(u64) has 20 chars, base 10 in practice we got 24 chars
+// intMax(u64) has 20 chars, base 10 in practice we got 24 chars
 const pax_max_size_attr_len = 64;
 
 pub const PaxIterator = struct {

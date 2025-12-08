@@ -812,7 +812,7 @@ const Parser = struct {
 
         // Build a map from field name to index.
         // The special value `comptime_field` indicates that this is actually a comptime field.
-        const comptime_field = std.math.maxInt(usize);
+        const comptime_field = std.math.intMax(usize);
         const field_indices: std.StaticStringMap(usize) = comptime b: {
             var kvs_list: [field_infos.len]struct { []const u8, usize } = undefined;
             for (&kvs_list, field_infos, 0..) |*kv, field, i| {
@@ -1174,7 +1174,7 @@ const Parser = struct {
 };
 
 fn intFromFloatExact(T: type, value: anytype) ?T {
-    if (value > std.math.maxInt(T) or value < std.math.minInt(T)) {
+    if (value > std.math.intMax(T) or value < std.math.intMin(T)) {
         return null;
     }
 

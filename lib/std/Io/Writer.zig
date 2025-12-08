@@ -1922,7 +1922,7 @@ fn writeMultipleOf7Leb128(w: *Writer, value: anytype) Error!void {
     for (&bytes, 1..) |*byte, len| {
         const more = switch (value_info.signedness) {
             .signed => remaining >> 6 != remaining >> (value_info.bits - 1),
-            .unsigned => remaining > std.math.maxInt(u7),
+            .unsigned => remaining > std.math.intMax(u7),
         };
         byte.* = .{
             .bits = @bitCast(@as(
@@ -2031,7 +2031,7 @@ test printDuration {
     try testDurationCase("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms);
     try testDurationCase("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms + 1);
     try testDurationCase("1y1m999ns", 365 * std.time.ns_per_day + std.time.ns_per_min + 999);
-    try testDurationCase("584y49w23h34m33.709s", std.math.maxInt(u64));
+    try testDurationCase("584y49w23h34m33.709s", std.math.intMax(u64));
 
     try testing.expectFmt("=======0ns", "{D:=>10}", .{0});
     try testing.expectFmt("1ns=======", "{D:=<10}", .{1});
@@ -2096,9 +2096,9 @@ test printDurationSigned {
     try testDurationCaseSigned("-1y1h1ms", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms + 1));
     try testDurationCaseSigned("1y1m999ns", 365 * std.time.ns_per_day + std.time.ns_per_min + 999);
     try testDurationCaseSigned("-1y1m999ns", -(365 * std.time.ns_per_day + std.time.ns_per_min + 999));
-    try testDurationCaseSigned("292y24w3d23h47m16.854s", std.math.maxInt(i64));
-    try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.minInt(i64) + 1);
-    try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.minInt(i64));
+    try testDurationCaseSigned("292y24w3d23h47m16.854s", std.math.intMax(i64));
+    try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.intMin(i64) + 1);
+    try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.intMin(i64));
 
     try testing.expectFmt("=======0ns", "{D:=>10}", .{0});
     try testing.expectFmt("1ns=======", "{D:=<10}", .{1});
@@ -2167,7 +2167,7 @@ test printByteSize {
     try testing.expectFmt("file size: =66.06MB=\n", "file size: {B:=^9.2}\n", .{63 * 1024 * 1024});
     try testing.expectFmt("file size:   66.06MB\n", "file size: {B: >9.2}\n", .{63 * 1024 * 1024});
     try testing.expectFmt("file size: 66.06MB  \n", "file size: {B: <9.2}\n", .{63 * 1024 * 1024});
-    try testing.expectFmt("file size: 0.01844674407370955ZB\n", "file size: {B}\n", .{std.math.maxInt(u64)});
+    try testing.expectFmt("file size: 0.01844674407370955ZB\n", "file size: {B}\n", .{std.math.intMax(u64)});
 }
 
 test "bytes.hex" {
@@ -2293,7 +2293,7 @@ pub const Discarding = struct {
         w.end = 0;
         if (limit == .nothing) return 0;
         if (file_reader.getSize()) |size| {
-            const n = limit.minInt64(size - file_reader.pos);
+            const n = limit.intMin64(size - file_reader.pos);
             if (n == 0) return error.EndOfStream;
             file_reader.seekBy(@intCast(n)) catch return error.Unimplemented;
             w.end = 0;
@@ -2780,7 +2780,7 @@ pub const Allocating = struct {
         const pos = file_reader.logicalPos();
         const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
         if (additional == 0) return error.EndOfStream;
-        a.ensureUnusedCapacity(limit.minInt64(additional)) catch return error.WriteFailed;
+        a.ensureUnusedCapacity(limit.intMin64(additional)) catch return error.WriteFailed;
         const dest = limit.slice(a.writer.buffer[a.writer.end..]);
         const n = try file_reader.interface.readSliceShort(dest);
         if (n == 0) return error.EndOfStream;

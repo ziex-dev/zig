@@ -35,7 +35,7 @@ test "truncate to non-power-of-two integers" {
     try testTrunc(i32, i5, 4, 4);
     try testTrunc(i32, i5, -28, 4);
     try testTrunc(i32, i5, 28, -4);
-    try testTrunc(i32, i5, std.math.maxInt(i32), -1);
+    try testTrunc(i32, i5, std.math.intMax(i32), -1);
 }
 
 test "truncate to non-power-of-two integers from 128-bit" {
@@ -51,7 +51,7 @@ test "truncate to non-power-of-two integers from 128-bit" {
     try testTrunc(i128, i5, 4, 4);
     try testTrunc(i128, i5, -28, 4);
     try testTrunc(i128, i5, 28, -4);
-    try testTrunc(i128, i5, std.math.maxInt(i128), -1);
+    try testTrunc(i128, i5, std.math.intMax(i128), -1);
 }
 
 fn testTrunc(comptime Big: type, comptime Little: type, big: Big, little: Little) !void {
@@ -1041,7 +1041,7 @@ test "const alloc with comptime-known initializer is made comptime-known" {
             positive: bool,
         };
         const biggest: Const = .{
-            .limbs = &([1]usize{comptime std.math.maxInt(usize)} ** 128),
+            .limbs = &([1]usize{comptime std.math.intMax(usize)} ** 128),
             .positive = false,
         };
         if (biggest.positive) @compileError("bad");
@@ -1051,7 +1051,7 @@ test "const alloc with comptime-known initializer is made comptime-known" {
             a: usize,
         };
         const u: U = .{
-            .a = comptime std.math.maxInt(usize),
+            .a = comptime std.math.intMax(usize),
         };
         if (u.a == 0) @compileError("bad");
     }
@@ -1154,11 +1154,11 @@ test "arrays and vectors with big integers" {
 
     inline for (.{ u65528, u65529, u65535 }) |Int| {
         var a: [1]Int = undefined;
-        a[0] = std.math.maxInt(Int);
-        try expect(a[0] == comptime std.math.maxInt(Int));
+        a[0] = std.math.intMax(Int);
+        try expect(a[0] == comptime std.math.intMax(Int));
         var b: @Vector(1, Int) = undefined;
-        b[0] = std.math.maxInt(Int);
-        try expect(b[0] == comptime std.math.maxInt(Int));
+        b[0] = std.math.intMax(Int);
+        try expect(b[0] == comptime std.math.intMax(Int));
     }
 }
 
@@ -1174,10 +1174,10 @@ fn testSignedCmp(comptime T: type) !void {
     var z: T = 0;
     var p: T = 123;
     var n: T = -123;
-    var min: T = std.math.minInt(T);
-    var max: T = std.math.maxInt(T);
-    var half_min: T = std.math.minInt(T) / 2;
-    var half_max: T = std.math.minInt(T) / 2;
+    var min: T = std.math.intMin(T);
+    var max: T = std.math.intMax(T);
+    var half_min: T = std.math.intMin(T) / 2;
+    var half_max: T = std.math.intMin(T) / 2;
     _ = .{ &z, &p, &n, &min, &max, &half_min, &half_max };
     try expect(z == z and z != p and z != n);
     try expect(p == p and p != n and n == n);
@@ -1200,8 +1200,8 @@ fn testSignedCmp(comptime T: type) !void {
 fn testUnsignedCmp(comptime T: type) !void {
     var z: T = 0;
     var p: T = 123;
-    var max: T = std.math.maxInt(T);
-    var half_max: T = std.math.minInt(T) / 2;
+    var max: T = std.math.intMax(T);
+    var half_max: T = std.math.intMin(T) / 2;
     _ = .{ &z, &p, &max, &half_max };
     try expect(z == z and z != p);
     try expect(p == p);

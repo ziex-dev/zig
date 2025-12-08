@@ -340,7 +340,7 @@ pub fn emitMir(emit: *Emit) Error!void {
                                     lowered_inst.ops[0],
                                     .{ .mem = .initSib(.none, .{
                                         .base = .{ .reg = .rax },
-                                        .disp = std.math.minInt(i32),
+                                        .disp = std.math.intMin(i32),
                                     }) },
                                 }, emit.lower.target), reloc_info);
                             },
@@ -356,7 +356,7 @@ pub fn emitMir(emit: *Emit) Error!void {
                                     lowered_inst.ops[0],
                                     .{ .mem = .initSib(.none, .{
                                         .base = .{ .reg = .rax },
-                                        .disp = std.math.minInt(i32),
+                                        .disp = std.math.intMin(i32),
                                     }) },
                                 }, emit.lower.target), reloc_info);
                             },
@@ -425,7 +425,7 @@ pub fn emitMir(emit: *Emit) Error!void {
                                     lowered_inst.ops[0],
                                     .{ .mem = .initSib(lowered_inst.ops[1].mem.sib.ptr_size, .{
                                         .base = .{ .reg = .eax },
-                                        .disp = std.math.minInt(i32),
+                                        .disp = std.math.intMin(i32),
                                     }) },
                                 }, emit.lower.target), reloc_info);
                             },
@@ -461,7 +461,7 @@ pub fn emitMir(emit: *Emit) Error!void {
                                     lowered_inst.ops[0],
                                     .{ .mem = .initSib(lowered_inst.ops[1].mem.sib.ptr_size, .{
                                         .base = .{ .reg = .rax },
-                                        .disp = std.math.minInt(i32),
+                                        .disp = std.math.intMin(i32),
                                     }) },
                                 }, emit.lower.target), reloc_info);
                             },

@@ -391,7 +391,7 @@ fn dirStartsWith(path: []const u8, prefix: []const u8) bool {
 
 const dispatch_time_t = enum(u64) {
     now = 0,
-    forever = std.math.maxInt(u64),
+    forever = std.math.intMax(u64),
     _,
 };
 extern fn dispatch_time(base: dispatch_time_t, delta_ns: i64) dispatch_time_t;
@@ -434,7 +434,7 @@ const CFAllocatorContext = extern struct {
 };
 const CFArrayCallBacks = opaque {};
 const CFStringEncoding = enum(u32) {
-    invalid_id = std.math.maxInt(u32),
+    invalid_id = std.math.intMax(u32),
     mac_roman = 0,
     windows_latin_1 = 0x500,
     iso_latin_1 = 0x201,
@@ -463,7 +463,7 @@ const FSEventStreamContext = extern struct {
     copy_description: ?CFAllocatorCopyDescriptionCallBack,
 };
 const FSEventStreamEventId = enum(u64) {
-    since_now = std.math.maxInt(u64),
+    since_now = std.math.intMax(u64),
     _,
 };
 const FSEventStreamCreateFlags = packed struct(u32) {

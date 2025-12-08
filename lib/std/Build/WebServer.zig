@@ -94,7 +94,7 @@ pub fn init(opts: Options) WebServer {
     const time_report_msgs = opts.gpa.alloc([]u8, time_reports_len) catch @panic("out of memory");
     const time_report_update_times = opts.gpa.alloc(i64, time_reports_len) catch @panic("out of memory");
     @memset(time_report_msgs, &.{});
-    @memset(time_report_update_times, std.math.minInt(i64));
+    @memset(time_report_update_times, std.math.intMin(i64));
 
     return .{
         .gpa = opts.gpa,
@@ -323,7 +323,7 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
     }
 
     var prev_fuzz: Fuzz.Previous = .init;
-    var prev_time: i64 = std.math.minInt(i64);
+    var prev_time: i64 = std.math.intMin(i64);
     while (true) {
         const start_time = ws.now();
         const start_update_id = ws.update_id.load(.acquire);

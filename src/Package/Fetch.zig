@@ -623,7 +623,7 @@ fn runResource(
 }
 
 pub fn computedPackageHash(f: *const Fetch) Package.Hash {
-    const saturated_size = std.math.cast(u32, f.computed_hash.total_size) orelse std.math.maxInt(u32);
+    const saturated_size = std.math.cast(u32, f.computed_hash.total_size) orelse std.math.intMax(u32);
     if (f.manifest) |man| {
         var version_buffer: [32]u8 = undefined;
         const version: []const u8 = std.fmt.bufPrint(&version_buffer, "{f}", .{man.version}) catch &version_buffer;

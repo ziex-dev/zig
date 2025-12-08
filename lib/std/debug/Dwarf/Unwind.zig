@@ -283,8 +283,8 @@ const EntryHeader = union(enum) {
         const cie_id: u64 = switch (section) {
             .eh_frame => 0,
             .debug_frame => switch (unit_header.format) {
-                .@"32" => maxInt(u32),
-                .@"64" => maxInt(u64),
+                .@"32" => intMax(u32),
+                .@"64" => intMax(u64),
             },
         };
         if (cie_ptr_or_id == cie_id) {
@@ -682,7 +682,7 @@ fn readEhPointer(r: *Reader, enc: EH.PE, addr_size_bytes: u8, ctx: EhPointerCont
 /// Like `Reader.fixed`, but when the length of the data is unknown and we just want to allow
 /// reading indefinitely.
 fn maxSlice(ptr: [*]const u8) []const u8 {
-    const len = std.math.maxInt(usize) - @intFromPtr(ptr);
+    const len = std.math.intMax(usize) - @intFromPtr(ptr);
     return ptr[0..len];
 }
 
@@ -695,7 +695,7 @@ const Dwarf = std.debug.Dwarf;
 const EH = DW.EH;
 const Endian = std.builtin.Endian;
 const Format = DW.Format;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const missing = Dwarf.missing;
 const Reader = std.Io.Reader;
 const std = @import("std");

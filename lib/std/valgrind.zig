@@ -302,7 +302,7 @@ pub fn disableErrorReporting() void {
 
 /// Re-enable error reporting. (see disableErrorReporting())
 pub fn enableErrorReporting() void {
-    doClientRequestStmt(.ChangeErrDisablement, math.maxInt(usize), 0, 0, 0, 0);
+    doClientRequestStmt(.ChangeErrDisablement, math.intMax(usize), 0, 0, 0, 0);
 }
 
 /// Execute a monitor command from the client program.

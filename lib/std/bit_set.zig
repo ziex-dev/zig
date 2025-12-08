@@ -894,7 +894,7 @@ pub const DynamicBitSetUnmanaged = struct {
     /// Set all bits to 1.
     pub fn setAll(self: *Self) void {
         const masks_len = numMasks(self.bit_length);
-        @memset(self.masks[0..masks_len], std.math.maxInt(MaskInt));
+        @memset(self.masks[0..masks_len], std.math.intMax(MaskInt));
     }
 
     /// Flips a specific bit in the bit set

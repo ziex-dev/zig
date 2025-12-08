@@ -709,7 +709,7 @@ pub const Decompress = struct {
             r.buffer = allocating.writer.buffer;
             r.end = allocating.writer.end;
         }
-        if (d.decode.state == math.maxInt(usize)) return error.EndOfStream;
+        if (d.decode.state == math.intMax(usize)) return error.EndOfStream;
 
         process_next: {
             if (d.unpacked_size) |unpacked_size| {
@@ -750,7 +750,7 @@ pub const Decompress = struct {
                 return error.ReadFailed;
             },
         };
-        d.decode.state = math.maxInt(usize);
+        d.decode.state = math.intMax(usize);
         return 0;
     }
 };

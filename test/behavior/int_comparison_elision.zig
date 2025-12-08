@@ -1,6 +1,6 @@
 const std = @import("std");
-const minInt = std.math.minInt;
-const maxInt = std.math.maxInt;
+const intMin = std.math.intMin;
+const intMax = std.math.intMax;
 const builtin = @import("builtin");
 
 test "int comparison elision" {
@@ -27,8 +27,8 @@ test "int comparison elision" {
 // All comparisons in this test have a guaranteed result,
 // so one branch of each 'if' should never be analyzed.
 fn testIntEdges(comptime T: type) void {
-    const min = minInt(T);
-    const max = maxInt(T);
+    const min = intMin(T);
+    const max = intMax(T);
 
     var runtime_val: T = undefined;
     _ = &runtime_val;

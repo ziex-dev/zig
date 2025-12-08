@@ -856,11 +856,11 @@ pub const Request = struct {
         not_allowed = 0,
         /// Redirects are passed to the client to analyze the redirect response
         /// directly.
-        unhandled = std.math.maxInt(u16),
+        unhandled = std.math.intMax(u16),
         _,
 
         pub fn init(n: u16) RedirectBehavior {
-            assert(n != std.math.maxInt(u16));
+            assert(n != std.math.intMax(u16));
             return @enumFromInt(n);
         }
 

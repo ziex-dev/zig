@@ -30,10 +30,10 @@ pub inline fn intFromFloat(comptime I: type, a: anytype) I {
     switch (@typeInfo(I).int.signedness) {
         .unsigned => {
             if (negative) return 0;
-            if (@as(c_uint, @intCast(exponent)) >= @min(int_bits, max_exp)) return math.maxInt(I);
+            if (@as(c_uint, @intCast(exponent)) >= @min(int_bits, max_exp)) return math.intMax(I);
         },
         .signed => if (@as(c_uint, @intCast(exponent)) >= @min(int_bits - 1, max_exp)) {
-            return if (negative) math.minInt(I) else math.maxInt(I);
+            return if (negative) math.intMin(I) else math.intMax(I);
         },
     }
 
@@ -83,7 +83,7 @@ pub inline fn bigIntFromFloat(comptime signedness: std.builtin.Signedness, resul
                 .little => exponent / 32,
                 .big => result.len - 1 - exponent / 32,
             };
-            const sign_bits: u32 = if (int < 0) math.maxInt(u32) else 0;
+            const sign_bits: u32 = if (int < 0) math.intMax(u32) else 0;
             @memset(result[0..exponent_limb], switch (endian) {
                 .little => 0,
                 .big => sign_bits,

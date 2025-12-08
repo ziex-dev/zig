@@ -208,7 +208,7 @@ test "Value.fetchAdd" {
     var x = Value(usize).init(5);
     try testing.expectEqual(@as(usize, 5), x.fetchAdd(5, .seq_cst));
     try testing.expectEqual(@as(usize, 10), x.load(.seq_cst));
-    try testing.expectEqual(@as(usize, 10), x.fetchAdd(std.math.maxInt(usize), .seq_cst));
+    try testing.expectEqual(@as(usize, 10), x.fetchAdd(std.math.intMax(usize), .seq_cst));
     try testing.expectEqual(@as(usize, 9), x.load(.seq_cst));
 }
 
@@ -217,7 +217,7 @@ test "Value.fetchSub" {
     try testing.expectEqual(@as(usize, 5), x.fetchSub(5, .seq_cst));
     try testing.expectEqual(@as(usize, 0), x.load(.seq_cst));
     try testing.expectEqual(@as(usize, 0), x.fetchSub(1, .seq_cst));
-    try testing.expectEqual(@as(usize, std.math.maxInt(usize)), x.load(.seq_cst));
+    try testing.expectEqual(@as(usize, std.math.intMax(usize)), x.load(.seq_cst));
 }
 
 test "Value.fetchMin" {

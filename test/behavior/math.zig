@@ -4,8 +4,8 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualSlices = std.testing.expectEqualSlices;
-const maxInt = std.math.maxInt;
-const minInt = std.math.minInt;
+const intMax = std.math.intMax;
+const intMin = std.math.intMin;
 const mem = std.mem;
 const math = std.math;
 
@@ -645,32 +645,32 @@ fn rem(comptime T: type, a: T, b: T) T {
 }
 
 test "unsigned wrapping" {
-    try testUnsignedWrappingEval(maxInt(u32));
-    try comptime testUnsignedWrappingEval(maxInt(u32));
+    try testUnsignedWrappingEval(intMax(u32));
+    try comptime testUnsignedWrappingEval(intMax(u32));
 }
 fn testUnsignedWrappingEval(x: u32) !void {
     const zero = x +% 1;
     try expect(zero == 0);
     const orig = zero -% 1;
-    try expect(orig == maxInt(u32));
+    try expect(orig == intMax(u32));
 }
 
 test "signed wrapping" {
-    try testSignedWrappingEval(maxInt(i32));
-    try comptime testSignedWrappingEval(maxInt(i32));
+    try testSignedWrappingEval(intMax(i32));
+    try comptime testSignedWrappingEval(intMax(i32));
 }
 fn testSignedWrappingEval(x: i32) !void {
     const min_val = x +% 1;
-    try expect(min_val == minInt(i32));
+    try expect(min_val == intMin(i32));
     const max_val = min_val -% 1;
-    try expect(max_val == maxInt(i32));
+    try expect(max_val == intMax(i32));
 }
 
 test "signed negation wrapping" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    try testSignedNegationWrappingEval(minInt(i16));
-    try comptime testSignedNegationWrappingEval(minInt(i16));
+    try testSignedNegationWrappingEval(intMin(i16));
+    try comptime testSignedNegationWrappingEval(intMin(i16));
 }
 fn testSignedNegationWrappingEval(x: i16) !void {
     try expect(x == -32768);
@@ -685,7 +685,7 @@ test "unsigned negation wrapping" {
 fn testUnsignedNegationWrappingEval(x: u16) !void {
     try expect(x == 1);
     const neg = -%x;
-    try expect(neg == maxInt(u16));
+    try expect(neg == intMax(u16));
 }
 
 test "negation wrapping" {
@@ -697,8 +697,8 @@ test "negation wrapping" {
 
 fn negateWrap(comptime T: type, x: T) T {
     // This is specifically testing a safety-checked add, so
-    // special case minInt(T) which would overflow otherwise.
-    return if (x == minInt(T)) minInt(T) else ~x + 1;
+    // special case intMin(T) which would overflow otherwise.
+    return if (x == intMin(T)) intMin(T) else ~x + 1;
 }
 
 test "unsigned 64-bit division" {
@@ -732,8 +732,8 @@ test "bit shift a u1" {
 }
 
 test "truncating shift right" {
-    try testShrTrunc(maxInt(u16));
-    try comptime testShrTrunc(maxInt(u16));
+    try testShrTrunc(intMax(u16));
+    try comptime testShrTrunc(intMax(u16));
 }
 fn testShrTrunc(x: u16) !void {
     const shifted = x >> 1;
@@ -774,52 +774,52 @@ test "umax wrapped squaring" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     {
-        var x: u4 = maxInt(u4);
+        var x: u4 = intMax(u4);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u8 = maxInt(u8);
+        var x: u8 = intMax(u8);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u12 = maxInt(u12);
+        var x: u12 = intMax(u12);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u16 = maxInt(u16);
+        var x: u16 = intMax(u16);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u24 = maxInt(u24);
+        var x: u24 = intMax(u24);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u32 = maxInt(u32);
+        var x: u32 = intMax(u32);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u48 = maxInt(u48);
+        var x: u48 = intMax(u48);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u64 = maxInt(u64);
+        var x: u64 = intMax(u64);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u96 = maxInt(u96);
+        var x: u96 = intMax(u96);
         x *%= x;
         try expect(x == 1);
     }
     {
-        var x: u128 = maxInt(u128);
+        var x: u128 = intMax(u128);
         x *%= x;
         try expect(x == 1);
     }
@@ -871,10 +871,10 @@ test "@addWithOverflow" {
     try testAddWithOverflow(u8, 200, 55, 255, 0);
 
     try testAddWithOverflow(usize, 6, 6, 12, 0);
-    try testAddWithOverflow(usize, maxInt(usize), 6, 5, 1);
+    try testAddWithOverflow(usize, intMax(usize), 6, 5, 1);
 
     try testAddWithOverflow(isize, -6, -6, -12, 0);
-    try testAddWithOverflow(isize, minInt(isize), -6, maxInt(isize) - 5, 1);
+    try testAddWithOverflow(isize, intMin(isize), -6, intMax(isize) - 5, 1);
 }
 
 test "@addWithOverflow > 64 bits" {
@@ -885,39 +885,39 @@ test "@addWithOverflow > 64 bits" {
 
     try testAddWithOverflow(u65, 4, 105, 109, 0);
     try testAddWithOverflow(u65, 1000, 100, 1100, 0);
-    try testAddWithOverflow(u65, 100, maxInt(u65) - 99, 0, 1);
-    try testAddWithOverflow(u65, maxInt(u65), maxInt(u65), maxInt(u65) - 1, 1);
-    try testAddWithOverflow(u65, maxInt(u65) - 1, maxInt(u65), maxInt(u65) - 2, 1);
-    try testAddWithOverflow(u65, maxInt(u65), maxInt(u65) - 1, maxInt(u65) - 2, 1);
+    try testAddWithOverflow(u65, 100, intMax(u65) - 99, 0, 1);
+    try testAddWithOverflow(u65, intMax(u65), intMax(u65), intMax(u65) - 1, 1);
+    try testAddWithOverflow(u65, intMax(u65) - 1, intMax(u65), intMax(u65) - 2, 1);
+    try testAddWithOverflow(u65, intMax(u65), intMax(u65) - 1, intMax(u65) - 2, 1);
 
     try testAddWithOverflow(u128, 4, 105, 109, 0);
     try testAddWithOverflow(u128, 1000, 100, 1100, 0);
-    try testAddWithOverflow(u128, 100, maxInt(u128) - 99, 0, 1);
-    try testAddWithOverflow(u128, maxInt(u128), maxInt(u128), maxInt(u128) - 1, 1);
-    try testAddWithOverflow(u128, maxInt(u128) - 1, maxInt(u128), maxInt(u128) - 2, 1);
-    try testAddWithOverflow(u128, maxInt(u128), maxInt(u128) - 1, maxInt(u128) - 2, 1);
+    try testAddWithOverflow(u128, 100, intMax(u128) - 99, 0, 1);
+    try testAddWithOverflow(u128, intMax(u128), intMax(u128), intMax(u128) - 1, 1);
+    try testAddWithOverflow(u128, intMax(u128) - 1, intMax(u128), intMax(u128) - 2, 1);
+    try testAddWithOverflow(u128, intMax(u128), intMax(u128) - 1, intMax(u128) - 2, 1);
 
     try testAddWithOverflow(i65, 4, -105, -101, 0);
     try testAddWithOverflow(i65, 1000, 100, 1100, 0);
-    try testAddWithOverflow(i65, minInt(i65), 1, minInt(i65) + 1, 0);
-    try testAddWithOverflow(i65, maxInt(i65), minInt(i65), -1, 0);
-    try testAddWithOverflow(i65, minInt(i65), maxInt(i65), -1, 0);
-    try testAddWithOverflow(i65, maxInt(i65), -2, maxInt(i65) - 2, 0);
-    try testAddWithOverflow(i65, maxInt(i65), maxInt(i65), -2, 1);
-    try testAddWithOverflow(i65, minInt(i65), minInt(i65), 0, 1);
-    try testAddWithOverflow(i65, maxInt(i65) - 1, maxInt(i65), -3, 1);
-    try testAddWithOverflow(i65, maxInt(i65), maxInt(i65) - 1, -3, 1);
+    try testAddWithOverflow(i65, intMin(i65), 1, intMin(i65) + 1, 0);
+    try testAddWithOverflow(i65, intMax(i65), intMin(i65), -1, 0);
+    try testAddWithOverflow(i65, intMin(i65), intMax(i65), -1, 0);
+    try testAddWithOverflow(i65, intMax(i65), -2, intMax(i65) - 2, 0);
+    try testAddWithOverflow(i65, intMax(i65), intMax(i65), -2, 1);
+    try testAddWithOverflow(i65, intMin(i65), intMin(i65), 0, 1);
+    try testAddWithOverflow(i65, intMax(i65) - 1, intMax(i65), -3, 1);
+    try testAddWithOverflow(i65, intMax(i65), intMax(i65) - 1, -3, 1);
 
     try testAddWithOverflow(i128, 4, -105, -101, 0);
     try testAddWithOverflow(i128, 1000, 100, 1100, 0);
-    try testAddWithOverflow(i128, minInt(i128), 1, minInt(i128) + 1, 0);
-    try testAddWithOverflow(i128, maxInt(i128), minInt(i128), -1, 0);
-    try testAddWithOverflow(i128, minInt(i128), maxInt(i128), -1, 0);
-    try testAddWithOverflow(i128, maxInt(i128), -2, maxInt(i128) - 2, 0);
-    try testAddWithOverflow(i128, maxInt(i128), maxInt(i128), -2, 1);
-    try testAddWithOverflow(i128, minInt(i128), minInt(i128), 0, 1);
-    try testAddWithOverflow(i128, maxInt(i128) - 1, maxInt(i128), -3, 1);
-    try testAddWithOverflow(i128, maxInt(i128), maxInt(i128) - 1, -3, 1);
+    try testAddWithOverflow(i128, intMin(i128), 1, intMin(i128) + 1, 0);
+    try testAddWithOverflow(i128, intMax(i128), intMin(i128), -1, 0);
+    try testAddWithOverflow(i128, intMin(i128), intMax(i128), -1, 0);
+    try testAddWithOverflow(i128, intMax(i128), -2, intMax(i128) - 2, 0);
+    try testAddWithOverflow(i128, intMax(i128), intMax(i128), -2, 1);
+    try testAddWithOverflow(i128, intMin(i128), intMin(i128), 0, 1);
+    try testAddWithOverflow(i128, intMax(i128) - 1, intMax(i128), -3, 1);
+    try testAddWithOverflow(i128, intMax(i128), intMax(i128) - 1, -3, 1);
 }
 
 test "small int addition" {
@@ -997,7 +997,7 @@ test "extensive @mulWithOverflow" {
     try testMulWithOverflow(i32, 3, -0x2aaaaaab, 0x7fffffff, 1);
 
     try testMulWithOverflow(u31, 1 << 30, 1 << 30, 0, 1);
-    try testMulWithOverflow(i31, minInt(i31), minInt(i31), 0, 1);
+    try testMulWithOverflow(i31, intMin(i31), intMin(i31), 0, 1);
 }
 
 test "@mulWithOverflow bitsize > 32" {
@@ -1026,7 +1026,7 @@ test "@mulWithOverflow bitsize > 32" {
     try testMulWithOverflow(i64, 3, -0x2aaaaaaaaaaaaaab, 0x7fffffffffffffff, 1);
 
     try testMulWithOverflow(u63, 1 << 62, 1 << 62, 0, 1);
-    try testMulWithOverflow(i63, minInt(i63), minInt(i63), 0, 1);
+    try testMulWithOverflow(i63, intMin(i63), intMin(i63), 0, 1);
 }
 
 test "@mulWithOverflow bitsize 128 bits" {
@@ -1041,14 +1041,14 @@ test "@mulWithOverflow bitsize 128 bits" {
     try testMulWithOverflow(u128, 3, 0x5555555555555555_5555555555555556, 2, 1);
 
     try testMulWithOverflow(u128, 1 << 100, 1 << 27, 1 << 127, 0);
-    try testMulWithOverflow(u128, maxInt(u128), maxInt(u128), 1, 1);
+    try testMulWithOverflow(u128, intMax(u128), intMax(u128), 1, 1);
     try testMulWithOverflow(u128, 1 << 100, 1 << 28, 0, 1);
     try testMulWithOverflow(u128, 1 << 127, 1 << 127, 0, 1);
 
     try testMulWithOverflow(i128, 3, -0x2aaaaaaaaaaaaaaa_aaaaaaaaaaaaaaaa, -0x7fffffffffffffff_fffffffffffffffe, 0);
     try testMulWithOverflow(i128, 3, -0x2aaaaaaaaaaaaaaa_aaaaaaaaaaaaaaab, 0x7fffffffffffffff_ffffffffffffffff, 1);
     try testMulWithOverflow(i128, -1, -1, 1, 0);
-    try testMulWithOverflow(i128, minInt(i128), minInt(i128), 0, 1);
+    try testMulWithOverflow(i128, intMin(i128), intMin(i128), 0, 1);
 
     try testMulWithOverflow(i128, 1 << 126, 1 << 1, -1 << 127, 1);
     try testMulWithOverflow(i128, -1 << 105, 1 << 22, -1 << 127, 0);
@@ -1114,9 +1114,9 @@ test "@subWithOverflow" {
     try testSubWithOverflow(u16, 10000, 9999, 1, 0);
 
     try testSubWithOverflow(usize, 6, 6, 0, 0);
-    try testSubWithOverflow(usize, 6, 7, maxInt(usize), 1);
+    try testSubWithOverflow(usize, 6, 7, intMax(usize), 1);
     try testSubWithOverflow(isize, -6, -6, 0, 0);
-    try testSubWithOverflow(isize, minInt(isize), 6, maxInt(isize) - 5, 1);
+    try testSubWithOverflow(isize, intMin(isize), 6, intMax(isize) - 5, 1);
 }
 
 test "@subWithOverflow > 64 bits" {
@@ -1125,39 +1125,39 @@ test "@subWithOverflow > 64 bits" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
-    try testSubWithOverflow(u65, 4, 105, maxInt(u65) - 100, 1);
+    try testSubWithOverflow(u65, 4, 105, intMax(u65) - 100, 1);
     try testSubWithOverflow(u65, 1000, 100, 900, 0);
-    try testSubWithOverflow(u65, maxInt(u65), maxInt(u65), 0, 0);
-    try testSubWithOverflow(u65, maxInt(u65) - 1, maxInt(u65), maxInt(u65), 1);
-    try testSubWithOverflow(u65, maxInt(u65), maxInt(u65) - 1, 1, 0);
+    try testSubWithOverflow(u65, intMax(u65), intMax(u65), 0, 0);
+    try testSubWithOverflow(u65, intMax(u65) - 1, intMax(u65), intMax(u65), 1);
+    try testSubWithOverflow(u65, intMax(u65), intMax(u65) - 1, 1, 0);
 
-    try testSubWithOverflow(u128, 4, 105, maxInt(u128) - 100, 1);
+    try testSubWithOverflow(u128, 4, 105, intMax(u128) - 100, 1);
     try testSubWithOverflow(u128, 1000, 100, 900, 0);
-    try testSubWithOverflow(u128, maxInt(u128), maxInt(u128), 0, 0);
-    try testSubWithOverflow(u128, maxInt(u128) - 1, maxInt(u128), maxInt(u128), 1);
-    try testSubWithOverflow(u128, maxInt(u128), maxInt(u128) - 1, 1, 0);
+    try testSubWithOverflow(u128, intMax(u128), intMax(u128), 0, 0);
+    try testSubWithOverflow(u128, intMax(u128) - 1, intMax(u128), intMax(u128), 1);
+    try testSubWithOverflow(u128, intMax(u128), intMax(u128) - 1, 1, 0);
 
     try testSubWithOverflow(i65, 4, 105, -101, 0);
     try testSubWithOverflow(i65, 1000, 100, 900, 0);
-    try testSubWithOverflow(i65, maxInt(i65), maxInt(i65), 0, 0);
-    try testSubWithOverflow(i65, minInt(i65), minInt(i65), 0, 0);
-    try testSubWithOverflow(i65, maxInt(i65) - 1, maxInt(i65), -1, 0);
-    try testSubWithOverflow(i65, maxInt(i65), maxInt(i65) - 1, 1, 0);
-    try testSubWithOverflow(i65, minInt(i65), 1, maxInt(i65), 1);
-    try testSubWithOverflow(i65, maxInt(i65), minInt(i65), -1, 1);
-    try testSubWithOverflow(i65, minInt(i65), maxInt(i65), 1, 1);
-    try testSubWithOverflow(i65, maxInt(i65), -2, minInt(i65) + 1, 1);
+    try testSubWithOverflow(i65, intMax(i65), intMax(i65), 0, 0);
+    try testSubWithOverflow(i65, intMin(i65), intMin(i65), 0, 0);
+    try testSubWithOverflow(i65, intMax(i65) - 1, intMax(i65), -1, 0);
+    try testSubWithOverflow(i65, intMax(i65), intMax(i65) - 1, 1, 0);
+    try testSubWithOverflow(i65, intMin(i65), 1, intMax(i65), 1);
+    try testSubWithOverflow(i65, intMax(i65), intMin(i65), -1, 1);
+    try testSubWithOverflow(i65, intMin(i65), intMax(i65), 1, 1);
+    try testSubWithOverflow(i65, intMax(i65), -2, intMin(i65) + 1, 1);
 
     try testSubWithOverflow(i128, 4, 105, -101, 0);
     try testSubWithOverflow(i128, 1000, 100, 900, 0);
-    try testSubWithOverflow(i128, maxInt(i128), maxInt(i128), 0, 0);
-    try testSubWithOverflow(i128, minInt(i128), minInt(i128), 0, 0);
-    try testSubWithOverflow(i128, maxInt(i128) - 1, maxInt(i128), -1, 0);
-    try testSubWithOverflow(i128, maxInt(i128), maxInt(i128) - 1, 1, 0);
-    try testSubWithOverflow(i128, minInt(i128), 1, maxInt(i128), 1);
-    try testSubWithOverflow(i128, maxInt(i128), minInt(i128), -1, 1);
-    try testSubWithOverflow(i128, minInt(i128), maxInt(i128), 1, 1);
-    try testSubWithOverflow(i128, maxInt(i128), -2, minInt(i128) + 1, 1);
+    try testSubWithOverflow(i128, intMax(i128), intMax(i128), 0, 0);
+    try testSubWithOverflow(i128, intMin(i128), intMin(i128), 0, 0);
+    try testSubWithOverflow(i128, intMax(i128) - 1, intMax(i128), -1, 0);
+    try testSubWithOverflow(i128, intMax(i128), intMax(i128) - 1, 1, 0);
+    try testSubWithOverflow(i128, intMin(i128), 1, intMax(i128), 1);
+    try testSubWithOverflow(i128, intMax(i128), intMin(i128), -1, 1);
+    try testSubWithOverflow(i128, intMin(i128), intMax(i128), 1, 1);
+    try testSubWithOverflow(i128, intMax(i128), -2, intMin(i128) + 1, 1);
 }
 
 fn testShlWithOverflow(comptime T: type, a: T, b: math.Log2Int(T), shl: T, bit: u1) !void {
@@ -1202,12 +1202,12 @@ test "@shlWithOverflow > 64 bits" {
     try testShlWithOverflow(u128, 0x0100_0000_0000_0000_0000000000000000, 9, 0, 1);
 
     try testShlWithOverflow(i65, 0x0_0100_0000_0000_0000, 7, 0x0_8000_0000_0000_0000, 0);
-    try testShlWithOverflow(i65, 0x0_0100_0000_0000_0000, 8, minInt(i65), 1);
+    try testShlWithOverflow(i65, 0x0_0100_0000_0000_0000, 8, intMin(i65), 1);
     try testShlWithOverflow(i65, 0x0_0100_0000_0000_0000, 9, 0, 1);
     try testShlWithOverflow(i65, 0x0_0100_0000_0000_0000, 10, 0, 1);
 
     try testShlWithOverflow(i128, 0x0100_0000_0000_0000_0000000000000000, 6, 0x4000_0000_0000_0000_0000000000000000, 0);
-    try testShlWithOverflow(i128, 0x0100_0000_0000_0000_0000000000000000, 7, minInt(i128), 1);
+    try testShlWithOverflow(i128, 0x0100_0000_0000_0000_0000000000000000, 7, intMin(i128), 1);
     try testShlWithOverflow(i128, 0x0100_0000_0000_0000_0000000000000000, 8, 0, 1);
     try testShlWithOverflow(i128, 0x0100_0000_0000_0000_0000000000000000, 9, 0, 1);
 }
@@ -1354,8 +1354,8 @@ test "quad hex float literal parsing accurate" {
 }
 
 test "truncating shift left" {
-    try testShlTrunc(maxInt(u16));
-    try comptime testShlTrunc(maxInt(u16));
+    try testShlTrunc(intMax(u16));
+    try comptime testShlTrunc(intMax(u16));
 }
 fn testShlTrunc(x: u16) !void {
     const shifted = x << 1;

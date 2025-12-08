@@ -80,7 +80,7 @@ pub fn legalizeFeatures(_: *const std.Target) *const Air.Legalize.Features {
 /// https://github.com/ziglang/zig/issues/22419
 const hack_around_sema_opv_bugs = true;
 
-const err_ret_trace_index: Air.Inst.Index = @enumFromInt(std.math.maxInt(u32));
+const err_ret_trace_index: Air.Inst.Index = @enumFromInt(std.math.intMax(u32));
 
 gpa: Allocator,
 pt: Zcu.PerThread,
@@ -2084,11 +2084,11 @@ fn gen(
         } else null;
 
         const frame_layout = try self.computeFrameLayout(fn_info.cc);
-        const need_frame_align = frame_layout.stack_mask != std.math.maxInt(u32);
+        const need_frame_align = frame_layout.stack_mask != std.math.intMax(u32);
         const need_stack_adjust = frame_layout.stack_adjust > 0;
         const need_save_reg = frame_layout.save_reg_list.count() > 0;
         if (need_frame_align) {
-            const page_align = @as(u32, std.math.maxInt(u32)) << 12;
+            const page_align = @as(u32, std.math.intMax(u32)) << 12;
             self.mir_instructions.set(backpatch_frame_align, .{
                 .tag = .@"and",
                 .ops = .ri_s,
@@ -54091,7 +54091,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         .{ ._, ._, .mul, .src1w, ._, ._, ._ },
                         .{ ._, ._, .mov, .tmp1d, .dst0d, ._, ._ },
                         .{ ._, ._, .@"and", .dst0d, .ua(.src0, .add_umax), ._, ._ },
-                        .{ ._, ._, .@"and", .tmp1d, .uia(std.math.maxInt(u16), .src0, .sub_umax), ._, ._ },
+                        .{ ._, ._, .@"and", .tmp1d, .uia(std.math.intMax(u16), .src0, .sub_umax), ._, ._ },
                         .{ ._, ._, .@"or", .tmp1d, .tmp0d, ._, ._ },
                     } },
                 }, .{
@@ -173978,7 +173978,7 @@ fn computeFrameLayout(self: *CodeGen, cc: std.builtin.CallingConvention.Tag) !Fr
         @intCast(rsp_offset - frame_offset[@intFromEnum(FrameIndex.stack_frame)]);
 
     return .{
-        .stack_mask = @as(u32, std.math.maxInt(u32)) << @intCast(if (need_align_stack) @intFromEnum(needed_align) else 0),
+        .stack_mask = @as(u32, std.math.intMax(u32)) << @intCast(if (need_align_stack) @intFromEnum(needed_align) else 0),
         .stack_adjust = @intCast(rsp_offset - frame_offset[@intFromEnum(FrameIndex.call_frame)]),
         .save_reg_list = save_reg_list,
     };
@@ -174618,7 +174618,7 @@ fn genShiftBinOpMir(
                             temp_regs[2].to32(),
                             registerAlias(.rcx, shift_abi_size),
                         );
-                        try self.asmRegisterImmediate(.{ ._, .@"and" }, .cl, .u(std.math.maxInt(u6)));
+                        try self.asmRegisterImmediate(.{ ._, .@"and" }, .cl, .u(std.math.intMax(u6)));
                         try self.asmRegisterImmediate(.{ ._r, .sh }, temp_regs[2].to32(), .u(6));
                         try self.asmRegisterRegister(
                             .{ ._, .mov },
@@ -174647,7 +174647,7 @@ fn genShiftBinOpMir(
                             temp_regs[0].to32(),
                             registerAlias(.rcx, shift_abi_size),
                         );
-                        try self.asmRegisterImmediate(.{ ._, .@"and" }, .cl, .u(std.math.maxInt(u6)));
+                        try self.asmRegisterImmediate(.{ ._, .@"and" }, .cl, .u(std.math.intMax(u6)));
                         try self.asmRegisterImmediate(.{ ._r, .sh }, temp_regs[0].to32(), .u(6));
                     },
                 }
@@ -174707,7 +174707,7 @@ fn genShiftBinOpMir(
                     }, .sh },
                     temp_regs[2].to64(),
                     temp_regs[3].to64(),
-                    .u(shift_imm & std.math.maxInt(u6)),
+                    .u(shift_imm & std.math.intMax(u6)),
                 ),
                 else => try self.asmRegisterRegisterRegister(.{ switch (tag[0]) {
                     ._l => ._ld,
@@ -174772,7 +174772,7 @@ fn genShiftBinOpMir(
             .immediate => |shift_imm| try self.asmRegisterImmediate(
                 tag,
                 temp_regs[2].to64(),
-                .u(shift_imm & std.math.maxInt(u6)),
+                .u(shift_imm & std.math.intMax(u6)),
             ),
             else => try self.asmRegisterRegister(tag, temp_regs[2].to64(), .cl),
         }
@@ -180142,7 +180142,7 @@ fn airSplat(self: *CodeGen, inst: Air.Inst.Index) !void {
         try self.genSetReg(
             regs[1],
             vector_ty,
-            .{ .immediate = @as(u64, std.math.maxInt(u64)) >> @intCast(64 - vector_len) },
+            .{ .immediate = @as(u64, std.math.intMax(u64)) >> @intCast(64 - vector_len) },
             .{},
         );
         const src_mcv = try self.resolveInst(ty_op.operand);
@@ -185788,7 +185788,7 @@ const Temp = struct {
                         .{ ._, .p_, .xor, .src0x, .src1x, ._, ._ },
                         .{ ._, .p_b, .cmpeq, .tmp1x, .src0x, ._, ._ },
                         .{ ._, .p_b, .movmsk, .tmp0d, .tmp1x, ._, ._ },
-                        .{ ._, ._, .xor, .tmp0d, .si(std.math.maxInt(u16)), ._, ._ },
+                        .{ ._, ._, .xor, .tmp0d, .si(std.math.intMax(u16)), ._, ._ },
                     } },
                 }, .{
                     .required_features = .{ .avx2, null, null, null },
@@ -186119,7 +186119,7 @@ const Temp = struct {
                         .{ .@"0:", ._dqa, .mov, .tmp1x, .memia(.src0x, .tmp0, .add_size), ._, ._ },
                         .{ ._, .p_b, .cmpeq, .tmp1x, .memia(.src1x, .tmp0, .add_size), ._, ._ },
                         .{ ._, .p_b, .movmsk, .tmp2d, .tmp1x, ._, ._ },
-                        .{ ._, ._, .xor, .tmp2d, .si(std.math.maxInt(u16)), ._, ._ },
+                        .{ ._, ._, .xor, .tmp2d, .si(std.math.intMax(u16)), ._, ._ },
                         .{ ._, ._nz, .j, .@"0f", ._, ._, ._ },
                         .{ ._, ._, .add, .tmp0p, .si(16), ._, ._ },
                         .{ ._, ._nz, .j, .@"0b", ._, ._, ._ },
@@ -187420,7 +187420,7 @@ const Temp = struct {
             return cg.temp_type[@intFromEnum(index)];
         }
 
-        const max = std.math.maxInt(@typeInfo(Index).@"enum".tag_type);
+        const max = std.math.intMax(@typeInfo(Index).@"enum".tag_type);
         const Set = std.StaticBitSet(max);
         const SafetySet = if (std.debug.runtime_safety) Set else struct {
             inline fn initEmpty() @This() {
@@ -188548,14 +188548,14 @@ const Select = struct {
                             if (res_scalar_info.bits <= 64) {
                                 const int_val: i64 = switch (spec.kind) {
                                     else => unreachable,
-                                    .smin_mem => std.math.minInt(i64),
-                                    .smax_mem => std.math.maxInt(i64),
-                                    .slimit_delta_mem => std.math.maxInt(i64) -
-                                        (@as(i64, std.math.maxInt(i64)) >> @intCast(res_scalar_info.bits - scalar_info.bits)),
+                                    .smin_mem => std.math.intMin(i64),
+                                    .smax_mem => std.math.intMax(i64),
+                                    .slimit_delta_mem => std.math.intMax(i64) -
+                                        (@as(i64, std.math.intMax(i64)) >> @intCast(res_scalar_info.bits - scalar_info.bits)),
                                     .umin_mem => 0,
                                     .umax_mem => -1,
-                                    .umax_delta_mem => @bitCast(std.math.maxInt(u64) -
-                                        (@as(u64, std.math.maxInt(u64)) >> @intCast(res_scalar_info.bits - scalar_info.bits))),
+                                    .umax_delta_mem => @bitCast(std.math.intMax(u64) -
+                                        (@as(u64, std.math.intMax(u64)) >> @intCast(res_scalar_info.bits - scalar_info.bits))),
                                     .@"0x1p63_mem" => switch (res_scalar_info.bits) {
                                         else => unreachable,
                                         16 => @as(i64, @as(i16, @bitCast(@as(f16, 0x1p63)))) << 64 - 16,
@@ -188701,7 +188701,7 @@ const Select = struct {
                     const from_bytes: u6 = @intCast(@divExact(trunc_spec.from.bitSize(cg.target), 8));
                     const to_bytes: u6 = @intCast(@divExact(trunc_spec.to.bitSize(cg.target), 8));
                     var index: u6 = 0;
-                    while (index < elems.len) : (index += from_bytes) @memset(elems[index..][0..to_bytes], std.math.maxInt(u8));
+                    while (index < elems.len) : (index += from_bytes) @memset(elems[index..][0..to_bytes], std.math.intMax(u8));
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
                         .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
@@ -188716,8 +188716,8 @@ const Select = struct {
                     const elems = elem_buf[0..spec.type.vectorLen(zcu)];
                     const mask_len: usize = @intCast((cg.unalignedSize(ref_ty) - 1) % elems.len + 1);
                     const invert_mask: u8 = switch (mask_spec.invert) {
-                        false => std.math.minInt(u8),
-                        true => std.math.maxInt(u8),
+                        false => std.math.intMin(u8),
+                        true => std.math.intMax(u8),
                     };
                     @memset(elems[0..mask_len], ~invert_mask);
                     @memset(elems[mask_len..], invert_mask);
@@ -188739,10 +188739,10 @@ const Select = struct {
                     for (0..@intCast(ref_ty.vectorLen(zcu))) |_| {
                         switch (mask_info.kind) {
                             .sign => {
-                                @memset(elems[index..][0 .. elem_bytes - 1], std.math.minInt(u8));
-                                elems[index + elem_bytes - 1] = @bitCast(@as(i8, std.math.minInt(i8)));
+                                @memset(elems[index..][0 .. elem_bytes - 1], std.math.intMin(u8));
+                                elems[index + elem_bytes - 1] = @bitCast(@as(i8, std.math.intMin(i8)));
                             },
-                            .all => @memset(elems[index..][0..elem_bytes], std.math.maxInt(u8)),
+                            .all => @memset(elems[index..][0..elem_bytes], std.math.intMax(u8)),
                         }
                         index += elem_bytes;
                     }
@@ -188792,12 +188792,12 @@ const Select = struct {
                     const inside_len = (ref_ty.vectorLen(zcu) - 1) % elems.len + 1;
                     @memset(elems[0..inside_len], (try pt.intValue(elem_ty, @as(i64, switch (splat_spec.inside) {
                         .umin => 0,
-                        .smin => std.math.minInt(i64),
-                        .smax => std.math.maxInt(i64),
+                        .smin => std.math.intMin(i64),
+                        .smax => std.math.intMax(i64),
                     }) >> @intCast(64 - elem_bits))).toIntern());
                     @memset(elems[inside_len..], (try pt.intValue(elem_ty, @as(i64, switch (splat_spec.outside) {
-                        .smin => std.math.minInt(i64),
-                        .smax => std.math.maxInt(i64),
+                        .smin => std.math.intMin(i64),
+                        .smax => std.math.intMax(i64),
                     }) >> @intCast(64 - elem_bits))).toIntern());
                     if (elems.len == 1) return .{ try cg.tempMemFromValue(.fromInterned(elems[0])), true };
                     const mem_size = cg.unalignedSize(spec.type);
@@ -189922,7 +189922,7 @@ const Select = struct {
                 .src1_sub_bit_size => @as(SignedImm, @intCast(Select.Operand.Ref.src1.valueOf(s).immediate)) -
                     @as(SignedImm, @intCast(s.cg.nonBoolScalarBitSize(op.flags.base.ref.typeOf(s)))),
                 .log2_src0_elem_size => @intCast(std.math.log2(Select.Operand.Ref.src0.typeOf(s).elemType2(s.cg.pt.zcu).abiSize(s.cg.pt.zcu))),
-                .elem_mask => @as(u8, std.math.maxInt(u8)) >> @intCast(
+                .elem_mask => @as(u8, std.math.intMax(u8)) >> @intCast(
                     8 - ((s.cg.unalignedSize(op.flags.base.ref.typeOf(s)) - 1) %
                         @divExact(op.flags.base.size.bitSize(s.cg.target), 8) + 1 >>
                         op.flags.index.scale.toLog2()),
@@ -189945,8 +189945,8 @@ const Select = struct {
                         };
                         break :lhs @bitCast(@as(Imm, @intCast(@as(RefImm, switch (adjust) {
                             else => comptime unreachable,
-                            .smin, .smin_shr_src1 => std.math.minInt,
-                            .smax, .umax, .smax_shr_src1, .umax_shr_src1 => std.math.maxInt,
+                            .smin, .smin_shr_src1 => std.math.intMin,
+                            .smax, .umax, .smax_shr_src1, .umax_shr_src1 => std.math.intMax,
                         }(RefImm)) >> @truncate(switch (adjust) {
                             else => comptime unreachable,
                             .smin, .smax, .umax => 0,

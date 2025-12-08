@@ -219,7 +219,7 @@ generated_llvm_ir: ?*GeneratedFile,
 generated_h: ?*GeneratedFile,
 
 /// The maximum number of distinct errors within a compilation step
-/// Defaults to `std.math.maxInt(u16)`
+/// Defaults to `std.math.intMax(u16)`
 error_limit: ?u32 = null,
 
 /// Computed during make().

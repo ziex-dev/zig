@@ -1345,7 +1345,7 @@ pub fn indexPack(
     defer big_offsets.deinit(allocator);
     for (oids.items) |oid| {
         const offset = index_entries.get(oid).?.offset;
-        if (offset <= std.math.maxInt(u31)) {
+        if (offset <= std.math.intMax(u31)) {
             try writer.writeInt(u32, @intCast(offset), .big);
         } else {
             const index = big_offsets.items.len;

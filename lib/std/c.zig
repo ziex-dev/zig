@@ -6,7 +6,7 @@ const native_endian = builtin.cpu.arch.endian();
 
 const std = @import("std");
 const c = @This();
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const assert = std.debug.assert;
 const page_size = std.heap.page_size_min;
 const linux = std.os.linux;
@@ -2647,7 +2647,7 @@ pub const SIG = switch (native_os) {
         pub const ERR = -1;
     },
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => enum(u32) {
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
         pub const HOLD: ?Sigaction.handler_fn = @ptrFromInt(5);
@@ -2732,7 +2732,7 @@ pub const SIG = switch (native_os) {
 
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
 
         pub const WORDS = 4;
         pub const MAXSIG = 128;
@@ -2792,7 +2792,7 @@ pub const SIG = switch (native_os) {
     },
     .illumos => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
         pub const HOLD: ?Sigaction.handler_fn = @ptrFromInt(2);
 
@@ -2868,7 +2868,7 @@ pub const SIG = switch (native_os) {
     .netbsd => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
 
         pub const WORDS = 4;
         pub const MAXSIG = 128;
@@ -2931,7 +2931,7 @@ pub const SIG = switch (native_os) {
     .dragonfly => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
 
         pub const BLOCK = 1;
         pub const UNBLOCK = 2;
@@ -2979,7 +2979,7 @@ pub const SIG = switch (native_os) {
     .haiku => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
 
         pub const HOLD: ?Sigaction.handler_fn = @ptrFromInt(3);
 
@@ -3025,7 +3025,7 @@ pub const SIG = switch (native_os) {
     .openbsd => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
         pub const CATCH: ?Sigaction.handler_fn = @ptrFromInt(2);
         pub const HOLD: ?Sigaction.handler_fn = @ptrFromInt(3);
 
@@ -3072,7 +3072,7 @@ pub const SIG = switch (native_os) {
     // https://github.com/SerenityOS/serenity/blob/046c23f567a17758d762a33bdf04bacbfd088f9f/Kernel/API/POSIX/signal_numbers.h
     .serenity => enum(u32) {
         pub const DFL: ?Sigaction.handler_fn = @ptrFromInt(0);
-        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(maxInt(usize));
+        pub const ERR: ?Sigaction.handler_fn = @ptrFromInt(intMax(usize));
         pub const IGN: ?Sigaction.handler_fn = @ptrFromInt(1);
 
         pub const BLOCK = 1;
@@ -7899,7 +7899,7 @@ pub const pthread_mutex_t = switch (native_os) {
         inner: ?*anyopaque = null,
     },
     .hermit => extern struct {
-        ptr: usize = maxInt(usize),
+        ptr: usize = intMax(usize),
     },
     .netbsd => extern struct {
         magic: u32 = 0x33330003,
@@ -7955,7 +7955,7 @@ pub const pthread_cond_t = switch (native_os) {
         inner: ?*anyopaque = null,
     },
     .hermit => extern struct {
-        ptr: usize = maxInt(usize),
+        ptr: usize = intMax(usize),
     },
     .netbsd => extern struct {
         magic: u32 = 0x55550005,
@@ -8013,7 +8013,7 @@ pub const pthread_rwlock_t = switch (native_os) {
         ptr: ?*anyopaque = null,
     },
     .hermit => extern struct {
-        ptr: usize = maxInt(usize),
+        ptr: usize = intMax(usize),
     },
     .netbsd => extern struct {
         magic: c_uint = 0x99990009,
@@ -8754,7 +8754,7 @@ pub const MREMAP = switch (native_os) {
 };
 
 /// Used by libc to communicate failure. Not actually part of the underlying syscall.
-pub const MAP_FAILED: *anyopaque = @ptrFromInt(maxInt(usize));
+pub const MAP_FAILED: *anyopaque = @ptrFromInt(intMax(usize));
 
 pub const cc_t = u8;
 

@@ -4078,7 +4078,7 @@ fn airTrunc(f: *Function, inst: Air.Inst.Index) !CValue {
             try f.writeCValue(w, operand, .FunctionArgument);
             try v.elem(f, w);
             try w.print(", {f})", .{
-                try f.fmtIntLiteralHex(try inst_scalar_ty.maxIntScalar(pt, scalar_ty)),
+                try f.fmtIntLiteralHex(try inst_scalar_ty.intMaxScalar(pt, scalar_ty)),
             });
         },
         .signed => {
@@ -7368,7 +7368,7 @@ fn airReduce(f: *Function, inst: Air.Inst.Index) !CValue {
         .And => switch (scalar_ty.zigTypeTag(zcu)) {
             .bool => Value.true,
             .int => switch (scalar_ty.intInfo(zcu).signedness) {
-                .unsigned => try scalar_ty.maxIntScalar(pt, scalar_ty),
+                .unsigned => try scalar_ty.intMaxScalar(pt, scalar_ty),
                 .signed => try pt.intValue(scalar_ty, -1),
             },
             else => unreachable,
@@ -7385,13 +7385,13 @@ fn airReduce(f: *Function, inst: Air.Inst.Index) !CValue {
         },
         .Min => switch (scalar_ty.zigTypeTag(zcu)) {
             .bool => Value.true,
-            .int => try scalar_ty.maxIntScalar(pt, scalar_ty),
+            .int => try scalar_ty.intMaxScalar(pt, scalar_ty),
             .float => try pt.floatValue(scalar_ty, std.math.nan(f128)),
             else => unreachable,
         },
         .Max => switch (scalar_ty.zigTypeTag(zcu)) {
             .bool => Value.false,
-            .int => try scalar_ty.minIntScalar(pt, scalar_ty),
+            .int => try scalar_ty.intMinScalar(pt, scalar_ty),
             .float => try pt.floatValue(scalar_ty, std.math.nan(f128)),
             else => unreachable,
         },

@@ -7,7 +7,7 @@ fn test__negdi2(a: i64, expected: i64) !void {
 }
 
 test "negdi2" {
-    // TODO ensuring that math.minInt(i64); returns error
+    // TODO ensuring that math.intMin(i64); returns error
 
     try test__negdi2(-3, 3);
     try test__negdi2(-2, 2);

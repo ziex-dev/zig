@@ -1048,7 +1048,7 @@ test "peer slices keep abi alignment with empty struct" {
 }
 
 test "sentinel expression in slice operation has result type" {
-    const sentinel = std.math.maxInt(u16);
+    const sentinel = std.math.intMax(u16);
 
     const arr: [3]u16 = .{ 1, 2, sentinel };
     const slice = arr[0..2 :@intCast(sentinel)];

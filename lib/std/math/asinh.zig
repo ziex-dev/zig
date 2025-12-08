@@ -8,7 +8,7 @@ const std = @import("../std.zig");
 const math = std.math;
 const mem = std.mem;
 const expect = std.testing.expect;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 /// Returns the hyperbolic arc-sin of x.
 ///
@@ -58,7 +58,7 @@ fn asinh64(x: f64) f64 {
     const e = (u >> 52) & 0x7FF;
     const s = u >> 63;
 
-    var rx = @as(f64, @bitCast(u & (maxInt(u64) >> 1))); // |x|
+    var rx = @as(f64, @bitCast(u & (intMax(u64) >> 1))); // |x|
 
     // |x| >= 0x1p26 or inf or nan
     if (e >= 0x3FF + 26) {

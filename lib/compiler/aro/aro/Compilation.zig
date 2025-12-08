@@ -30,7 +30,7 @@ pub const Error = error{
 } || Allocator.Error;
 pub const AddSourceError = Error || error{FileTooBig};
 
-pub const bit_int_max_bits = std.math.maxInt(u16);
+pub const bit_int_max_bits = std.math.intMax(u16);
 const path_buf_stack_limit = 1024;
 
 /// Environment variables used during compilation / linking.
@@ -1026,7 +1026,7 @@ pub fn generateBuiltinMacros(comp: *Compilation, system_defines_mode: SystemDefi
         error.WriteFailed, error.OutOfMemory => return error.OutOfMemory,
     };
 
-    if (allocating.written().len > std.math.maxInt(u32)) return error.FileTooBig;
+    if (allocating.written().len > std.math.intMax(u32)) return error.FileTooBig;
 
     const contents = try allocating.toOwnedSlice();
     errdefer comp.gpa.free(contents);
@@ -1332,11 +1332,11 @@ pub fn hasHalfPrecisionFloatABI(comp: *const Compilation) bool {
 fn generateIntMax(comp: *const Compilation, w: *Io.Writer, name: []const u8, qt: QualType) !void {
     const unsigned = qt.signedness(comp) == .unsigned;
     const max: u128 = switch (qt.bitSizeof(comp)) {
-        8 => if (unsigned) std.math.maxInt(u8) else std.math.maxInt(i8),
-        16 => if (unsigned) std.math.maxInt(u16) else std.math.maxInt(i16),
-        32 => if (unsigned) std.math.maxInt(u32) else std.math.maxInt(i32),
-        64 => if (unsigned) std.math.maxInt(u64) else std.math.maxInt(i64),
-        128 => if (unsigned) std.math.maxInt(u128) else std.math.maxInt(i128),
+        8 => if (unsigned) std.math.intMax(u8) else std.math.intMax(i8),
+        16 => if (unsigned) std.math.intMax(u16) else std.math.intMax(i16),
+        32 => if (unsigned) std.math.intMax(u32) else std.math.intMax(i32),
+        64 => if (unsigned) std.math.intMax(u64) else std.math.intMax(i64),
+        128 => if (unsigned) std.math.intMax(u128) else std.math.intMax(i128),
         else => unreachable,
     };
     try w.print("#define __{s}_MAX__ {d}{s}\n", .{ name, max, qt.intValueSuffix(comp) });
@@ -1346,9 +1346,9 @@ fn generateIntMax(comp: *const Compilation, w: *Io.Writer, name: []const u8, qt:
 pub fn wcharMax(comp: *const Compilation) u32 {
     const unsigned = comp.type_store.wchar.signedness(comp) == .unsigned;
     return switch (comp.type_store.wchar.bitSizeof(comp)) {
-        8 => if (unsigned) std.math.maxInt(u8) else std.math.maxInt(i8),
-        16 => if (unsigned) std.math.maxInt(u16) else std.math.maxInt(i16),
-        32 => if (unsigned) std.math.maxInt(u32) else std.math.maxInt(i32),
+        8 => if (unsigned) std.math.intMax(u8) else std.math.intMax(i8),
+        16 => if (unsigned) std.math.intMax(u16) else std.math.intMax(i16),
+        32 => if (unsigned) std.math.intMax(u32) else std.math.intMax(i32),
         else => unreachable,
     };
 }
@@ -1441,7 +1441,7 @@ pub fn getSource(comp: *const Compilation, id: Source.Id) Source {
 /// caller retains ownership of `path`
 /// To add a file's contents given its path, see addSourceFromPath
 pub fn addSourceFromOwnedBuffer(comp: *Compilation, path: []const u8, buf: []u8, kind: Source.Kind) !Source {
-    assert(buf.len <= std.math.maxInt(u32));
+    assert(buf.len <= std.math.intMax(u32));
     try comp.sources.ensureUnusedCapacity(comp.gpa, 1);
 
     var contents = buf;
@@ -1618,7 +1618,7 @@ fn addNewlineEscapeError(
 /// the allocation, please use `addSourceFromOwnedBuffer`
 pub fn addSourceFromBuffer(comp: *Compilation, path: []const u8, buf: []const u8) AddSourceError!Source {
     if (comp.sources.get(path)) |some| return some;
-    if (buf.len > std.math.maxInt(u32)) return error.FileTooBig;
+    if (buf.len > std.math.intMax(u32)) return error.FileTooBig;
 
     const contents = try comp.gpa.dupe(u8, buf);
     errdefer comp.gpa.free(contents);
@@ -1983,12 +1983,12 @@ fn getFileContents(comp: *Compilation, file: std.fs.File, limit: Io.Limit) ![]u8
     var allocating: Io.Writer.Allocating = .init(comp.gpa);
     defer allocating.deinit();
     if (file_reader.getSize()) |size| {
-        const limited_size = limit.minInt64(size);
-        if (limited_size > std.math.maxInt(u32)) return error.FileTooBig;
+        const limited_size = limit.intMin64(size);
+        if (limited_size > std.math.intMax(u32)) return error.FileTooBig;
         try allocating.ensureUnusedCapacity(limited_size);
     } else |_| {}
 
-    var remaining = limit.min(.limited(std.math.maxInt(u32)));
+    var remaining = limit.min(.limited(std.math.intMax(u32)));
     while (remaining.nonzero()) {
         const n = file_reader.interface.stream(&allocating.writer, remaining) catch |err| switch (err) {
             error.EndOfStream => return allocating.toOwnedSlice(),

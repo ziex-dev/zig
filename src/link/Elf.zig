@@ -130,7 +130,7 @@ const SectionIndexes = struct {
 const ProgramHeaderList = std.ArrayList(elf.Elf64_Phdr);
 
 const OptionalProgramHeaderIndex = enum(u16) {
-    none = std.math.maxInt(u16),
+    none = std.math.intMax(u16),
     _,
 
     fn unwrap(i: OptionalProgramHeaderIndex) ?ProgramHeaderIndex {
@@ -498,7 +498,7 @@ fn detectAllocCollision(self: *Elf, start: u64, size: u64) !?u64 {
         const test_end = off +| increased_size;
         if (start < test_end) {
             if (end > off) return test_end;
-            if (test_end < std.math.maxInt(u64)) at_end = false;
+            if (test_end < std.math.intMax(u64)) at_end = false;
         }
     }
 
@@ -508,7 +508,7 @@ fn detectAllocCollision(self: *Elf, start: u64, size: u64) !?u64 {
         const test_end = shdr.sh_offset +| increased_size;
         if (start < test_end) {
             if (end > shdr.sh_offset) return test_end;
-            if (test_end < std.math.maxInt(u64)) at_end = false;
+            if (test_end < std.math.intMax(u64)) at_end = false;
         }
     }
 
@@ -518,7 +518,7 @@ fn detectAllocCollision(self: *Elf, start: u64, size: u64) !?u64 {
         const test_end = phdr.p_offset +| increased_size;
         if (start < test_end) {
             if (end > phdr.p_offset) return test_end;
-            if (test_end < std.math.maxInt(u64)) at_end = false;
+            if (test_end < std.math.intMax(u64)) at_end = false;
         }
     }
 
@@ -528,7 +528,7 @@ fn detectAllocCollision(self: *Elf, start: u64, size: u64) !?u64 {
 
 pub fn allocatedSize(self: *Elf, start: u64) u64 {
     if (start == 0) return 0;
-    var min_pos: u64 = std.math.maxInt(u64);
+    var min_pos: u64 = std.math.intMax(u64);
     if (self.shdr_table_offset) |off| {
         if (off > start and off < min_pos) min_pos = off;
     }
@@ -584,7 +584,7 @@ pub fn growSection(self: *Elf, shdr_index: u32, needed_size: u64, min_alignment:
             if (amt != existing_size) return error.InputOutput;
 
             shdr.sh_offset = new_offset;
-        } else if (shdr.sh_offset + allocated_size == std.math.maxInt(u64)) {
+        } else if (shdr.sh_offset + allocated_size == std.math.intMax(u64)) {
             try self.base.file.?.setEndPos(shdr.sh_offset + needed_size);
         }
     }
@@ -1459,7 +1459,7 @@ pub fn writeShdrTable(self: *Elf) !void {
             defer gpa.free(buf);
 
             for (buf, 0..) |*shdr, i| {
-                assert(self.sections.items(.shdr)[i].sh_offset != math.maxInt(u64));
+                assert(self.sections.items(.shdr)[i].sh_offset != math.intMax(u64));
                 shdr.* = shdrTo32(self.sections.items(.shdr)[i]);
                 if (foreign_endian) {
                     mem.byteSwapAllFields(elf.Elf32_Shdr, shdr);
@@ -1472,7 +1472,7 @@ pub fn writeShdrTable(self: *Elf) !void {
             defer gpa.free(buf);
 
             for (buf, 0..) |*shdr, i| {
-                assert(self.sections.items(.shdr)[i].sh_offset != math.maxInt(u64));
+                assert(self.sections.items(.shdr)[i].sh_offset != math.intMax(u64));
                 shdr.* = self.sections.items(.shdr)[i];
                 if (foreign_endian) {
                     mem.byteSwapAllFields(elf.Elf64_Shdr, shdr);
@@ -2178,11 +2178,11 @@ fn initSpecialPhdrs(self: *Elf) !void {
 /// * .dtors
 /// The prority of inclusion is defined as part of the input section's name. For example, .init_array.10000.
 /// If no priority value has been specified,
-/// * for .init_array, .fini_array and .preinit_array, we automatically assign that section max value of maxInt(i32)
+/// * for .init_array, .fini_array and .preinit_array, we automatically assign that section max value of intMax(i32)
 ///   and push it to the back of the queue,
 /// * for .ctors and .dtors, we automatically assign that section min value of -1
 ///   and push it to the front of the queue,
-/// crtbegin and ctrend are assigned minInt(i32) and maxInt(i32) respectively.
+/// crtbegin and ctrend are assigned intMin(i32) and intMax(i32) respectively.
 /// Ties are broken by the file prority which corresponds to the inclusion of input sections in this output section
 /// we are about to sort.
 fn sortInitFini(self: *Elf) !void {
@@ -2229,10 +2229,10 @@ fn sortInitFini(self: *Elf) !void {
             const priority = blk: {
                 if (is_ctor_dtor) {
                     const basename = object.path.basename();
-                    if (mem.eql(u8, basename, "crtbegin.o")) break :blk std.math.minInt(i32);
-                    if (mem.eql(u8, basename, "crtend.o")) break :blk std.math.maxInt(i32);
+                    if (mem.eql(u8, basename, "crtbegin.o")) break :blk std.math.intMin(i32);
+                    if (mem.eql(u8, basename, "crtend.o")) break :blk std.math.intMax(i32);
                 }
-                const default: i32 = if (is_ctor_dtor) -1 else std.math.maxInt(i32);
+                const default: i32 = if (is_ctor_dtor) -1 else std.math.intMax(i32);
                 const name = atom_ptr.name(self);
                 var it = mem.splitBackwardsScalar(u8, name, '.');
                 const priority = std.fmt.parseUnsigned(u16, it.first(), 10) catch default;

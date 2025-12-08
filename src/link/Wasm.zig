@@ -498,8 +498,8 @@ pub const TableIndex = enum(u32) {
 /// precisely via AST node and token.
 pub const SourceLocation = enum(u32) {
     /// From the Zig compilation unit but no precise source location.
-    zig_object_nofile = std.math.maxInt(u32) - 1,
-    none = std.math.maxInt(u32),
+    zig_object_nofile = std.math.intMax(u32) - 1,
+    none = std.math.intMax(u32),
     _,
 
     /// Index into `source_locations`.
@@ -1520,7 +1520,7 @@ pub const ObjectFunctionIndex = enum(u32) {
 
 /// Index into `object_functions`, or null.
 pub const OptionalObjectFunctionIndex = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn unwrap(i: OptionalObjectFunctionIndex) ?ObjectFunctionIndex {
@@ -1735,7 +1735,7 @@ pub const DataPayload = extern struct {
 
     pub const Off = enum(u32) {
         /// The payload is all zeroes (bss section).
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         /// Points into string_bytes. No corresponding string_table entry.
         _,
 
@@ -2225,7 +2225,7 @@ pub const String = enum(u32) {
 };
 
 pub const OptionalString = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn unwrap(i: OptionalString) ?String {

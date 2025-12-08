@@ -20,7 +20,7 @@ const std = @import("std.zig");
 const mem = std.mem;
 const fs = std.fs;
 const max_path_bytes = fs.max_path_bytes;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const cast = std.math.cast;
 const assert = std.debug.assert;
 const native_os = builtin.os.tag;
@@ -836,7 +836,7 @@ pub const ReadError = std.Io.File.Reader.Error;
 /// on both 64-bit and 32-bit systems. This is due to using a signed C int as the return value, as
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `read` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
-/// The corresponding POSIX limit is `maxInt(isize)`.
+/// The corresponding POSIX limit is `intMax(isize)`.
 pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
     if (buf.len == 0) return 0;
     if (native_os == .windows) {
@@ -871,8 +871,8 @@ pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
     // Prevents EINVAL.
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => maxInt(i32),
-        else => maxInt(isize),
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => intMax(i32),
+        else => intMax(isize),
     };
     while (true) {
         const rc = system.read(fd, buf.ptr, @min(buf.len, max_count));
@@ -974,7 +974,7 @@ pub const PReadError = std.Io.File.ReadPositionalError;
 /// on both 64-bit and 32-bit systems. This is due to using a signed C int as the return value, as
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `read` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
-/// The corresponding POSIX limit is `maxInt(isize)`.
+/// The corresponding POSIX limit is `intMax(isize)`.
 pub fn pread(fd: fd_t, buf: []u8, offset: u64) PReadError!usize {
     if (buf.len == 0) return 0;
     if (native_os == .windows) {
@@ -1012,8 +1012,8 @@ pub fn pread(fd: fd_t, buf: []u8, offset: u64) PReadError!usize {
     // Prevent EINVAL.
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => maxInt(i32),
-        else => maxInt(isize),
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => intMax(i32),
+        else => intMax(isize),
     };
 
     const pread_sym = if (lfs64_abi) system.pread64 else system.pread;
@@ -1243,7 +1243,7 @@ pub const WriteError = error{
 /// on both 64-bit and 32-bit systems. This is due to using a signed C int as the return value, as
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `write` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
-/// The corresponding POSIX limit is `maxInt(isize)`.
+/// The corresponding POSIX limit is `intMax(isize)`.
 pub fn write(fd: fd_t, bytes: []const u8) WriteError!usize {
     if (bytes.len == 0) return 0;
     if (native_os == .windows) {
@@ -1277,8 +1277,8 @@ pub fn write(fd: fd_t, bytes: []const u8) WriteError!usize {
 
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => maxInt(i32),
-        else => maxInt(isize),
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => intMax(i32),
+        else => intMax(isize),
     };
     while (true) {
         const rc = system.write(fd, bytes.ptr, @min(bytes.len, max_count));
@@ -1404,7 +1404,7 @@ pub const PWriteError = WriteError || error{Unseekable};
 /// on both 64-bit and 32-bit systems. This is due to using a signed C int as the return value, as
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `write` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to write more than that returns EINVAL.
-/// The corresponding POSIX limit is `maxInt(isize)`.
+/// The corresponding POSIX limit is `intMax(isize)`.
 pub fn pwrite(fd: fd_t, bytes: []const u8, offset: u64) PWriteError!usize {
     if (bytes.len == 0) return 0;
     if (native_os == .windows) {
@@ -1442,8 +1442,8 @@ pub fn pwrite(fd: fd_t, bytes: []const u8, offset: u64) PWriteError!usize {
     // Prevent EINVAL.
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => maxInt(i32),
-        else => maxInt(isize),
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => intMax(i32),
+        else => intMax(isize),
     };
 
     const pwrite_sym = if (lfs64_abi) system.pwrite64 else system.pwrite;
@@ -4968,8 +4968,8 @@ pub fn realpathW2(pathname: []const u16, out_buffer: *[std.os.windows.PATH_MAX_W
 /// Spurious wakeups are possible and no precision of timing is guaranteed.
 pub fn nanosleep(seconds: u64, nanoseconds: u64) void {
     var req = timespec{
-        .sec = cast(isize, seconds) orelse maxInt(isize),
-        .nsec = cast(isize, nanoseconds) orelse maxInt(isize),
+        .sec = cast(isize, seconds) orelse intMax(isize),
+        .nsec = cast(isize, nanoseconds) orelse intMax(isize),
     };
     var rem: timespec = undefined;
     while (true) {
@@ -5653,7 +5653,7 @@ pub const CopyFileRangeError = error{
 ///
 /// Other systems fall back to calling `pread` / `pwrite`.
 ///
-/// Maximum offsets on Linux and FreeBSD are `maxInt(i64)`.
+/// Maximum offsets on Linux and FreeBSD are `intMax(i64)`.
 pub fn copy_file_range(fd_in: fd_t, off_in: u64, fd_out: fd_t, off_out: u64, len: usize, flags: u32) CopyFileRangeError!usize {
     if (builtin.os.tag == .freebsd or builtin.os.tag == .linux) {
         const use_c = native_os != .linux or

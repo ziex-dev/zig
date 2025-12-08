@@ -18,7 +18,7 @@ const HasherError = pwhash.HasherError;
 const EncodingError = phc_format.Error;
 const Error = pwhash.Error;
 
-const max_size = math.maxInt(usize);
+const max_size = math.intMax(usize);
 const max_int = max_size >> 1;
 const default_salt_len = 32;
 const default_hash_len = 32;

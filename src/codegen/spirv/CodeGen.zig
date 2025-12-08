@@ -2968,7 +2968,7 @@ fn normalize(cg: *CodeGen, value: Temporary, info: ArithmeticTypeInfo) !Temporar
         .composite_integer, .integer, .bool, .float => return value,
         .strange_integer => switch (info.signedness) {
             .unsigned => {
-                const mask_value = @as(u64, std.math.maxInt(u64)) >> @as(u6, @intCast(64 - info.bits));
+                const mask_value = @as(u64, std.math.intMax(u64)) >> @as(u6, @intCast(64 - info.bits));
                 const mask_id = try cg.constInt(ty.scalarType(zcu), mask_value);
                 return try cg.buildBinary(.OpBitwiseAnd, value, Temporary.init(ty.scalarType(zcu), mask_id));
             },

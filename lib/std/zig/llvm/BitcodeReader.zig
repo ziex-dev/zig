@@ -403,7 +403,7 @@ fn readFixed(bc: *BitcodeReader, comptime T: type, bits: u7) !T {
     while (remaining > 0) {
         if (bc.bit_offset == 0) bc.bit_buffer = try bc.read32Bits();
         const chunk_len = @min(@as(u6, 32) - bc.bit_offset, remaining);
-        const chunk_mask = @as(u32, std.math.maxInt(u32)) >> @intCast(32 - chunk_len);
+        const chunk_mask = @as(u32, std.math.intMax(u32)) >> @intCast(32 - chunk_len);
         result |= @as(T, @intCast(bc.bit_buffer >> bc.bit_offset & chunk_mask)) << @intCast(shift);
         shift += @intCast(chunk_len);
         remaining -= chunk_len;
@@ -457,7 +457,7 @@ const Abbrev = struct {
         define_abbrev,
         unabbrev_record,
 
-        const first_record_id: u32 = std.math.maxInt(u32) - @typeInfo(Builtin).@"enum".fields.len + 1;
+        const first_record_id: u32 = std.math.intMax(u32) - @typeInfo(Builtin).@"enum".fields.len + 1;
         fn toRecordId(builtin: Builtin) u32 {
             return first_record_id + @intFromEnum(builtin);
         }
@@ -476,7 +476,7 @@ const Abbrev = struct {
         block_len,
         abbrev_op,
 
-        const literal_id = std.math.maxInt(u64);
+        const literal_id = std.math.intMax(u64);
         const Encoding = enum(u3) {
             fixed = 1,
             vbr = 2,

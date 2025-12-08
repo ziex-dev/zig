@@ -2197,7 +2197,7 @@ pub const Inst = struct {
         /// ZIR is structured so that the outermost "main" struct of any file
         /// is always at index 0.
         main_struct_inst = 0,
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn unwrap(oi: OptionalIndex) ?Index {
@@ -2346,7 +2346,7 @@ pub const Inst = struct {
 
         /// This Ref does not correspond to any ZIR instruction or constant
         /// value and may instead be used as a sentinel to indicate null.
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
 
         _,
 
@@ -2988,8 +2988,8 @@ pub const Inst = struct {
         };
 
         pub const Name = enum(u32) {
-            @"comptime" = std.math.maxInt(u32),
-            unnamed_test = std.math.maxInt(u32) - 1,
+            @"comptime" = std.math.intMax(u32),
+            unnamed_test = std.math.intMax(u32) - 1,
             /// Other values are `NullTerminatedString` values, i.e. index into
             /// `string_bytes`. If the byte referenced is 0, the decl is a named
             /// test, and the actual name begins at the following byte.

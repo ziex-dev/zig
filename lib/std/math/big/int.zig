@@ -10,8 +10,8 @@ const SignedDoubleLimb = std.math.big.SignedDoubleLimb;
 const Log2Limb = std.math.big.Log2Limb;
 const Allocator = std.mem.Allocator;
 const mem = std.mem;
-const maxInt = std.math.maxInt;
-const minInt = std.math.minInt;
+const intMax = std.math.intMax;
+const intMin = std.math.intMin;
 const assert = std.debug.assert;
 const Endian = std.builtin.Endian;
 const Signedness = std.builtin.Signedness;
@@ -32,7 +32,7 @@ const constants: Constants = blk: {
     var digits_per_limb = [_]u8{0} ** 37;
     var bases = [_]Limb{0} ** 37;
     for (2..37) |base| {
-        digits_per_limb[base] = @intCast(math.log(Limb, base, math.maxInt(Limb)));
+        digits_per_limb[base] = @intCast(math.log(Limb, base, math.intMax(Limb)));
         bases[base] = std.math.pow(Limb, base, digits_per_limb[base]);
     }
     break :blk Constants{ .big_bases = bases, .digits_per_limb = digits_per_limb };
@@ -134,7 +134,7 @@ pub fn addMulLimbWithCarry(a: Limb, b: Limb, c: Limb, carry: *Limb) Limb {
     const ov2 = @addWithOverflow(ov1[0], r2);
 
     // This never overflows, c1, c3 are either 0 or 1 and if both are 1 then
-    // c2 is at least <= maxInt(Limb) - 2.
+    // c2 is at least <= intMax(Limb) - 2.
     carry.* = ov1[1] + c2 + ov2[1];
 
     return ov2[0];
@@ -326,7 +326,7 @@ pub const Mutable = struct {
             .comptime_int => {
                 comptime var w_value = @abs(value);
 
-                if (w_value <= maxInt(Limb)) {
+                if (w_value <= intMax(Limb)) {
                     self.limbs[0] = w_value;
                 } else {
                     const mask = (1 << limb_bits) - 1;
@@ -458,7 +458,7 @@ pub const Mutable = struct {
                         const new_mask = (new_signmask << 1) -% 1; // 0b0..001..1 where the rightmost 0 is the sign bit.
 
                         r.len = new_req_limbs;
-                        @memset(r.limbs[0 .. r.len - 1], maxInt(Limb));
+                        @memset(r.limbs[0 .. r.len - 1], intMax(Limb));
                         r.limbs[r.len - 1] = new_mask;
                     }
                 },
@@ -471,7 +471,7 @@ pub const Mutable = struct {
                 .max => {
                     // Max bound, unsigned = 0xFF
                     r.len = req_limbs;
-                    @memset(r.limbs[0 .. r.len - 1], maxInt(Limb));
+                    @memset(r.limbs[0 .. r.len - 1], intMax(Limb));
                     r.limbs[r.len - 1] = mask;
                 },
             },
@@ -1712,7 +1712,7 @@ pub const Mutable = struct {
 
             // Optimization for small divisor. By using a half limb we can avoid requiring DoubleLimb
             // divisions in the hot code path. This may often require compiler_rt software-emulation.
-            if (divisor < maxInt(HalfLimb)) {
+            if (divisor < intMax(HalfLimb)) {
                 lldiv0p5(q.limbs, &r.limbs[0], x.limbs[xy_trailing..x.len], @as(HalfLimb, @intCast(divisor)));
             } else {
                 lldiv1(q.limbs, &r.limbs[0], x.limbs[xy_trailing..x.len], divisor);
@@ -1826,7 +1826,7 @@ pub const Mutable = struct {
             // else:
             //   q[i - t - 1] = (x[i] * b + x[i - 1]) / y[t]
             if (x.limbs[i] == y.limbs[t]) {
-                q.limbs[k] = maxInt(Limb);
+                q.limbs[k] = intMax(Limb);
             } else {
                 const q0 = (@as(DoubleLimb, x.limbs[i]) << limb_bits) | @as(DoubleLimb, x.limbs[i - 1]);
                 const n0 = @as(DoubleLimb, y.limbs[t]);
@@ -1906,7 +1906,7 @@ pub const Mutable = struct {
 
         const max_limbs = calcTwosCompLimbCount(bit_count);
         const sign_bit = @as(Limb, 1) << @truncate(bit_count - 1);
-        const mask = @as(Limb, maxInt(Limb)) >> @truncate(-%bit_count);
+        const mask = @as(Limb, intMax(Limb)) >> @truncate(-%bit_count);
 
         // Guess whether the result will have the same sign as `a`.
         //  * If the result will be signed zero, the guess is `true`.
@@ -1937,7 +1937,7 @@ pub const Mutable = struct {
             //  * The result is non-zero and has the opposite sign as `a`.
             r.addScalar(abs_trunc_a, -1);
             llnot(r.limbs[0..r.len]);
-            @memset(r.limbs[r.len..max_limbs], maxInt(Limb));
+            @memset(r.limbs[r.len..max_limbs], intMax(Limb));
             r.limbs[max_limbs - 1] &= mask;
             r.normalize(max_limbs);
             r.positive = switch (signedness) {
@@ -2297,7 +2297,7 @@ pub const Const = struct {
                         if (math.cast(Int, r)) |ok| {
                             return -ok;
                         } else {
-                            return minInt(Int);
+                            return intMin(Int);
                         }
                     }
                 }
@@ -2377,7 +2377,7 @@ pub const Const = struct {
         var limbs: [calcToStringLimbsBufferLen(available_len, 10)]Limb = undefined;
 
         const biggest: Const = .{
-            .limbs = &([1]Limb{comptime math.maxInt(Limb)} ** available_len),
+            .limbs = &([1]Limb{comptime math.intMax(Limb)} ** available_len),
             .positive = false,
         };
         var buf: [biggest.sizeInBaseUpperBound(2)]u8 = undefined;
@@ -2449,7 +2449,7 @@ pub const Const = struct {
         } else {
             // Non power-of-two: batch divisions per word size.
             // We use a HalfLimb here so the division uses the faster lldiv0p5 over lldiv1 codepath.
-            const digits_per_limb = math.log(HalfLimb, base, maxInt(HalfLimb));
+            const digits_per_limb = math.log(HalfLimb, base, intMax(HalfLimb));
             var limb_base: Limb = 1;
             var j: usize = 0;
             while (j < digits_per_limb) : (j += 1) {
@@ -4100,7 +4100,7 @@ fn llsignedor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_p
         // b is at least 1, so this should never underflow.
         assert(b_borrow == 0); // b was 0
 
-        // Can never overflow because in order for b_limb to be maxInt(Limb),
+        // Can never overflow because in order for b_limb to be intMax(Limb),
         // b_borrow would need to equal 1.
 
         // x & y can only clear bits, meaning x & y <= x and x & y <= y. This implies that
@@ -4398,7 +4398,7 @@ test {
 
 const testing_allocator = std.testing.allocator;
 test "llshl shift by whole number of limb" {
-    const padding = maxInt(Limb);
+    const padding = intMax(Limb);
 
     var r: [10]Limb = @splat(padding);
 
@@ -4548,8 +4548,8 @@ test "llshr to 0" {
     try testOneShiftCase(.llshr, .{1,   &.{0}, &.{1}});
     try testOneShiftCase(.llshr, .{5,   &.{0}, &.{1}});
     try testOneShiftCase(.llshr, .{65,  &.{0}, &.{0, 1}});
-    try testOneShiftCase(.llshr, .{193, &.{0}, &.{0, 0, maxInt(Limb)}});
-    try testOneShiftCase(.llshr, .{193, &.{0}, &.{maxInt(Limb), 1, maxInt(Limb)}});
+    try testOneShiftCase(.llshr, .{193, &.{0}, &.{0, 0, intMax(Limb)}});
+    try testOneShiftCase(.llshr, .{193, &.{0}, &.{intMax(Limb), 1, intMax(Limb)}});
     try testOneShiftCase(.llshr, .{193, &.{0}, &.{0xdeadbeef, 0xabcdefab, 0x1234}});
     // zig fmt: on
 }
@@ -4633,7 +4633,7 @@ fn testOneShiftCase(comptime function: enum { llshr, llshl }, case: Case) !void 
 }
 
 fn testOneShiftCaseNoAliasing(func: fn ([]Limb, []const Limb, usize) usize, case: Case) !void {
-    const padding = maxInt(Limb);
+    const padding = intMax(Limb);
     var r: [20]Limb = @splat(padding);
 
     const shift = case[0];
@@ -4650,7 +4650,7 @@ fn testOneShiftCaseNoAliasing(func: fn ([]Limb, []const Limb, usize) usize, case
 }
 
 fn testOneShiftCaseAliasing(func: fn ([]Limb, []const Limb, usize) usize, case: Case, shift_direction: isize) !void {
-    const padding = maxInt(Limb);
+    const padding = intMax(Limb);
     var r: [60]Limb = @splat(padding);
     const base = 20;
 
@@ -4685,7 +4685,7 @@ test "format" {
     try a.set(-123);
     try testFormat(a, "-123");
 
-    try a.set(20000000000000000000); // > maxInt(u64)
+    try a.set(20000000000000000000); // > intMax(u64)
     try testFormat(a, "20000000000000000000");
 
     try a.set(1 << 64 * @sizeOf(usize) * 8);

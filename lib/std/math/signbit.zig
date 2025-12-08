@@ -30,9 +30,9 @@ test signbit {
 }
 
 fn testInts(comptime Type: type) !void {
-    try expect((std.math.minInt(Type) < 0) == signbit(@as(Type, std.math.minInt(Type))));
+    try expect((std.math.intMin(Type) < 0) == signbit(@as(Type, std.math.intMin(Type))));
     try expect(!signbit(@as(Type, 0)));
-    try expect(!signbit(@as(Type, std.math.maxInt(Type))));
+    try expect(!signbit(@as(Type, std.math.intMax(Type))));
 }
 
 fn testFloats(comptime Type: type) !void {

@@ -128,7 +128,7 @@ pub fn growSection(
         }
 
         sect.offset = @intCast(new_offset);
-    } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
+    } else if (sect.offset + allocated_size == std.math.intMax(u64)) {
         try self.file.?.setEndPos(sect.offset + needed_size);
     }
 
@@ -161,7 +161,7 @@ fn detectAllocCollision(self: *DebugSymbols, start: u64, size: u64) !?u64 {
         const test_end = section.offset + increased_size;
         if (start < test_end) {
             if (end > section.offset) return test_end;
-            if (test_end < std.math.maxInt(u64)) at_end = false;
+            if (test_end < std.math.intMax(u64)) at_end = false;
         }
     }
 
@@ -352,7 +352,7 @@ fn allocatedSize(self: *DebugSymbols, start: u64) u64 {
     if (start == 0) return 0;
     const seg = self.getDwarfSegmentPtr();
     assert(start >= seg.fileoff);
-    var min_pos: u64 = std.math.maxInt(u64);
+    var min_pos: u64 = std.math.intMax(u64);
     for (self.sections.items) |section| {
         if (section.offset <= start) continue;
         if (section.offset < min_pos) min_pos = section.offset;

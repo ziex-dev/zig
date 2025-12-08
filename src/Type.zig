@@ -2982,20 +2982,20 @@ pub fn getParentNamespace(ty: Type, zcu: *Zcu) InternPool.OptionalNamespaceIndex
 }
 
 // Works for vectors and vectors of integers.
-pub fn minInt(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
+pub fn intMin(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
     const zcu = pt.zcu;
-    const scalar = try minIntScalar(ty.scalarType(zcu), pt, dest_ty.scalarType(zcu));
+    const scalar = try intMinScalar(ty.scalarType(zcu), pt, dest_ty.scalarType(zcu));
     return if (ty.zigTypeTag(zcu) == .vector) pt.aggregateSplatValue(dest_ty, scalar) else scalar;
 }
 
 /// Asserts that the type is an integer.
-pub fn minIntScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
+pub fn intMinScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
     const zcu = pt.zcu;
     const info = ty.intInfo(zcu);
     if (info.signedness == .unsigned or info.bits == 0) return pt.intValue(dest_ty, 0);
 
     if (std.math.cast(u6, info.bits - 1)) |shift| {
-        const n = @as(i64, std.math.minInt(i64)) >> (63 - shift);
+        const n = @as(i64, std.math.intMin(i64)) >> (63 - shift);
         return pt.intValue(dest_ty, n);
     }
 
@@ -3009,14 +3009,14 @@ pub fn minIntScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
 
 // Works for vectors and vectors of integers.
 /// The returned Value will have type dest_ty.
-pub fn maxInt(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
+pub fn intMax(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
     const zcu = pt.zcu;
-    const scalar = try maxIntScalar(ty.scalarType(zcu), pt, dest_ty.scalarType(zcu));
+    const scalar = try intMaxScalar(ty.scalarType(zcu), pt, dest_ty.scalarType(zcu));
     return if (ty.zigTypeTag(zcu) == .vector) pt.aggregateSplatValue(dest_ty, scalar) else scalar;
 }
 
 /// The returned Value will have type dest_ty.
-pub fn maxIntScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
+pub fn intMaxScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
     const info = ty.intInfo(pt.zcu);
 
     switch (info.bits) {
@@ -3030,11 +3030,11 @@ pub fn maxIntScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
 
     if (std.math.cast(u6, info.bits - 1)) |shift| switch (info.signedness) {
         .signed => {
-            const n = @as(i64, std.math.maxInt(i64)) >> (63 - shift);
+            const n = @as(i64, std.math.intMax(i64)) >> (63 - shift);
             return pt.intValue(dest_ty, n);
         },
         .unsigned => {
-            const n = @as(u64, std.math.maxInt(u64)) >> (63 - shift);
+            const n = @as(u64, std.math.intMax(u64)) >> (63 - shift);
             return pt.intValue(dest_ty, n);
         },
     };

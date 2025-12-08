@@ -15,12 +15,12 @@ pub fn start(self: *WaitGroup) void {
 
 pub fn startStateless(state: *std.atomic.Value(usize)) void {
     const prev_state = state.fetchAdd(one_pending, .monotonic);
-    assert((prev_state / one_pending) < (std.math.maxInt(usize) / one_pending));
+    assert((prev_state / one_pending) < (std.math.intMax(usize) / one_pending));
 }
 
 pub fn startMany(self: *WaitGroup, n: usize) void {
     const state = self.state.fetchAdd(one_pending * n, .monotonic);
-    assert((state / one_pending) < (std.math.maxInt(usize) / one_pending));
+    assert((state / one_pending) < (std.math.intMax(usize) / one_pending));
 }
 
 pub fn finish(self: *WaitGroup) void {

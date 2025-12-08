@@ -1080,7 +1080,7 @@ fn setVl(func: *Func, dst_reg: Register, avl: u64, options: bits.VType) !void {
         });
     } else {
         // if the avl can fit into u5 we can use vsetivli otherwise use vsetvli
-        if (avl <= std.math.maxInt(u5)) {
+        if (avl <= std.math.intMax(u5)) {
             const options_int: u12 = (~@as(u12, 0) << 10) | @as(u8, @bitCast(options));
             _ = try func.addInst(.{
                 .tag = .vsetivli,
@@ -6849,7 +6849,7 @@ fn genSetReg(func: *Func, ty: Type, reg: Register, src_mcv: MCValue) InnerError!
             assert(dst_reg_class == .int);
 
             const x: i64 = @bitCast(unsigned_x);
-            if (math.minInt(i12) <= x and x <= math.maxInt(i12)) {
+            if (math.intMin(i12) <= x and x <= math.intMax(i12)) {
                 _ = try func.addInst(.{
                     .tag = .addi,
                     .data = .{ .i_type = .{
@@ -6858,7 +6858,7 @@ fn genSetReg(func: *Func, ty: Type, reg: Register, src_mcv: MCValue) InnerError!
                         .imm12 = Immediate.s(@intCast(x)),
                     } },
                 });
-            } else if (math.minInt(i32) <= x and x <= math.maxInt(i32)) {
+            } else if (math.intMin(i32) <= x and x <= math.intMax(i32)) {
                 const lo12: i12 = @truncate(x);
                 const carry: i32 = if (lo12 < 0) 1 else 0;
                 const hi20: i20 = @truncate((x >> 12) +% carry);

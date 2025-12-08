@@ -1031,7 +1031,7 @@ pub fn parsePragmaCodePage(full_command: []const u8) !?SupportedCodePage {
             break :code_page null;
         }
 
-        // The Win32 compiler behaves fairly strangely around maxInt(u32):
+        // The Win32 compiler behaves fairly strangely around intMax(u32):
         // - If the overflowed u32 wraps and becomes a known code page ID, then
         //   it will error/warn with "Codepage not valid:  ignored" (depending on /w)
         // - If the overflowed u32 wraps and does not become a known code page ID,
@@ -1052,7 +1052,7 @@ pub fn parsePragmaCodePage(full_command: []const u8) !?SupportedCodePage {
             return error.CodePagePragmaNotInteger;
         }
         // Anything above u16 max is not going to be found since our CodePage enum is backed by a u16.
-        if (num > std.math.maxInt(u16)) {
+        if (num > std.math.intMax(u16)) {
             return error.CodePagePragmaInvalidCodePage;
         }
 

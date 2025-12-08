@@ -78,8 +78,8 @@ fn zonCast(comptime Result: type, zon_value: anytype, symbols: anytype) Result {
                     .int => |info| {
                         var buf: [
                             std.fmt.count("{d}", .{switch (info.signedness) {
-                                .signed => std.math.minInt(Symbol),
-                                .unsigned => std.math.maxInt(Symbol),
+                                .signed => std.math.intMin(Symbol),
+                                .unsigned => std.math.intMax(Symbol),
                             }})
                         ]u8 = undefined;
                         return std.meta.stringToEnum(Result, std.fmt.bufPrint(&buf, "{d}", .{symbol}) catch unreachable).?;
@@ -452,7 +452,7 @@ const SymbolSpec = union(enum) {
                 } else {
                     const Repr = std.math.FloatRepr(f16);
                     const repr: Repr = @bitCast(fimm);
-                    if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 != 0 or switch (repr.exponent) {
+                    if (repr.mantissa & std.math.intMax(Repr.Mantissa) >> 5 != 0 or switch (repr.exponent) {
                         .denormal, .infinite => true,
                         else => std.math.cast(i3, repr.exponent.unbias() - 1) == null,
                     }) {

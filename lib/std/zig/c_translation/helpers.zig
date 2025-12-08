@@ -28,7 +28,7 @@ pub fn ArithmeticConversion(comptime A: type, comptime B: type) type {
 
     if (integerRank(UnsignedType) >= integerRank(SignedType)) return UnsignedType;
 
-    if (std.math.maxInt(SignedType) >= std.math.maxInt(UnsignedType)) return SignedType;
+    if (std.math.intMax(SignedType) >= std.math.intMax(UnsignedType)) return SignedType;
 
     return ToUnsigned(SignedType);
 }
@@ -117,7 +117,7 @@ fn PromoteIntLiteralReturnType(comptime SuffixType: type, comptime number: compt
 
     var pos = std.mem.indexOfScalar(type, list, SuffixType).?;
     while (pos < list.len) : (pos += 1) {
-        if (number >= std.math.minInt(list[pos]) and number <= std.math.maxInt(list[pos])) {
+        if (number >= std.math.intMin(list[pos]) and number <= std.math.intMax(list[pos])) {
             return list[pos];
         }
     }

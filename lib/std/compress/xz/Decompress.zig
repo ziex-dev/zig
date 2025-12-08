@@ -132,7 +132,7 @@ fn readIndirect(r: *Reader) Reader.Error!usize {
     }
 
     if (d.err != null) return error.ReadFailed;
-    if (d.block_count == std.math.maxInt(usize)) return error.EndOfStream;
+    if (d.block_count == std.math.intMax(usize)) return error.EndOfStream;
 
     readBlock(input, &allocating) catch |err| switch (err) {
         error.WriteFailed => {
@@ -144,7 +144,7 @@ fn readIndirect(r: *Reader) Reader.Error!usize {
                 d.err = finish_err;
                 return error.ReadFailed;
             };
-            d.block_count = std.math.maxInt(usize);
+            d.block_count = std.math.intMax(usize);
             return error.EndOfStream;
         },
         else => |e| {

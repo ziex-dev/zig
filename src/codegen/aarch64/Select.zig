@@ -53,7 +53,7 @@ pub const Block = struct {
     target_label: u32,
 
     pub const main: Air.Inst.Index = @enumFromInt(
-        std.math.maxInt(@typeInfo(Air.Inst.Index).@"enum".tag_type),
+        std.math.intMax(@typeInfo(Air.Inst.Index).@"enum".tag_type),
     );
 
     fn branch(target_block: *const Block, isel: *Select) !void {
@@ -73,7 +73,7 @@ pub const Loop = struct {
     repeat_list: u32,
 
     pub const invalid: Air.Inst.Index = @enumFromInt(
-        std.math.maxInt(@typeInfo(Air.Inst.Index).@"enum".tag_type),
+        std.math.intMax(@typeInfo(Air.Inst.Index).@"enum".tag_type),
     );
 
     pub const Index = enum(u32) {
@@ -88,7 +88,7 @@ pub const Loop = struct {
         }
     };
 
-    pub const empty_list: u32 = std.math.maxInt(u32);
+    pub const empty_list: u32 = std.math.intMax(u32);
 
     fn branch(target_loop: *Loop, isel: *Select) !void {
         try isel.instructions.ensureUnusedCapacity(isel.pt.zcu.gpa, 1);
@@ -1675,7 +1675,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             },
                             .unsigned => switch (bits) {
                                 else => unreachable,
-                                2...31 => try isel.movImmediate(saturated_ra.w(), @as(u32, std.math.maxInt(u32)) >> @intCast(32 - bits)),
+                                2...31 => try isel.movImmediate(saturated_ra.w(), @as(u32, std.math.intMax(u32)) >> @intCast(32 - bits)),
                                 32 => {},
                             },
                         }
@@ -1773,7 +1773,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             .unsigned => {
                                 switch (bits) {
                                     else => unreachable,
-                                    32...63 => try isel.movImmediate(saturated_ra.x(), @as(u64, std.math.maxInt(u64)) >> @intCast(64 - bits)),
+                                    32...63 => try isel.movImmediate(saturated_ra.x(), @as(u64, std.math.intMax(u64)) >> @intCast(64 - bits)),
                                     64 => {},
                                 }
                                 try isel.emit(.madd(unwrapped_lo64_ra.x(), lhs_mat.ra.x(), rhs_mat.ra.x(), .xzr));
@@ -8056,8 +8056,8 @@ fn movImmediate(isel: *Select, dst_reg: Register, src_imm: u64) !void {
     }
 
     const Part = u16;
-    const min_part: Part = std.math.minInt(Part);
-    const max_part: Part = std.math.maxInt(Part);
+    const min_part: Part = std.math.intMin(Part);
+    const max_part: Part = std.math.intMax(Part);
 
     const parts: [4]Part = @bitCast(switch (sf) {
         .word => @as(u32, @intCast(src_imm)),
@@ -8084,10 +8084,10 @@ fn movImmediate(isel: *Select, dst_reg: Register, src_imm: u64) !void {
     if (remaining_parts > 1) {
         var elem_width: u8 = 2;
         while (elem_width <= width) : (elem_width <<= 1) {
-            const emask = @as(u64, std.math.maxInt(u64)) >> @intCast(64 - elem_width);
+            const emask = @as(u64, std.math.intMax(u64)) >> @intCast(64 - elem_width);
             const rmask = @divExact(@as(u64, switch (sf) {
-                .word => std.math.maxInt(u32),
-                .doubleword => std.math.maxInt(u64),
+                .word => std.math.intMax(u32),
+                .doubleword => std.math.intMax(u64),
             }), emask);
             const elem = src_imm & emask;
             if (src_imm != elem * rmask) continue;
@@ -8978,8 +8978,8 @@ pub const Value = struct {
     };
 
     pub const Index = enum(u32) {
-        allocating = std.math.maxInt(u32) - 1,
-        free = std.math.maxInt(u32) - 0,
+        allocating = std.math.intMax(u32) - 1,
+        free = std.math.intMax(u32) - 0,
         _,
 
         fn get(vi: Value.Index, isel: *Select) *Value {
@@ -10861,14 +10861,14 @@ pub const Value = struct {
                                         if (feat_fp16) {
                                             const Repr = std.math.FloatRepr(f16);
                                             const repr: Repr = @bitCast(imm);
-                                            if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
+                                            if (repr.mantissa & std.math.intMax(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
                                                 .denormal, .infinite => false,
                                                 else => std.math.cast(i3, repr.exponent.unbias() - 1) != null,
                                             }) break :free try isel.emit(.fmov(mat.ra.h(), .{ .immediate = imm }));
                                         }
                                         const bits: u16 = @bitCast(imm);
                                         if (bits == 0) break :free try isel.emit(.movi(mat.ra.d(), 0b00000000, .replicate));
-                                        if (bits & std.math.maxInt(u8) == 0) break :free try isel.emit(.movi(
+                                        if (bits & std.math.intMax(u8) == 0) break :free try isel.emit(.movi(
                                             mat.ra.@"4h"(),
                                             @intCast(@shrExact(bits, 8)),
                                             .{ .lsl = 8 },
@@ -10885,13 +10885,13 @@ pub const Value = struct {
                                         } };
                                         const Repr = std.math.FloatRepr(f32);
                                         const repr: Repr = @bitCast(imm);
-                                        if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
+                                        if (repr.mantissa & std.math.intMax(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
                                             .denormal, .infinite => false,
                                             else => std.math.cast(i3, repr.exponent.unbias() - 1) != null,
                                         }) break :free try isel.emit(.fmov(mat.ra.s(), .{ .immediate = @floatCast(imm) }));
                                         const bits: u32 = @bitCast(imm);
                                         if (bits == 0) break :free try isel.emit(.movi(mat.ra.d(), 0b00000000, .replicate));
-                                        if (bits & std.math.maxInt(u24) == 0) break :free try isel.emit(.movi(
+                                        if (bits & std.math.intMax(u24) == 0) break :free try isel.emit(.movi(
                                             mat.ra.@"2s"(),
                                             @intCast(@shrExact(bits, 24)),
                                             .{ .lsl = 24 },
@@ -10908,7 +10908,7 @@ pub const Value = struct {
                                         } };
                                         const Repr = std.math.FloatRepr(f64);
                                         const repr: Repr = @bitCast(imm);
-                                        if (repr.mantissa & std.math.maxInt(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
+                                        if (repr.mantissa & std.math.intMax(Repr.Mantissa) >> 5 == 0 and switch (repr.exponent) {
                                             .denormal, .infinite => false,
                                             else => std.math.cast(i3, repr.exponent.unbias() - 1) != null,
                                         }) break :free try isel.emit(.fmov(mat.ra.d(), .{ .immediate = @floatCast(imm) }));

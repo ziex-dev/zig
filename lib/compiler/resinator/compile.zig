@@ -637,7 +637,7 @@ pub const Compiler = struct {
                     defer icon_dir.deinit();
 
                     // This limit is inherent to the ico format since number of entries is a u16 field.
-                    std.debug.assert(icon_dir.entries.len <= std.math.maxInt(u16));
+                    std.debug.assert(icon_dir.entries.len <= std.math.intMax(u16));
 
                     // Note: The Win32 RC compiler will compile the resource as whatever type is
                     //       in the icon_dir regardless of the type of resource specified in the .rc.
@@ -836,7 +836,7 @@ pub const Compiler = struct {
                         try writeResourceDataNoPadding(writer, &file_reader.interface, entry.data_size_in_bytes);
                         try writeDataPadding(writer, full_data_size);
 
-                        if (self.state.icon_id == std.math.maxInt(u16)) {
+                        if (self.state.icon_id == std.math.intMax(u16)) {
                             try self.addErrorDetails(.{
                                 .err = .max_icon_ids_exhausted,
                                 .print_source_line = false,
@@ -986,7 +986,7 @@ pub const Compiler = struct {
                     }
                     header.applyMemoryFlags(node.common_resource_attributes, self.source);
                     const file_size = try file_reader.getSize();
-                    if (file_size > std.math.maxInt(u32)) {
+                    if (file_size > std.math.intMax(u32)) {
                         return self.addErrorDetailsAndFail(.{
                             .err = .resource_data_size_exceeds_max,
                             .token = node.id,
@@ -1029,7 +1029,7 @@ pub const Compiler = struct {
 
         // Fallback to just writing out the entire contents of the file
         const data_size = try file_reader.getSize();
-        if (data_size > std.math.maxInt(u32)) {
+        if (data_size > std.math.intMax(u32)) {
             return self.addErrorDetailsAndFail(.{
                 .err = .resource_data_size_exceeds_max,
                 .token = node.id,
@@ -1698,7 +1698,7 @@ pub const Compiler = struct {
         );
 
         var controls_by_id = std.AutoHashMap(u32, *const Node.ControlStatement).init(self.allocator);
-        // Number of controls are guaranteed by the parser to be within maxInt(u16).
+        // Number of controls are guaranteed by the parser to be within intMax(u16).
         try controls_by_id.ensureTotalCapacity(@as(u16, @intCast(node.controls.len)));
         defer controls_by_id.deinit();
 
@@ -1714,7 +1714,7 @@ pub const Compiler = struct {
                 &controls_by_id,
             );
 
-            if (data_buffer.written().len > std.math.maxInt(u32)) {
+            if (data_buffer.written().len > std.math.intMax(u32)) {
                 try self.addErrorDetails(.{
                     .err = .resource_data_size_exceeds_max,
                     .token = node.id,
@@ -1990,7 +1990,7 @@ pub const Compiler = struct {
             defer data.deinit(self.allocator);
             try data.write(&extra_data_buf.writer);
 
-            if (extra_data_buf.written().len > std.math.maxInt(u16)) {
+            if (extra_data_buf.written().len > std.math.intMax(u16)) {
                 try self.addErrorDetails(.{
                     .err = .control_extra_data_size_exceeds_max,
                     .token = control.type,
@@ -2022,7 +2022,7 @@ pub const Compiler = struct {
         try data_writer.writeInt(u16, 1, .little);
         try data_writer.writeInt(u16, button_width.asWord(), .little);
         try data_writer.writeInt(u16, button_height.asWord(), .little);
-        // Number of buttons is guaranteed by the parser to be within maxInt(u16).
+        // Number of buttons is guaranteed by the parser to be within intMax(u16).
         try data_writer.writeInt(u16, @as(u16, @intCast(node.buttons.len)), .little);
 
         for (node.buttons) |button_or_sep| {
@@ -2355,7 +2355,7 @@ pub const Compiler = struct {
                 },
                 else => |e| return e,
             };
-            if (overflow or data_buffer.written().len > std.math.maxInt(u16)) {
+            if (overflow or data_buffer.written().len > std.math.intMax(u16)) {
                 try self.addErrorDetails(.{
                     .err = .version_node_size_exceeds_max,
                     .token = node.id,
@@ -2960,7 +2960,7 @@ pub const FontDir = struct {
     pub fn writeResData(self: *FontDir, compiler: *Compiler, writer: *std.Io.Writer) !void {
         if (self.fonts.items.len == 0) return;
 
-        // We know the number of fonts is limited to maxInt(u16) because fonts
+        // We know the number of fonts is limited to intMax(u16) because fonts
         // must have a valid and unique u16 ordinal ID (trying to specify a FONT
         // with e.g. id 65537 will wrap around to 1 and be ignored if there's already
         // a font with that ID in the file).
@@ -3195,8 +3195,8 @@ pub const StringTable = struct {
                     break :trim std.mem.trimEnd(u16, trimmed, &[_]u16{0});
                 };
 
-                // String literals are limited to maxInt(u15) codepoints, so these UTF-16 encoded
-                // strings are limited to maxInt(u15) * 2 = 65,534 code units (since 2 is the
+                // String literals are limited to intMax(u15) codepoints, so these UTF-16 encoded
+                // strings are limited to intMax(u15) * 2 = 65,534 code units (since 2 is the
                 // maximum number of UTF-16 code units per codepoint).
                 // This leaves room for exactly one NUL terminator.
                 var string_len_in_utf16_code_units: u16 = @intCast(trimmed_string.len);
@@ -3216,9 +3216,9 @@ pub const StringTable = struct {
             // This intCast will never be able to fail due to the length constraints on string literals.
             //
             // - STRINGTABLE resource definitions can can only provide one string literal per index.
-            // - STRINGTABLE strings are limited to maxInt(u16) UTF-16 code units (see 'string_len_in_utf16_code_units'
+            // - STRINGTABLE strings are limited to intMax(u16) UTF-16 code units (see 'string_len_in_utf16_code_units'
             //   above), which means that the maximum number of bytes per string literal is
-            //   2 * maxInt(u16) = 131,070 (since there are 2 bytes per UTF-16 code unit).
+            //   2 * intMax(u16) = 131,070 (since there are 2 bytes per UTF-16 code unit).
             // - Each Block/RT_STRING resource includes exactly 16 strings and each have a 2 byte
             //   length field, so the maximum number of total bytes in a RT_STRING resource's data is
             //   16 * (131,070 + 2) = 2,097,152 which is well within the u32 max.

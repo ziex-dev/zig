@@ -113,7 +113,7 @@ pub fn populateCieLastRow(
     try vm.evalInstructions(
         gpa,
         cie,
-        std.math.maxInt(u64),
+        std.math.intMax(u64),
         cie.initial_instructions,
         addr_size_bytes,
         endian,

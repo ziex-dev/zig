@@ -408,7 +408,7 @@ pub const Node = extern struct {
             const pos = file_reader.logicalPos();
             const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
             if (additional == 0) return error.EndOfStream;
-            try growingRebase(interface, interface.end, limit.minInt64(additional));
+            try growingRebase(interface, interface.end, limit.intMin64(additional));
             switch (file_reader.mode) {
                 .positional => {
                     const fr_buf = file_reader.interface.buffered();
@@ -422,7 +422,7 @@ pub const Node = extern struct {
                         file_reader.file,
                         file_reader.pos,
                         w.ni.fileLocation(w.mf, true).offset + interface.end,
-                        limit.minInt(interface.unusedCapacityLen()),
+                        limit.intMin(interface.unusedCapacityLen()),
                     ) catch |err| {
                         w.err = err;
                         return error.WriteFailed;

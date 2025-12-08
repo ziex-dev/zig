@@ -510,7 +510,7 @@ pub fn addIncludeStart(pp: *Preprocessor, source: Source.Id) !void {
     if (pp.linemarkers == .none) return;
     try pp.addToken(.{ .id = .include_start, .loc = .{
         .id = source,
-        .byte_offset = std.math.maxInt(u32),
+        .byte_offset = std.math.intMax(u32),
         .line = 1,
     } });
 }

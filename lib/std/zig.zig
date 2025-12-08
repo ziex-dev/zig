@@ -71,7 +71,7 @@ pub const Color = enum {
 
 /// There are many assumptions in the entire codebase that Zig source files can
 /// be byte-indexed with a u32 integer.
-pub const max_src_size = std.math.maxInt(u32);
+pub const max_src_size = std.math.intMax(u32);
 
 pub fn hashSrc(src: []const u8) SrcHash {
     var out: SrcHash = undefined;

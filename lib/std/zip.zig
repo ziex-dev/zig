@@ -124,7 +124,7 @@ pub const EndRecord = extern struct {
     pub fn findFile(fr: *File.Reader) FindFileError!EndRecord {
         const end_pos = try fr.getSize();
 
-        var buf: [@sizeOf(EndRecord) + std.math.maxInt(u16)]u8 = undefined;
+        var buf: [@sizeOf(EndRecord) + std.math.intMax(u16)]u8 = undefined;
         const record_len_max = @min(end_pos, buf.len);
         var loaded_len: u32 = 0;
         var comment_len: u16 = 0;
@@ -155,7 +155,7 @@ pub const EndRecord = extern struct {
                 return record.*;
             }
 
-            if (comment_len == std.math.maxInt(u16))
+            if (comment_len == std.math.intMax(u16))
                 return error.ZipNoEndRecord;
             comment_len += 1;
         }
@@ -220,7 +220,7 @@ fn isBadFilename(filename: []const u8) bool {
 }
 
 fn isMaxInt(uint: anytype) bool {
-    return uint == std.math.maxInt(@TypeOf(uint));
+    return uint == std.math.intMax(@TypeOf(uint));
 }
 
 const FileExtents = struct {
@@ -402,7 +402,7 @@ pub const Iterator = struct {
         };
 
         if (header.extra_len > 0) {
-            var extra_buf: [std.math.maxInt(u16)]u8 = undefined;
+            var extra_buf: [std.math.intMax(u16)]u8 = undefined;
             const extra = extra_buf[0..header.extra_len];
 
             try input.seekTo(header_zip_offset + @sizeOf(CentralDirectoryFileHeader) + header.filename_len);
@@ -498,7 +498,7 @@ pub const Iterator = struct {
                     .local_file_header_offset = 0,
                 };
                 if (local_header.extra_len > 0) {
-                    var extra_buf: [std.math.maxInt(u16)]u8 = undefined;
+                    var extra_buf: [std.math.intMax(u16)]u8 = undefined;
                     const extra = extra_buf[0..local_header.extra_len];
 
                     {

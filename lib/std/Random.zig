@@ -8,7 +8,7 @@ const std = @import("std.zig");
 const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const Random = @This();
 
 /// Fast unbiased random numbers.
@@ -94,10 +94,10 @@ pub fn enumValueWithIndex(r: Random, comptime EnumType: type, comptime Index: ty
     //  arbitrary values.  Instead we'll randomly pick one of the type's values.
     const values = comptime std.enums.values(EnumType);
     comptime assert(values.len > 0); // can't return anything
-    comptime assert(maxInt(Index) >= values.len - 1); // can't access all values
+    comptime assert(intMax(Index) >= values.len - 1); // can't access all values
     if (values.len == 1) return values[0];
 
-    const index = if (comptime values.len - 1 == maxInt(Index))
+    const index = if (comptime values.len - 1 == intMax(Index))
         r.int(Index)
     else
         r.uintLessThan(Index, values.len);
@@ -106,7 +106,7 @@ pub fn enumValueWithIndex(r: Random, comptime EnumType: type, comptime Index: ty
     return values[@as(MinInt, @intCast(index))];
 }
 
-/// Returns a random int `i` such that `minInt(T) <= i <= maxInt(T)`.
+/// Returns a random int `i` such that `intMin(T) <= i <= intMax(T)`.
 /// `i` is evenly distributed.
 pub fn int(r: Random, comptime T: type) T {
     const bits = @typeInfo(T).int.bits;
@@ -174,7 +174,7 @@ pub fn uintLessThan(r: Random, comptime T: type, less_than: T) T {
 /// The results of this function may be biased.
 pub fn uintAtMostBiased(r: Random, comptime T: type, at_most: T) T {
     assert(@typeInfo(T).int.signedness == .unsigned);
-    if (at_most == maxInt(T)) {
+    if (at_most == intMax(T)) {
         // have the full range
         return r.int(T);
     }
@@ -186,7 +186,7 @@ pub fn uintAtMostBiased(r: Random, comptime T: type, at_most: T) T {
 /// for commentary on the runtime of this function.
 pub fn uintAtMost(r: Random, comptime T: type, at_most: T) T {
     assert(@typeInfo(T).int.signedness == .unsigned);
-    if (at_most == maxInt(T)) {
+    if (at_most == intMax(T)) {
         // have the full range
         return r.int(T);
     }
@@ -373,7 +373,7 @@ pub fn shuffleWithIndex(r: Random, comptime T: type, buf: []T, comptime Index: t
         return;
     }
 
-    // `i <= j < max <= maxInt(MinInt)`
+    // `i <= j < max <= intMax(MinInt)`
     const max: MinInt = @intCast(buf.len);
     var i: MinInt = 0;
     while (i < max - 1) : (i += 1) {

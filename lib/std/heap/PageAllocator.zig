@@ -2,7 +2,7 @@ const std = @import("../std.zig");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const mem = std.mem;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const assert = std.debug.assert;
 const native_os = builtin.os.tag;
 const windows = std.os.windows;
@@ -23,7 +23,7 @@ pub const vtable: Allocator.VTable = .{
 
 pub fn map(n: usize, alignment: mem.Alignment) ?[*]u8 {
     const page_size = std.heap.pageSize();
-    if (n >= maxInt(usize) - page_size) return null;
+    if (n >= intMax(usize) - page_size) return null;
     const alignment_bytes = alignment.toByteUnits();
 
     if (native_os == .windows) {

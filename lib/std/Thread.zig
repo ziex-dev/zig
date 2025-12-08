@@ -123,7 +123,7 @@ pub const ResetEvent = enum(u32) {
             return;
         }
         if (@atomicRmw(ResetEvent, re, .Xchg, .is_set, .release) == .waiting) {
-            Futex.wake(@ptrCast(re), std.math.maxInt(u32));
+            Futex.wake(@ptrCast(re), std.math.intMax(u32));
         }
     }
 

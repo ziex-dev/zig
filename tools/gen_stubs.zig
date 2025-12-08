@@ -386,7 +386,7 @@ pub fn main() !void {
     };
     sym_table.sort(SymTableSort{ .sym_table = &sym_table, .sections = &sections });
 
-    var prev_section: u16 = std.math.maxInt(u16);
+    var prev_section: u16 = std.math.intMax(u16);
     var prev_pp_state: union(enum) { all, single: Arch, multi, family: Family, time32 } = .all;
     for (sym_table.values(), 0..) |multi_sym, sym_index| {
         const name = sym_table.keys()[sym_index];

@@ -9,8 +9,8 @@ const SignedLimb = std.math.big.SignedLimb;
 const DoubleLimb = std.math.big.DoubleLimb;
 const SignedDoubleLimb = std.math.big.SignedDoubleLimb;
 const calcTwosCompLimbCount = std.math.big.int.calcTwosCompLimbCount;
-const maxInt = std.math.maxInt;
-const minInt = std.math.minInt;
+const intMax = std.math.intMax;
+const intMin = std.math.intMin;
 
 // NOTE: All the following tests assume the max machine-word will be 64-bit.
 //
@@ -32,7 +32,7 @@ test "comptime_int set" {
 
     comptime var i: usize = 0;
     inline while (i < s_limb_count) : (i += 1) {
-        const result = @as(Limb, s & maxInt(Limb));
+        const result = @as(Limb, s & intMax(Limb));
         s >>= @typeInfo(Limb).int.bits / 2;
         s >>= @typeInfo(Limb).int.bits / 2;
         try testing.expectEqual(result, a.limbs[i]);
@@ -70,14 +70,14 @@ test "sub-limb to" {
 }
 
 test "set negative minimum" {
-    var a = try Managed.initSet(testing.allocator, @as(i64, minInt(i64)));
+    var a = try Managed.initSet(testing.allocator, @as(i64, intMin(i64)));
     defer a.deinit();
 
-    try testing.expectEqual(minInt(i64), try a.toInt(i64));
+    try testing.expectEqual(intMin(i64), try a.toInt(i64));
 }
 
 test "set double-width maximum then zero" {
-    var a = try Managed.initSet(testing.allocator, maxInt(DoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(DoubleLimb));
     defer a.deinit();
     try a.set(@as(DoubleLimb, 0));
 
@@ -721,11 +721,11 @@ fn testTwosComplementLimit(comptime T: type) !void {
     defer a.deinit();
 
     try a.setTwosCompIntLimit(.max, int_info.signedness, int_info.bits);
-    const max: T = maxInt(T);
+    const max: T = intMax(T);
     try testing.expectEqual(max, try a.toInt(T));
 
     try a.setTwosCompIntLimit(.min, int_info.signedness, int_info.bits);
-    const min: T = minInt(T);
+    const min: T = intMin(T);
     try testing.expectEqual(min, try a.toInt(T));
 }
 
@@ -859,7 +859,7 @@ test "compare similar" {
 }
 
 test "compare different limb size" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) + 1);
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) + 1);
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, 1);
     defer b.deinit();
@@ -924,7 +924,7 @@ test "add single-single" {
 }
 
 test "add multi-single" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) + 1);
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) + 1);
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, 1);
     defer b.deinit();
@@ -933,10 +933,10 @@ test "add multi-single" {
     defer c.deinit();
 
     try c.add(&a, &b);
-    try testing.expectEqual(maxInt(Limb) + 2, try c.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(Limb) + 2, try c.toInt(DoubleLimb));
 
     try c.add(&b, &a);
-    try testing.expectEqual(maxInt(Limb) + 2, try c.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(Limb) + 2, try c.toInt(DoubleLimb));
 }
 
 test "add multi-multi" {
@@ -1031,7 +1031,7 @@ test "add scalar" {
 }
 
 test "addWrap single-single, unsigned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(u17));
+    var a = try Managed.initSet(testing.allocator, intMax(u17));
     defer a.deinit();
 
     var b = try Managed.initSet(testing.allocator, 10);
@@ -1047,7 +1047,7 @@ test "subWrap single-single, unsigned" {
     var a = try Managed.initSet(testing.allocator, 0);
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, maxInt(u17));
+    var b = try Managed.initSet(testing.allocator, intMax(u17));
     defer b.deinit();
 
     const wrapped = try a.subWrap(&a, &b, .unsigned, 17);
@@ -1057,46 +1057,46 @@ test "subWrap single-single, unsigned" {
 }
 
 test "addWrap multi-multi, unsigned, limb aligned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(DoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(DoubleLimb));
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, maxInt(DoubleLimb));
+    var b = try Managed.initSet(testing.allocator, intMax(DoubleLimb));
     defer b.deinit();
 
     const wrapped = try a.addWrap(&a, &b, .unsigned, @bitSizeOf(DoubleLimb));
 
     try testing.expect(wrapped);
-    try testing.expectEqual(maxInt(DoubleLimb) - 1, try a.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(DoubleLimb) - 1, try a.toInt(DoubleLimb));
 }
 
 test "subWrap single-multi, unsigned, limb aligned" {
     var a = try Managed.initSet(testing.allocator, 10);
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, maxInt(DoubleLimb) + 100);
+    var b = try Managed.initSet(testing.allocator, intMax(DoubleLimb) + 100);
     defer b.deinit();
 
     const wrapped = try a.subWrap(&a, &b, .unsigned, @bitSizeOf(DoubleLimb));
 
     try testing.expect(wrapped);
-    try testing.expectEqual(maxInt(DoubleLimb) - 88, try a.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(DoubleLimb) - 88, try a.toInt(DoubleLimb));
 }
 
 test "addWrap single-single, signed" {
-    var a = try Managed.initSet(testing.allocator, maxInt(i21));
+    var a = try Managed.initSet(testing.allocator, intMax(i21));
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, 1 + 1 + maxInt(u21));
+    var b = try Managed.initSet(testing.allocator, 1 + 1 + intMax(u21));
     defer b.deinit();
 
     const wrapped = try a.addWrap(&a, &b, .signed, @bitSizeOf(i21));
 
     try testing.expect(wrapped);
-    try testing.expectEqual(minInt(i21), try a.toInt(i21));
+    try testing.expectEqual(intMin(i21), try a.toInt(i21));
 }
 
 test "subWrap single-single, signed" {
-    var a = try Managed.initSet(testing.allocator, minInt(i21));
+    var a = try Managed.initSet(testing.allocator, intMin(i21));
     defer a.deinit();
 
     var b = try Managed.initSet(testing.allocator, 1);
@@ -1105,14 +1105,14 @@ test "subWrap single-single, signed" {
     const wrapped = try a.subWrap(&a, &b, .signed, @bitSizeOf(i21));
 
     try testing.expect(wrapped);
-    try testing.expectEqual(maxInt(i21), try a.toInt(i21));
+    try testing.expectEqual(intMax(i21), try a.toInt(i21));
 }
 
 test "addWrap multi-multi, signed, limb aligned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(SignedDoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(SignedDoubleLimb));
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, maxInt(SignedDoubleLimb));
+    var b = try Managed.initSet(testing.allocator, intMax(SignedDoubleLimb));
     defer b.deinit();
 
     const wrapped = try a.addWrap(&a, &b, .signed, @bitSizeOf(SignedDoubleLimb));
@@ -1122,7 +1122,7 @@ test "addWrap multi-multi, signed, limb aligned" {
 }
 
 test "subWrap single-multi, signed, limb aligned" {
-    var a = try Managed.initSet(testing.allocator, minInt(SignedDoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMin(SignedDoubleLimb));
     defer a.deinit();
 
     var b = try Managed.initSet(testing.allocator, 1);
@@ -1131,7 +1131,7 @@ test "subWrap single-multi, signed, limb aligned" {
     const wrapped = try a.subWrap(&a, &b, .signed, @bitSizeOf(SignedDoubleLimb));
 
     try testing.expect(wrapped);
-    try testing.expectEqual(maxInt(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(intMax(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
 }
 
 test "addWrap returns normalized result" {
@@ -1163,7 +1163,7 @@ test "subWrap returns normalized result" {
 }
 
 test "addSat single-single, unsigned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(u17) - 5);
+    var a = try Managed.initSet(testing.allocator, intMax(u17) - 5);
     defer a.deinit();
 
     var b = try Managed.initSet(testing.allocator, 10);
@@ -1171,7 +1171,7 @@ test "addSat single-single, unsigned" {
 
     try a.addSat(&a, &b, .unsigned, 17);
 
-    try testing.expectEqual(maxInt(u17), try a.toInt(u17));
+    try testing.expectEqual(intMax(u17), try a.toInt(u17));
 }
 
 test "subSat single-single, unsigned" {
@@ -1187,22 +1187,22 @@ test "subSat single-single, unsigned" {
 }
 
 test "addSat multi-multi, unsigned, limb aligned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(DoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(DoubleLimb));
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, maxInt(DoubleLimb));
+    var b = try Managed.initSet(testing.allocator, intMax(DoubleLimb));
     defer b.deinit();
 
     try a.addSat(&a, &b, .unsigned, @bitSizeOf(DoubleLimb));
 
-    try testing.expectEqual(maxInt(DoubleLimb), try a.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(DoubleLimb), try a.toInt(DoubleLimb));
 }
 
 test "subSat single-multi, unsigned, limb aligned" {
     var a = try Managed.initSet(testing.allocator, 10);
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, maxInt(DoubleLimb) + 100);
+    var b = try Managed.initSet(testing.allocator, intMax(DoubleLimb) + 100);
     defer b.deinit();
 
     try a.subSat(&a, &b, .unsigned, @bitSizeOf(DoubleLimb));
@@ -1211,7 +1211,7 @@ test "subSat single-multi, unsigned, limb aligned" {
 }
 
 test "addSat single-single, signed" {
-    var a = try Managed.initSet(testing.allocator, maxInt(i14));
+    var a = try Managed.initSet(testing.allocator, intMax(i14));
     defer a.deinit();
 
     var b = try Managed.initSet(testing.allocator, 1);
@@ -1219,11 +1219,11 @@ test "addSat single-single, signed" {
 
     try a.addSat(&a, &b, .signed, @bitSizeOf(i14));
 
-    try testing.expectEqual(maxInt(i14), try a.toInt(i14));
+    try testing.expectEqual(intMax(i14), try a.toInt(i14));
 }
 
 test "subSat single-single, signed" {
-    var a = try Managed.initSet(testing.allocator, minInt(i21));
+    var a = try Managed.initSet(testing.allocator, intMin(i21));
     defer a.deinit();
 
     var b = try Managed.initSet(testing.allocator, 1);
@@ -1231,23 +1231,23 @@ test "subSat single-single, signed" {
 
     try a.subSat(&a, &b, .signed, @bitSizeOf(i21));
 
-    try testing.expectEqual(minInt(i21), try a.toInt(i21));
+    try testing.expectEqual(intMin(i21), try a.toInt(i21));
 }
 
 test "addSat multi-multi, signed, limb aligned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(SignedDoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(SignedDoubleLimb));
     defer a.deinit();
 
-    var b = try Managed.initSet(testing.allocator, maxInt(SignedDoubleLimb));
+    var b = try Managed.initSet(testing.allocator, intMax(SignedDoubleLimb));
     defer b.deinit();
 
     try a.addSat(&a, &b, .signed, @bitSizeOf(SignedDoubleLimb));
 
-    try testing.expectEqual(maxInt(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(intMax(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
 }
 
 test "subSat single-multi, signed, limb aligned" {
-    var a = try Managed.initSet(testing.allocator, minInt(SignedDoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMin(SignedDoubleLimb));
     defer a.deinit();
 
     var b = try Managed.initSet(testing.allocator, 1);
@@ -1255,7 +1255,7 @@ test "subSat single-multi, signed, limb aligned" {
 
     try a.subSat(&a, &b, .signed, @bitSizeOf(SignedDoubleLimb));
 
-    try testing.expectEqual(minInt(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(intMin(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
 }
 
 test "sub single-single" {
@@ -1272,7 +1272,7 @@ test "sub single-single" {
 }
 
 test "sub multi-single" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) + 1);
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) + 1);
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, 1);
     defer b.deinit();
@@ -1281,7 +1281,7 @@ test "sub multi-single" {
     defer c.deinit();
     try c.sub(&a, &b);
 
-    try testing.expectEqual(maxInt(Limb), try c.toInt(Limb));
+    try testing.expectEqual(intMax(Limb), try c.toInt(Limb));
 }
 
 test "sub multi-multi" {
@@ -1357,7 +1357,7 @@ test "mul single-single" {
 }
 
 test "mul multi-single" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb));
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, 2);
     defer b.deinit();
@@ -1366,7 +1366,7 @@ test "mul multi-single" {
     defer c.deinit();
     try c.mul(&a, &b);
 
-    try testing.expectEqual(2 * maxInt(Limb), try c.toInt(DoubleLimb));
+    try testing.expectEqual(2 * intMax(Limb), try c.toInt(DoubleLimb));
 }
 
 test "mul multi-multi" {
@@ -1389,34 +1389,34 @@ test "mul multi-multi" {
 }
 
 test "mul alias r with a" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb));
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, 2);
     defer b.deinit();
 
     try a.mul(&a, &b);
 
-    try testing.expectEqual(2 * maxInt(Limb), try a.toInt(DoubleLimb));
+    try testing.expectEqual(2 * intMax(Limb), try a.toInt(DoubleLimb));
 }
 
 test "mul alias r with b" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb));
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, 2);
     defer b.deinit();
 
     try a.mul(&b, &a);
 
-    try testing.expectEqual(2 * maxInt(Limb), try a.toInt(DoubleLimb));
+    try testing.expectEqual(2 * intMax(Limb), try a.toInt(DoubleLimb));
 }
 
 test "mul alias r with a and b" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb));
     defer a.deinit();
 
     try a.mul(&a, &a);
 
-    try testing.expectEqual(maxInt(Limb) * maxInt(Limb), try a.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(Limb) * intMax(Limb), try a.toInt(DoubleLimb));
 }
 
 test "mul a*0" {
@@ -1456,7 +1456,7 @@ test "mul large" {
     // Generate a number that's large enough to cross the thresholds for the use
     // of subquadratic algorithms
     for (a.limbs) |*p| {
-        p.* = maxInt(Limb);
+        p.* = intMax(Limb);
     }
     a.setMetadata(true, 50);
 
@@ -1517,16 +1517,16 @@ test "mulWrap multi-multi signed" {
         else => {},
     }
 
-    var a = try Managed.initSet(testing.allocator, maxInt(SignedDoubleLimb) - 1);
+    var a = try Managed.initSet(testing.allocator, intMax(SignedDoubleLimb) - 1);
     defer a.deinit();
-    var b = try Managed.initSet(testing.allocator, maxInt(SignedDoubleLimb));
+    var b = try Managed.initSet(testing.allocator, intMax(SignedDoubleLimb));
     defer b.deinit();
 
     var c = try Managed.init(testing.allocator);
     defer c.deinit();
     try c.mulWrap(&a, &b, .signed, @bitSizeOf(SignedDoubleLimb));
 
-    try testing.expectEqual(minInt(SignedDoubleLimb) + 2, try c.toInt(SignedDoubleLimb));
+    try testing.expectEqual(intMin(SignedDoubleLimb) + 2, try c.toInt(SignedDoubleLimb));
 }
 
 test "mulWrap large" {
@@ -1540,7 +1540,7 @@ test "mulWrap large" {
     // Generate a number that's large enough to cross the thresholds for the use
     // of subquadratic algorithms
     for (a.limbs) |*p| {
-        p.* = maxInt(Limb);
+        p.* = intMax(Limb);
     }
     a.setMetadata(true, 50);
 
@@ -2312,12 +2312,12 @@ test "div multi-multi fuzz case #2" {
 }
 
 test "truncate single unsigned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(u47));
+    var a = try Managed.initSet(testing.allocator, intMax(u47));
     defer a.deinit();
 
     try a.truncate(&a, .unsigned, 17);
 
-    try testing.expectEqual(maxInt(u17), try a.toInt(u17));
+    try testing.expectEqual(intMax(u17), try a.toInt(u17));
 }
 
 test "truncate single signed" {
@@ -2326,11 +2326,11 @@ test "truncate single signed" {
 
     try a.truncate(&a, .signed, 17);
 
-    try testing.expectEqual(minInt(i17), try a.toInt(i17));
+    try testing.expectEqual(intMin(i17), try a.toInt(i17));
 }
 
 test "truncate multi to single unsigned" {
-    var a = try Managed.initSet(testing.allocator, (maxInt(Limb) + 1) | 0x1234_5678_9ABC_DEF0);
+    var a = try Managed.initSet(testing.allocator, (intMax(Limb) + 1) | 0x1234_5678_9ABC_DEF0);
     defer a.deinit();
 
     try a.truncate(&a, .unsigned, 27);
@@ -2339,24 +2339,24 @@ test "truncate multi to single unsigned" {
 }
 
 test "truncate multi to single signed" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) << 10);
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) << 10);
     defer a.deinit();
 
     try a.truncate(&a, .signed, @bitSizeOf(i11));
 
-    try testing.expectEqual(minInt(i11), try a.toInt(i11));
+    try testing.expectEqual(intMin(i11), try a.toInt(i11));
 }
 
 test "truncate multi to multi unsigned" {
     const bits = @typeInfo(SignedDoubleLimb).int.bits;
     const Int = std.meta.Int(.unsigned, bits - 1);
 
-    var a = try Managed.initSet(testing.allocator, maxInt(SignedDoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(SignedDoubleLimb));
     defer a.deinit();
 
     try a.truncate(&a, .unsigned, bits - 1);
 
-    try testing.expectEqual(maxInt(Int), try a.toInt(Int));
+    try testing.expectEqual(intMax(Int), try a.toInt(Int));
 }
 
 test "truncate multi to multi signed" {
@@ -2369,7 +2369,7 @@ test "truncate multi to multi signed" {
 }
 
 test "truncate negative multi to single" {
-    var a = try Managed.initSet(testing.allocator, -@as(SignedDoubleLimb, maxInt(Limb) + 1));
+    var a = try Managed.initSet(testing.allocator, -@as(SignedDoubleLimb, intMax(Limb) + 1));
     defer a.deinit();
 
     try a.truncate(&a, .signed, @bitSizeOf(i17));
@@ -2404,13 +2404,13 @@ test "truncate to mutable with fewer limbs" {
     try testing.expect(res.positive and res.len == 1 and res.limbs[0] == 0);
     res.truncate(.{ .positive = false, .limbs = &.{ 0, 1 } }, .signed, @bitSizeOf(Limb));
     try testing.expect(res.positive and res.len == 1 and res.limbs[0] == 0);
-    res.truncate(.{ .positive = true, .limbs = &.{ maxInt(Limb), 1 } }, .unsigned, @bitSizeOf(Limb));
-    try testing.expect(res.toConst().orderAgainstScalar(maxInt(Limb)).compare(.eq));
-    res.truncate(.{ .positive = true, .limbs = &.{ maxInt(Limb), 1 } }, .signed, @bitSizeOf(Limb));
+    res.truncate(.{ .positive = true, .limbs = &.{ intMax(Limb), 1 } }, .unsigned, @bitSizeOf(Limb));
+    try testing.expect(res.toConst().orderAgainstScalar(intMax(Limb)).compare(.eq));
+    res.truncate(.{ .positive = true, .limbs = &.{ intMax(Limb), 1 } }, .signed, @bitSizeOf(Limb));
     try testing.expect(res.toConst().orderAgainstScalar(-1).compare(.eq));
-    res.truncate(.{ .positive = false, .limbs = &.{ maxInt(Limb), 1 } }, .unsigned, @bitSizeOf(Limb));
+    res.truncate(.{ .positive = false, .limbs = &.{ intMax(Limb), 1 } }, .unsigned, @bitSizeOf(Limb));
     try testing.expect(res.toConst().orderAgainstScalar(1).compare(.eq));
-    res.truncate(.{ .positive = false, .limbs = &.{ maxInt(Limb), 1 } }, .signed, @bitSizeOf(Limb));
+    res.truncate(.{ .positive = false, .limbs = &.{ intMax(Limb), 1 } }, .signed, @bitSizeOf(Limb));
     try testing.expect(res.toConst().orderAgainstScalar(1).compare(.eq));
 }
 
@@ -2475,7 +2475,7 @@ test "saturate single signed positive" {
 
     try a.saturate(&a, .signed, 17);
 
-    try testing.expectEqual(maxInt(i17), try a.toInt(i17));
+    try testing.expectEqual(intMax(i17), try a.toInt(i17));
 }
 
 test "saturate single signed negative" {
@@ -2484,25 +2484,25 @@ test "saturate single signed negative" {
 
     try a.saturate(&a, .signed, 17);
 
-    try testing.expectEqual(minInt(i17), try a.toInt(i17));
+    try testing.expectEqual(intMin(i17), try a.toInt(i17));
 }
 
 test "saturate single signed" {
-    var a = try Managed.initSet(testing.allocator, maxInt(i17) - 1);
+    var a = try Managed.initSet(testing.allocator, intMax(i17) - 1);
     defer a.deinit();
 
     try a.saturate(&a, .signed, 17);
 
-    try testing.expectEqual(maxInt(i17) - 1, try a.toInt(i17));
+    try testing.expectEqual(intMax(i17) - 1, try a.toInt(i17));
 }
 
 test "saturate multi signed" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) << @bitSizeOf(SignedDoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) << @bitSizeOf(SignedDoubleLimb));
     defer a.deinit();
 
     try a.saturate(&a, .signed, @bitSizeOf(SignedDoubleLimb));
 
-    try testing.expectEqual(maxInt(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(intMax(SignedDoubleLimb), try a.toInt(SignedDoubleLimb));
 }
 
 test "saturate single unsigned" {
@@ -2511,7 +2511,7 @@ test "saturate single unsigned" {
 
     try a.saturate(&a, .unsigned, 23);
 
-    try testing.expectEqual(maxInt(u23), try a.toInt(u23));
+    try testing.expectEqual(intMax(u23), try a.toInt(u23));
 }
 
 test "saturate multi unsigned zero" {
@@ -2524,12 +2524,12 @@ test "saturate multi unsigned zero" {
 }
 
 test "saturate multi unsigned" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) << @bitSizeOf(DoubleLimb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) << @bitSizeOf(DoubleLimb));
     defer a.deinit();
 
     try a.saturate(&a, .unsigned, @bitSizeOf(DoubleLimb));
 
-    try testing.expectEqual(maxInt(DoubleLimb), try a.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(DoubleLimb), try a.toInt(DoubleLimb));
 }
 
 test "shift-right single" {
@@ -2659,7 +2659,7 @@ test "sat shift-left multi unsigned" {
     defer a.deinit();
     try a.shiftLeftSat(&a, @bitSizeOf(DoubleLimb) - 3, .unsigned, @bitSizeOf(DoubleLimb) - 1);
 
-    try testing.expectEqual(maxInt(DoubleLimb) >> 1, try a.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(DoubleLimb) >> 1, try a.toInt(DoubleLimb));
 }
 
 test "sat shift-left unsigned shift > bitcount" {
@@ -2667,7 +2667,7 @@ test "sat shift-left unsigned shift > bitcount" {
     defer a.deinit();
     try a.shiftLeftSat(&a, 10, .unsigned, 10);
 
-    try testing.expectEqual(maxInt(u10), try a.toInt(u10));
+    try testing.expectEqual(intMax(u10), try a.toInt(u10));
 }
 
 test "sat shift-left unsigned zero" {
@@ -2691,7 +2691,7 @@ test "sat shift-left signed simple negative" {
     defer a.deinit();
     try a.shiftLeftSat(&a, 3, .signed, 10);
 
-    try testing.expectEqual(minInt(i10), try a.toInt(i10));
+    try testing.expectEqual(intMin(i10), try a.toInt(i10));
 }
 
 test "sat shift-left signed simple positive" {
@@ -2699,7 +2699,7 @@ test "sat shift-left signed simple positive" {
     defer a.deinit();
     try a.shiftLeftSat(&a, 3, .signed, 10);
 
-    try testing.expectEqual(maxInt(i10), try a.toInt(i10));
+    try testing.expectEqual(intMax(i10), try a.toInt(i10));
 }
 
 test "sat shift-left signed multi positive" {
@@ -2746,7 +2746,7 @@ test "bitNotWrap unsigned multi" {
 
     try a.bitNotWrap(&a, .unsigned, @bitSizeOf(DoubleLimb));
 
-    try testing.expectEqual(maxInt(DoubleLimb), try a.toInt(DoubleLimb));
+    try testing.expectEqual(intMax(DoubleLimb), try a.toInt(DoubleLimb));
 }
 
 test "bitNotWrap signed simple" {
@@ -2778,7 +2778,7 @@ test "bitNotWrap more than two limbs" {
     // LLVM: unexpected runtime library name: __umodei4
     if (builtin.zig_backend == .stage2_llvm and comptime builtin.target.cpu.arch.isWasm()) return error.SkipZigTest; // TODO
 
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb));
     defer a.deinit();
 
     var res = try Managed.init(testing.allocator);
@@ -2788,11 +2788,11 @@ test "bitNotWrap more than two limbs" {
 
     try res.bitNotWrap(&a, .unsigned, bits);
     const Unsigned = @Int(.unsigned, bits);
-    try testing.expectEqual((try res.toInt(Unsigned)), ~@as(Unsigned, maxInt(Limb)));
+    try testing.expectEqual((try res.toInt(Unsigned)), ~@as(Unsigned, intMax(Limb)));
 
     try res.bitNotWrap(&a, .signed, bits);
     const Signed = @Int(.signed, bits);
-    try testing.expectEqual((try res.toInt(Signed)), ~@as(Signed, maxInt(Limb)));
+    try testing.expectEqual((try res.toInt(Signed)), ~@as(Signed, intMax(Limb)));
 }
 
 test "bitwise and simple" {
@@ -2807,9 +2807,9 @@ test "bitwise and simple" {
 }
 
 test "bitwise and multi-limb" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) + 1);
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) + 1);
     defer a.deinit();
-    var b = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var b = try Managed.initSet(testing.allocator, intMax(Limb));
     defer b.deinit();
 
     try a.bitAnd(&a, &b);
@@ -2829,9 +2829,9 @@ test "bitwise and negative-positive simple" {
 }
 
 test "bitwise and negative-positive multi-limb" {
-    var a = try Managed.initSet(testing.allocator, -maxInt(Limb) - 1);
+    var a = try Managed.initSet(testing.allocator, -intMax(Limb) - 1);
     defer a.deinit();
-    var b = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var b = try Managed.initSet(testing.allocator, intMax(Limb));
     defer b.deinit();
 
     try a.bitAnd(&a, &b);
@@ -2851,9 +2851,9 @@ test "bitwise and positive-negative simple" {
 }
 
 test "bitwise and positive-negative multi-limb" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb));
     defer a.deinit();
-    var b = try Managed.initSet(testing.allocator, -maxInt(Limb) - 1);
+    var b = try Managed.initSet(testing.allocator, -intMax(Limb) - 1);
     defer b.deinit();
 
     try a.bitAnd(&a, &b);
@@ -2873,25 +2873,25 @@ test "bitwise and negative-negative simple" {
 }
 
 test "bitwise and negative-negative multi-limb" {
-    var a = try Managed.initSet(testing.allocator, -maxInt(Limb) - 1);
+    var a = try Managed.initSet(testing.allocator, -intMax(Limb) - 1);
     defer a.deinit();
-    var b = try Managed.initSet(testing.allocator, -maxInt(Limb) - 2);
+    var b = try Managed.initSet(testing.allocator, -intMax(Limb) - 2);
     defer b.deinit();
 
     try a.bitAnd(&a, &b);
 
-    try testing.expectEqual(-maxInt(Limb) * 2 - 2, try a.toInt(i128));
+    try testing.expectEqual(-intMax(Limb) * 2 - 2, try a.toInt(i128));
 }
 
 test "bitwise and negative overflow" {
-    var a = try Managed.initSet(testing.allocator, -maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, -intMax(Limb));
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, -2);
     defer b.deinit();
 
     try a.bitAnd(&a, &b);
 
-    try testing.expectEqual(-maxInt(Limb) - 1, try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(-intMax(Limb) - 1, try a.toInt(SignedDoubleLimb));
 }
 
 test "bitwise xor simple" {
@@ -2906,8 +2906,8 @@ test "bitwise xor simple" {
 }
 
 test "bitwise xor multi-limb" {
-    var x: DoubleLimb = maxInt(Limb) + 1;
-    var y: DoubleLimb = maxInt(Limb);
+    var x: DoubleLimb = intMax(Limb) + 1;
+    var y: DoubleLimb = intMax(Limb);
     _ = .{ &x, &y };
 
     var a = try Managed.initSet(testing.allocator, x);
@@ -2943,14 +2943,14 @@ test "bitwise xor single negative multi-limb" {
 }
 
 test "bitwise xor single negative overflow" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, intMax(Limb));
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, -1);
     defer b.deinit();
 
     try a.bitXor(&a, &b);
 
-    try testing.expectEqual(-(maxInt(Limb) + 1), try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(-(intMax(Limb) + 1), try a.toInt(SignedDoubleLimb));
 }
 
 test "bitwise xor double negative simple" {
@@ -2987,14 +2987,14 @@ test "bitwise or simple" {
 }
 
 test "bitwise or multi-limb" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) + 1);
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) + 1);
     defer a.deinit();
-    var b = try Managed.initSet(testing.allocator, maxInt(Limb));
+    var b = try Managed.initSet(testing.allocator, intMax(Limb));
     defer b.deinit();
 
     try a.bitOr(&a, &b);
 
-    try testing.expectEqual((maxInt(Limb) + 1) + maxInt(Limb), try a.toInt(DoubleLimb));
+    try testing.expectEqual((intMax(Limb) + 1) + intMax(Limb), try a.toInt(DoubleLimb));
 }
 
 test "bitwise or negative-positive simple" {
@@ -3009,14 +3009,14 @@ test "bitwise or negative-positive simple" {
 }
 
 test "bitwise or negative-positive multi-limb" {
-    var a = try Managed.initSet(testing.allocator, -maxInt(Limb) - 1);
+    var a = try Managed.initSet(testing.allocator, -intMax(Limb) - 1);
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, 1);
     defer b.deinit();
 
     try a.bitOr(&a, &b);
 
-    try testing.expectEqual(-maxInt(Limb), try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(-intMax(Limb), try a.toInt(SignedDoubleLimb));
 }
 
 test "bitwise or positive-negative simple" {
@@ -3031,7 +3031,7 @@ test "bitwise or positive-negative simple" {
 }
 
 test "bitwise or positive-negative multi-limb" {
-    var a = try Managed.initSet(testing.allocator, maxInt(Limb) + 1);
+    var a = try Managed.initSet(testing.allocator, intMax(Limb) + 1);
     defer a.deinit();
     var b = try Managed.initSet(testing.allocator, -1);
     defer b.deinit();
@@ -3053,14 +3053,14 @@ test "bitwise or negative-negative simple" {
 }
 
 test "bitwise or negative-negative multi-limb" {
-    var a = try Managed.initSet(testing.allocator, -maxInt(Limb) - 1);
+    var a = try Managed.initSet(testing.allocator, -intMax(Limb) - 1);
     defer a.deinit();
-    var b = try Managed.initSet(testing.allocator, -maxInt(Limb));
+    var b = try Managed.initSet(testing.allocator, -intMax(Limb));
     defer b.deinit();
 
     try a.bitOr(&a, &b);
 
-    try testing.expectEqual(-maxInt(Limb), try a.toInt(SignedDoubleLimb));
+    try testing.expectEqual(-intMax(Limb), try a.toInt(SignedDoubleLimb));
 }
 
 test "var args" {
@@ -3309,9 +3309,9 @@ test "big int popcount" {
     try popCountTest(&a, 12, 2);
     try popCountTest(&a, 24, 14);
 
-    try a.set(maxInt(u5000));
+    try a.set(intMax(u5000));
     try popCountTest(&a, 5000, 5000);
-    try a.set(minInt(i5000));
+    try a.set(intMin(i5000));
     try popCountTest(&a, 5000, 1);
 
     // Check -1 at various bit counts that cross Limb size multiples.
@@ -3339,7 +3339,7 @@ test "big int popcount" {
 
     // Check when most significant limb is full of 1s.
     const limb_size = @bitSizeOf(Limb);
-    try a.set(maxInt(Limb));
+    try a.set(intMax(Limb));
     try popCountTest(&a, limb_size, limb_size);
     try popCountTest(&a, limb_size + 1, limb_size);
     try popCountTest(&a, limb_size * 10 + 2, limb_size);
@@ -3676,7 +3676,7 @@ test "big int byte swap" {
     try byteSwapTest(i128, @as(i128, @bitCast(@as(u128, 0x123456789abcdef11121314151617181))), @as(i128, @bitCast(@as(u128, 0x8171615141312111f1debc9a78563412))));
 
     try byteSwapTest(u512, 0x80, 1 << 511);
-    try byteSwapTest(i512, 0x80, minInt(i512));
+    try byteSwapTest(i512, 0x80, intMin(i512));
     try byteSwapTest(i512, 0x40, 1 << 510);
     try byteSwapTest(i512, -0x100, (1 << 504) - 1);
     try byteSwapTest(i400, -0x100, (1 << 392) - 1);
@@ -3689,12 +3689,12 @@ test "big int byte swap" {
 }
 
 test "mul multi-multi alias r with a and b" {
-    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, 2 * intMax(Limb));
     defer a.deinit();
 
     try a.mul(&a, &a);
 
-    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    var want = try Managed.initSet(testing.allocator, 4 * intMax(Limb) * intMax(Limb));
     defer want.deinit();
 
     try testing.expect(a.eql(want));
@@ -3705,12 +3705,12 @@ test "mul multi-multi alias r with a and b" {
 }
 
 test "sqr multi alias r with a" {
-    var a = try Managed.initSet(testing.allocator, 2 * maxInt(Limb));
+    var a = try Managed.initSet(testing.allocator, 2 * intMax(Limb));
     defer a.deinit();
 
     try a.sqr(&a);
 
-    var want = try Managed.initSet(testing.allocator, 4 * maxInt(Limb) * maxInt(Limb));
+    var want = try Managed.initSet(testing.allocator, 4 * intMax(Limb) * intMax(Limb));
     defer want.deinit();
 
     try testing.expect(a.eql(want));
@@ -3846,13 +3846,13 @@ test "(BigInt) negative" {
 
 test "clz" {
     const neg_limb_max_squared: std.math.big.int.Const = .{
-        .limbs = &.{ 1, maxInt(Limb) - 1 },
+        .limbs = &.{ 1, intMax(Limb) - 1 },
         .positive = false,
     };
     try testing.expectEqual(0, neg_limb_max_squared.clz(@bitSizeOf(Limb) * 2 + 1));
 
     const neg_limb_max_squared_plus_one: std.math.big.int.Const = .{
-        .limbs = &.{ 0, maxInt(Limb) - 1 },
+        .limbs = &.{ 0, intMax(Limb) - 1 },
         .positive = false,
     };
     try testing.expectEqual(0, neg_limb_max_squared_plus_one.clz(@bitSizeOf(Limb) * 2 + 1));
@@ -3865,7 +3865,7 @@ test "clz" {
     try testing.expectEqual(0, neg_limb_msb_squared.clz(@bitSizeOf(Limb) * 2 + 1));
 
     const neg_limb_max: std.math.big.int.Const = .{
-        .limbs = &.{maxInt(Limb)},
+        .limbs = &.{intMax(Limb)},
         .positive = false,
     };
     try testing.expectEqual(0, neg_limb_max.clz(@bitSizeOf(Limb) + 1));
@@ -3924,7 +3924,7 @@ test "clz" {
     try testing.expectEqual(@bitSizeOf(Limb) + 1, limb_msb.clz(@bitSizeOf(Limb) * 2 + 1));
 
     const limb_max: std.math.big.int.Const = .{
-        .limbs = &.{maxInt(Limb)},
+        .limbs = &.{intMax(Limb)},
         .positive = true,
     };
     try testing.expectEqual(0, limb_max.clz(@bitSizeOf(Limb)));
@@ -3942,14 +3942,14 @@ test "clz" {
     try testing.expectEqual(2, limb_msb_squared.clz(@bitSizeOf(Limb) * 2 + 1));
 
     const limb_max_squared_minus_one: std.math.big.int.Const = .{
-        .limbs = &.{ 0, maxInt(Limb) - 1 },
+        .limbs = &.{ 0, intMax(Limb) - 1 },
         .positive = true,
     };
     try testing.expectEqual(0, limb_max_squared_minus_one.clz(@bitSizeOf(Limb) * 2));
     try testing.expectEqual(1, limb_max_squared_minus_one.clz(@bitSizeOf(Limb) * 2 + 1));
 
     const limb_max_squared: std.math.big.int.Const = .{
-        .limbs = &.{ 1, maxInt(Limb) - 1 },
+        .limbs = &.{ 1, intMax(Limb) - 1 },
         .positive = true,
     };
     try testing.expectEqual(0, limb_max_squared.clz(@bitSizeOf(Limb) * 2));
@@ -3958,13 +3958,13 @@ test "clz" {
 
 test "ctz" {
     const neg_limb_max_squared: std.math.big.int.Const = .{
-        .limbs = &.{ 1, maxInt(Limb) - 1 },
+        .limbs = &.{ 1, intMax(Limb) - 1 },
         .positive = false,
     };
     try testing.expectEqual(0, neg_limb_max_squared.ctz(@bitSizeOf(Limb) * 2 + 1));
 
     const neg_limb_max_squared_plus_one: std.math.big.int.Const = .{
-        .limbs = &.{ 0, maxInt(Limb) - 1 },
+        .limbs = &.{ 0, intMax(Limb) - 1 },
         .positive = false,
     };
     try testing.expectEqual(@bitSizeOf(Limb) + 1, neg_limb_max_squared_plus_one.ctz(@bitSizeOf(Limb) * 2 + 1));
@@ -3977,7 +3977,7 @@ test "ctz" {
     try testing.expectEqual(@bitSizeOf(Limb) * 2 - 2, neg_limb_msb_squared.ctz(@bitSizeOf(Limb) * 2 + 1));
 
     const neg_limb_max: std.math.big.int.Const = .{
-        .limbs = &.{maxInt(Limb)},
+        .limbs = &.{intMax(Limb)},
         .positive = false,
     };
     try testing.expectEqual(0, neg_limb_max.ctz(@bitSizeOf(Limb) + 1));
@@ -4036,7 +4036,7 @@ test "ctz" {
     try testing.expectEqual(@bitSizeOf(Limb) - 1, limb_msb.ctz(@bitSizeOf(Limb) * 2 + 1));
 
     const limb_max: std.math.big.int.Const = .{
-        .limbs = &.{maxInt(Limb)},
+        .limbs = &.{intMax(Limb)},
         .positive = true,
     };
     try testing.expectEqual(0, limb_max.ctz(@bitSizeOf(Limb)));
@@ -4054,14 +4054,14 @@ test "ctz" {
     try testing.expectEqual(@bitSizeOf(Limb) * 2 - 2, limb_msb_squared.ctz(@bitSizeOf(Limb) * 2 + 1));
 
     const limb_max_squared_minus_one: std.math.big.int.Const = .{
-        .limbs = &.{ 0, maxInt(Limb) - 1 },
+        .limbs = &.{ 0, intMax(Limb) - 1 },
         .positive = true,
     };
     try testing.expectEqual(@bitSizeOf(Limb) + 1, limb_max_squared_minus_one.ctz(@bitSizeOf(Limb) * 2));
     try testing.expectEqual(@bitSizeOf(Limb) + 1, limb_max_squared_minus_one.ctz(@bitSizeOf(Limb) * 2 + 1));
 
     const limb_max_squared: std.math.big.int.Const = .{
-        .limbs = &.{ 1, maxInt(Limb) - 1 },
+        .limbs = &.{ 1, intMax(Limb) - 1 },
         .positive = true,
     };
     try testing.expectEqual(0, limb_max_squared.ctz(@bitSizeOf(Limb) * 2));

@@ -868,7 +868,7 @@ fn testOverflow() !void {
 pub fn divTrunc(comptime T: type, numerator: T, denominator: T) !T {
     @setRuntimeSafety(false);
     if (denominator == 0) return error.DivisionByZero;
-    if (@typeInfo(T) == .int and @typeInfo(T).int.signedness == .signed and numerator == minInt(T) and denominator == -1) return error.Overflow;
+    if (@typeInfo(T) == .int and @typeInfo(T).int.signedness == .signed and numerator == intMin(T) and denominator == -1) return error.Overflow;
     return @divTrunc(numerator, denominator);
 }
 
@@ -892,7 +892,7 @@ fn testDivTrunc() !void {
 pub fn divFloor(comptime T: type, numerator: T, denominator: T) !T {
     @setRuntimeSafety(false);
     if (denominator == 0) return error.DivisionByZero;
-    if (@typeInfo(T) == .int and @typeInfo(T).int.signedness == .signed and numerator == minInt(T) and denominator == -1) return error.Overflow;
+    if (@typeInfo(T) == .int and @typeInfo(T).int.signedness == .signed and numerator == intMin(T) and denominator == -1) return error.Overflow;
     return @divFloor(numerator, denominator);
 }
 
@@ -921,7 +921,7 @@ pub fn divCeil(comptime T: type, numerator: T, denominator: T) !T {
         .comptime_float, .float => return @ceil(numerator / denominator),
         .comptime_int, .int => {
             if (numerator < 0 and denominator < 0) {
-                if (info == .int and numerator == minInt(T) and denominator == -1)
+                if (info == .int and numerator == intMin(T) and denominator == -1)
                     return error.Overflow;
                 return @divFloor(numerator + 1, denominator) + 1;
             }
@@ -971,7 +971,7 @@ fn testDivCeil() !void {
 pub fn divExact(comptime T: type, numerator: T, denominator: T) !T {
     @setRuntimeSafety(false);
     if (denominator == 0) return error.DivisionByZero;
-    if (@typeInfo(T) == .int and @typeInfo(T).int.signedness == .signed and numerator == minInt(T) and denominator == -1) return error.Overflow;
+    if (@typeInfo(T) == .int and @typeInfo(T).int.signedness == .signed and numerator == intMin(T) and denominator == -1) return error.Overflow;
     const result = @divTrunc(numerator, denominator);
     if (result * denominator != numerator) return error.UnexpectedRemainder;
     return result;
@@ -1051,9 +1051,9 @@ pub fn negateCast(x: anytype) !std.meta.Int(.signed, @bitSizeOf(@TypeOf(x))) {
     if (@typeInfo(@TypeOf(x)).int.signedness == .signed) return negate(x);
 
     const int = std.meta.Int(.signed, @bitSizeOf(@TypeOf(x)));
-    if (x > -minInt(int)) return error.Overflow;
+    if (x > -intMin(int)) return error.Overflow;
 
-    if (x == -minInt(int)) return minInt(int);
+    if (x == -intMin(int)) return intMin(int);
 
     return -@as(int, @intCast(x));
 }
@@ -1062,10 +1062,10 @@ test negateCast {
     try testing.expect((negateCast(@as(u32, 999)) catch unreachable) == -999);
     try testing.expect(@TypeOf(negateCast(@as(u32, 999)) catch unreachable) == i32);
 
-    try testing.expect((negateCast(@as(u32, -minInt(i32))) catch unreachable) == minInt(i32));
-    try testing.expect(@TypeOf(negateCast(@as(u32, -minInt(i32))) catch unreachable) == i32);
+    try testing.expect((negateCast(@as(u32, -intMin(i32))) catch unreachable) == intMin(i32));
+    try testing.expect(@TypeOf(negateCast(@as(u32, -intMin(i32))) catch unreachable) == i32);
 
-    try testing.expectError(error.Overflow, negateCast(@as(u32, maxInt(i32) + 10)));
+    try testing.expectError(error.Overflow, negateCast(@as(u32, intMax(i32) + 10)));
 }
 
 /// Cast an integer to a different integer type. If the value doesn't fit,
@@ -1074,9 +1074,9 @@ pub fn cast(comptime T: type, x: anytype) ?T {
     comptime assert(@typeInfo(T) == .int); // must pass an integer
     const is_comptime = @TypeOf(x) == comptime_int;
     comptime assert(is_comptime or @typeInfo(@TypeOf(x)) == .int); // must pass an integer
-    if ((is_comptime or maxInt(@TypeOf(x)) > maxInt(T)) and x > maxInt(T)) {
+    if ((is_comptime or intMax(@TypeOf(x)) > intMax(T)) and x > intMax(T)) {
         return null;
-    } else if ((is_comptime or minInt(@TypeOf(x)) < minInt(T)) and x < minInt(T)) {
+    } else if ((is_comptime or intMin(@TypeOf(x)) < intMin(T)) and x < intMin(T)) {
         return null;
     } else {
         return @as(T, @intCast(x));
@@ -1342,10 +1342,10 @@ pub fn lossyCast(comptime T: type, value: anytype) T {
         .int => {
             switch (@typeInfo(@TypeOf(value))) {
                 .int, .comptime_int => {
-                    if (value >= maxInt(T)) {
-                        return maxInt(T);
-                    } else if (value <= minInt(T)) {
-                        return minInt(T);
+                    if (value >= intMax(T)) {
+                        return intMax(T);
+                    } else if (value <= intMin(T)) {
+                        return intMin(T);
                     } else {
                         return @intCast(value);
                     }
@@ -1353,14 +1353,14 @@ pub fn lossyCast(comptime T: type, value: anytype) T {
                 .float, .comptime_float => {
                     // In extreme cases, we probably need a language enhancement to be able to
                     // specify a rounding mode here to prevent `@intFromFloat` panics.
-                    const max: @TypeOf(value) = @floatFromInt(maxInt(T));
-                    const min: @TypeOf(value) = @floatFromInt(minInt(T));
+                    const max: @TypeOf(value) = @floatFromInt(intMax(T));
+                    const min: @TypeOf(value) = @floatFromInt(intMin(T));
                     if (isNan(value)) {
                         return 0;
                     } else if (value >= max) {
-                        return maxInt(T);
+                        return intMax(T);
                     } else if (value <= min) {
-                        return minInt(T);
+                        return intMin(T);
                     } else {
                         return @intFromFloat(value);
                     }
@@ -1376,7 +1376,7 @@ test lossyCast {
     try testing.expect(lossyCast(i16, 70000.0) == @as(i16, 32767));
     try testing.expect(lossyCast(u32, @as(i16, -255)) == @as(u32, 0));
     try testing.expect(lossyCast(i9, @as(u32, 200)) == @as(i9, 200));
-    try testing.expect(lossyCast(u32, @as(f32, @floatFromInt(maxInt(u32)))) == maxInt(u32));
+    try testing.expect(lossyCast(u32, @as(f32, @floatFromInt(intMax(u32)))) == intMax(u32));
     try testing.expect(lossyCast(u32, nan(f32)) == 0);
 }
 
@@ -1440,7 +1440,7 @@ test lerp {
 }
 
 /// Returns the maximum value of integer type T.
-pub fn maxInt(comptime T: type) comptime_int {
+pub fn intMax(comptime T: type) comptime_int {
     const info = @typeInfo(T);
     const bit_count = info.int.bits;
     if (bit_count == 0) return 0;
@@ -1448,7 +1448,7 @@ pub fn maxInt(comptime T: type) comptime_int {
 }
 
 /// Returns the minimum value of integer type T.
-pub fn minInt(comptime T: type) comptime_int {
+pub fn intMin(comptime T: type) comptime_int {
     const info = @typeInfo(T);
     const bit_count = info.int.bits;
     if (info.int.signedness == .unsigned) return 0;
@@ -1456,47 +1456,47 @@ pub fn minInt(comptime T: type) comptime_int {
     return -(1 << (bit_count - 1));
 }
 
-test maxInt {
-    try testing.expect(maxInt(u0) == 0);
-    try testing.expect(maxInt(u1) == 1);
-    try testing.expect(maxInt(u8) == 255);
-    try testing.expect(maxInt(u16) == 65535);
-    try testing.expect(maxInt(u32) == 4294967295);
-    try testing.expect(maxInt(u64) == 18446744073709551615);
-    try testing.expect(maxInt(u128) == 340282366920938463463374607431768211455);
+test intMax {
+    try testing.expect(intMax(u0) == 0);
+    try testing.expect(intMax(u1) == 1);
+    try testing.expect(intMax(u8) == 255);
+    try testing.expect(intMax(u16) == 65535);
+    try testing.expect(intMax(u32) == 4294967295);
+    try testing.expect(intMax(u64) == 18446744073709551615);
+    try testing.expect(intMax(u128) == 340282366920938463463374607431768211455);
 
-    try testing.expect(maxInt(i0) == 0);
-    try testing.expect(maxInt(i1) == 0);
-    try testing.expect(maxInt(i8) == 127);
-    try testing.expect(maxInt(i16) == 32767);
-    try testing.expect(maxInt(i32) == 2147483647);
-    try testing.expect(maxInt(i63) == 4611686018427387903);
-    try testing.expect(maxInt(i64) == 9223372036854775807);
-    try testing.expect(maxInt(i128) == 170141183460469231731687303715884105727);
+    try testing.expect(intMax(i0) == 0);
+    try testing.expect(intMax(i1) == 0);
+    try testing.expect(intMax(i8) == 127);
+    try testing.expect(intMax(i16) == 32767);
+    try testing.expect(intMax(i32) == 2147483647);
+    try testing.expect(intMax(i63) == 4611686018427387903);
+    try testing.expect(intMax(i64) == 9223372036854775807);
+    try testing.expect(intMax(i128) == 170141183460469231731687303715884105727);
 }
 
-test minInt {
-    try testing.expect(minInt(u0) == 0);
-    try testing.expect(minInt(u1) == 0);
-    try testing.expect(minInt(u8) == 0);
-    try testing.expect(minInt(u16) == 0);
-    try testing.expect(minInt(u32) == 0);
-    try testing.expect(minInt(u63) == 0);
-    try testing.expect(minInt(u64) == 0);
-    try testing.expect(minInt(u128) == 0);
+test intMin {
+    try testing.expect(intMin(u0) == 0);
+    try testing.expect(intMin(u1) == 0);
+    try testing.expect(intMin(u8) == 0);
+    try testing.expect(intMin(u16) == 0);
+    try testing.expect(intMin(u32) == 0);
+    try testing.expect(intMin(u63) == 0);
+    try testing.expect(intMin(u64) == 0);
+    try testing.expect(intMin(u128) == 0);
 
-    try testing.expect(minInt(i0) == 0);
-    try testing.expect(minInt(i1) == -1);
-    try testing.expect(minInt(i8) == -128);
-    try testing.expect(minInt(i16) == -32768);
-    try testing.expect(minInt(i32) == -2147483648);
-    try testing.expect(minInt(i63) == -4611686018427387904);
-    try testing.expect(minInt(i64) == -9223372036854775808);
-    try testing.expect(minInt(i128) == -170141183460469231731687303715884105728);
+    try testing.expect(intMin(i0) == 0);
+    try testing.expect(intMin(i1) == -1);
+    try testing.expect(intMin(i8) == -128);
+    try testing.expect(intMin(i16) == -32768);
+    try testing.expect(intMin(i32) == -2147483648);
+    try testing.expect(intMin(i63) == -4611686018427387904);
+    try testing.expect(intMin(i64) == -9223372036854775808);
+    try testing.expect(intMin(i128) == -170141183460469231731687303715884105728);
 }
 
 test "max value type" {
-    const x: u32 = maxInt(i32);
+    const x: u32 = intMax(i32);
     try testing.expect(x == 2147483647);
 }
 

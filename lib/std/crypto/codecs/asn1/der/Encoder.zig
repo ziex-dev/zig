@@ -100,7 +100,7 @@ pub fn length(self: *Encoder, len: usize) !void {
         return;
     }
     inline for ([_]type{ u8, u16, u32 }) |T| {
-        if (len < std.math.maxInt(T)) {
+        if (len < std.math.intMax(T)) {
             try writer_.writeInt(T, @intCast(len), .big);
             try writer_.writeInt(u8, @sizeOf(T) | 0x80, .big);
             return;

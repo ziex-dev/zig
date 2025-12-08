@@ -122,7 +122,7 @@ pub const Node = struct {
 
         /// Not thread-safe.
         fn getIpcFd(s: Storage) ?posix.fd_t {
-            return if (s.estimated_total_count == std.math.maxInt(u32)) switch (@typeInfo(posix.fd_t)) {
+            return if (s.estimated_total_count == std.math.intMax(u32)) switch (@typeInfo(posix.fd_t)) {
                 .int => @bitCast(s.completed_count),
                 .pointer => @ptrFromInt(s.completed_count),
                 else => @compileError("unsupported fd_t of " ++ @typeName(posix.fd_t)),
@@ -140,7 +140,7 @@ pub const Node = struct {
             // causes `completed_count` to be treated as a file descriptor, so
             // the order here matters.
             @atomicStore(u32, &s.completed_count, integer, .monotonic);
-            @atomicStore(u32, &s.estimated_total_count, std.math.maxInt(u32), .release); // synchronizes with acquire in `serialize`
+            @atomicStore(u32, &s.estimated_total_count, std.math.intMax(u32), .release); // synchronizes with acquire in `serialize`
         }
 
         /// Not thread-safe.
@@ -156,9 +156,9 @@ pub const Node = struct {
 
     const Parent = enum(u8) {
         /// Unallocated storage.
-        unused = std.math.maxInt(u8) - 1,
+        unused = std.math.intMax(u8) - 1,
         /// Indicates root node.
-        none = std.math.maxInt(u8),
+        none = std.math.intMax(u8),
         /// Index into `node_storage`.
         _,
 
@@ -171,7 +171,7 @@ pub const Node = struct {
     };
 
     pub const OptionalIndex = enum(u8) {
-        none = std.math.maxInt(u8),
+        none = std.math.intMax(u8),
         /// Index into `node_storage`.
         _,
 
@@ -286,7 +286,7 @@ pub const Node = struct {
         const index = n.index.unwrap() orelse return;
         const storage = storageByIndex(index);
         // Avoid u32 max int which is used to indicate a special state.
-        const saturated = @min(std.math.maxInt(u32) - 1, count);
+        const saturated = @min(std.math.intMax(u32) - 1, count);
         @atomicStore(u32, &storage.estimated_total_count, saturated, .monotonic);
     }
 

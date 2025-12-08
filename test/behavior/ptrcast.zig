@@ -194,7 +194,7 @@ const Bytes = struct {
 test "ptrcast of const integer has the correct object size" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
-    const is_value = ~@as(isize, @intCast(std.math.minInt(isize)));
+    const is_value = ~@as(isize, @intCast(std.math.intMin(isize)));
     const is_bytes = @as([*]const u8, @ptrCast(&is_value))[0..@sizeOf(isize)];
     if (@sizeOf(isize) == 8) {
         switch (native_endian) {

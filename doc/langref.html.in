@@ -4748,7 +4748,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       <p>
       Floored division. Rounds toward negative infinity. For unsigned integers it is
       the same as {#syntax#}numerator / denominator{#endsyntax#}. Caller guarantees {#syntax#}denominator != 0{#endsyntax#} and
-              {#syntax#}!(@typeInfo(T) == .int and T.is_signed and numerator == std.math.minInt(T) and denominator == -1){#endsyntax#}.
+              {#syntax#}!(@typeInfo(T) == .int and T.is_signed and numerator == std.math.intMin(T) and denominator == -1){#endsyntax#}.
       </p>
       <ul>
           <li>{#syntax#}@divFloor(-5, 3) == -2{#endsyntax#}</li>
@@ -4762,7 +4762,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       <p>
       Truncated division. Rounds toward zero. For unsigned integers it is
       the same as {#syntax#}numerator / denominator{#endsyntax#}. Caller guarantees {#syntax#}denominator != 0{#endsyntax#} and
-              {#syntax#}!(@typeInfo(T) == .int and T.is_signed and numerator == std.math.minInt(T) and denominator == -1){#endsyntax#}.
+              {#syntax#}!(@typeInfo(T) == .int and T.is_signed and numerator == std.math.intMin(T) and denominator == -1){#endsyntax#}.
       </p>
       <ul>
           <li>{#syntax#}@divTrunc(-5, 3) == -1{#endsyntax#}</li>
@@ -6045,7 +6045,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       {#code|runtime_invalid_cast.zig#}
 
       <p>
-      To obtain the maximum value of an unsigned integer, use {#syntax#}std.math.maxInt{#endsyntax#}.
+      To obtain the maximum value of an unsigned integer, use {#syntax#}std.math.intMax{#endsyntax#}.
       </p>
       {#header_close#}
       {#header_open|Cast Truncates Data#}

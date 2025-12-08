@@ -207,7 +207,7 @@ const DarwinImpl = struct {
 
             const timeout_us = std.math.cast(u32, timeout_ns / std.time.ns_per_us) orelse overflow: {
                 timeout_overflowed = true;
-                break :overflow std.math.maxInt(u32);
+                break :overflow std.math.intMax(u32);
             };
 
             break :blk c.__ulock_wait(flags, addr, expect, timeout_us);
@@ -287,7 +287,7 @@ const LinuxImpl = struct {
         const rc = linux.futex_3arg(
             &ptr.raw,
             .{ .cmd = .WAKE, .private = true },
-            @min(max_waiters, std.math.maxInt(i32)),
+            @min(max_waiters, std.math.intMax(i32)),
         );
 
         switch (linux.errno(rc)) {
@@ -392,7 +392,7 @@ const OpenbsdImpl = struct {
         const rc = c.futex(
             @as(*const volatile u32, @ptrCast(&ptr.raw)),
             c.FUTEX.WAKE | c.FUTEX.PRIVATE_FLAG,
-            std.math.cast(c_int, max_waiters) orelse std.math.maxInt(c_int),
+            std.math.cast(c_int, max_waiters) orelse std.math.intMax(c_int),
             null, // FUTEX.WAKE takes no timeout ptr
             null, // FUTEX.WAKE takes no requeue address
         );
@@ -415,7 +415,7 @@ const DragonflyImpl = struct {
             assert(delay != 0); // handled by timedWait().
             timeout_us = std.math.cast(c_int, delay / std.time.ns_per_us) orelse blk: {
                 timeout_overflowed = true;
-                break :blk std.math.maxInt(c_int);
+                break :blk std.math.intMax(c_int);
             };
 
             // Only need to record the start time if we can provide somewhat accurate error.Timeout's
@@ -794,7 +794,7 @@ const PosixImpl = struct {
         //
         // acquire barrier to ensure the announcement happens before the ptr check below.
         var pending = bucket.pending.fetchAdd(1, .acquire);
-        assert(pending < std.math.maxInt(usize));
+        assert(pending < std.math.intMax(usize));
 
         // If the wait gets canceled, remove the pending count we previously added.
         // This is done outside the mutex lock to keep the critical section short in case of contention.
@@ -896,7 +896,7 @@ test "smoke test" {
     // Try wakes
     Futex.wake(&value, 0);
     Futex.wake(&value, 1);
-    Futex.wake(&value, std.math.maxInt(u32));
+    Futex.wake(&value, std.math.intMax(u32));
 }
 
 test "signaling" {

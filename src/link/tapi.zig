@@ -141,8 +141,8 @@ pub const LibStub = struct {
 
     pub fn loadFromFile(allocator: Allocator, file: fs.File) TapiError!LibStub {
         const filesize = blk: {
-            const stat = file.stat() catch break :blk std.math.maxInt(u32);
-            break :blk @min(stat.size, std.math.maxInt(u32));
+            const stat = file.stat() catch break :blk std.math.intMax(u32);
+            break :blk @min(stat.size, std.math.intMax(u32));
         };
         const source = try allocator.alloc(u8, filesize);
         defer allocator.free(source);

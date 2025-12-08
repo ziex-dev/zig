@@ -3364,7 +3364,7 @@ fn buildOutputType(
     var thread_pool: ThreadPool = undefined;
     try thread_pool.init(.{
         .allocator = gpa,
-        .n_jobs = @min(@max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1), std.math.maxInt(Zcu.PerThread.IdBacking)),
+        .n_jobs = @min(@max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1), std.math.intMax(Zcu.PerThread.IdBacking)),
         .track_ids = true,
         .stack_size = thread_stack_size,
     });
@@ -5143,7 +5143,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) 
     var thread_pool: ThreadPool = undefined;
     try thread_pool.init(.{
         .allocator = gpa,
-        .n_jobs = @min(@max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1), std.math.maxInt(Zcu.PerThread.IdBacking)),
+        .n_jobs = @min(@max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1), std.math.intMax(Zcu.PerThread.IdBacking)),
         .track_ids = true,
         .stack_size = thread_stack_size,
     });
@@ -5551,7 +5551,7 @@ fn jitCmd(
     var thread_pool: ThreadPool = undefined;
     try thread_pool.init(.{
         .allocator = gpa,
-        .n_jobs = @min(@max(std.Thread.getCpuCount() catch 1, 1), std.math.maxInt(Zcu.PerThread.IdBacking)),
+        .n_jobs = @min(@max(std.Thread.getCpuCount() catch 1, 1), std.math.intMax(Zcu.PerThread.IdBacking)),
         .track_ids = true,
         .stack_size = thread_stack_size,
     });
@@ -5692,7 +5692,7 @@ fn jitCmd(
 
     if (options.capture) |ptr| {
         var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
-        ptr.* = try stdout_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
+        ptr.* = try stdout_reader.interface.allocRemaining(arena, .limited(std.math.intMax(u32)));
     }
 
     const term = try child.wait();

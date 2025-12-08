@@ -109,7 +109,7 @@ pub fn getDylibOrdinal(symbol: Symbol, macho_file: *MachO) ?u16 {
 }
 
 pub fn getSymbolRank(symbol: Symbol, macho_file: *MachO) u32 {
-    const file = symbol.getFile(macho_file) orelse return std.math.maxInt(u32);
+    const file = symbol.getFile(macho_file) orelse return std.math.intMax(u32);
     const in_archive = switch (file) {
         .object => |x| !x.alive,
         else => false,

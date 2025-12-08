@@ -228,7 +228,7 @@ pub fn capacity(self: Atom, macho_file: *MachO) u64 {
     const next_addr = if (zo.getAtom(self.next_index)) |next|
         next.getAddress(macho_file)
     else
-        std.math.maxInt(u32);
+        std.math.intMax(u32);
     return next_addr - self.getAddress(macho_file);
 }
 

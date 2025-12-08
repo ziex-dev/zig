@@ -40,7 +40,7 @@ pub fn StaticStringMapWithEql(
         kvs: *const KVs = &empty_kvs,
         len_indexes: [*]const u32 = &empty_len_indexes,
         len_indexes_len: u32 = 0,
-        min_len: u32 = std.math.maxInt(u32),
+        min_len: u32 = std.math.intMax(u32),
         max_len: u32 = 0,
 
         pub const KV = struct {

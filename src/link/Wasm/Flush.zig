@@ -506,7 +506,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
         if (memory_ptr > initial_memory) {
             diags.addError("initial memory value {d} insufficient; minimum {d}", .{ initial_memory, memory_ptr });
         }
-        if (initial_memory > std.math.maxInt(u32)) {
+        if (initial_memory > std.math.intMax(u32)) {
             diags.addError("initial memory value {d} exceeds 32-bit address space", .{initial_memory});
         }
         if (diags.hasErrors()) return error.LinkFailure;
@@ -528,7 +528,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
         if (memory_ptr > max_memory) {
             diags.addError("maximum memory value {d} insufficient; minimum {d}", .{ max_memory, memory_ptr });
         }
-        if (max_memory > std.math.maxInt(u32)) {
+        if (max_memory > std.math.intMax(u32)) {
             diags.addError("maximum memory value {d} exceeds 32-bit address space", .{max_memory});
         }
         if (diags.hasErrors()) return error.LinkFailure;

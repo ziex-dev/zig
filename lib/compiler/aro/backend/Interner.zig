@@ -213,7 +213,7 @@ pub const Key = union(enum) {
 };
 
 pub const Ref = enum(u32) {
-    const max = std.math.maxInt(u32);
+    const max = std.math.intMax(u32);
 
     ptr = max - 1,
     noreturn = max - 2,
@@ -242,7 +242,7 @@ pub const Ref = enum(u32) {
 };
 
 pub const OptRef = enum(u32) {
-    const max = std.math.maxInt(u32);
+    const max = std.math.intMax(u32);
 
     none = max - 0,
     ptr = max - 1,

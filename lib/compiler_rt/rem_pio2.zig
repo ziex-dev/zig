@@ -168,7 +168,7 @@ pub fn rem_pio2(x: f64, y: *[2]f64) i32 {
     }
     // set z = scalbn(|x|,-ilogb(x)+23)
     ui = @bitCast(x);
-    ui &= std.math.maxInt(u64) >> 12;
+    ui &= std.math.intMax(u64) >> 12;
     ui |= @as(u64, 0x3ff + 23) << 52;
     z = @bitCast(ui);
 

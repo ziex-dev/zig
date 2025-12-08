@@ -607,7 +607,7 @@ fn readSparseBitVector(reader: *std.Io.Reader, allocator: Allocator) ![]u32 {
             if (word & (@as(u32, 1) << bit_i) != 0) {
                 try list.append(word_i * 32 + bit_i);
             }
-            if (bit_i == std.math.maxInt(u5)) break;
+            if (bit_i == std.math.intMax(u5)) break;
         }
     }
     return try list.toOwnedSlice();

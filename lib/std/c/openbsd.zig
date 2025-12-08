@@ -1,6 +1,6 @@
 const std = @import("../std.zig");
 const assert = std.debug.assert;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const builtin = @import("builtin");
 const caddr_t = std.c.caddr_t;
 const iovec = std.posix.iovec;

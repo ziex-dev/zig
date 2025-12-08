@@ -19,7 +19,7 @@ comptime {
 
 inline fn muloXi4_genericSmall(comptime ST: type, a: ST, b: ST, overflow: *c_int) ST {
     overflow.* = 0;
-    const min = math.minInt(ST);
+    const min = math.intMin(ST);
     const res: ST = a *% b;
     // Hacker's Delight section Overflow subsection Multiplication
     // case a=-2^{31}, b=-1 problem, because
@@ -39,8 +39,8 @@ inline fn muloXi4_genericFast(comptime ST: type, a: ST, b: ST, overflow: *c_int)
         i128 => i256,
         else => unreachable,
     };
-    const min = math.minInt(ST);
-    const max = math.maxInt(ST);
+    const min = math.intMin(ST);
+    const max = math.intMax(ST);
     const res: EST = @as(EST, a) * @as(EST, b);
     //invariant: -2^{bitwidth(EST)} < res < 2^{bitwidth(EST)-1}
     if (res < min or max < res)

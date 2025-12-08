@@ -88,14 +88,14 @@ test "minUnsignedBits" {
     try Test.checkIntBits(&comp, 0, 0);
     try Test.checkIntBits(&comp, 1, 1);
     try Test.checkIntBits(&comp, 2, 2);
-    try Test.checkIntBits(&comp, std.math.maxInt(i8), 7);
-    try Test.checkIntBits(&comp, std.math.maxInt(u8), 8);
-    try Test.checkIntBits(&comp, std.math.maxInt(i16), 15);
-    try Test.checkIntBits(&comp, std.math.maxInt(u16), 16);
-    try Test.checkIntBits(&comp, std.math.maxInt(i32), 31);
-    try Test.checkIntBits(&comp, std.math.maxInt(u32), 32);
-    try Test.checkIntBits(&comp, std.math.maxInt(i64), 63);
-    try Test.checkIntBits(&comp, std.math.maxInt(u64), 64);
+    try Test.checkIntBits(&comp, std.math.intMax(i8), 7);
+    try Test.checkIntBits(&comp, std.math.intMax(u8), 8);
+    try Test.checkIntBits(&comp, std.math.intMax(i16), 15);
+    try Test.checkIntBits(&comp, std.math.intMax(u16), 16);
+    try Test.checkIntBits(&comp, std.math.intMax(i32), 31);
+    try Test.checkIntBits(&comp, std.math.intMax(u32), 32);
+    try Test.checkIntBits(&comp, std.math.intMax(i64), 63);
+    try Test.checkIntBits(&comp, std.math.intMax(u64), 64);
 }
 
 /// Minimum number of bits needed to represent `v` in 2's complement notation
@@ -128,10 +128,10 @@ test "minSignedBits" {
     try Test.checkIntBits(&comp, -2, 2);
     try Test.checkIntBits(&comp, -10, 5);
     try Test.checkIntBits(&comp, -101, 8);
-    try Test.checkIntBits(&comp, std.math.minInt(i8), 8);
-    try Test.checkIntBits(&comp, std.math.minInt(i16), 16);
-    try Test.checkIntBits(&comp, std.math.minInt(i32), 32);
-    try Test.checkIntBits(&comp, std.math.minInt(i64), 64);
+    try Test.checkIntBits(&comp, std.math.intMin(i8), 8);
+    try Test.checkIntBits(&comp, std.math.intMin(i16), 16);
+    try Test.checkIntBits(&comp, std.math.intMin(i32), 32);
+    try Test.checkIntBits(&comp, std.math.intMin(i64), 64);
 }
 
 pub const FloatToIntChangeKind = enum {
@@ -377,7 +377,7 @@ pub fn imaginaryPart(v: Value, comp: *Compilation) !Value {
 fn bigIntToFloat(limbs: []const std.math.big.Limb, positive: bool) f128 {
     if (limbs.len == 0) return 0;
 
-    const base = std.math.maxInt(std.math.big.Limb) + 1;
+    const base = std.math.intMax(std.math.big.Limb) + 1;
     var result: f128 = 0;
     var i: usize = limbs.len;
     while (i != 0) {
@@ -426,7 +426,7 @@ const IsInfKind = enum(i32) {
     negative = -1,
     finite = 0,
     positive = 1,
-    unknown = std.math.maxInt(i32),
+    unknown = std.math.intMax(i32),
 };
 
 pub fn isInfSign(v: Value, comp: *const Compilation) IsInfKind {
@@ -786,7 +786,7 @@ pub fn div(res: *Value, lhs: Value, rhs: Value, qt: QualType, comp: *Compilation
 }
 
 /// caller guarantees rhs != 0
-/// caller guarantees lhs != std.math.minInt(T) OR rhs != -1
+/// caller guarantees lhs != std.math.intMin(T) OR rhs != -1
 pub fn rem(lhs: Value, rhs: Value, qt: QualType, comp: *Compilation) !Value {
     var lhs_space: BigIntSpace = undefined;
     var rhs_space: BigIntSpace = undefined;
@@ -795,7 +795,7 @@ pub fn rem(lhs: Value, rhs: Value, qt: QualType, comp: *Compilation) !Value {
 
     if (qt.signedness(comp) == .signed) {
         var spaces: [2]BigIntSpace = undefined;
-        const min_val = try Value.minInt(qt, comp);
+        const min_val = try Value.intMin(qt, comp);
         const negative = BigIntMutable.init(&spaces[0].limbs, -1).toConst();
         const big_one = BigIntMutable.init(&spaces[1].limbs, 1).toConst();
         if (lhs.compare(.eq, min_val, comp) and rhs_bigint.eql(negative)) {
@@ -911,14 +911,14 @@ pub fn bitNot(val: Value, qt: QualType, comp: *Compilation) !Value {
 pub fn shl(res: *Value, lhs: Value, rhs: Value, qt: QualType, comp: *Compilation) !bool {
     var lhs_space: Value.BigIntSpace = undefined;
     const lhs_bigint = lhs.toBigInt(&lhs_space, comp);
-    const shift = rhs.toInt(usize, comp) orelse std.math.maxInt(usize);
+    const shift = rhs.toInt(usize, comp) orelse std.math.intMax(usize);
 
     const bits: usize = @intCast(qt.bitSizeof(comp));
     if (shift > bits) {
         if (lhs_bigint.positive) {
-            res.* = try Value.maxInt(qt, comp);
+            res.* = try Value.intMax(qt, comp);
         } else {
-            res.* = try Value.minInt(qt, comp);
+            res.* = try Value.intMin(qt, comp);
         }
         return true;
     }
@@ -1043,9 +1043,9 @@ fn twosCompIntLimit(limit: std.math.big.int.TwosCompIntLimit, qt: QualType, comp
     const mag_bits: usize = @intCast(qt.bitSizeof(comp));
     switch (mag_bits) {
         inline 8, 16, 32, 64 => |bits| {
-            if (limit == .min) return Value.int(@as(i64, std.math.minInt(std.meta.Int(.signed, bits))), comp);
+            if (limit == .min) return Value.int(@as(i64, std.math.intMin(std.meta.Int(.signed, bits))), comp);
             return switch (signedness) {
-                inline else => |sign| Value.int(std.math.maxInt(std.meta.Int(sign, bits)), comp),
+                inline else => |sign| Value.int(std.math.intMax(std.meta.Int(sign, bits)), comp),
             };
         },
         else => {},
@@ -1065,11 +1065,11 @@ fn twosCompIntLimit(limit: std.math.big.int.TwosCompIntLimit, qt: QualType, comp
     return Value.intern(comp, .{ .int = .{ .big_int = result_bigint.toConst() } });
 }
 
-pub fn minInt(qt: QualType, comp: *Compilation) !Value {
+pub fn intMin(qt: QualType, comp: *Compilation) !Value {
     return twosCompIntLimit(.min, qt, comp);
 }
 
-pub fn maxInt(qt: QualType, comp: *Compilation) !Value {
+pub fn intMax(qt: QualType, comp: *Compilation) !Value {
     return twosCompIntLimit(.max, qt, comp);
 }
 
@@ -1149,7 +1149,7 @@ pub fn printString(bytes: []const u8, qt: QualType, comp: *const Compilation, w:
             const data_slice = std.mem.sliceAsBytes(item[0..1]);
             for (0..@divExact(without_null.len, 4)) |n| {
                 @memcpy(data_slice, without_null[n * 4 ..][0..4]);
-                if (item[0] <= std.math.maxInt(u21) and std.unicode.utf8ValidCodepoint(@intCast(item[0]))) {
+                if (item[0] <= std.math.intMax(u21) and std.unicode.utf8ValidCodepoint(@intCast(item[0]))) {
                     const codepoint: u21 = @intCast(item[0]);
                     try w.print("{u}", .{codepoint});
                 } else {

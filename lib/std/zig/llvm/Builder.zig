@@ -82,7 +82,7 @@ pub const Options = struct {
 };
 
 pub const String = enum(u32) {
-    none = std.math.maxInt(u31),
+    none = std.math.intMax(u31),
     empty,
     _,
 
@@ -242,7 +242,7 @@ pub const Type = enum(u32) {
     ptr,
     @"ptr addrspace(4)",
 
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub const ptr_amdgpu_constant =
@@ -1432,8 +1432,8 @@ pub const Attribute = union(Kind) {
         //sanitize_memtag,
         sanitize_address_dyninit = 102,
 
-        string = std.math.maxInt(u31),
-        none = std.math.maxInt(u32),
+        string = std.math.intMax(u31),
+        none = std.math.intMax(u32),
         _,
 
         pub const len = @typeInfo(Kind).@"enum".fields.len - 2;
@@ -1513,12 +1513,12 @@ pub const Attribute = union(Kind) {
         elem_size: u16,
         num_elems: u16,
 
-        pub const none = std.math.maxInt(u16);
+        pub const none = std.math.intMax(u16);
 
         fn toLlvm(self: AllocSize) packed struct(u64) { num_elems: u32, elem_size: u32 } {
             return .{ .num_elems = switch (self.num_elems) {
                 else => self.num_elems,
-                none => std.math.maxInt(u32),
+                none => std.math.intMax(u32),
             }, .elem_size = self.elem_size };
         }
     };
@@ -2014,7 +2014,7 @@ pub const ExternallyInitialized = enum {
 };
 
 pub const Alignment = enum(u6) {
-    default = std.math.maxInt(u6),
+    default = std.math.intMax(u6),
     _,
 
     pub fn fromByteUnits(bytes: u64) Alignment {
@@ -2177,7 +2177,7 @@ pub const CallConv = enum(u10) {
 };
 
 pub const StrtabString = enum(u32) {
-    none = std.math.maxInt(u31),
+    none = std.math.intMax(u31),
     empty,
     _,
 
@@ -2305,7 +2305,7 @@ pub const Global = struct {
     },
 
     pub const Index = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn unwrap(self: Index, builder: *const Builder) Index {
@@ -2475,7 +2475,7 @@ pub const Alias = struct {
     aliasee: Constant = .no_init,
 
     pub const Index = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn ptr(self: Index, builder: *Builder) *Alias {
@@ -2527,7 +2527,7 @@ pub const Variable = struct {
     alignment: Alignment = .default,
 
     pub const Index = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn ptr(self: Index, builder: *Builder) *Variable {
@@ -4054,7 +4054,7 @@ pub const Function = struct {
     extra: []const u32 = &.{},
 
     pub const Index = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn ptr(self: Index, builder: *Builder) *Function {
@@ -4408,7 +4408,7 @@ pub const Function = struct {
         };
 
         pub const Index = enum(u32) {
-            none = std.math.maxInt(u31),
+            none = std.math.intMax(u31),
             _,
 
             pub fn name(self: Instruction.Index, function: *const Function) String {
@@ -5004,7 +5004,7 @@ pub const Function = struct {
                 fsub = 12,
                 fmax = 13,
                 fmin = 14,
-                none = std.math.maxInt(u5),
+                none = std.math.intMax(u5),
             };
         };
 
@@ -7326,7 +7326,7 @@ pub const Constant = enum(u32) {
         //indices: [info.indices_len]Constant,
 
         pub const Kind = enum { normal, inbounds };
-        pub const InRangeIndex = enum(u16) { none = std.math.maxInt(u16), _ };
+        pub const InRangeIndex = enum(u16) { none = std.math.intMax(u16), _ };
         pub const Info = packed struct(u32) { indices_len: u16, inrange: InRangeIndex };
     };
 
@@ -7576,7 +7576,7 @@ pub const Constant = enum(u32) {
                             string: [
                                 (std.math.big.int.Const{
                                     .limbs = &([1]std.math.big.Limb{
-                                        std.math.maxInt(std.math.big.Limb),
+                                        std.math.intMax(std.math.big.Limb),
                                     } ** expected_limbs),
                                     .positive = false,
                                 }).sizeInBaseUpperBound(10)
@@ -7619,7 +7619,7 @@ pub const Constant = enum(u32) {
 
                         const repr: Float.Repr(f32) = @bitCast(item.data);
                         const denormal_shift = switch (repr.exponent) {
-                            std.math.minInt(Exponent32) => @as(
+                            std.math.intMin(Exponent32) => @as(
                                 std.math.Log2Int(Mantissa64),
                                 @clz(repr.mantissa),
                             ) + 1,
@@ -7633,14 +7633,14 @@ pub const Constant = enum(u32) {
                                     denormal_shift,
                             ),
                             .exponent = switch (repr.exponent) {
-                                std.math.minInt(Exponent32) => if (repr.mantissa > 0)
+                                std.math.intMin(Exponent32) => if (repr.mantissa > 0)
                                     @as(Exponent64, std.math.floatExponentMin(f32) +
                                         std.math.floatExponentMax(f64)) - denormal_shift
                                 else
-                                    std.math.minInt(Exponent64),
+                                    std.math.intMin(Exponent64),
                                 else => @as(Exponent64, repr.exponent) +
                                     (std.math.floatExponentMax(f64) - std.math.floatExponentMax(f32)),
-                                std.math.maxInt(Exponent32) => std.math.maxInt(Exponent64),
+                                std.math.intMax(Exponent32) => std.math.intMax(Exponent64),
                             },
                             .sign = repr.sign,
                         }))});
@@ -7817,7 +7817,7 @@ pub const Constant = enum(u32) {
 };
 
 pub const Value = enum(u32) {
-    none = std.math.maxInt(u31),
+    none = std.math.intMax(u31),
     false = first_constant + @intFromEnum(Constant.false),
     true = first_constant + @intFromEnum(Constant.true),
     @"0" = first_constant + @intFromEnum(Constant.@"0"),
@@ -8957,7 +8957,7 @@ pub fn structType(
 pub fn opaqueType(self: *Builder, name: String) Allocator.Error!Type {
     try self.string_map.ensureUnusedCapacity(self.gpa, 1);
     if (name.slice(self)) |id| {
-        const count: usize = comptime std.fmt.count("{d}", .{std.math.maxInt(u32)});
+        const count: usize = comptime std.fmt.count("{d}", .{std.math.intMax(u32)});
         try self.string_bytes.ensureUnusedCapacity(self.gpa, id.len + count);
     }
     try self.string_indices.ensureUnusedCapacity(self.gpa, 1);
@@ -10507,7 +10507,7 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                         string: [
                             (std.math.big.int.Const{
                                 .limbs = &([1]std.math.big.Limb{
-                                    std.math.maxInt(std.math.big.Limb),
+                                    std.math.intMax(std.math.big.Limb),
                                 } ** expected_limbs),
                                 .positive = false,
                             }).sizeInBaseUpperBound(10)
@@ -10657,7 +10657,7 @@ fn printEscapedString(slice: []const u8, quotes: QuoteBehavior, w: *Writer) Writ
 fn ensureUnusedGlobalCapacity(self: *Builder, name: StrtabString) Allocator.Error!void {
     try self.strtab_string_map.ensureUnusedCapacity(self.gpa, 1);
     if (name.slice(self)) |id| {
-        const count: usize = comptime std.fmt.count("{d}", .{std.math.maxInt(u32)});
+        const count: usize = comptime std.fmt.count("{d}", .{std.math.intMax(u32)});
         try self.strtab_string_bytes.ensureUnusedCapacity(self.gpa, id.len + count);
     }
     try self.strtab_string_indices.ensureUnusedCapacity(self.gpa, 1);

@@ -557,7 +557,7 @@ const ResourceTree = struct {
 
     fn incrementRsrc02Len(self: *ResourceTree, resource: *const Resource) !void {
         // Note: This @intCast is only safe if we assume that the resource was parsed from a .res file,
-        // since the maximum data length for a resource in the .res file format is maxInt(u32).
+        // since the maximum data length for a resource in the .res file format is intMax(u32).
         // TODO: Either codify this properly or use std.math.cast and return an error.
         const data_len: u32 = @intCast(resource.data.len);
         const data_len_including_padding: u32 = std.math.cast(u32, std.mem.alignForward(u33, data_len, 8)) orelse {
@@ -876,7 +876,7 @@ const ResourceTree = struct {
             // Another option would be to adopt llvm-cvtres' behavior
             // of $R000001, $R000002, etc. rather than using data offset values.
             var name_buf: [8]u8 = undefined;
-            if (relocation.data_offset > std.math.maxInt(u24)) {
+            if (relocation.data_offset > std.math.intMax(u24)) {
                 const name_slice = try std.fmt.allocPrint(allocator, "$R{X}", .{relocation.data_offset});
                 defer allocator.free(name_slice);
                 const string_table_offset: u32 = try coff_string_table.put(allocator, name_slice);
@@ -969,7 +969,7 @@ const StringTable = struct {
     pub fn put(self: *StringTable, allocator: Allocator, string: []const u8) !u32 {
         const null_terminated_len = string.len + 1;
         const start_offset = self.totalByteLength();
-        if (start_offset + null_terminated_len > std.math.maxInt(u32)) {
+        if (start_offset + null_terminated_len > std.math.intMax(u32)) {
             return error.StringTableOverflow;
         }
         try self.bytes.ensureUnusedCapacity(allocator, null_terminated_len);

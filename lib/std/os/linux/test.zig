@@ -223,7 +223,7 @@ test "futex v1" {
     {
         const val3 = 1;
         const wake_nr = 3;
-        const requeue_max = std.math.maxInt(u31);
+        const requeue_max = std.math.intMax(u31);
         var target_lock: std.atomic.Value(u32) = std.atomic.Value(u32).init(1);
         rc = linux.futex(&lock.raw, .{ .cmd = .CMP_REQUEUE, .private = true }, wake_nr, .{ .val2 = requeue_max }, &target_lock.raw, val3);
         try expectEqual(0, rc);

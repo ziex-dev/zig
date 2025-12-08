@@ -14,7 +14,7 @@ pub fn floatFromInt(comptime T: type, x: anytype) T {
     const int_bits = @bitSizeOf(@TypeOf(x));
     const exp_bits = math.floatExponentBits(T);
     const fractional_bits = math.floatFractionalBits(T);
-    const exp_bias = math.maxInt(Int(.unsigned, exp_bits - 1));
+    const exp_bias = math.intMax(Int(.unsigned, exp_bits - 1));
     const implicit_bit = if (T != f80) @as(uT, 1) << fractional_bits else 0;
     const max_exp = exp_bias;
 

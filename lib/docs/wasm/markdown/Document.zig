@@ -121,7 +121,7 @@ pub const Node = struct {
         // type can be more naturally expressed as ?u30. As it is, we want
         // values to fit within 4 bytes, so ?u30 does not yet suffice for
         // storage.
-        unordered = std.math.maxInt(u30),
+        unordered = std.math.intMax(u30),
         _,
 
         pub fn asNumber(start: ListStart) ?u30 {

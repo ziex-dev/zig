@@ -1868,7 +1868,7 @@ fn intShlSat(
         // We only support ints with up to 2^16 - 1 bits, so this
         // shift will fully saturate every non-zero int (assuming
         // that `usize` is at least 16 bits wide).
-        return if (lhs_bigint.eqlZero()) lhs else lhs_ty.maxIntScalar(pt, lhs_ty);
+        return if (lhs_bigint.eqlZero()) lhs else lhs_ty.intMaxScalar(pt, lhs_ty);
     };
 
     const limbs = try sema.arena.alloc(
