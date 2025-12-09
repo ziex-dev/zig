@@ -1506,19 +1506,6 @@ pub const SrcLoc = struct {
                 const node = node_off.toAbsolute(src_loc.base_node);
                 return tree.nodeToSpan(node);
             },
-            .node_offset_asm_source => |node_off| {
-                const tree = try src_loc.file_scope.getTree(zcu);
-                const node = node_off.toAbsolute(src_loc.base_node);
-                const full = tree.fullAsm(node).?;
-                return tree.nodeToSpan(full.ast.template);
-            },
-            .node_offset_asm_ret_ty => |node_off| {
-                const tree = try src_loc.file_scope.getTree(zcu);
-                const node = node_off.toAbsolute(src_loc.base_node);
-                const full = tree.fullAsm(node).?;
-                const asm_output = full.outputs[0];
-                return tree.nodeToSpan(tree.nodeData(asm_output).opt_node_and_token[0].unwrap().?);
-            },
 
             .node_offset_if_cond => |node_off| {
                 const tree = try src_loc.file_scope.getTree(zcu);
@@ -2372,16 +2359,6 @@ pub const LazySrcLoc = struct {
         /// base node, which points to a pointer deref AST node. Next, navigate
         /// to the pointer expression.
         node_offset_deref_ptr: Ast.Node.Offset,
-        /// The source location points to the assembly source code of an inline assembly
-        /// expression, found by taking this AST node index offset from the containing
-        /// base node, which points to inline assembly AST node. Next, navigate
-        /// to the asm template source code.
-        node_offset_asm_source: Ast.Node.Offset,
-        /// The source location points to the return type of an inline assembly
-        /// expression, found by taking this AST node index offset from the containing
-        /// base node, which points to inline assembly AST node. Next, navigate
-        /// to the return type expression.
-        node_offset_asm_ret_ty: Ast.Node.Offset,
         /// The source location points to the condition expression of an if
         /// expression, found by taking this AST node index offset from the containing
         /// base node, which points to an if expression AST node. Next, navigate

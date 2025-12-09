@@ -2561,11 +2561,8 @@ pub const Inst = struct {
         src_node: Ast.Node.Offset,
         // null-terminated string index
         asm_source: NullTerminatedString,
-        /// 1 bit for each outputs_len: whether it uses `-> T` or not.
-        ///   0b0 - operand is a pointer to where to store the output.
-        ///   0b1 - operand is a type; asm expression has the output as the result.
-        /// 0b0X is the first output, 0bX0 is the second, etc.
-        output_type_bits: u32,
+        /// Index of the output that uses `-> T` or `std.math.maxInt(u32)` if none do.
+        output_value_index: u32,
         clobbers: Ref,
 
         pub const Small = packed struct(u16) {
@@ -2579,7 +2576,7 @@ pub const Inst = struct {
             name: NullTerminatedString,
             /// index into string_bytes (null terminated)
             constraint: NullTerminatedString,
-            /// How to interpret this is determined by `output_type_bits`.
+            /// How to interpret this is determined by `output_value_index`.
             operand: Ref,
         };
 

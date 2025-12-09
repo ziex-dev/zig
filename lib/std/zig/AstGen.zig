@@ -8786,10 +8786,13 @@ fn asmExpr(
     if (full.outputs.len >= 16) {
         return astgen.failNode(full.outputs[16], "too many asm outputs", .{});
     }
+    var name_map: std.AutoArrayHashMapUnmanaged(Zir.NullTerminatedString, Ast.TokenIndex) = .empty;
+    try name_map.ensureUnusedCapacity(astgen.arena, full.outputs.len + full.inputs.len);
+
     var outputs_buffer: [15]Zir.Inst.Asm.Output = undefined;
     const outputs = outputs_buffer[0..full.outputs.len];
 
-    var output_type_bits: u32 = 0;
+    var output_value_index: u32 = std.math.maxInt(u32);
 
     for (full.outputs, 0..) |output_node, i| {
         const symbolic_name = tree.nodeMainToken(output_node);
@@ -8798,10 +8801,10 @@ fn asmExpr(
         const constraint = (try astgen.strLitAsString(constraint_token)).index;
         const has_arrow = tree.tokenTag(symbolic_name + 4) == .arrow;
         if (has_arrow) {
-            if (output_type_bits != 0) {
+            if (output_value_index != std.math.maxInt(u32)) {
                 return astgen.failNode(output_node, "inline assembly allows up to one output value", .{});
             }
-            output_type_bits |= @as(u32, 1) << @intCast(i);
+            output_value_index = @intCast(i);
             const out_type_node = tree.nodeData(output_node).opt_node_and_token[0].unwrap().?;
             const out_type_inst = try typeExpr(gz, scope, out_type_node);
             outputs[i] = .{
@@ -8819,6 +8822,15 @@ fn asmExpr(
                 .constraint = constraint,
                 .operand = try localVarRef(gz, scope, .{ .rl = .ref }, node, ident_token),
             };
+        }
+        if (!std.mem.eql(u8, tree.tokenSlice(symbolic_name), "_")) {
+            const gop = name_map.getOrPutAssumeCapacity(name);
+            if (gop.found_existing) {
+                return astgen.failTokNotes(symbolic_name, "duplicate assembly output name", .{}, &.{
+                    try astgen.errNoteTok(gop.value_ptr.*, "previously declared here", .{}),
+                });
+            }
+            gop.value_ptr.* = symbolic_name;
         }
     }
 
@@ -8839,6 +8851,15 @@ fn asmExpr(
             .constraint = constraint,
             .operand = operand,
         };
+        if (!std.mem.eql(u8, tree.tokenSlice(symbolic_name), "_")) {
+            const gop = name_map.getOrPutAssumeCapacity(name);
+            if (gop.found_existing) {
+                return astgen.failTokNotes(symbolic_name, "duplicate assembly input name", .{}, &.{
+                    try astgen.errNoteTok(gop.value_ptr.*, "previously declared here", .{}),
+                });
+            }
+            gop.value_ptr.* = symbolic_name;
+        }
     }
 
     const clobbers: Zir.Inst.Ref = if (full.ast.clobbers.unwrap()) |clobbers_node|
@@ -8853,7 +8874,7 @@ fn asmExpr(
         .node = node,
         .asm_source = tag_and_tmpl.tmpl,
         .is_volatile = full.volatile_token != null,
-        .output_type_bits = output_type_bits,
+        .output_value_index = output_value_index,
         .outputs = outputs,
         .inputs = inputs,
         .clobbers = clobbers,
@@ -12946,7 +12967,7 @@ const GenZir = struct {
             /// Absolute node index. This function does the conversion to offset from Decl.
             node: Ast.Node.Index,
             asm_source: Zir.NullTerminatedString,
-            output_type_bits: u32,
+            output_value_index: u32,
             is_volatile: bool,
             outputs: []const Zir.Inst.Asm.Output,
             inputs: []const Zir.Inst.Asm.Input,
@@ -12965,7 +12986,7 @@ const GenZir = struct {
         const payload_index = gz.astgen.addExtraAssumeCapacity(Zir.Inst.Asm{
             .src_node = gz.nodeIndexToRelative(args.node),
             .asm_source = args.asm_source,
-            .output_type_bits = args.output_type_bits,
+            .output_value_index = args.output_value_index,
             .clobbers = args.clobbers,
         });
         for (args.outputs) |output| {

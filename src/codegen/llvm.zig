@@ -7380,9 +7380,8 @@ pub const FuncGen = struct {
             }
 
             if (!std.mem.eql(u8, name, "_")) {
-                const gop = name_map.getOrPutAssumeCapacity(name);
-                if (gop.found_existing) return self.todo("duplicate asm output name '{s}'", .{name});
-                gop.value_ptr.* = @intCast(total_i);
+                // AstGen guarantees no duplicate names
+                name_map.putAssumeCapacity(name, @intCast(total_i));
             }
             total_i += 1;
         }
@@ -7435,9 +7434,8 @@ pub const FuncGen = struct {
             }
 
             if (!std.mem.eql(u8, name, "_")) {
-                const gop = name_map.getOrPutAssumeCapacity(name);
-                if (gop.found_existing) return self.todo("duplicate asm input name '{s}'", .{name});
-                gop.value_ptr.* = @intCast(total_i);
+                // AstGen guarantees no duplicate names
+                name_map.putAssumeCapacity(name, @intCast(total_i));
             }
 
             // In the case of indirect inputs, LLVM requires the callsite to have

@@ -16091,7 +16091,6 @@ fn zirAsm(
 
     const extra = sema.code.extraData(Zir.Inst.Asm, extended.operand);
     const src = block.nodeOffset(extra.data.src_node);
-    const ret_ty_src = block.src(.{ .node_offset_asm_ret_ty = extra.data.src_node });
     const small: Zir.Inst.Asm.Small = @bitCast(extended.small);
     const outputs_len = small.outputs_len;
     const inputs_len = small.inputs_len;
@@ -16116,7 +16115,7 @@ fn zirAsm(
     try sema.requireRuntimeBlock(block, src, null);
 
     var extra_i = extra.end;
-    var output_type_bits = extra.data.output_type_bits;
+    const output_value_index = extra.data.output_value_index;
     var needed_capacity: usize = @typeInfo(Air.Asm).@"struct".fields.len + outputs_len + inputs_len;
 
     const ConstraintName = struct { c: []const u8, n: []const u8 };
@@ -16127,20 +16126,17 @@ fn zirAsm(
     for (out_args, 0..) |*arg, out_i| {
         const output = sema.code.extraData(Zir.Inst.Asm.Output, extra_i);
         const output_src = block.src(.{ .asm_output = .{
-            .offset = src.offset.node_offset.x,
+            .offset = extra.data.src_node,
             .output_index = @intCast(out_i),
         } });
         extra_i = output.end;
 
-        const is_type = @as(u1, @truncate(output_type_bits)) != 0;
-        output_type_bits >>= 1;
-
         const name = sema.code.nullTerminatedString(output.data.name);
 
-        if (is_type) {
+        if (output_value_index == out_i) {
             // Indicate the output is the asm instruction return value.
             arg.* = .none;
-            const out_ty = try sema.resolveType(block, ret_ty_src, output.data.operand);
+            const out_ty = try sema.resolveType(block, output_src, output.data.operand);
             expr_ty = Air.internedToRef(out_ty.toIntern());
         } else {
             const inst = try sema.resolveInst(output.data.operand);
@@ -16154,9 +16150,12 @@ fn zirAsm(
         const constraint = sema.code.nullTerminatedString(output.data.constraint);
         needed_capacity += (constraint.len + name.len + (2 + 3)) / 4;
 
-        // AstGen gives us a reference to a variable
-        if (arg.* != .none and sema.typeOf(arg.*).isConstPtr(zcu)) {
-            return sema.fail(block, output_src, "asm cannot output to const '{s}'", .{name});
+        if (arg.* != .none) {
+            const output_ptr_ty = sema.typeOf(arg.*);
+            assert(output_ptr_ty.isSinglePointer(zcu)); // guaranteed by AstGen
+            if (output_ptr_ty.isConstPtr(zcu)) {
+                return sema.fail(block, output_src, "asm cannot output to const '{s}'", .{name});
+            }
         }
 
         outputs[out_i] = .{ .c = constraint, .n = name };

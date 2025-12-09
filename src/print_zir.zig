@@ -1278,15 +1278,14 @@ const Writer = struct {
         try stream.writeAll(", ");
 
         var extra_i: usize = extra.end;
-        var output_type_bits = extra.data.output_type_bits;
+        const output_value_index = extra.data.output_value_index;
         {
             var i: usize = 0;
             while (i < small.outputs_len) : (i += 1) {
                 const output = self.code.extraData(Zir.Inst.Asm.Output, extra_i);
                 extra_i = output.end;
 
-                const is_type = @as(u1, @truncate(output_type_bits)) != 0;
-                output_type_bits >>= 1;
+                const is_type = output_value_index == i;
 
                 const name = self.code.nullTerminatedString(output.data.name);
                 const constraint = self.code.nullTerminatedString(output.data.constraint);
