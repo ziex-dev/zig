@@ -637,7 +637,7 @@ fn errDeprecated(p: *Parser, tok_i: TokenIndex, diagnostic: Diagnostic, msg: ?Va
 }
 
 fn addNode(p: *Parser, node: Tree.Node) Allocator.Error!Node.Index {
-    if (p.in_macro) return undefined;
+    if (p.in_macro) return @as(Node.Index, undefined);
     return p.tree.addNode(node);
 }
 

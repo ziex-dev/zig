@@ -4624,7 +4624,7 @@ fn zirForLen(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.
             len = arg_len;
             len_idx = i;
         }
-        if (try sema.resolveDefinedValue(block, src, arg_len)) |arg_val| {
+        if (try sema.resolveDefinedValue(block, arg_src, arg_len)) |arg_val| {
             if (len_val) |v| {
                 if (!(try sema.valuesEqual(arg_val, v, .usize))) {
                     const msg = msg: {
@@ -18571,12 +18571,14 @@ fn retWithErrTracing(
 ) CompileError!void {
     const pt = sema.pt;
     const need_check = switch (is_non_err) {
+        _ => true, // runtime known
+        .bool_false => false, // known to be an error
         .bool_true => {
             _ = try block.addUnOp(ret_tag, operand);
             return;
         },
-        .bool_false => false,
-        else => true,
+        .undef_bool => unreachable, // caller should have handled this
+        else => unreachable, // not a bool
     };
 
     // This means we're returning something that might be an error!
@@ -18769,6 +18771,19 @@ fn analyzeRet(
         error.NotCoercible => unreachable,
         else => |e| return e,
     };
+
+    if (sema.fn_ret_ty.isError(zcu)) {
+        if (try sema.resolveValue(operand)) |operand_val| {
+            if (operand_val.isUndef(zcu)) {
+                const type_str: []const u8 = switch (sema.fn_ret_ty.zigTypeTag(zcu)) {
+                    .error_set => "error set",
+                    .error_union => "error union",
+                    else => unreachable,
+                };
+                return sema.fail(block, src, "cannot return undefined {s}", .{type_str});
+            }
+        }
+    }
 
     if (block.inlining) |inlining| {
         assert(!inlining.is_generic_instantiation); // can't `return` in a generic param/ret ty expr
@@ -28819,6 +28834,11 @@ fn coerceExtra(
                 return sema.wrapErrorUnionSet(block, dest_ty, inst, inst_src);
             },
             else => eu: {
+                if (maybe_inst_val) |val| {
+                    if (val.toIntern() == .undef) {
+                        return pt.undefRef(dest_ty);
+                    }
+                }
                 // T to E!T
                 return sema.wrapErrorUnionPayload(block, dest_ty, inst, inst_src) catch |err| switch (err) {
                     error.NotCoercible => {

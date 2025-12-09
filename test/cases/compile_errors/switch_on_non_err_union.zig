@@ -1,4 +1,4 @@
-pub fn main() void {
+export fn foo() void {
     false catch |err| switch (err) {
         else => {},
     };
@@ -6,4 +6,4 @@ pub fn main() void {
 
 // error
 //
-// :2:11: error: expected error union type, found 'bool'
+// :2:5: error: expected error union type, found 'bool'

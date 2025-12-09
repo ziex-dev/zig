@@ -162,7 +162,7 @@ test "branching logic inside @TypeOf" {
         var data: i32 = 0;
         fn foo() anyerror!i32 {
             data += 1;
-            return undefined;
+            return 0;
         }
     };
     const T = @TypeOf(S.foo() catch undefined);

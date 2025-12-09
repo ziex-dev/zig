@@ -1529,8 +1529,8 @@ pub const SrcLoc = struct {
                         return tree.tokensToSpan(start, end, start);
                     },
 
-                    .@"orelse" => node,
-                    .@"catch" => node,
+                    .@"orelse" => tree.nodeData(node).node_and_node[0],
+                    .@"catch" => tree.nodeData(node).node_and_node[0],
                     else => unreachable,
                 };
                 return tree.nodeToSpan(src_node);

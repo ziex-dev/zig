@@ -97,7 +97,11 @@ pub fn print(
             .err_name => |err_name| try writer.print("error.{f}", .{
                 err_name.fmt(ip),
             }),
-            .payload => |payload| try print(Value.fromInterned(payload), writer, level, pt, opt_sema),
+            .payload => |payload| {
+                try writer.print("@as({f}, ", .{Value.fromInterned(payload).typeOf(zcu).fmt(pt)});
+                try print(.fromInterned(payload), writer, level - 1, pt, opt_sema);
+                try writer.writeByte(')');
+            },
         },
         .enum_literal => |enum_literal| try writer.print(".{f}", .{
             enum_literal.fmt(ip),

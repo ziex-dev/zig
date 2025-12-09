@@ -11,4 +11,4 @@ fn bad() ?void {
 // error
 //
 // :4:22: error: comptime control flow inside runtime block
-// :4:15: note: runtime control flow here
+// :4:12: note: runtime control flow here

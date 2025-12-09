@@ -5,4 +5,4 @@ comptime {
 
 // error
 //
-// :3:11: error: use of undefined value here causes illegal behavior
+// :3:9: error: use of undefined value here causes illegal behavior
