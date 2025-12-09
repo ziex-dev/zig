@@ -6537,10 +6537,8 @@ pub const Alignment = enum(u6) {
         pub const empty: Slice = .{ .tid = .main, .start = 0, .len = 0 };
 
         pub fn get(slice: Slice, ip: *const InternPool) []Alignment {
-            // TODO: implement @ptrCast between slices changing the length
             const extra = ip.getLocalShared(slice.tid).extra.acquire();
-            //const bytes: []u8 = @ptrCast(extra.view().items(.@"0")[slice.start..]);
-            const bytes: []u8 = std.mem.sliceAsBytes(extra.view().items(.@"0")[slice.start..]);
+            const bytes: []u8 = @ptrCast(extra.view().items(.@"0")[slice.start..]);
             return @ptrCast(bytes[0..slice.len]);
         }
     };
@@ -8835,13 +8833,10 @@ pub fn getUnionType(
     const align_elements_len = if (ini.flags.any_aligned_fields) (ini.fields_len + 3) / 4 else 0;
     const align_element: u32 = @bitCast([1]u8{@intFromEnum(Alignment.none)} ** 4);
     try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeUnion).@"struct".fields.len +
-        // TODO: fmt bug
-        // zig fmt: off
         switch (ini.key) {
             inline .declared, .declared_owned_captures => |d| @intFromBool(d.captures.len != 0) + d.captures.len,
             .reified => 2, // type_hash: PackedU64
         } +
-        // zig fmt: on
         ini.fields_len + // field types
         align_elements_len);
 
@@ -9041,13 +9036,10 @@ pub fn getStructType(
         .@"extern" => true,
         .@"packed" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeStructPacked).@"struct".fields.len +
-                // TODO: fmt bug
-                // zig fmt: off
                 switch (ini.key) {
                     inline .declared, .declared_owned_captures => |d| @intFromBool(d.captures.len != 0) + d.captures.len,
                     .reified => 2, // type_hash: PackedU64
                 } +
-                // zig fmt: on
                 ini.fields_len + // types
                 ini.fields_len + // names
                 ini.fields_len); // inits
@@ -9109,13 +9101,10 @@ pub fn getStructType(
     const comptime_elements_len = if (ini.any_comptime_fields) (ini.fields_len + 31) / 32 else 0;
 
     try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeStruct).@"struct".fields.len +
-        // TODO: fmt bug
-        // zig fmt: off
         switch (ini.key) {
             inline .declared, .declared_owned_captures => |d| @intFromBool(d.captures.len != 0) + d.captures.len,
             .reified => 2, // type_hash: PackedU64
         } +
-        // zig fmt: on
         (ini.fields_len * 5) + // types, names, inits, runtime order, offsets
         align_elements_len + comptime_elements_len +
         1); // names_map
@@ -10120,13 +10109,10 @@ pub fn getEnumType(
         .auto => {
             assert(!ini.has_values);
             try extra.ensureUnusedCapacity(@typeInfo(EnumAuto).@"struct".fields.len +
-                // TODO: fmt bug
-                // zig fmt: off
                 switch (ini.key) {
                     inline .declared, .declared_owned_captures => |d| d.captures.len,
                     .reified => 2, // type_hash: PackedU64
                 } +
-                // zig fmt: on
                 ini.fields_len); // field types
 
             const extra_index = addExtraAssumeCapacity(extra, EnumAuto{
@@ -10178,13 +10164,10 @@ pub fn getEnumType(
             };
 
             try extra.ensureUnusedCapacity(@typeInfo(EnumExplicit).@"struct".fields.len +
-                // TODO: fmt bug
-                // zig fmt: off
                 switch (ini.key) {
                     inline .declared, .declared_owned_captures => |d| d.captures.len,
                     .reified => 2, // type_hash: PackedU64
                 } +
-                // zig fmt: on
                 ini.fields_len + // field types
                 ini.fields_len * @intFromBool(ini.has_values)); // field values
 
