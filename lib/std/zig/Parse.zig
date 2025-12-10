@@ -1570,9 +1570,9 @@ const PrecClass = struct {
         /// For this to work correctly we require that all subgroups are strictly adjacent
         /// Major groups are defined by the first text before an underscore
         const Major: type = b: {
-            var major_names: [] const [] const u8 = &.{};
+            var major_names: []const []const u8 = &.{};
             for (std.meta.fieldNames(Group)) |fieldname| {
-                var major_name: [] const u8 = fieldname[0..];
+                var major_name: []const u8 = fieldname[0..];
                 for (fieldname, 0..) |c, i| {
                     if (c == '_') {
                         major_name = fieldname[0..i];
@@ -1584,8 +1584,8 @@ const PrecClass = struct {
                 }
             }
 
-            const IntType = std.math.IntFittingRange(0, major_names.len-1);
-            var values: [major_names.len] IntType = undefined;
+            const IntType = std.math.IntFittingRange(0, major_names.len - 1);
+            var values: [major_names.len]IntType = undefined;
             for (0..major_names.len) |i| values[i] = i;
 
             break :b @Enum(
@@ -1599,22 +1599,22 @@ const PrecClass = struct {
 
     pub const start: PrecClass = .{ .group = .root };
 
-    pub const Rel = enum (i2) {
+    pub const Rel = enum(i2) {
         lt = -1,
-        eq =  0,
-        gt =  1,
+        eq = 0,
+        gt = 1,
 
         fn inverted(self: Rel) Rel {
             return @enumFromInt(-@intFromEnum(self));
         }
     };
 
-    const PrecedenceArray = [Group.num_distinct][Group.num_distinct] ?Rel;
+    const PrecedenceArray = [Group.num_distinct][Group.num_distinct]?Rel;
 
     fn setMajorRelation(prec_array: *PrecedenceArray, major_a: Group.Major, rel: Rel, major_b: Group.Major) void {
         for (std.meta.fieldNames(Group), 0..) |fieldname_i, i| {
             if (!std.mem.startsWith(u8, fieldname_i, @tagName(major_a))) continue;
-            
+
             for (std.meta.fieldNames(Group), 0..) |fieldname_j, j| {
                 if (!std.mem.startsWith(u8, fieldname_j, @tagName(major_b))) continue;
 
@@ -1630,37 +1630,36 @@ const PrecClass = struct {
     /// Arithmetic_* > Coercion
     /// Bitwise_* > Coercion
     /// Coercion > Comparison > Logical_* > Root
-    /// 
+    ///
     /// *_Product > *_Sum
     /// Bitwise_Shift > Bitwise_Product
-    /// 
+    ///
     /// order[y][x] --> y cmp x
     const precedence_ordering = b: {
         @setEvalBranchQuota(20_000);
         const major_greater_than_relations = [_][2]Group.Major{
             .{ .arithmetic, .coercion },
-            .{ .bitwise,    .coercion },
-            .{ .coercion,   .comparison },
+            .{ .bitwise, .coercion },
+            .{ .coercion, .comparison },
             .{ .comparison, .logical },
-            .{ .logical,    .root },
+            .{ .logical, .root },
         };
 
         var order: PrecedenceArray = @splat(@splat(null));
-        
+
         for (major_greater_than_relations) |relation| {
             setMajorRelation(&order, relation[0], .gt, relation[1]);
         }
 
-        setMinorRelation(&order, .arithmetic_product_chainable,     .eq, .arithmetic_product_nonchainable);
-        setMinorRelation(&order, .arithmetic_product_nonchainable,  .gt, .arithmetic_sum);
-        setMinorRelation(&order, .arithmetic_product_chainable,     .gt, .arithmetic_sum);
+        setMinorRelation(&order, .arithmetic_product_chainable, .eq, .arithmetic_product_nonchainable);
+        setMinorRelation(&order, .arithmetic_product_nonchainable, .gt, .arithmetic_sum);
+        setMinorRelation(&order, .arithmetic_product_chainable, .gt, .arithmetic_sum);
         //We have to add both >'s here since the Transative Order computer doesnt know that a == b > c --> a > c
 
-        setMinorRelation(&order, .bitwise_shift,    .gt, .bitwise_product);
-        setMinorRelation(&order, .bitwise_product,  .gt, .bitwise_sum);
+        setMinorRelation(&order, .bitwise_shift, .gt, .bitwise_product);
+        setMinorRelation(&order, .bitwise_product, .gt, .bitwise_sum);
 
         setMinorRelation(&order, .logical_product, .gt, .logical_sum);
-        
 
         computeTransativeOrdering(&order);
         break :b order;
@@ -1687,44 +1686,46 @@ const OperInfo = struct {
 };
 
 const operTable = std.enums.directEnumArrayDefault(Token.Tag, OperInfo, .{ .prec = .start, .tag = Node.Tag.root }, 0, .{
-    .keyword_or =                            .{ .prec = .{ .group = .logical_sum },                                          .tag = .bool_or },         
-                                                                                                                                                        
-    .keyword_and =                           .{ .prec = .{ .group = .logical_product },                                      .tag = .bool_and },        
-                                                                                                                                                        
-    .equal_equal =                           .{ .prec = .{ .group = .comparison, .assoc = Assoc.none },                      .tag = .equal_equal },     
-    .bang_equal =                            .{ .prec = .{ .group = .comparison, .assoc = Assoc.none },                      .tag = .bang_equal },      
-    .angle_bracket_left =                    .{ .prec = .{ .group = .comparison, .assoc = Assoc.none },                      .tag = .less_than },       
-    .angle_bracket_right =                   .{ .prec = .{ .group = .comparison, .assoc = Assoc.none },                      .tag = .greater_than },    
-    .angle_bracket_left_equal =              .{ .prec = .{ .group = .comparison, .assoc = Assoc.none },                      .tag = .less_or_equal },   
-    .angle_bracket_right_equal =             .{ .prec = .{ .group = .comparison, .assoc = Assoc.none },                      .tag = .greater_or_equal },
-                                                                                                                                                        
-    .ampersand =                             .{ .prec = .{ .group = .bitwise_product },                                      .tag = .bit_and },         
-    .caret =                                 .{ .prec = .{ .group = .bitwise_xor },                                          .tag = .bit_xor },         
-    .pipe =                                  .{ .prec = .{ .group = .bitwise_sum },                                          .tag = .bit_or },          
-                                                                                                                                                        
-    .keyword_orelse =                        .{ .prec = .{ .group = .coercion },                                             .tag = .@"orelse" },       
-    .keyword_catch =                         .{ .prec = .{ .group = .coercion },                                             .tag = .@"catch" },        
-                                                                                                                                                        
-    .angle_bracket_angle_bracket_left =      .{ .prec = .{ .group = .bitwise_shift },                                        .tag = .shl },             
-    .angle_bracket_angle_bracket_left_pipe = .{ .prec = .{ .group = .bitwise_shift },                                        .tag = .shl_sat },         
-    .angle_bracket_angle_bracket_right =     .{ .prec = .{ .group = .bitwise_shift },                                        .tag = .shr },             
-                                                                                                                                                        
-    .plus =                                  .{ .prec = .{ .group = .arithmetic_sum },                                       .tag = .add },             
-    .minus =                                 .{ .prec = .{ .group = .arithmetic_sum },                                       .tag = .sub },             
-    .plus_plus =                             .{ .prec = .{ .group = .arithmetic_sum },                                       .tag = .array_cat },       
-    .plus_percent =                          .{ .prec = .{ .group = .arithmetic_sum },                                       .tag = .add_wrap },        
-    .minus_percent =                         .{ .prec = .{ .group = .arithmetic_sum },                                       .tag = .sub_wrap },        
-    .plus_pipe =                             .{ .prec = .{ .group = .arithmetic_sum },                                       .tag = .add_sat },         
-    .minus_pipe =                            .{ .prec = .{ .group = .arithmetic_sum },                                       .tag = .sub_sat },         
-                                                                                                                                                        
-    .pipe_pipe =                             .{ .prec = .{ .group = .arithmetic_product_chainable },                         .tag = .merge_error_sets },
-    .asterisk =                              .{ .prec = .{ .group = .arithmetic_product_chainable },                         .tag = .mul },             
-    .slash =                                 .{ .prec = .{ .group = .arithmetic_product_chainable },                         .tag = .div },             
-    .asterisk_percent =                      .{ .prec = .{ .group = .arithmetic_product_chainable },                         .tag = .mul_wrap },        
-    .asterisk_pipe =                         .{ .prec = .{ .group = .arithmetic_product_chainable },                         .tag = .mul_sat },         
-                                                                                                                                                        
-    .asterisk_asterisk =                     .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .array_mult },      
-    .percent =                               .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .mod },             
+    //zig-fmt: off
+    .keyword_or = .{ .prec = .{ .group = .logical_sum }, .tag = .bool_or },
+
+    .keyword_and = .{ .prec = .{ .group = .logical_product }, .tag = .bool_and },
+
+    .equal_equal = .{ .prec = .{ .group = .comparison, .assoc = Assoc.none }, .tag = .equal_equal },
+    .bang_equal = .{ .prec = .{ .group = .comparison, .assoc = Assoc.none }, .tag = .bang_equal },
+    .angle_bracket_left = .{ .prec = .{ .group = .comparison, .assoc = Assoc.none }, .tag = .less_than },
+    .angle_bracket_right = .{ .prec = .{ .group = .comparison, .assoc = Assoc.none }, .tag = .greater_than },
+    .angle_bracket_left_equal = .{ .prec = .{ .group = .comparison, .assoc = Assoc.none }, .tag = .less_or_equal },
+    .angle_bracket_right_equal = .{ .prec = .{ .group = .comparison, .assoc = Assoc.none }, .tag = .greater_or_equal },
+
+    .ampersand = .{ .prec = .{ .group = .bitwise_product }, .tag = .bit_and },
+    .caret = .{ .prec = .{ .group = .bitwise_xor }, .tag = .bit_xor },
+    .pipe = .{ .prec = .{ .group = .bitwise_sum }, .tag = .bit_or },
+
+    .keyword_orelse = .{ .prec = .{ .group = .coercion }, .tag = .@"orelse" },
+    .keyword_catch = .{ .prec = .{ .group = .coercion }, .tag = .@"catch" },
+
+    .angle_bracket_angle_bracket_left = .{ .prec = .{ .group = .bitwise_shift }, .tag = .shl },
+    .angle_bracket_angle_bracket_left_pipe = .{ .prec = .{ .group = .bitwise_shift }, .tag = .shl_sat },
+    .angle_bracket_angle_bracket_right = .{ .prec = .{ .group = .bitwise_shift }, .tag = .shr },
+
+    .plus = .{ .prec = .{ .group = .arithmetic_sum }, .tag = .add },
+    .minus = .{ .prec = .{ .group = .arithmetic_sum }, .tag = .sub },
+    .plus_plus = .{ .prec = .{ .group = .arithmetic_sum }, .tag = .array_cat },
+    .plus_percent = .{ .prec = .{ .group = .arithmetic_sum }, .tag = .add_wrap },
+    .minus_percent = .{ .prec = .{ .group = .arithmetic_sum }, .tag = .sub_wrap },
+    .plus_pipe = .{ .prec = .{ .group = .arithmetic_sum }, .tag = .add_sat },
+    .minus_pipe = .{ .prec = .{ .group = .arithmetic_sum }, .tag = .sub_sat },
+
+    .pipe_pipe = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .merge_error_sets },
+    .asterisk = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .mul },
+    .slash = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .div },
+    .asterisk_percent = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .mul_wrap },
+    .asterisk_pipe = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .mul_sat },
+
+    .asterisk_asterisk = .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .array_mult },
+    .percent = .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .mod },
+    //zig-fmt: on
 });
 
 fn parseExprPrecedence(p: *Parse, min_exc_prec: PrecClass) Error!?Node.Index {
