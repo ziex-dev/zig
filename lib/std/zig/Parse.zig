@@ -1667,9 +1667,7 @@ const PrecClass = struct {
     };
 
     pub fn cmp(lhs: PrecClass, rhs: PrecClass) ?Rel {
-        const ret = PrecClass.precedence_ordering[@intFromEnum(lhs.group)][@intFromEnum(rhs.group)];
-        if (ret == null) std.debug.print("CMP is {?}\n", .{ret});
-        return ret;
+        return PrecClass.precedence_ordering[@intFromEnum(lhs.group)][@intFromEnum(rhs.group)];
     }
 
     fn computeTransativeOrdering(order: *PrecedenceArray) void {
