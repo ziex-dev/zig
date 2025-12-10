@@ -565,7 +565,6 @@ pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void 
             return w.writeAll("for input is not captured");
         },
         .ambiguous_operator_precedence => {
-            //if (2==2) @panic("Bad.");
             return w.writeAll("ambiguous operator precedence; Please help this text wont appear use parentheses to disambiguate");
         },
         .illegal_chained_operators => {
