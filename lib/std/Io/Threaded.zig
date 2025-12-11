@@ -8559,7 +8559,10 @@ fn select(userdata: ?*anyopaque, futures: []const *Io.AnyFuture) Io.Cancelable!u
 
     for (futures, 0..) |future, i| {
         const closure: *AsyncClosure = @ptrCast(@alignCast(future));
-        if (@atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, &event, .seq_cst) == AsyncClosure.done_event) {
+        // Closures that participated in a previous call to select and are already
+        // completed cannot set our reset_event, so we check that first
+        const done = closure.event.isSet();
+        if (done or @atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, &event, .seq_cst) == AsyncClosure.done_event) {
             for (futures[0..i]) |cleanup_future| {
                 const cleanup_closure: *AsyncClosure = @ptrCast(@alignCast(cleanup_future));
                 if (@atomicRmw(?*Io.Event, &cleanup_closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_event) {
