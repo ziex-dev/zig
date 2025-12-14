@@ -487,8 +487,8 @@ pub const Iterator = switch (native_os) {
                 const name_wtf8 = self.name_data[0..name_wtf8_len];
                 const kind: Entry.Kind = blk: {
                     const attrs = dir_info.FileAttributes;
-                    if (attrs.DIRECTORY) break :blk .directory;
                     if (attrs.REPARSE_POINT) break :blk .sym_link;
+                    if (attrs.DIRECTORY) break :blk .directory;
                     break :blk .file;
                 };
                 return Entry{

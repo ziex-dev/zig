@@ -649,6 +649,35 @@ test "Dir.Iterator but dir is deleted during iteration" {
     }
 }
 
+test "Dir.Iterator reported kinds" {
+    var tmp_dir = tmpDir(.{ .iterate = true });
+    defer tmp_dir.cleanup();
+
+    const file = try tmp_dir.dir.createFile("some_file", .{});
+    file.close();
+    try tmp_dir.dir.makeDir("some_dir");
+    try setupSymlink(tmp_dir.dir, "some_file", "symlink_file", .{});
+    try setupSymlink(tmp_dir.dir, "some_dir", "symlink_dir", .{ .is_directory = true });
+
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var entries = std.StringHashMap(std.Io.File.Kind).init(allocator);
+
+    var iter = tmp_dir.dir.iterate();
+    while (try iter.next()) |entry| {
+        const name = try allocator.dupe(u8, entry.name);
+        try entries.putNoClobber(name, entry.kind);
+    }
+
+    try testing.expectEqual(4, entries.count());
+    try testing.expectEqual(.file, entries.get("some_file"));
+    try testing.expectEqual(.directory, entries.get("some_dir"));
+    try testing.expectEqual(.sym_link, entries.get("symlink_file"));
+    try testing.expectEqual(.sym_link, entries.get("symlink_dir"));
+}
+
 fn entryEql(lhs: Dir.Entry, rhs: Dir.Entry) bool {
     return mem.eql(u8, lhs.name, rhs.name) and lhs.kind == rhs.kind;
 }
