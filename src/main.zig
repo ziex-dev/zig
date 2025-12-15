@@ -275,7 +275,7 @@ fn mainArgs(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
         mem.eql(u8, cmd, "-cc1") or mem.eql(u8, cmd, "-cc1as"))
     {
         dev.check(.clang_command);
-        return process.exit(try clangMain(arena, args));
+        return process.exit(try clangMainSanitized(arena, io, args));
     } else if (mem.eql(u8, cmd, "ld.lld") or
         mem.eql(u8, cmd, "lld-link") or
         mem.eql(u8, cmd, "wasm-ld"))
@@ -1972,7 +1972,7 @@ fn buildOutputType(
                     .ignore => {},
                     .driver_punt => {
                         // Never mind what we're doing, just pass the args directly. For example --help.
-                        return process.exit(try clangMain(arena, all_args));
+                        return process.exit(try clangMainSanitized(arena, io, all_args));
                     },
                     .pic => mod_opts.pic = true,
                     .no_pic => mod_opts.pic = false,
@@ -2914,7 +2914,7 @@ fn buildOutputType(
                     // An error message is generated when there is more than 1 C source file.
                     if (create_module.c_source_files.items.len != 1) {
                         // For example `zig cc` and no args should print the "no input files" message.
-                        return process.exit(try clangMain(arena, all_args));
+                        return process.exit(try clangMainSanitized(arena, io, all_args));
                     }
                     if (emit_pch) {
                         emit_bin = if (out_path) |p| .{ .yes = p } else .yes_default_path;
@@ -2938,7 +2938,7 @@ fn buildOutputType(
             {
                 // For example `zig cc` and no args should print the "no input files" message.
                 // There could be other reasons to punt to clang, for example, --help.
-                return process.exit(try clangMain(arena, all_args));
+                return process.exit(try clangMainSanitized(arena, io, all_args));
             }
         },
     }
@@ -5756,6 +5756,37 @@ pub fn clangMain(alloc: Allocator, args: []const []const u8) error{OutOfMemory}!
     const argv = try argsCopyZ(arena, args);
     const exit_code = ZigClang_main(@as(c_int, @intCast(argv.len)), argv.ptr);
     return @as(u8, @bitCast(@as(i8, @truncate(exit_code))));
+}
+
+fn zigTripleToLlvmTriple(alloc: Allocator, io: Io, triple: []const u8) error{OutOfMemory}![]const u8 {
+    const target_query = std.Target.Query.parse(.{ .arch_os_abi = triple }) catch {
+        return triple;
+    };
+    const target = std.zig.system.resolveTargetQuery(io, target_query) catch {
+        return triple;
+    };
+    return @import("codegen/llvm.zig").targetTriple(alloc, &target);
+}
+
+fn clangMainSanitized(alloc: Allocator, io: Io, args: []const []const u8) error{OutOfMemory}!u8 {
+    var sanitized_args = try alloc.alloc([]const u8, args.len);
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        const arg = args[i];
+        if (mem.startsWith(u8, arg, "--target=")) {
+            const triple = arg["--target=".len..];
+            const sanitized = try zigTripleToLlvmTriple(alloc, io, triple);
+            sanitized_args[i] = try mem.concat(alloc, u8, &.{ "--target=", sanitized });
+        } else if (mem.eql(u8, arg, "-target") and (i + 1 < args.len)) {
+            sanitized_args[i] = arg;
+            i += 1;
+            sanitized_args[i] = try zigTripleToLlvmTriple(alloc, io, args[i]);
+        } else {
+            sanitized_args[i] = arg;
+        }
+    }
+
+    return clangMain(alloc, sanitized_args);
 }
 
 pub fn llvmArMain(alloc: Allocator, args: []const []const u8) error{OutOfMemory}!u8 {
