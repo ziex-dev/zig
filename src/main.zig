@@ -1664,6 +1664,16 @@ fn buildOutputType(
                         linker_global_base = int;
                     } else if (mem.cutPrefix(u8, arg, "--export=")) |rest| {
                         try linker_export_symbol_names.append(arena, rest);
+                    } else if (mem.eql(u8, arg, "-exported_symbols_list")) {
+                        const exported_symbols_list = args_iter.nextOrFatal();
+                        const content = Io.Dir.cwd().readFileAlloc(io, exported_symbols_list, arena, .limited(10 * 1024 * 1024)) catch |err| {
+                            fatal("unable to read exported symbols list '{s}': {s}", .{ exported_symbols_list, @errorName(err) });
+                        };
+                        var it = mem.splitScalar(u8, content, '\n');
+                        while (it.next()) |line| {
+                            if (line.len == 0) continue;
+                            try linker_export_symbol_names.append(arena, line);
+                        }
                     } else if (mem.eql(u8, arg, "-Bsymbolic")) {
                         linker_bind_global_refs_locally = true;
                     } else if (mem.eql(u8, arg, "--gc-sections")) {
