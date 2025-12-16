@@ -67,7 +67,7 @@ pub fn build(b: *std.Build) void {
             // Target and optimization levels must be explicitly wired in when
             // defining an executable or library (in the root module), and you
             // can also hardcode a specific target for an executable or library
-            // definition if desireable (e.g. firmware for embedded devices).
+            // definition if desirable (e.g. firmware for embedded devices).
             .target = target,
             .optimize = optimize,
             // List of modules available for import in source files part of the
