@@ -173048,11 +173048,39 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const ty_nav = air_datas[@intFromEnum(inst)].ty_nav;
                 const nav = ip.getNav(ty_nav.nav);
                 const is_threadlocal = zcu.comp.config.any_non_single_threaded and nav.isThreadlocal(ip);
-                if (is_threadlocal) if (cg.target.ofmt == .coff or cg.mod.pic) {
-                    try cg.spillRegisters(&.{ .rdi, .rax });
-                } else {
-                    try cg.spillRegisters(&.{.rax});
+
+                if (is_threadlocal) switch (cg.target.ofmt) {
+                    .elf => if (cg.mod.pic) {
+                        // LD model: `__tls_get_addr` uses the standard ABI
+                        try cg.spillEflagsIfOccupied();
+                        try cg.spillRegisters(abi.getCallerPreservedRegs(.x86_64_sysv));
+                    } else {
+                        // LE model: manual lowering uses these two registers
+                        try cg.spillRegisters(&.{ .rdi, .rax });
+                    },
+
+                    .coff => {
+                        // manual lowering uses these registers
+                        try cg.spillRegisters(&.{ .rdi, .rax });
+                    },
+
+                    .macho => switch (cg.target.cpu.arch) {
+                        .x86 => {
+                            // `tlv_get_addr` returns in eax, clobbers ecx, preserves other GPRs
+                            try cg.spillEflagsIfOccupied();
+                            try cg.spillRegisters(&.{ .rax, .rcx });
+                        },
+                        .x86_64 => {
+                            // `tlv_get_addr` returns in rax, preserves other GPRs
+                            try cg.spillEflagsIfOccupied();
+                            try cg.spillRegisters(&.{.rax});
+                        },
+                        else => unreachable,
+                    },
+
+                    else => unreachable,
                 };
+
                 var res = try cg.tempInit(.fromInterned(ty_nav.ty), .{ .lea_nav = ty_nav.nav });
                 if (is_threadlocal) while (try res.toRegClass(true, .general_purpose, cg)) {};
                 try res.finish(inst, &.{}, &.{}, cg);
