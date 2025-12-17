@@ -22,6 +22,9 @@
         .wasm_basic_features = .{
             .path = "wasm/basic-features",
         },
+        .wasm_custom_section = .{
+            .path = "wasm/custom-section",
+        },
         .wasm_export = .{
             .path = "wasm/export",
         },

@@ -4601,8 +4601,34 @@ pub const NavGen = struct {
         } else {
             const variable_index = try o.resolveGlobalNav(pt, nav_index);
             variable_index.setAlignment(pt.navAlignment(nav_index).toLlvm(), &o.builder);
-            if (resolved.@"linksection".toSlice(ip)) |section|
+            if (resolved.@"linksection".toSlice(ip)) |section| {
                 variable_index.setSection(try o.builder.string(section), &o.builder);
+
+                if (o.builder.target_triple.slice(&o.builder)) |triple| {
+                    if (std.mem.startsWith(u8, triple, "wasm")) {
+                        const val = Value.fromInterned(init_val);
+                        const val_key = ip.indexToKey(val.toIntern());
+                        const val_ty = val.typeOf(zcu);
+
+                        switch (val_key) {
+                            .aggregate => |aggregate| switch (aggregate.storage) {
+                                .bytes => |bytes| {
+                                    const slice = bytes.toSlice(val_ty.arrayLenIncludingSentinel(zcu), ip);
+
+                                    try o.builder.addWasmCustomSection(
+                                        try o.builder.metadataTuple(&.{
+                                            (try o.builder.metadataString(section)).toMetadata(),
+                                            (try o.builder.metadataString(slice)).toMetadata(),
+                                        })
+                                    );
+                                },
+                                else => {}
+                            },
+                            else => {}
+                        }
+                    }
+                }
+            }
             if (is_const) variable_index.setMutability(.constant, &o.builder);
             try variable_index.setInitializer(switch (init_val) {
                 .none => .no_init,
