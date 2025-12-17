@@ -4722,6 +4722,7 @@ const usage_init =
     \\
     \\Options:
     \\  -m, --minimal          Use minimal init template
+    \\  -b, --basic            Use basic init template
     \\  -h, --help             Print this help and exit
     \\
     \\
@@ -4730,7 +4731,7 @@ const usage_init =
 fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     dev.check(.init_command);
 
-    var template: enum { example, minimal } = .example;
+    var template: enum { example, basic, minimal } = .example;
     {
         var i: usize = 0;
         while (i < args.len) : (i += 1) {
@@ -4738,6 +4739,8 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-m") or mem.eql(u8, arg, "--minimal")) {
                     template = .minimal;
+                } else if (mem.eql(u8, arg, "-b") or mem.eql(u8, arg, "--basic")) {
+                    template = .basic;
                 } else if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
                     try fs.File.stdout().writeAll(usage_init);
                     return cleanExit();
@@ -4757,20 +4760,28 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
     const fingerprint: Package.Fingerprint = .generate(sanitized_root_name);
 
     switch (template) {
-        .example => {
-            var templates = findTemplates(gpa, arena);
+        .example, .basic => {
+            var templates = findTemplates(gpa, arena, switch (template) {
+                .example => .example,
+                .basic => .basic,
+                else => unreachable,
+            });
             defer templates.deinit();
 
             const s = fs.path.sep_str;
-            const template_paths = [_][]const u8{
+            var template_paths: std.array_list.Managed([]const u8) = .init(arena);
+            defer template_paths.deinit();
+            try template_paths.appendSlice(&.{
                 Package.build_zig_basename,
                 Package.Manifest.basename,
                 "src" ++ s ++ "main.zig",
-                "src" ++ s ++ "root.zig",
-            };
+            });
+            if (template == .example)
+                try template_paths.append("src" ++ s ++ "root.zig");
+
             var ok_count: usize = 0;
 
-            for (template_paths) |template_path| {
+            for (template_paths.items) |template_path| {
                 if (templates.write(arena, fs.cwd(), sanitized_root_name, template_path, fingerprint)) |_| {
                     std.log.info("created {s}", .{template_path});
                     ok_count += 1;
@@ -4782,7 +4793,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, args: []const []const u8) !void {
                 }
             }
 
-            if (ok_count == template_paths.len) {
+            if (ok_count == template_paths.items.len) {
                 std.log.info("see `zig build --help` for a menu of options", .{});
             }
             return cleanExit();
@@ -7453,7 +7464,7 @@ fn writeSimpleTemplateFile(file_name: []const u8, comptime fmt: []const u8, args
     try fw.interface.flush();
 }
 
-fn findTemplates(gpa: Allocator, arena: Allocator) Templates {
+fn findTemplates(gpa: Allocator, arena: Allocator, template: enum { example, basic }) Templates {
     const cwd_path = introspect.getResolvedCwd(arena) catch |err| {
         fatal("unable to get cwd: {s}", .{@errorName(err)});
     };
@@ -7465,7 +7476,10 @@ fn findTemplates(gpa: Allocator, arena: Allocator) Templates {
     };
 
     const s = fs.path.sep_str;
-    const template_sub_path = "init";
+    const template_sub_path = switch (template) {
+        .basic => "init" ++ s ++ "basic",
+        .example => "init" ++ s ++ "example",
+    };
     const template_dir = zig_lib_directory.handle.openDir(template_sub_path, .{}) catch |err| {
         const path = zig_lib_directory.path orelse ".";
         fatal("unable to open zig project template directory '{s}{s}{s}': {s}", .{
