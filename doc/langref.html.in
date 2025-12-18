@@ -4734,7 +4734,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       <pre>{#syntax#}@divExact(numerator: T, denominator: T) T{#endsyntax#}</pre>
       <p>
       Exact division. Caller guarantees {#syntax#}denominator != 0{#endsyntax#} and
-          {#syntax#}@divTrunc(numerator, denominator) * denominator == numerator{#endsyntax#}.
+          {#syntax#}@divExact(numerator, denominator) * denominator == numerator{#endsyntax#}.
       </p>
       <ul>
           <li>{#syntax#}@divExact(6, 3) == 2{#endsyntax#}</li>
