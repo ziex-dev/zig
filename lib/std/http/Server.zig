@@ -627,8 +627,7 @@ pub const Request = struct {
         const r = &request.server.reader;
         if (keep_alive and request.head.keep_alive) switch (r.state) {
             .received_head => {
-                if (request.head.method.requestHasBody()) {
-                    assert(request.head.transfer_encoding != .none or request.head.content_length != null);
+                if (request.head.method.requestHasBody() and (request.head.transfer_encoding != .none or request.head.content_length != null)) {
                     const reader_interface = request.readerExpectContinue(&.{}) catch return false;
                     _ = reader_interface.discardRemaining() catch return false;
                     assert(r.state == .ready);
