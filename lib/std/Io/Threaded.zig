@@ -8573,16 +8573,21 @@ fn select(userdata: ?*anyopaque, futures: []const *Io.AnyFuture) Io.Cancelable!u
         }
     }
 
-    try event.wait(ioBasic(t));
-
     var result: ?usize = null;
-    for (futures, 0..) |future, i| {
-        const closure: *AsyncClosure = @ptrCast(@alignCast(future));
-        if (@atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_event) {
-            closure.event.waitUncancelable(ioBasic(t)); // Ensure no reference to our stack-allocated event.
-            if (result == null) result = i; // In case multiple are ready, return first.
-        }
+    {
+        // We need to clean-up any potential references to our event, regardless
+        // of completion or cancellation of the `wait` call.
+        defer for (futures, 0..) |future, i| {
+            const closure: *AsyncClosure = @ptrCast(@alignCast(future));
+            if (@atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_event) {
+                closure.event.waitUncancelable(ioBasic(t)); // Ensure no reference to our stack-allocated event.
+                if (result == null) result = i; // In case multiple are ready, return first.
+            }
+        };
+
+        try event.wait(ioBasic(t));
     }
+
     return result.?;
 }
 
