@@ -321,6 +321,8 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                     error.UnknownName => unreachable, // constant, known good value
                     error.Unexpected => return error.OSVersionDetectionFail,
                 };
+                // terminating null character is included in the length
+                len = len - 1;
 
                 if (Target.Query.parseVersion(buf[0..len :0])) |ver| {
                     assert(ver.build == null);
