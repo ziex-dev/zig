@@ -9,6 +9,8 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
+pub const Template = @import("Io/Template.zig");
+
 pub const Limit = enum(usize) {
     nothing = 0,
     unlimited = std.math.maxInt(usize),
