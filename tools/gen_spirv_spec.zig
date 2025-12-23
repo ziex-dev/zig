@@ -279,7 +279,7 @@ fn render(
         \\    operands: []const Operand,
         \\};
         \\
-        \\pub const zig_generator_id: Word = 41;
+        \\pub const zig_generator_id: Word = 12;
         \\
     );
 

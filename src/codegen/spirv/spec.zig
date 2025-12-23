@@ -84,7 +84,7 @@ pub const Instruction = struct {
     operands: []const Operand,
 };
 
-pub const zig_generator_id: Word = 41;
+pub const zig_generator_id: Word = 12;
 pub const version: Version = .{ .major = 1, .minor = 6, .patch = 4 };
 pub const magic_number: Word = 0x07230203;
 
