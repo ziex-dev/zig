@@ -91,6 +91,9 @@ pub fn defaultLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
+    if (builtin.os.tag == .freestanding)
+        return;
+
     var buffer: [64]u8 = undefined;
     const stderr, const ttyconf = std.debug.lockStderrWriter(&buffer);
     defer std.debug.unlockStderrWriter();
