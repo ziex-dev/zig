@@ -171444,12 +171444,14 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                             const elem_dies = bt.feed();
                             if (tuple_type.values.get(ip)[field_index] != .none) continue;
                             const field_type = Type.fromInterned(tuple_type.types.get(ip)[field_index]);
-                            elem_disp = @intCast(field_type.abiAlignment(zcu).forward(elem_disp));
-                            var elem = try cg.tempFromOperand(elem_ref, elem_dies);
-                            try res.write(&elem, .{ .disp = elem_disp }, cg);
-                            try elem.die(cg);
-                            try cg.resetTemps(reset_index);
-                            elem_disp += @intCast(field_type.abiSize(zcu));
+                            if (!hack_around_sema_opv_bugs or field_type.hasRuntimeBitsIgnoreComptime(zcu)) {
+                                elem_disp = @intCast(field_type.abiAlignment(zcu).forward(elem_disp));
+                                var elem = try cg.tempFromOperand(elem_ref, elem_dies);
+                                try res.write(&elem, .{ .disp = elem_disp }, cg);
+                                try elem.die(cg);
+                                try cg.resetTemps(reset_index);
+                                elem_disp += @intCast(field_type.abiSize(zcu));
+                            }
                         }
                     },
                     else => return cg.fail("failed to select {s} {f}", .{
@@ -180202,6 +180204,7 @@ fn airSplat(self: *CodeGen, inst: Air.Inst.Index) !void {
 fn airSelect(self: *CodeGen, inst: Air.Inst.Index) !void {
     const pt = self.pt;
     const zcu = pt.zcu;
+    const io = zcu.comp.io;
     const pl_op = self.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
     const extra = self.air.extraData(Air.Bin, pl_op.payload).data;
     const ty = self.typeOfIndex(inst);
@@ -180475,7 +180478,7 @@ fn airSelect(self: *CodeGen, inst: Air.Inst.Index) !void {
                 for (mask_elems, 0..) |*elem, bit| elem.* = @intCast(bit / elem_bits);
                 const mask_mcv = try self.lowerValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                     .ty = mask_ty.toIntern(),
-                    .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, mask_elems, .maybe_embedded_nulls) },
+                    .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, mask_elems, .maybe_embedded_nulls) },
                 } })));
                 const mask_mem: Memory = .{
                     .base = .{ .reg = try self.copyToTmpRegister(.usize, mask_mcv.address()) },
@@ -188474,6 +188477,7 @@ const Select = struct {
         fn create(spec: TempSpec, s: *const Select) InnerError!struct { Temp, bool } {
             const cg = s.cg;
             const pt = cg.pt;
+            const io = pt.zcu.comp.io;
             return switch (spec.kind) {
                 .unused => .{ undefined, false },
                 .any => .{ try cg.tempAlloc(spec.type), true },
@@ -188691,7 +188695,7 @@ const Select = struct {
                     };
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
-                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
+                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, elems, .maybe_embedded_nulls) },
                     } }))), true };
                 },
                 .pshufb_trunc_mem => |trunc_spec| {
@@ -188718,7 +188722,7 @@ const Select = struct {
                     };
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
-                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
+                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, elems, .maybe_embedded_nulls) },
                     } }))), true };
                 },
                 .pand_trunc_mem => |trunc_spec| {
@@ -188732,7 +188736,7 @@ const Select = struct {
                     while (index < elems.len) : (index += from_bytes) @memset(elems[index..][0..to_bytes], std.math.maxInt(u8));
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
-                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
+                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, elems, .maybe_embedded_nulls) },
                     } }))), true };
                 },
                 .pand_mask_mem => |mask_spec| {
@@ -188751,7 +188755,7 @@ const Select = struct {
                     @memset(elems[mask_len..], invert_mask);
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
-                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
+                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, elems, .maybe_embedded_nulls) },
                     } }))), true };
                 },
                 .ptest_mask_mem => |mask_ref| {
@@ -188776,7 +188780,7 @@ const Select = struct {
                     }
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
-                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
+                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, elems, .maybe_embedded_nulls) },
                     } }))), true };
                 },
                 .pshufb_bswap_mem => |bswap_spec| {
@@ -188792,7 +188796,7 @@ const Select = struct {
                     };
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
-                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
+                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, elems, .maybe_embedded_nulls) },
                     } }))), true };
                 },
                 .bits_mem => |direction| {
@@ -188806,7 +188810,7 @@ const Select = struct {
                     };
                     return .{ try cg.tempMemFromValue(.fromInterned(try pt.intern(.{ .aggregate = .{
                         .ty = spec.type.toIntern(),
-                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, pt.tid, elems, .maybe_embedded_nulls) },
+                        .storage = .{ .bytes = try zcu.intern_pool.getOrPutString(zcu.gpa, io, pt.tid, elems, .maybe_embedded_nulls) },
                     } }))), true };
                 },
                 .splat_int_mem => |splat_spec| {
