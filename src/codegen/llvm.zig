@@ -11354,7 +11354,8 @@ pub const FuncGen = struct {
         const payload_llvm_ty = try o.lowerType(pt, payload_ty);
         const abi_size = payload_ty.abiSize(zcu);
 
-        const load_llvm_ty = if (payload_ty.isAbiInt(zcu))
+        // only do truncated loads on packed structs / unions
+        const load_llvm_ty = if (payload_ty.containerLayoutOrNull(zcu) == .@"packed")
             try o.builder.intType(@intCast(abi_size * 8))
         else
             payload_llvm_ty;

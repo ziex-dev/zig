@@ -2103,12 +2103,16 @@ pub fn unionGetLayout(ty: Type, zcu: *const Zcu) Zcu.UnionLayout {
 }
 
 pub fn containerLayout(ty: Type, zcu: *const Zcu) std.builtin.Type.ContainerLayout {
+    return containerLayoutOrNull(ty, zcu) orelse unreachable;
+}
+
+pub fn containerLayoutOrNull(ty: Type, zcu: *const Zcu) ?std.builtin.Type.ContainerLayout {
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(ty.toIntern())) {
         .struct_type => ip.loadStructType(ty.toIntern()).layout,
         .tuple_type => .auto,
         .union_type => ip.loadUnionType(ty.toIntern()).flagsUnordered(ip).layout,
-        else => unreachable,
+        else => null,
     };
 }
 
