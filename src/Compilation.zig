@@ -3139,30 +3139,6 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
             const bin_digest = man.finalBin();
             const hex_digest = Cache.binToHex(bin_digest);
 
-            // Work around windows `AccessDenied` if any files within this
-            // directory are open by closing and reopening the file handles.
-            const need_writable_dance: enum { no, lf_only, lf_and_debug } = w: {
-                if (builtin.os.tag == .windows) {
-                    if (comp.bin_file) |lf| {
-                        // We cannot just call `makeExecutable` as it makes a false
-                        // assumption that we have a file handle open only when linking
-                        // an executable file. This used to be true when our linkers
-                        // were incapable of emitting relocatables and static archive.
-                        // Now that they are capable, we need to unconditionally close
-                        // the file handle and re-open it in the follow up call to
-                        // `makeWritable`.
-                        if (lf.file) |f| {
-                            f.close();
-                            lf.file = null;
-
-                            if (lf.closeDebugInfo()) break :w .lf_and_debug;
-                            break :w .lf_only;
-                        }
-                    }
-                }
-                break :w .no;
-            };
-
             // Rename the temporary directory into place.
             // Close tmp dir and link.File to avoid open handle during rename.
             whole.tmp_artifact_directory.?.handle.close();
@@ -3170,17 +3146,72 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
             const s = fs.path.sep_str;
             const tmp_dir_sub_path = "tmp" ++ s ++ std.fmt.hex(tmp_dir_rand_int);
             const o_sub_path = "o" ++ s ++ hex_digest;
-            renameTmpIntoCache(comp.dirs.local_cache, tmp_dir_sub_path, o_sub_path) catch |err| {
-                return comp.setMiscFailure(
-                    .rename_results,
-                    "failed to rename compilation results ('{f}{s}') into local cache ('{f}{s}'): {t}",
-                    .{
-                        comp.dirs.local_cache, tmp_dir_sub_path,
-                        comp.dirs.local_cache, o_sub_path,
-                        err,
-                    },
-                );
+
+            // Workaround for hosts that cause an `AccessDenied` during
+            // renaming. Required for Windows and useful in environments
+            // such as Windows Subsystem for Linux.
+            const need_writable_dance: enum { no, lf_only, lf_and_debug } = w: {
+                if (builtin.os.tag != .windows) denied: {
+                    renameTmpIntoCache(
+                        comp.dirs.local_cache,
+                        tmp_dir_sub_path,
+                        o_sub_path,
+                    ) catch |err| {
+                        // On `AccessDenied`, attempt close/reopen dance, then retry.
+                        if (err == error.AccessDenied) {
+                            log.debug("failed to rename compilation results, attempting workaround", .{});
+                            break :denied;
+                        }
+                        return comp.setMiscFailure(
+                            .rename_results,
+                            "failed to rename compilation results ('{f}{s}') into local cache ('{f}{s}'): {t}",
+                            .{
+                                comp.dirs.local_cache, tmp_dir_sub_path,
+                                comp.dirs.local_cache, o_sub_path,
+                                err,
+                            },
+                        );
+                    };
+                    break :w .no;
+                }
+
+                if (comp.bin_file) |lf| {
+                    // We cannot just call `makeExecutable` as it makes a false
+                    // assumption that we have a file handle open only when linking
+                    // an executable file. This used to be true when our linkers
+                    // were incapable of emitting relocatables and static archive.
+                    // Now that they are capable, we need to unconditionally close
+                    // the file handle and re-open it in the follow up call to
+                    // `makeWritable`.
+                    if (lf.file) |f| {
+                        f.close();
+                        lf.file = null;
+
+                        if (lf.closeDebugInfo()) break :w .lf_and_debug;
+                        break :w .lf_only;
+                    }
+                }
+                break :w .no;
             };
+
+            if (need_writable_dance != .no) {
+                renameTmpIntoCache(
+                    comp.dirs.local_cache,
+                    tmp_dir_sub_path,
+                    o_sub_path,
+                ) catch |err| {
+                    return comp.setMiscFailure(
+                        .rename_results,
+                        "failed workaround to rename compilation results ('{f}{s}') into local cache ('{f}{s}'): {t}",
+                        .{
+                            comp.dirs.local_cache, tmp_dir_sub_path,
+                            comp.dirs.local_cache, o_sub_path,
+                            err
+                        },
+                    );
+                };
+            }
+
             comp.digest = bin_digest;
 
             // The linker flush functions need to know the final output path
