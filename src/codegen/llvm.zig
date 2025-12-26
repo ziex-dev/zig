@@ -11552,29 +11552,15 @@ pub const FuncGen = struct {
             return;
         }
         assert(ordering == .none);
-        // llvm workaround:
-        // as of writing, the optimization pass `memcpyopt` should remove these `memcpy`,
-        // but in the case of non-byte sized types, if they are less than 8 bytes,
-        // the pass `instcombine` replaces the `memcpy` by a `load` and a `store`, but with a
-        // type larger than original, which prevents some optimizations
-        //
-        // note: while the pass do that for types of size less than 8 bytes, prior passes
-        // may split the `memcpy`, so we do the workaround for larger struct as well
-        if (elem_ty.abiSize(zcu) <= 32) {
-            const val = try self.wip.load(access_kind, try o.lowerType(pt, elem_ty), elem, elem_ty.abiAlignment(zcu).toLlvm(), "");
-
-            _ = try self.wip.store(access_kind, val, ptr, ptr_alignment);
-        } else {
-            _ = try self.wip.callMemCpy(
-                ptr,
-                ptr_alignment,
-                elem,
-                elem_ty.abiAlignment(zcu).toLlvm(),
-                try o.builder.intValue(try o.lowerType(pt, Type.usize), elem_ty.abiSize(zcu)),
-                access_kind,
-                self.disable_intrinsics,
-            );
-        }
+        _ = try self.wip.callMemCpy(
+            ptr,
+            ptr_alignment,
+            elem,
+            elem_ty.abiAlignment(zcu).toLlvm(),
+            try o.builder.intValue(try o.lowerType(pt, Type.usize), elem_ty.abiSize(zcu)),
+            access_kind,
+            self.disable_intrinsics,
+        );
     }
 
     fn valgrindMarkUndef(fg: *FuncGen, ptr: Builder.Value, len: Builder.Value) Allocator.Error!void {
