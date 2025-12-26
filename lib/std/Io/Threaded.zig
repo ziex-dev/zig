@@ -1875,13 +1875,6 @@ fn fileStatLinux(userdata: ?*anyopaque, file: Io.File) Io.File.StatError!Io.File
         switch (linux.errno(rc)) {
             .SUCCESS => {
                 current_thread.endSyscall();
-                assert(statx.mask.TYPE);
-                assert(statx.mask.MODE);
-                assert(statx.mask.ATIME);
-                assert(statx.mask.MTIME);
-                assert(statx.mask.CTIME);
-                assert(statx.mask.INO);
-                assert(statx.mask.SIZE);
                 return statFromLinux(&statx);
             },
             .INTR => {
