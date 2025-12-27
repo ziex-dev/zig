@@ -1182,8 +1182,13 @@ const huffman = struct {
         }
         var freq_sums: [16]u16 = @splat(0);
         for (out_codes, bits, freqs) |*c, b, f| {
-            c.* = @bitReverse(base[b]) >> -%b;
-            base[b] += 1; // For `b == 0` this is fine since v is specified to be undefined.
+            // Avoid using an undefined value (`base[0]`). It is fine that `c.*` will be left
+            // untouched, as `build()` specifies that "for `freqs[i]` == 0, `out_codes[i]` will be
+            // undefined."
+            if (b != 0) {
+                c.* = @bitReverse(base[b]) >> -%b;
+                base[b] += 1;
+            }
             freq_sums[b] += f;
         }
         return @reduce(.Add, @as(@Vector(16, u32), freq_sums) * std.simd.iota(u32, 16));
@@ -1307,7 +1312,7 @@ const huffman = struct {
             \\ freqs: {any}
             \\ bits: {any}
             \\ # freqs: {}
-            \\ max bits: {} 
+            \\ max bits: {}
             \\ weighted sum: {}
             \\ has_bitlen_one: {}
             \\ expected/actual total bits: {}/{}
