@@ -102,12 +102,19 @@ test "suggestVectorLengthForCpu works with signed and unsigned values" {
     try std.testing.expectEqual(expected_len, signed_integer_len);
 }
 
-fn vectorLength(comptime VectorType: type) comptime_int {
-    return switch (@typeInfo(VectorType)) {
-        .vector => |info| info.len,
-        .array => |info| info.len,
-        else => @compileError("Invalid type " ++ @typeName(VectorType)),
-    };
+/// Returns the number of elements in `VectorType`.
+/// For vectors equivalent to `@TypeInfo(VectorType).vector.len`.
+/// For arrays equivalent to `@TypeInfo(VectorType).array.len`.
+/// For tuples equivalent to `@TypeInfo(VectorType).@"struct".fields.len`.
+pub fn vectorLen(comptime VectorType: type) comptime_int {
+    switch (@typeInfo(VectorType)) {
+        .vector => |info| return info.len,
+        .array => |info| return info.len,
+        .@"struct" => |info| if (info.is_tuple)
+            return info.fields.len,
+        else => {},
+    }
+    @compileError("Invalid type " ++ @typeName(VectorType));
 }
 
 fn vectorTupleTotalLen(vecs: anytype) usize {
@@ -115,18 +122,18 @@ fn vectorTupleTotalLen(vecs: anytype) usize {
     const info = @typeInfo(vecs).@"struct";
     std.debug.assert(info.is_tuple);
     inline for (info.fields) |V|
-        len += vectorLength(V.type);
+        len += vectorLen(V.type);
     return len;
 }
 
 /// Returns the smallest type of unsigned ints capable of indexing any element within the given vector type.
 pub fn VectorIndex(comptime VectorType: type) type {
-    return std.math.IntFittingRange(0, vectorLength(VectorType) - 1);
+    return std.math.IntFittingRange(0, vectorLen(VectorType) - 1);
 }
 
 /// Returns the smallest type of unsigned ints capable of holding the length of the given vector type.
 pub fn VectorCount(comptime VectorType: type) type {
-    return std.math.IntFittingRange(0, vectorLength(VectorType));
+    return std.math.IntFittingRange(0, vectorLen(VectorType));
 }
 
 /// Returns a vector containing the first `len` integers in order from 0 to `len`-1.
@@ -150,11 +157,11 @@ pub inline fn iota(comptime T: type, comptime len: usize) @Vector(len, T) {
 pub fn repeat(comptime len: usize, vec: anytype) @Vector(len, std.meta.Child(@TypeOf(vec))) {
     const Child = std.meta.Child(@TypeOf(vec));
 
-    return @shuffle(Child, vec, undefined, iota(i32, len) % @as(@Vector(len, i32), @splat(@intCast(vectorLength(@TypeOf(vec))))));
+    return @shuffle(Child, vec, undefined, iota(i32, len) % @as(@Vector(len, i32), @splat(@intCast(vectorLen(@TypeOf(vec))))));
 }
 
 /// Returns a vector containing all elements of the input vectors in order.
-/// For example, `join(.{[4]u32{11, 12, 13, 14}, [4]u32{21, 22, 23, 24}, .{31, 32}})` returns a vector containing `.{11, 12, 13, 14, 21, 22, 23, 24, 31, 32}`.
+/// For example, `join(.{[4]u32{11, 12, 13, 14}, .{21, 22, 23, 24}, .{31, 32}})` returns a vector containing `.{11, 12, 13, 14, 21, 22, 23, 24, 31, 32}`.
 /// Element type of the result vector is inferred from the first input vector.
 pub fn join(vecs: anytype) @Vector(vectorTupleTotalLen(@TypeOf(vecs)), std.meta.Child(@TypeOf(vecs[0]))) {
     const Child = std.meta.Child(@TypeOf(vecs[0]));
@@ -163,7 +170,7 @@ pub fn join(vecs: anytype) @Vector(vectorTupleTotalLen(@TypeOf(vecs)), std.meta.
     var ret: @Vector(len, Child) = undefined;
     comptime var offset = 0;
     inline for (vecs) |v| {
-        const v_len = vectorLength(@TypeOf(v));
+        const v_len = vectorLen(@TypeOf(v));
         ret = @shuffle(
             Child,
             ret,
@@ -180,7 +187,7 @@ pub fn join(vecs: anytype) @Vector(vectorTupleTotalLen(@TypeOf(vecs)), std.meta.
 
 /// Returns a vector whose elements alternates between those of each input vector.
 /// For example, `interlace(.{[4]u32{11, 12, 13, 14}, [4]u32{21, 22, 23, 24}})` returns a vector containing `.{11, 21, 12, 22, 13, 23, 14, 24}`.
-pub fn interlace(vecs: anytype) @Vector(vectorLength(@TypeOf(vecs[0])) * vecs.len, std.meta.Child(@TypeOf(vecs[0]))) {
+pub fn interlace(vecs: anytype) @Vector(vectorLen(@TypeOf(vecs[0])) * vecs.len, std.meta.Child(@TypeOf(vecs[0]))) {
     // interlace doesn't work on MIPS, for some reason.
     // Notes from earlier debug attempt:
     //  The indices are correct. The problem seems to be with the @shuffle builtin.
@@ -200,8 +207,8 @@ pub fn interlace(vecs: anytype) @Vector(vectorLength(@TypeOf(vecs[0])) * vecs.le
     const a = interlace(@as(*const [a_vec_count]VecType, @ptrCast(vecs_arr[0..a_vec_count])).*);
     const b = interlace(@as(*const [b_vec_count]VecType, @ptrCast(vecs_arr[a_vec_count..])).*);
 
-    const a_len = vectorLength(@TypeOf(a));
-    const b_len = vectorLength(@TypeOf(b));
+    const a_len = vectorLen(@TypeOf(a));
+    const b_len = vectorLen(@TypeOf(b));
     const len = a_len + b_len;
 
     const indices = comptime blk: {
@@ -223,10 +230,10 @@ pub fn deinterlace(
     comptime vec_count: usize,
     interlaced: anytype,
 ) [vec_count]@Vector(
-    vectorLength(@TypeOf(interlaced)) / vec_count,
+    vectorLen(@TypeOf(interlaced)) / vec_count,
     std.meta.Child(@TypeOf(interlaced)),
 ) {
-    const vec_len = vectorLength(@TypeOf(interlaced)) / vec_count;
+    const vec_len = vectorLen(@TypeOf(interlaced)) / vec_count;
     const Child = std.meta.Child(@TypeOf(interlaced));
 
     var out: [vec_count]@Vector(vec_len, Child) = undefined;
@@ -246,7 +253,7 @@ pub fn extract(
     comptime count: VectorCount(@TypeOf(vec)),
 ) @Vector(count, std.meta.Child(@TypeOf(vec))) {
     const Child = std.meta.Child(@TypeOf(vec));
-    const len = vectorLength(@TypeOf(vec));
+    const len = vectorLen(@TypeOf(vec));
 
     std.debug.assert(@as(comptime_int, @intCast(first)) + @as(comptime_int, @intCast(count)) <= len);
 
@@ -290,13 +297,13 @@ test "vector joining" {
     try std.testing.expectEqual(@Vector(12, u32){ 10, 20, 30, 40, 50, 11, 22, 33, 1, 2, 3, 4 }, join(.{ veca, vecb, vecc }));
     try std.testing.expectEqual(@Vector(12, u32){ 11, 22, 33, 1, 2, 3, 4, 10, 20, 30, 40, 50 }, join(.{ vecb, vecc, veca }));
     try std.testing.expectEqual(@Vector(12, u32){ 1, 2, 3, 4, 11, 22, 33, 10, 20, 30, 40, 50 }, join(.{ vecc, vecb, veca }));
-    try std.testing.expectEqual(@Vector(7, u32){ 11, 22, 33, 4, 5, 6, 70 }, join(.{ vecb, [3]u32{ 4, 5, 6 }, [1]u32{70} }));
-    try std.testing.expectEqual(@Vector(10, u32){ 11, 12, 13, 14, 21, 22, 23, 24, 31, 32 }, join(.{ [4]u32{ 11, 12, 13, 14 }, [4]u32{ 21, 22, 23, 24 }, [2]u32{ 31, 32 } }));
+    try std.testing.expectEqual(@Vector(7, u32){ 11, 22, 33, 4, 5, 6, 70 }, join(.{ vecb, .{ 4, 5, 6 }, .{70} }));
+    try std.testing.expectEqual(@Vector(10, u32){ 11, 12, 13, 14, 21, 22, 23, 24, 31, 32 }, join(.{ [4]u32{ 11, 12, 13, 14 }, .{ 21, 22, 23, 24 }, .{ 31, 32 } }));
 }
 
 /// Joins two vectors, shifts them leftwards (towards lower indices) and extracts the leftmost elements into a vector the length of a and b.
 pub fn mergeShift(a: anytype, b: anytype, comptime shift: VectorCount(@TypeOf(a, b))) @TypeOf(a, b) {
-    const len = vectorLength(@TypeOf(a, b));
+    const len = vectorLen(@TypeOf(a, b));
 
     return extract(join(.{ a, b }), shift, len);
 }
@@ -308,7 +315,7 @@ pub fn shiftElementsRight(vec: anytype, comptime amount: VectorCount(@TypeOf(vec
     // slice would be comptime-known. This would permit vector shifts and rotates by a non-comptime-known amount.
     // However, I am unsure whether compiler optimizations would handle that well enough on all platforms.
     const V = @TypeOf(vec);
-    const len = vectorLength(V);
+    const len = vectorLen(V);
 
     return mergeShift(@as(V, @splat(shift_in)), vec, len - amount);
 }
@@ -328,12 +335,12 @@ pub fn rotateElementsLeft(vec: anytype, comptime amount: VectorCount(@TypeOf(vec
 
 /// Elements are shifted rightwards (towards higher indices). Elements that leave to the right will reappear to the left in the same order.
 pub fn rotateElementsRight(vec: anytype, comptime amount: VectorCount(@TypeOf(vec))) @TypeOf(vec) {
-    return rotateElementsLeft(vec, vectorLength(@TypeOf(vec)) - amount);
+    return rotateElementsLeft(vec, vectorLen(@TypeOf(vec)) - amount);
 }
 
 pub fn reverseOrder(vec: anytype) @TypeOf(vec) {
     const Child = std.meta.Child(@TypeOf(vec));
-    const len = vectorLength(@TypeOf(vec));
+    const len = vectorLen(@TypeOf(vec));
 
     return @shuffle(Child, vec, undefined, @as(@Vector(len, i32), @splat(@as(i32, @intCast(len)) - 1)) - iota(i32, len));
 }
@@ -349,7 +356,7 @@ test "vector shifting" {
 }
 
 pub fn firstTrue(vec: anytype) ?VectorIndex(@TypeOf(vec)) {
-    const len = vectorLength(@TypeOf(vec));
+    const len = vectorLen(@TypeOf(vec));
     const IndexInt = VectorIndex(@TypeOf(vec));
 
     if (!@reduce(.Or, vec)) {
@@ -361,7 +368,7 @@ pub fn firstTrue(vec: anytype) ?VectorIndex(@TypeOf(vec)) {
 }
 
 pub fn lastTrue(vec: anytype) ?VectorIndex(@TypeOf(vec)) {
-    const len = vectorLength(@TypeOf(vec));
+    const len = vectorLen(@TypeOf(vec));
     const IndexInt = VectorIndex(@TypeOf(vec));
 
     if (!@reduce(.Or, vec)) {
@@ -374,7 +381,7 @@ pub fn lastTrue(vec: anytype) ?VectorIndex(@TypeOf(vec)) {
 }
 
 pub fn countTrues(vec: anytype) VectorCount(@TypeOf(vec)) {
-    const len = vectorLength(@TypeOf(vec));
+    const len = vectorLen(@TypeOf(vec));
     const CountIntType = VectorCount(@TypeOf(vec));
 
     const all_ones: @Vector(len, CountIntType) = @splat(1);
@@ -425,7 +432,7 @@ pub fn prefixScanWithFunc(
     // I haven't debugged this, but it might be a cousin of sorts to what's going on with interlace.
     if (builtin.cpu.arch.isMIPS()) @compileError("TODO: Find out why prefixScan doesn't work on MIPS");
 
-    const len = vectorLength(@TypeOf(vec));
+    const len = vectorLen(@TypeOf(vec));
 
     if (hop == 0) @compileError("hop can not be 0; you'd be going nowhere forever!");
     const abs_hop = if (hop < 0) -hop else hop;
