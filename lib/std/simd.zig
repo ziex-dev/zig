@@ -110,6 +110,15 @@ fn vectorLength(comptime VectorType: type) comptime_int {
     };
 }
 
+fn vectorTupleTotalLen(vecs: anytype) usize {
+    comptime var len = 0;
+    const info = @typeInfo(vecs).@"struct";
+    std.debug.assert(info.is_tuple);
+    inline for (info.fields) |V|
+        len += vectorLength(V.type);
+    return len;
+}
+
 /// Returns the smallest type of unsigned ints capable of indexing any element within the given vector type.
 pub fn VectorIndex(comptime VectorType: type) type {
     return std.math.IntFittingRange(0, vectorLength(VectorType) - 1);
@@ -144,14 +153,29 @@ pub fn repeat(comptime len: usize, vec: anytype) @Vector(len, std.meta.Child(@Ty
     return @shuffle(Child, vec, undefined, iota(i32, len) % @as(@Vector(len, i32), @splat(@intCast(vectorLength(@TypeOf(vec))))));
 }
 
-/// Returns a vector containing all elements of the first vector at the lower indices followed by all elements of the second vector
-/// at the higher indices.
-pub fn join(a: anytype, b: anytype) @Vector(vectorLength(@TypeOf(a)) + vectorLength(@TypeOf(b)), std.meta.Child(@TypeOf(a))) {
-    const Child = std.meta.Child(@TypeOf(a));
-    const a_len = vectorLength(@TypeOf(a));
-    const b_len = vectorLength(@TypeOf(b));
+/// Returns a vector containing all elements of the input vectors in order.
+/// For example, `join(.{[4]u32{11, 12, 13, 14}, [4]u32{21, 22, 23, 24}, .{31, 32}})` returns a vector containing `.{11, 12, 13, 14, 21, 22, 23, 24, 31, 32}`.
+/// Element type of the result vector is inferred from the first input vector.
+pub fn join(vecs: anytype) @Vector(vectorTupleTotalLen(@TypeOf(vecs)), std.meta.Child(@TypeOf(vecs[0]))) {
+    const Child = std.meta.Child(@TypeOf(vecs[0]));
+    const len = comptime vectorTupleTotalLen(@TypeOf(vecs));
 
-    return @shuffle(Child, a, b, @as([a_len]i32, iota(i32, a_len)) ++ @as([b_len]i32, ~iota(i32, b_len)));
+    var ret: @Vector(len, Child) = undefined;
+    comptime var offset = 0;
+    inline for (vecs) |v| {
+        const v_len = vectorLength(@TypeOf(v));
+        ret = @shuffle(
+            Child,
+            ret,
+            @as(@Vector(v_len, Child), v),
+            @as([offset]i32, iota(i32, offset)) ++
+                @as([v_len]i32, ~iota(i32, v_len)) ++
+                [1]i32{len - 1} ** (len - offset - v_len),
+        );
+        offset += v_len;
+    }
+
+    return ret;
 }
 
 /// Returns a vector whose elements alternates between those of each input vector.
@@ -184,7 +208,7 @@ pub fn interlace(vecs: anytype) @Vector(vectorLength(@TypeOf(vecs[0])) * vecs.le
         const Vi32 = @Vector(len, i32);
         const count_up = iota(i32, len);
         const cycle = @divFloor(count_up, @as(Vi32, @splat(@intCast(vecs_arr.len))));
-        const select_mask = repeat(len, join(@as(@Vector(a_vec_count, bool), @splat(true)), @as(@Vector(b_vec_count, bool), @splat(false))));
+        const select_mask = repeat(len, join(.{ @as(@Vector(a_vec_count, bool), @splat(true)), @as(@Vector(b_vec_count, bool), @splat(false)) }));
         const a_indices = count_up - cycle * @as(Vi32, @splat(@intCast(b_vec_count)));
         const b_indices = shiftElementsRight(count_up - cycle * @as(Vi32, @splat(@intCast(a_vec_count))), a_vec_count, 0);
         break :blk @select(i32, select_mask, a_indices, ~b_indices);
@@ -244,7 +268,7 @@ test "vector patterns" {
     };
 
     try std.testing.expectEqual([6]u32{ 10, 20, 30, 40, 10, 20 }, repeat(6, base));
-    try std.testing.expectEqual([8]u32{ 10, 20, 30, 40, 55, 66, 77, 88 }, join(base, other_base));
+    try std.testing.expectEqual([8]u32{ 10, 20, 30, 40, 55, 66, 77, 88 }, join(.{ base, other_base }));
     try std.testing.expectEqual([2]u32{ 20, 30 }, extract(base, 1, 2));
 
     if (!builtin.cpu.arch.isMIPS()) {
@@ -256,11 +280,25 @@ test "vector patterns" {
     }
 }
 
+test "vector joining" {
+    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest;
+
+    const veca: @Vector(5, u32) = .{ 10, 20, 30, 40, 50 };
+    const vecb: @Vector(3, u32) = .{ 11, 22, 33 };
+    const vecc: @Vector(4, u32) = .{ 1, 2, 3, 4 };
+
+    try std.testing.expectEqual(@Vector(12, u32){ 10, 20, 30, 40, 50, 11, 22, 33, 1, 2, 3, 4 }, join(.{ veca, vecb, vecc }));
+    try std.testing.expectEqual(@Vector(12, u32){ 11, 22, 33, 1, 2, 3, 4, 10, 20, 30, 40, 50 }, join(.{ vecb, vecc, veca }));
+    try std.testing.expectEqual(@Vector(12, u32){ 1, 2, 3, 4, 11, 22, 33, 10, 20, 30, 40, 50 }, join(.{ vecc, vecb, veca }));
+    try std.testing.expectEqual(@Vector(7, u32){ 11, 22, 33, 4, 5, 6, 70 }, join(.{ vecb, [3]u32{ 4, 5, 6 }, [1]u32{70} }));
+    try std.testing.expectEqual(@Vector(10, u32){ 11, 12, 13, 14, 21, 22, 23, 24, 31, 32 }, join(.{ [4]u32{ 11, 12, 13, 14 }, [4]u32{ 21, 22, 23, 24 }, [2]u32{ 31, 32 } }));
+}
+
 /// Joins two vectors, shifts them leftwards (towards lower indices) and extracts the leftmost elements into a vector the length of a and b.
 pub fn mergeShift(a: anytype, b: anytype, comptime shift: VectorCount(@TypeOf(a, b))) @TypeOf(a, b) {
     const len = vectorLength(@TypeOf(a, b));
 
-    return extract(join(a, b), shift, len);
+    return extract(join(.{ a, b }), shift, len);
 }
 
 /// Elements are shifted rightwards (towards higher indices). New elements are added to the left, and the rightmost elements are cut off
