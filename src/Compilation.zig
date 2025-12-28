@@ -3079,7 +3079,11 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
     // The linker progress node is set up here instead of in `performAllTheWork`, because
     // we also want it around during `flush`.
     if (comp.bin_file) |lf| {
-        comp.link_prog_node = main_progress_node.start("Linking", 0);
+        const initial_estimated_total: usize = if (comp.zcu) |zcu|
+            if (zcu.llvm_object) |_| 2 else 1
+        else
+            1;
+        comp.link_prog_node = main_progress_node.start("Linking", initial_estimated_total);
         lf.startProgress(comp.link_prog_node);
     }
     defer if (comp.bin_file) |lf| {

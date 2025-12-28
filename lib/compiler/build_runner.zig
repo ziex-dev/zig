@@ -765,13 +765,20 @@ fn runStepNames(
         var initial_set: std.ArrayList(*Step) = .empty;
         defer initial_set.deinit(gpa);
         try initial_set.ensureUnusedCapacity(gpa, step_stack.count());
+
+        var step_count: usize = 0;
+
         for (step_stack.keys()) |s| {
-            if (s.state == .precheck_done and s.pending_deps == 0) {
-                initial_set.appendAssumeCapacity(s);
+            if (s.state == .precheck_done) {
+                if (s.pending_deps == 0) {
+                    initial_set.appendAssumeCapacity(s);
+                }
+
+                step_count += 1;
             }
         }
 
-        const step_prog = parent_prog_node.start("steps", step_stack.count());
+        const step_prog = parent_prog_node.start("steps", step_count);
         defer step_prog.end();
 
         var group: Io.Group = .init;

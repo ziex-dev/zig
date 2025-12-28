@@ -782,6 +782,8 @@ fn runResource(
     };
 
     if (!disable_recompress) {
+        job_queue.prog_node.increaseEstimatedTotalItems(1);
+
         // Spin off a task to recompress the tarball, with filtered files deleted, into
         // the global cache.
         job_queue.group.async(io, JobQueue.recompress, .{ job_queue, computed_package_hash });
@@ -1550,6 +1552,8 @@ fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!U
     // because the backing of arena could be page allocator
     const gpa = f.arena.child_allocator;
     const object_format: git.Oid.Format = resource.want_oid;
+
+    f.prog_node.increaseEstimatedTotalItems(2);
 
     var res: UnpackResult = .{};
     // The .git directory is used to store the packfile and associated index, but

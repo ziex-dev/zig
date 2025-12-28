@@ -5336,7 +5336,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
             defer if (cleanup_build_dir) |*dir| dir.close(io);
 
             if (dev.env.supports(.fetch_command)) {
-                const fetch_prog_node = root_prog_node.start("Fetch Packages", 0);
+                const fetch_prog_node = root_prog_node.start("Fetch Packages", 1);
                 defer fetch_prog_node.end();
 
                 // Reset fork match counts.

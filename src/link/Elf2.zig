@@ -2172,7 +2172,7 @@ fn loadObject(
                             .size = section.shdr.size,
                         },
                     };
-                    elf.synth_prog_node.increaseEstimatedTotalItems(1);
+                    elf.input_prog_node.increaseEstimatedTotalItems(1);
                 },
             };
             var symmap: std.ArrayList(Symbol.Index) = .empty;
@@ -3070,7 +3070,8 @@ pub fn flush(
 ) !void {
     const comp = elf.base.comp;
     _ = arena;
-    _ = prog_node;
+    const sub_prog_node = prog_node.start("ELF Flush", 0);
+    defer sub_prog_node.end();
     while (try elf.idle(tid)) {}
     elf.mf.flush() catch |err| switch (err) {
         error.Canceled => |e| return e,
