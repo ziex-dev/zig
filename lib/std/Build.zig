@@ -1764,8 +1764,15 @@ fn supportedWindowsProgramExtension(ext: []const u8) bool {
 fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
     const io = b.graph.io;
     const arena = b.allocator;
+    const absolute_path = path: {
+        if (Io.Dir.path.isAbsolute(full_path)) break :path full_path;
+        break :path Io.Dir.realPathFileAlloc(b.build_root.handle, io, full_path, arena) catch |err| switch (err) {
+            error.OutOfMemory => @panic("OOM"),
+            else => return null,
+        };
+    };
 
-    if (Io.Dir.realPathFileAbsoluteAlloc(io, full_path, arena)) |p| {
+    if (Io.Dir.realPathFileAbsoluteAlloc(io, absolute_path, arena)) |p| {
         return p;
     } else |err| switch (err) {
         error.OutOfMemory => @panic("OOM"),
@@ -1781,7 +1788,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
 
                 return Io.Dir.realPathFileAbsoluteAlloc(
                     io,
-                    b.fmt("{s}{s}", .{ full_path, ext }),
+                    b.fmt("{s}{s}", .{ absolute_path, ext }),
                     arena,
                 ) catch |err| switch (err) {
                     error.OutOfMemory => @panic("OOM"),
