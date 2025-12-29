@@ -751,10 +751,10 @@ pub fn main(init: std.process.Init) !void {
         }
         const syntax = objSyntax(obj) orelse continue;
 
-        if (std.mem.eql(u8, name, "MT") and syntax == .flag) {
-            // `-MT foo` is ambiguous because there is also an -MT flag
-            // The canonical way to specify the flag is with `/MT` and so we make this
-            // the only way.
+        // `/MT` and `/u` also support `-mt` and `-u` which is ambiguous
+        // The canonical way to specify the flag is with `/MT` or `/u` and so we
+        // make this the only way.
+        if (syntax == .flag and (std.mem.eql(u8, name, "MT") or std.mem.eql(u8, name, "u"))) {
             try stdout.print("flagpsl(\"{s}\"),\n", .{name});
         } else if (knownOption(name)) |ident| {
 
