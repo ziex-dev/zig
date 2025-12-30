@@ -330,6 +330,9 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
             const logical_pos = logicalPos(r);
             const delta = @min(@intFromEnum(limit), size - logical_pos);
             setLogicalPos(r, logical_pos + delta);
+            if (delta == 0) {
+                return error.EndOfStream;
+            }
             return delta;
         },
         .streaming, .streaming_simple => {
