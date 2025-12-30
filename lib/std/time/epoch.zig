@@ -1,7 +1,6 @@
 //! Epoch reference times in terms of their difference from
 //! UTC 1970-01-01 in seconds.
 const std = @import("../std.zig");
-const native_os = @import("builtin").os.tag;
 const testing = std.testing;
 const math = std.math;
 
@@ -40,7 +39,7 @@ pub const brew = gps;
 pub const atsc = gps;
 pub const go = clr;
 
-pub const epoch_year = if (native_os == .windows) 1601 else 1970;
+pub const epoch_year = 1970;
 pub const secs_per_day: u17 = 24 * 60 * 60;
 
 pub fn isLeapYear(year: Year) bool {
@@ -291,171 +290,87 @@ fn testDatetimeToNanoseconds(seconds: i96, dt: Datetime) !void {
 }
 
 test "epoch decoding" {
-    if (native_os == .windows) {
-        try testEpoch(0, .{ .year = 1601, .day = 0 }, .{
-            .month = .jan,
-            .day_index = 0,
-        }, .{ .hours_into_day = 0, .minutes_into_hour = 0, .seconds_into_minute = 0 });
+    try testEpoch(0, .{ .year = 1970, .day = 0 }, .{
+        .month = .jan,
+        .day_index = 0,
+    }, .{ .hours_into_day = 0, .minutes_into_hour = 0, .seconds_into_minute = 0 });
 
-        try testEpoch(31535999, .{ .year = 1601, .day = 364 }, .{
-            .month = .dec,
-            .day_index = 30,
-        }, .{ .hours_into_day = 23, .minutes_into_hour = 59, .seconds_into_minute = 59 });
+    try testEpoch(31535999, .{ .year = 1970, .day = 364 }, .{
+        .month = .dec,
+        .day_index = 30,
+    }, .{ .hours_into_day = 23, .minutes_into_hour = 59, .seconds_into_minute = 59 });
 
-        try testEpoch(13267398506, .{ .year = 2021, .day = 31 + 28 + 31 + 30 + 31 + 4 }, .{
-            .month = .jun,
-            .day_index = 4,
-        }, .{ .hours_into_day = 20, .minutes_into_hour = 28, .seconds_into_minute = 26 });
+    try testEpoch(1622924906, .{ .year = 2021, .day = 31 + 28 + 31 + 30 + 31 + 4 }, .{
+        .month = .jun,
+        .day_index = 4,
+    }, .{ .hours_into_day = 20, .minutes_into_hour = 28, .seconds_into_minute = 26 });
 
-        try testEpoch(13269633073, .{ .year = 2021, .day = 31 + 28 + 31 + 30 + 31 + 30 }, .{
-            .month = .jul,
-            .day_index = 0,
-        }, .{ .hours_into_day = 17, .minutes_into_hour = 11, .seconds_into_minute = 13 });
-    } else {
-        try testEpoch(0, .{ .year = 1970, .day = 0 }, .{
-            .month = .jan,
-            .day_index = 0,
-        }, .{ .hours_into_day = 0, .minutes_into_hour = 0, .seconds_into_minute = 0 });
-
-        try testEpoch(31535999, .{ .year = 1970, .day = 364 }, .{
-            .month = .dec,
-            .day_index = 30,
-        }, .{ .hours_into_day = 23, .minutes_into_hour = 59, .seconds_into_minute = 59 });
-
-        try testEpoch(1622924906, .{ .year = 2021, .day = 31 + 28 + 31 + 30 + 31 + 4 }, .{
-            .month = .jun,
-            .day_index = 4,
-        }, .{ .hours_into_day = 20, .minutes_into_hour = 28, .seconds_into_minute = 26 });
-
-        try testEpoch(1625159473, .{ .year = 2021, .day = 31 + 28 + 31 + 30 + 31 + 30 }, .{
-            .month = .jul,
-            .day_index = 0,
-        }, .{ .hours_into_day = 17, .minutes_into_hour = 11, .seconds_into_minute = 13 });
-    }
+    try testEpoch(1625159473, .{ .year = 2021, .day = 31 + 28 + 31 + 30 + 31 + 30 }, .{
+        .month = .jul,
+        .day_index = 0,
+    }, .{ .hours_into_day = 17, .minutes_into_hour = 11, .seconds_into_minute = 13 });
 }
 
 test "datetime to epochseconds" {
-    if (native_os == .windows) {
-        // epoc time exactly
-        try testDatetimeToNanoseconds(0, .{
-            .year = 1601,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
+    // epoc time exactly
+    try testDatetimeToNanoseconds(0, .{
+        .year = 1970,
+        .month = .jan,
+        .day = 1,
+        .hour = 0,
+        .minute = 0,
+        .second = 0,
+    });
 
-        // last second of a year
-        try testDatetimeToNanoseconds(31535999, .{
-            .year = 1601,
-            .month = .dec,
-            .day = 31,
-            .hour = 23,
-            .minute = 59,
-            .second = 59,
-        });
+    // last second of a year
+    try testDatetimeToNanoseconds(31535999, .{
+        .year = 1970,
+        .month = .dec,
+        .day = 31,
+        .hour = 23,
+        .minute = 59,
+        .second = 59,
+    });
 
-        // first second of next year
-        try testDatetimeToNanoseconds(31536000, .{
-            .year = 1602,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
+    // first second of next year
+    try testDatetimeToNanoseconds(31536000, .{
+        .year = 1971,
+        .month = .jan,
+        .day = 1,
+        .hour = 0,
+        .minute = 0,
+        .second = 0,
+    });
 
-        // leap year
-        try testDatetimeToNanoseconds(99792000, .{
-            .year = 1604,
-            .month = .mar,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
+    // leap year
+    try testDatetimeToNanoseconds(68256000, .{
+        .year = 1972,
+        .month = .mar,
+        .day = 1,
+        .hour = 0,
+        .minute = 0,
+        .second = 0,
+    });
 
-        // super far in the future
-        try testDatetimeToNanoseconds(23636102400, .{
-            .year = 2350,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
+    // super far in the future
+    try testDatetimeToNanoseconds(11991628800, .{
+        .year = 2350,
+        .month = .jan,
+        .day = 1,
+        .hour = 0,
+        .minute = 0,
+        .second = 0,
+    });
 
-        // time before epoch
-        try testDatetimeToNanoseconds(-3187296000, .{
-            .year = 1500,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
-    } else {
-        // epoc time exactly
-        try testDatetimeToNanoseconds(0, .{
-            .year = 1970,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
-
-        // last second of a year
-        try testDatetimeToNanoseconds(31535999, .{
-            .year = 1970,
-            .month = .dec,
-            .day = 31,
-            .hour = 23,
-            .minute = 59,
-            .second = 59,
-        });
-
-        // first second of next year
-        try testDatetimeToNanoseconds(31536000, .{
-            .year = 1971,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
-
-        // leap year
-        try testDatetimeToNanoseconds(68256000, .{
-            .year = 1972,
-            .month = .mar,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
-
-        // super far in the future
-        try testDatetimeToNanoseconds(11991628800, .{
-            .year = 2350,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
-
-        // time before epoch
-        try testDatetimeToNanoseconds(-14831769600, .{
-            .year = 1500,
-            .month = .jan,
-            .day = 1,
-            .hour = 0,
-            .minute = 0,
-            .second = 0,
-        });
-    }
+    // time before epoch
+    try testDatetimeToNanoseconds(-14831769600, .{
+        .year = 1500,
+        .month = .jan,
+        .day = 1,
+        .hour = 0,
+        .minute = 0,
+        .second = 0,
+    });
 
     // invalid input
     const dt = Datetime{

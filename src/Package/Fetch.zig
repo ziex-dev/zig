@@ -1400,15 +1400,15 @@ fn parseRetryAfter(io: Io, header_iter: *std.http.HeaderIterator) !?u32 {
         .second = second,
     };
     const timestamp_retry_after: Io.Timestamp = try datetime.asTimestamp();
-    const timestamp_cur = try Io.Clock.Timestamp.now(io, .real);
+    const timestamp_cur = try Io.Clock.now(.real, io);
 
     // If Retry-After is before or equal to now, disregard it and calc delay as usual
-    if (timestamp_retry_after.nanoseconds <= timestamp_cur.raw.nanoseconds) {
+    if (timestamp_retry_after.nanoseconds <= timestamp_cur.nanoseconds) {
         return null;
     }
 
     // i96_max / 1_000_000 needs 76 bits if unsigned
-    const diff: u76 = @intCast(@divTrunc(timestamp_retry_after.nanoseconds - timestamp_cur.raw.nanoseconds, std.time.ns_per_s));
+    const diff: u76 = @intCast(@divTrunc(timestamp_retry_after.nanoseconds - timestamp_cur.nanoseconds, std.time.ns_per_s));
 
     // If we get a number too large to fit into u32, it's way too big anyway, we can cap at u32's max
     const capped: u32 = @min(diff, std.math.maxInt(u32));
