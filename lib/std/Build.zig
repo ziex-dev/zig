@@ -1779,7 +1779,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
             while (it.next()) |ext| {
                 if (!supportedWindowsProgramExtension(ext)) continue;
 
-                return Io.Dir.realPathFileAbsoluteAlloc(
+                return b.build_root.handle.realPathFileAlloc(
                     io,
                     b.fmt("{s}{s}", .{ full_path, ext }),
                     arena,
