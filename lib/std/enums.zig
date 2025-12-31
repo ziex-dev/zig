@@ -8,23 +8,114 @@ const EnumField = std.builtin.Type.EnumField;
 /// Increment this value when adding APIs that add single backwards branches.
 const eval_branch_quota_cushion = 10;
 
+/// Returns whether the range of valid values is contiguous
+pub fn isContiguous(comptime E: type) bool {
+    comptime {
+        const info = @typeInfo(E).@"enum";
+        if (!info.is_exhaustive) return true;
+
+        const min, const max = range(E) orelse return true;
+        const diff = @intFromEnum(max) - @intFromEnum(min);
+        return diff == info.fields.len - 1;
+    }
+}
+
+test isContiguous {
+    try testing.expect(comptime isContiguous(enum {}));
+    try testing.expect(comptime isContiguous(enum { a }));
+    try testing.expect(comptime isContiguous(enum(i8) { a = 2 }));
+    try testing.expect(comptime isContiguous(enum { a, b }));
+    try testing.expect(comptime isContiguous(enum { a, b, c }));
+    try testing.expect(comptime isContiguous(enum(i8) { a = 0, b, c }));
+    try testing.expect(comptime isContiguous(enum(i8) { a = 2, b, c }));
+    try testing.expect(comptime isContiguous(enum(i8) { a = 4, b = 2, c = 3 }));
+    try testing.expect(comptime isContiguous(enum(i8) { a = -2, b = -4, c = -3 }));
+    try testing.expect(comptime isContiguous(enum(i8) { a = -1, b = 0, c = 1 }));
+    try testing.expect(comptime !isContiguous(enum(i8) { a = 2, b = 4 }));
+    try testing.expect(comptime !isContiguous(enum(i8) { a = 2, b = 3, c = 5 }));
+    try testing.expect(comptime !isContiguous(enum(i8) { a = -2, b = 3, c = 4 }));
+}
+
+/// Returns the minimum and maximum valid value in the enum, inclusive.
+/// Non-exhaustive enums return the minimum and maximum values of their tag type.
+/// If the enum is exhaustive and empty, returns null.
+pub fn range(comptime E: type) ?struct { E, E } {
+    const enum_info = @typeInfo(E).@"enum";
+    const fields = enum_info.fields;
+    const Tag = enum_info.tag_type;
+    if (comptime !enum_info.is_exhaustive) return .{ std.math.minInt(Tag), std.math.maxInt(Tag) };
+    if (comptime fields.len == 0) return null;
+    const min, const max = comptime blk: {
+        var min = fields[0].value;
+        var max = min;
+        for (fields[1..]) |f| {
+            min = @min(min, f.value);
+            max = @max(max, f.value);
+        }
+        break :blk .{ min, max };
+    };
+    return .{ @enumFromInt(min), @enumFromInt(max) };
+}
+test range {
+    try testing.expect(null == comptime range(enum {}));
+
+    const helper = struct {
+        fn call(expected: [2]i8, actual: anytype) !void {
+            try testing.expectEqual(expected[0], @intFromEnum(actual.?[0]));
+            try testing.expectEqual(expected[1], @intFromEnum(actual.?[1]));
+        }
+    }.call;
+    try helper(.{ 0, 0 }, range(enum { a }));
+    try helper(.{ 2, 2 }, range(enum(i8) { a = 2 }));
+    try helper(.{ 0, 1 }, range(enum { a, b }));
+    try helper(.{ 0, 2 }, range(enum { a, b, c }));
+    try helper(.{ 0, 2 }, range(enum(i8) { a = 0, b, c }));
+    try helper(.{ 2, 4 }, range(enum(i8) { a = 2, b, c }));
+    try helper(.{ 2, 4 }, range(enum(i8) { a = 4, b = 2, c = 3 }));
+    try helper(.{ -4, -2 }, range(enum(i8) { a = -2, b = -4, c = -3 }));
+    try helper(.{ -1, 1 }, range(enum(i8) { a = -1, b = 0, c = 1 }));
+    try helper(.{ 2, 4 }, range(enum(i8) { a = 2, b = 4 }));
+    try helper(.{ 2, 5 }, range(enum(i8) { a = 2, b = 3, c = 5 }));
+    try helper(.{ -2, 4 }, range(enum(i8) { a = -2, b = 3, c = 4 }));
+}
+
 pub fn fromInt(comptime E: type, integer: anytype) ?E {
     const enum_info = @typeInfo(E).@"enum";
-    if (!enum_info.is_exhaustive) {
-        if (std.math.cast(enum_info.tag_type, integer)) |tag| {
-            return @enumFromInt(tag);
+    const casted = std.math.cast(enum_info.tag_type, integer) orelse return null;
+
+    if (comptime !enum_info.is_exhaustive) return @enumFromInt(casted);
+    if (comptime enum_info.fields.len == 0) return null;
+
+    if (comptime isContiguous(E)) {
+        const min, const max = comptime range(E).?;
+        return if (casted >= @intFromEnum(min) and casted <= @intFromEnum(max))
+            @enumFromInt(casted)
+        else
+            null;
+    }
+
+    const sorted_values = comptime blk: {
+        const vs = values(E);
+        var v = vs[0..vs.len].*;
+        const Context = struct {
+            pub fn lessThan(_: @This(), lhs: E, rhs: E) bool {
+                return @intFromEnum(lhs) < @intFromEnum(rhs);
+            }
+        };
+        std.sort.pdq(E, &v, Context{}, Context.lessThan);
+        break :blk v;
+    };
+
+    const Context = struct {
+        target: enum_info.tag_type,
+
+        pub fn order(self: @This(), rhs: E) std.math.Order {
+            return std.math.order(self.target, @intFromEnum(rhs));
         }
-        return null;
-    }
-    // We don't directly iterate over the fields of E, as that
-    // would require an inline loop. Instead, we create an array of
-    // values that is comptime-know, but can be iterated at runtime
-    // without requiring an inline loop.
-    // This generates better machine code.
-    for (values(E)) |value| {
-        if (@intFromEnum(value) == integer) return value;
-    }
-    return null;
+    };
+    const maybe_index = std.sort.binarySearch(E, &sorted_values, Context{ .target = casted }, Context.order);
+    if (maybe_index == null) return null;
+    return @enumFromInt(casted);
 }
 
 /// Returns a struct with a field matching each unique named enum element.
@@ -205,6 +296,7 @@ test "directEnumArrayDefault slice" {
 }
 
 test fromInt {
+    const E0 = enum {};
     const E1 = enum {
         A,
     };
@@ -214,16 +306,23 @@ test fromInt {
     };
     const E3 = enum(i8) { A, _ };
     const E4 = enum(u8) { A };
+    const E5 = enum(i8) {
+        A = 3,
+        B = -5,
+    };
 
-    var zero: u8 = 0;
-    var one: u16 = 1;
-    _ = &zero;
-    _ = &one;
+    const zero: u8 = 0;
+    const one: u16 = 1;
+    try testing.expect(fromInt(E0, zero) == null);
+    try testing.expect(fromInt(E0, one) == null);
     try testing.expect(fromInt(E1, zero).? == E1.A);
     try testing.expect(fromInt(E2, one).? == E2.B);
     try testing.expect(fromInt(E3, zero).? == E3.A);
     try testing.expect(fromInt(E3, 127).? == @as(E3, @enumFromInt(127)));
     try testing.expect(fromInt(E3, -128).? == @as(E3, @enumFromInt(-128)));
+    try testing.expect(fromInt(E5, -128) == null);
+    try testing.expect(fromInt(E5, 3).? == @as(E5, @enumFromInt(3)));
+    try testing.expect(fromInt(E5, -5).? == @as(E5, @enumFromInt(-5)));
     try testing.expectEqual(null, fromInt(E1, one));
     try testing.expectEqual(null, fromInt(E3, 128));
     try testing.expectEqual(null, fromInt(E3, -129));
