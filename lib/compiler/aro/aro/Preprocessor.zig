@@ -1496,7 +1496,7 @@ const DateTimeStampKind = enum {
 };
 
 fn writeDateTimeStamp(pp: *const Preprocessor, kind: DateTimeStampKind, timestamp: u64) !void {
-    std.debug.assert(std.time.epoch.Month.jan.numeric() == 1);
+    std.debug.assert(std.time.epoch.Datetime.Month.jan.numeric() == 1);
     const gpa = pp.comp.gpa;
 
     const epoch_seconds = std.time.epoch.EpochSeconds{ .secs = timestamp };

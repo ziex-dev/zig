@@ -1372,13 +1372,14 @@ fn parseRetryAfter(io: Io, header_iter: *std.http.HeaderIterator) !?u32 {
     const months = "JanFebMarAprMayJunJulAugSepOctNovDec";
 
     const epoch = std.time.epoch;
+    const Datetime = epoch.Datetime;
 
     // Example date with periodic indices for easy visualization:
     // Tue, 29 Oct 2024 16:56:32 GMT
     // ^         ^         ^
     // 0         10        20
-    const year = try std.fmt.parseInt(epoch.Year, retry_after[12..16], 10);
-    const month: epoch.Month = for (0..12) |i| {
+    const year = try std.fmt.parseInt(Datetime.Year, retry_after[12..16], 10);
+    const month: Datetime.Month = for (0..12) |i| {
         const month = months[i * 3 .. (i * 3) + 3];
         if (std.mem.eql(u8, month, retry_after[8..11])) {
             break @enumFromInt(i + 1);
@@ -1386,12 +1387,12 @@ fn parseRetryAfter(io: Io, header_iter: *std.http.HeaderIterator) !?u32 {
     } else {
         return error.CannotFindMonth;
     };
-    const day = try std.fmt.parseInt(epoch.Day, retry_after[5..7], 10);
-    const hour = try std.fmt.parseInt(epoch.Hour, retry_after[17..19], 10);
-    const minute = try std.fmt.parseInt(epoch.Minute, retry_after[20..22], 10);
-    const second = try std.fmt.parseInt(epoch.Second, retry_after[23..25], 10);
+    const day = try std.fmt.parseInt(Datetime.Day, retry_after[5..7], 10);
+    const hour = try std.fmt.parseInt(Datetime.Hour, retry_after[17..19], 10);
+    const minute = try std.fmt.parseInt(Datetime.Minute, retry_after[20..22], 10);
+    const second = try std.fmt.parseInt(Datetime.Second, retry_after[23..25], 10);
 
-    const datetime = epoch.Datetime{
+    const datetime = Datetime{
         .year = year,
         .month = month,
         .day = day,

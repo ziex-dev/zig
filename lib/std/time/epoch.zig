@@ -42,7 +42,7 @@ pub const go = clr;
 pub const epoch_year = 1970;
 pub const secs_per_day: u17 = 24 * 60 * 60;
 
-pub fn isLeapYear(year: Year) bool {
+pub fn isLeapYear(year: Datetime.Year) bool {
     if (@mod(year, 4) != 0)
         return false;
     if (@mod(year, 100) != 0)
@@ -57,45 +57,9 @@ test isLeapYear {
     try testing.expectEqual(true, isLeapYear(2400));
 }
 
-pub fn getDaysInYear(year: Year) u9 {
+pub fn getDaysInYear(year: Datetime.Year) u9 {
     return if (isLeapYear(year)) 366 else 365;
 }
-
-/// The type that holds the current year, i.e. 2016
-pub const Year = u16;
-
-pub const Month = enum(u4) {
-    jan = 1,
-    feb,
-    mar,
-    apr,
-    may,
-    jun,
-    jul,
-    aug,
-    sep,
-    oct,
-    nov,
-    dec,
-
-    /// return the numeric calendar value for the given month
-    /// i.e. jan=1, feb=2, etc
-    pub fn numeric(self: Month) u4 {
-        return @intFromEnum(self);
-    }
-};
-
-/// Day of month (1 to 31)
-pub const Day = u5;
-
-/// Hour of day (0 to 23)
-pub const Hour = u5;
-
-/// Minute of hour (0 to 59)
-pub const Minute = u6;
-
-/// Second of minute (0 to 59)
-pub const Second = u6;
 
 pub const Datetime = struct {
     year: Year,
@@ -104,6 +68,42 @@ pub const Datetime = struct {
     hour: Hour,
     minute: Minute,
     second: Second,
+
+    /// The type that holds the current year, i.e. 2016
+    pub const Year = u16;
+
+    pub const Month = enum(u4) {
+        jan = 1,
+        feb,
+        mar,
+        apr,
+        may,
+        jun,
+        jul,
+        aug,
+        sep,
+        oct,
+        nov,
+        dec,
+
+        /// return the numeric calendar value for the given month
+        /// i.e. jan=1, feb=2, etc
+        pub fn numeric(self: Month) u4 {
+            return @intFromEnum(self);
+        }
+    };
+
+    /// Day of month (1 to 31)
+    pub const Day = u5;
+
+    /// Hour of day (0 to 23)
+    pub const Hour = u5;
+
+    /// Minute of hour (0 to 59)
+    pub const Minute = u6;
+
+    /// Second of minute (0 to 59)
+    pub const Second = u6;
 
     pub fn asTimestamp(d: *const Datetime) !std.Io.Timestamp {
         if (d.day == 0 or d.day > getDaysInMonth(d.year, d.month)) return error.InvalidDay;
@@ -148,7 +148,7 @@ pub const Datetime = struct {
 
 /// Counts the number of leap years in the range [start_year, end_year).
 /// The end_year is exclusive.
-pub fn countLeapYearsBetween(start_year: Year, end_year: Year) u15 {
+pub fn countLeapYearsBetween(start_year: Datetime.Year, end_year: Datetime.Year) u15 {
     // We retrun u15 because `Year` is u16 and leap year is every 4 years.
     // (2 ** 16) / 4 = 2 ** 14, so u14 is clearly the best fit. But every 100
     // years is also leap year, which will result in very few extra leap years,
@@ -164,13 +164,13 @@ pub fn countLeapYearsBetween(start_year: Year, end_year: Year) u15 {
 }
 
 /// Counts leap years from year 0 to the given year (inclusive).
-fn countLeapYearsFromZero(y: Year) u15 {
+fn countLeapYearsFromZero(y: Datetime.Year) u15 {
     // Divisible by 4, minus centuries (divisible by 100), plus quad-centuries (divisible by 400)
     return @as(u15, @intCast((y / 4) - (y / 100) + (y / 400)));
 }
 
 /// Get the number of days in the given month and year
-pub fn getDaysInMonth(year: Year, month: Month) u5 {
+pub fn getDaysInMonth(year: Datetime.Year, month: Datetime.Month) u5 {
     return switch (month) {
         .jan => 31,
         .feb => switch (isLeapYear(year)) {
@@ -191,26 +191,26 @@ pub fn getDaysInMonth(year: Year, month: Month) u5 {
 }
 
 pub const YearAndDay = struct {
-    year: Year,
+    year: Datetime.Year,
     /// The number of days into the year (0 to 365)
     day: u9,
 
     pub fn calculateMonthDay(self: YearAndDay) MonthAndDay {
-        var month: Month = .jan;
+        var month: Datetime.Month = .jan;
         var days_left = self.day;
         while (true) {
             const days_in_month = getDaysInMonth(self.year, month);
             if (days_left < days_in_month)
                 break;
             days_left -= days_in_month;
-            month = @as(Month, @enumFromInt(@intFromEnum(month) + 1));
+            month = @as(Datetime.Month, @enumFromInt(@intFromEnum(month) + 1));
         }
         return .{ .month = month, .day_index = @as(u5, @intCast(days_left)) };
     }
 };
 
 pub const MonthAndDay = struct {
-    month: Month,
+    month: Datetime.Month,
     day_index: u5, // days into the month (0 to 30)
 };
 
@@ -219,7 +219,7 @@ pub const EpochDay = struct {
     day: u47, // u47 = u64 - u17 (because day = sec(u64) / secs_per_day(u17)
     pub fn calculateYearDay(self: EpochDay) YearAndDay {
         var year_day = self.day;
-        var year: Year = epoch_year;
+        var year: Datetime.Year = epoch_year;
         while (true) {
             const year_size = getDaysInYear(year);
             if (year_day < year_size)
