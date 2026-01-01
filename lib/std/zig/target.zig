@@ -398,19 +398,13 @@ pub fn isLibCLibName(target: *const std.Target, name: []const u8) bool {
     if (target.isFreeBSDLibC()) {
         if (eqlIgnoreCase(ignore_case, name, "dl"))
             return true;
-        if (eqlIgnoreCase(ignore_case, name, "execinfo"))
-            return true;
         if (eqlIgnoreCase(ignore_case, name, "m"))
             return true;
         if (eqlIgnoreCase(ignore_case, name, "pthread"))
             return true;
         if (eqlIgnoreCase(ignore_case, name, "rt"))
             return true;
-        if (eqlIgnoreCase(ignore_case, name, "stdthreads"))
-            return true;
         if (eqlIgnoreCase(ignore_case, name, "thr"))
-            return true;
-        if (eqlIgnoreCase(ignore_case, name, "util"))
             return true;
         if (eqlIgnoreCase(ignore_case, name, "xnet"))
             return true;
