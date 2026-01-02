@@ -198,7 +198,7 @@ pub fn autoHash(hasher: anytype, key: anytype) void {
 /// and for normalizing floating point numbers.
 /// This is not a general purpose hashing function, it is only intended for use
 /// with floating point numbers.
-fn normalizedFloatHash(hasher: anytype, key: anytype) void {
+pub fn normalizedFloatHash(hasher: anytype, key: anytype) void {
     if (@typeInfo(@TypeOf(key)) != .float) {
         @compileError("normalizedFloatHash only supports floating point numbers, found " ++ @typeName(@TypeOf(key)));
     }

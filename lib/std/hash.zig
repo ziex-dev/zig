@@ -4,6 +4,7 @@ const auto_hash = @import("hash/auto_hash.zig");
 pub const autoHash = auto_hash.autoHash;
 pub const autoHashStrat = auto_hash.hash;
 pub const Strategy = auto_hash.HashStrategy;
+pub const normalizedFloatHash = auto_hash.normalizedFloatHash;
 
 // pub for polynomials + generic crc32 construction
 pub const crc = @import("hash/crc.zig");
