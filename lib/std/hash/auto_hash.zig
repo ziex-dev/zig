@@ -104,7 +104,7 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
             },
         },
 
-        .float => @compileError("Use std.hash.normalizedFloatHash for keys of float type"),
+        .float => normalizedFloatHash(hasher, key),
 
         .bool => hash(hasher, @intFromBool(key), strat),
         .@"enum" => hash(hasher, @intFromEnum(key), strat),
