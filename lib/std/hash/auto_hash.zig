@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const math = std.math;
 const mem = std.mem;
 
 /// Describes how pointer types should be hashed.
@@ -83,7 +84,6 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
         .type,
         .enum_literal,
         .frame,
-        .float,
         => @compileError("unable to hash type " ++ @typeName(Key)),
 
         .void => return,
@@ -103,6 +103,8 @@ pub fn hash(hasher: anytype, key: anytype, comptime strat: HashStrategy) void {
                 }
             },
         },
+
+        .float => @compileError("Use std.hash.normalizedFloatHash for keys of float type"),
 
         .bool => hash(hasher, @intFromBool(key), strat),
         .@"enum" => hash(hasher, @intFromEnum(key), strat),
@@ -191,6 +193,33 @@ pub fn autoHash(hasher: anytype, key: anytype) void {
     hash(hasher, key, .Shallow);
 }
 
+/// Provides bit-level hashing for floating point numbers.
+/// This is useful for hashing floating point values except for NaN
+/// and for normalizing floating point numbers.
+/// This is not a general purpose hashing function, it is only intended for use
+/// with floating point numbers.
+fn normalizedFloatHash(hasher: anytype, key: anytype) void {
+    if (@typeInfo(@TypeOf(key)) != .float) {
+        @compileError("normalizedFloatHash only supports floating point numbers, found " ++ @typeName(@TypeOf(key)));
+    }
+    assert(!math.isNan(key));
+
+    const norm_key = if (key == 0.0) 0.0 else key;
+    const bits = @typeInfo(@TypeOf(norm_key)).float.bits;
+    switch (bits) {
+        16,
+        32,
+        64,
+        80,
+        128,
+        => {
+            const U: type = @Int(.unsigned, bits);
+            hash(hasher, @as(U, @bitCast(norm_key)), .Shallow);
+        },
+        else => @compileError("unknown floating point type"),
+    }
+}
+
 const testing = std.testing;
 const Wyhash = std.hash.Wyhash;
 
@@ -219,6 +248,13 @@ fn testHashDeepRecursive(key: anytype) u64 {
     // Any hash could be used here, for testing autoHash.
     var hasher = Wyhash.init(0);
     hash(&hasher, key, .DeepRecursive);
+    return hasher.final();
+}
+
+fn testNormalizedFloatHash(key: anytype) u64 {
+    // Any hash could be used here, for testing autoHash.
+    var hasher = Wyhash.init(0);
+    normalizedFloatHash(&hasher, key);
     return hasher.final();
 }
 
@@ -420,4 +456,14 @@ test "testHash error union" {
     try testing.expect(testHash(f) != testHash(g));
     try testing.expect(testHash(f) == testHash(Foo{}));
     try testing.expect(testHash(g) == testHash(Errors.Test));
+}
+
+test "testNormalizedFloatHash" {
+    var a: f32 = -1.0;
+    while (a != 0.0) {
+        a /= 10.0;
+    }
+    var b: f32 = 1.0;
+    b -= 1.0;
+    try testing.expect(testNormalizedFloatHash(a) == testNormalizedFloatHash(b));
 }
