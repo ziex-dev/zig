@@ -40,7 +40,7 @@ test {
     _ = windows;
 }
 
-/// See also `getenv`. Populated by startup code before main().
+/// See also `posix.getenv`. Populated by startup code before main().
 /// TODO this is a footgun because the value will be undefined when using `zig build-lib`.
 /// https://github.com/ziglang/zig/issues/4524
 pub var environ: [][*:0]u8 = undefined;
