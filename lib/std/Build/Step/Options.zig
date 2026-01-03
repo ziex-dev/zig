@@ -423,6 +423,7 @@ fn printStructValue(
     }
 }
 
+// only call this on tagged unions
 fn printUnion(options: *Options, out: *std.ArrayList(u8), comptime T: type, comptime val: std.builtin.Type.Union, indent: u8) !void {
     const gpa = options.step.owner.allocator;
     const gop = try options.encountered_types.getOrPut(gpa, @typeName(T));
@@ -432,9 +433,9 @@ fn printUnion(options: *Options, out: *std.ArrayList(u8), comptime T: type, comp
     try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(@typeName(T))});
 
     switch (val.layout) {
-        .@"extern" => try out.appendSlice(gpa, "extern union"),
-        .@"packed" => try out.appendSlice(gpa, "packed union"),
-        else => try out.appendSlice(gpa, "union"),
+        .auto => try out.appendSlice(gpa, "union"),
+        // only .auto unions have enum tags
+        else => unreachable,
     }
 
     const tag_is_inferred = std.mem.eql(u8, @typeName(val.tag_type.?), "@typeInfo(" ++ @typeName(T) ++ ").@\"union\".tag_type.?");
