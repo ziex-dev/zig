@@ -439,7 +439,6 @@ fn printUnion(options: *Options, out: *std.ArrayList(u8), comptime T: type, comp
 
     const tag_is_inferred = std.mem.eql(u8, @typeName(val.tag_type.?), "@typeInfo(" ++ @typeName(T) ++ ").@\"union\".tag_type.?");
     if (tag_is_inferred) {
-        //todo
         const enum_tag_type = @typeInfo(val.tag_type.?).@"enum".tag_type;
         try out.print(gpa, "(enum({s}))", .{@typeName(enum_tag_type)});
     } else {
