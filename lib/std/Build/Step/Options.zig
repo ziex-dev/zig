@@ -266,7 +266,7 @@ fn printType(
             return;
         },
         .@"union" => |info| {
-            if (info.tag_type == null) @compileError("untagged unions are not supported as buid options");
+            if (info.tag_type == null) @compileError("untagged unions are not supported as build options");
             try printUnion(options, out, T, info, indent);
 
             if (name) |some| {
