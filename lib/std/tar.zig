@@ -95,6 +95,34 @@ pub const Diagnostics = struct {
         try expectEqualStrings("a", rootDir("a/b/c", .directory));
     }
 
+    pub fn format(
+        d: *const @This(),
+        w: *std.Io.Writer,
+    ) std.Io.Writer.Error!void {
+        for (d.errors.items) |item| switch (item) {
+            .unable_to_create_sym_link => |info| {
+                try w.print("Unable to create symlink {s} to file {s} due to err: {t}\n", .{
+                    info.link_name, info.file_name, info.code,
+                });
+            },
+            .unable_to_create_file => |info| {
+                try w.print("Unable to create file '{s}' due to err: {t}\n", .{
+                    info.file_name,
+                    info.code,
+                });
+            },
+            .unsupported_file_type => |info| {
+                try w.print("'{s}' has unsupported file type: {t}\n", .{
+                    info.file_name,
+                    info.file_type,
+                });
+            },
+            .components_outside_stripped_prefix => |info| {
+                try w.print("'{s}' has components outside stripped prefix\n", .{info.file_name});
+            },
+        };
+    }
+
     pub fn deinit(d: *Diagnostics) void {
         for (d.errors.items) |item| {
             switch (item) {
