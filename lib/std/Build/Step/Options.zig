@@ -436,7 +436,15 @@ fn printUnion(options: *Options, out: *std.ArrayList(u8), comptime T: type, comp
         .@"packed" => try out.appendSlice(gpa, "packed union"),
         else => try out.appendSlice(gpa, "union"),
     }
-    try out.print(gpa, "({f})", .{std.zig.fmtId(@typeName(val.tag_type.?))});
+
+    const tag_is_inferred = std.mem.eql(u8, @typeName(val.tag_type.?), "@typeInfo(" ++ @typeName(T) ++ ").@\"union\".tag_type.?");
+    if (tag_is_inferred) {
+        //todo
+        const enum_tag_type = @typeInfo(val.tag_type.?).@"enum".tag_type;
+        try out.print(gpa, "(enum({s}))", .{@typeName(enum_tag_type)});
+    } else {
+        try out.print(gpa, "({f})", .{std.zig.fmtId(@typeName(val.tag_type.?))});
+    }
 
     try out.appendSlice(gpa, " {\n");
 
@@ -469,7 +477,9 @@ fn printUnion(options: *Options, out: *std.ArrayList(u8), comptime T: type, comp
     inline for (val.fields) |field| {
         try printUserDefinedType(options, out, field.type, 0);
     }
-    try printUserDefinedType(options, out, val.tag_type.?, 0);
+    if (!tag_is_inferred) {
+        try printUserDefinedType(options, out, val.tag_type.?, 0);
+    }
 }
 
 fn printUnionValue(
