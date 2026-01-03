@@ -265,6 +265,19 @@ fn printType(
             }
             return;
         },
+        .@"union" => |info| {
+            if (info.tag_type == null) @compileError("untagged unions are not supported as buid options");
+            try printUnion(options, out, T, info, indent);
+
+            if (name) |some| {
+                try out.print(gpa, "pub const {f}: {f} = ", .{
+                    std.zig.fmtId(some),
+                    std.zig.fmtId(@typeName(T)),
+                });
+                try printUnionValue(options, out, info, value, indent);
+            }
+            return;
+        },
         else => @compileError(std.fmt.comptimePrint("`{s}` are not yet supported as build options", .{@tagName(@typeInfo(T))})),
     }
 }
@@ -386,6 +399,91 @@ fn printStructValue(
         }
     } else {
         inline for (struct_val.fields) |field| {
+            try out.appendNTimes(gpa, ' ', indent);
+            try out.print(gpa, "    .{f} = ", .{
+                std.zig.fmtIdFlags(field.name, .{ .allow_primitive = true, .allow_underscore = true }),
+            });
+
+            const field_name = @field(val, field.name);
+            switch (@typeInfo(@TypeOf(field_name))) {
+                .@"enum" => try out.print(gpa, ".{s},\n", .{@tagName(field_name)}),
+                .@"struct" => |struct_info| {
+                    try printStructValue(options, out, struct_info, field_name, indent + 4);
+                },
+                else => try printType(options, out, @TypeOf(field_name), field_name, indent, null),
+            }
+        }
+    }
+
+    if (indent == 0) {
+        try out.appendSlice(gpa, "};\n");
+    } else {
+        try out.appendNTimes(gpa, ' ', indent);
+        try out.appendSlice(gpa, "},\n");
+    }
+}
+
+fn printUnion(options: *Options, out: *std.ArrayList(u8), comptime T: type, comptime val: std.builtin.Type.Union, indent: u8) !void {
+    const gpa = options.step.owner.allocator;
+    const gop = try options.encountered_types.getOrPut(gpa, @typeName(T));
+    if (gop.found_existing) return;
+
+    try out.appendNTimes(gpa, ' ', indent);
+    try out.print(gpa, "pub const {f} = ", .{std.zig.fmtId(@typeName(T))});
+
+    switch (val.layout) {
+        .@"extern" => try out.appendSlice(gpa, "extern union"),
+        .@"packed" => try out.appendSlice(gpa, "packed union"),
+        else => try out.appendSlice(gpa, "union"),
+    }
+    try out.print(gpa, "({f})", .{std.zig.fmtId(@typeName(val.tag_type.?))});
+
+    try out.appendSlice(gpa, " {\n");
+
+    inline for (val.fields) |field| {
+        try out.appendNTimes(gpa, ' ', indent);
+
+        const type_name = @typeName(field.type);
+
+        // If the type name doesn't contains a '.' the type is from zig builtins.
+        if (std.mem.containsAtLeast(u8, type_name, 1, ".")) {
+            try out.print(gpa, "    {f}: {f}", .{
+                std.zig.fmtIdFlags(field.name, .{ .allow_underscore = true, .allow_primitive = true }),
+                std.zig.fmtId(type_name),
+            });
+        } else {
+            try out.print(gpa, "    {f}: {s}", .{
+                std.zig.fmtIdFlags(field.name, .{ .allow_underscore = true, .allow_primitive = true }),
+                type_name,
+            });
+        }
+
+        try out.appendSlice(gpa, ",\n");
+    }
+
+    // TODO: write declarations
+
+    try out.appendNTimes(gpa, ' ', indent);
+    try out.appendSlice(gpa, "};\n");
+
+    inline for (val.fields) |field| {
+        try printUserDefinedType(options, out, field.type, 0);
+    }
+    try printUserDefinedType(options, out, val.tag_type.?, 0);
+}
+
+fn printUnionValue(
+    options: *Options,
+    out: *std.ArrayList(u8),
+    comptime struct_val: std.builtin.Type.Union,
+    val: anytype,
+    indent: u8,
+) !void {
+    const gpa = options.step.owner.allocator;
+    try out.appendSlice(gpa, ".{\n");
+
+    inline for (struct_val.fields) |field| {
+        if (std.meta.activeTag(val) == std.meta.stringToEnum(std.meta.Tag(@TypeOf(val)), field.name)) {
             try out.appendNTimes(gpa, ' ', indent);
             try out.print(gpa, "    .{f} = ", .{
                 std.zig.fmtIdFlags(field.name, .{ .allow_primitive = true, .allow_underscore = true }),
