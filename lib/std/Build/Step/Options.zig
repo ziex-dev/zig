@@ -226,7 +226,14 @@ fn printType(
             }
             return;
         },
-        .void,
+        .void => {
+            if (name) |some| {
+                try out.print(gpa, "pub const {f}: {s} = {{}};\n", .{ std.zig.fmtId(some), @typeName(T) });
+            } else {
+                try out.appendSlice(gpa, "{},\n");
+            }
+            return;
+        },
         .bool,
         .int,
         .comptime_int,
