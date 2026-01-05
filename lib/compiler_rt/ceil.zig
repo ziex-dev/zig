@@ -103,7 +103,7 @@ pub fn __ceilx(x: f80) callconv(.c) f80 {
     const e = (u >> 64) & 0x7FFF;
     var y: f80 = undefined;
 
-    if (e >= 0x3FFF + 64 or x == 0) return x;
+    if (e >= 0x3FFF + 63 or x == 0) return x;
 
     if (u >> 79 != 0) {
         y = x - f80_toint + f80_toint - x;
@@ -184,6 +184,9 @@ test "ceil64" {
 }
 
 test "ceil80" {
+    const max_u64: u64 = std.math.maxInt(u64);
+    const max_u64_as_f80: f80 = @floatFromInt(max_u64);
+    try expect(max_u64_as_f80 == __ceilx(max_u64_as_f80));
     try expect(__ceilx(1.3) == 2.0);
     try expect(__ceilx(-1.3) == -1.0);
     try expect(__ceilx(0.2) == 1.0);
