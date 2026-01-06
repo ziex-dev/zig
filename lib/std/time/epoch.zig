@@ -142,14 +142,14 @@ pub const Datetime = struct {
 
         const nanoseconds: i96 = total_secs * std.time.ns_per_s;
 
-        return std.Io.Timestamp{ .nanoseconds = nanoseconds };
+        return .{ .nanoseconds = nanoseconds };
     }
 };
 
 /// Counts the number of leap years in the range [start_year, end_year).
 /// The end_year is exclusive.
 pub fn countLeapYearsBetween(start_year: Datetime.Year, end_year: Datetime.Year) u15 {
-    // We retrun u15 because `Year` is u16 and leap year is every 4 years.
+    // We return u15 because `Year` is u16 and leap year is every 4 years.
     // (2 ** 16) / 4 = 2 ** 14, so u14 is clearly the best fit. But every 100
     // years is also leap year, which will result in very few extra leap years,
     // so we are adding 1 bit to make room for that, resulting in u15.
@@ -312,7 +312,7 @@ test "epoch decoding" {
 }
 
 test "datetime to epochseconds" {
-    // epoc time exactly
+    // epoch time exactly
     try testDatetimeToNanoseconds(0, .{
         .year = 1970,
         .month = .jan,

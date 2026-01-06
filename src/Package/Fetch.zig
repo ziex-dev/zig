@@ -500,11 +500,11 @@ pub const Retry = struct {
     /// `null`.
     retry_delay_override_ms: ?u32 = null,
     /// Hard cap of how many milliseconds to wait between retries.
-    const MAX_RETRY_SLEEP_MS = 10 * 1000;
+    const max_retry_sleep_ms = 10 * 1000;
     /// Minimum time a jittered retry delay could be
-    const MIN_RETRY_JITTER_MS = 500;
+    const min_retry_jitter_ms = 500;
     /// Maximum time a jittered retry delay could be
-    const MAX_RETRY_JITTER_MS = 1500;
+    const max_retry_jitter_ms = 1500;
 
     fn calcRetryDelayMs(r: *Retry) i64 {
         if (r.retry_delay_override_ms) |delay| {
@@ -512,9 +512,9 @@ pub const Retry = struct {
             return delay;
         }
         if (r.cur_retries == 0) {
-            return std.crypto.random.intRangeAtMost(i64, MIN_RETRY_JITTER_MS, MAX_RETRY_JITTER_MS);
+            return std.crypto.random.intRangeAtMost(i64, min_retry_jitter_ms, max_retry_jitter_ms);
         }
-        return @min(r.cur_retries * 3 * 1000, MAX_RETRY_SLEEP_MS);
+        return @min(r.cur_retries * 3 * 1000, max_retry_sleep_ms);
     }
 
     fn callWithRetries(
@@ -1310,14 +1310,14 @@ fn initHttpResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer:
     response.* = try request.receiveHead(&redirect_buffer);
     const status = response.head.status;
 
-    if (@intFromEnum(status) >= 500 or status == .too_many_requests or status == .not_found) {
+    if (status.class() == .server_error or status == .too_many_requests or status == .not_found) {
         var iter = response.head.iterateHeaders();
         if (parseRetryAfter(f.job_queue.io, &iter) catch null) |delay_sec| {
             // Set max by dividing and multiplying again, because Retry-After
             // header value needs to be u32, and could be obsurdly large, and
             // we do not want to multiply that large number by 1000 in case of
             // overflow. So we cap it first, then convert to milliseconds.
-            f.retry.retry_delay_override_ms = @min(delay_sec, Retry.MAX_RETRY_SLEEP_MS / 1000) * @as(u32, 1000);
+            f.retry.retry_delay_override_ms = @min(delay_sec, Retry.max_retry_sleep_ms / 1000) * @as(u32, 1000);
         }
         return BadHttpStatus.MaybeSpurious;
     } else if (status != .ok) {
@@ -1366,11 +1366,6 @@ fn parseRetryAfter(io: Io, header_iter: *std.http.HeaderIterator) !?u32 {
         return error.InvalidHeaderValueLength;
     }
 
-    // Much more memory compact than an array of string slices, because
-    // pointers are large. Also 12 strings means 11 more `\0` bytes than we
-    // actually need.
-    const months = "JanFebMarAprMayJunJulAugSepOctNovDec";
-
     const epoch = std.time.epoch;
     const Datetime = epoch.Datetime;
 
@@ -1379,14 +1374,10 @@ fn parseRetryAfter(io: Io, header_iter: *std.http.HeaderIterator) !?u32 {
     // ^         ^         ^
     // 0         10        20
     const year = try std.fmt.parseInt(Datetime.Year, retry_after[12..16], 10);
-    const month: Datetime.Month = for (0..12) |i| {
-        const month = months[i * 3 .. (i * 3) + 3];
-        if (std.mem.eql(u8, month, retry_after[8..11])) {
-            break @enumFromInt(i + 1);
-        }
-    } else {
-        return error.CannotFindMonth;
-    };
+    var retry_after_month: [3:0]u8 = undefined;
+    @memcpy(&retry_after_month, retry_after[8..11]);
+    retry_after_month[0] = std.ascii.toLower(retry_after_month[0]);
+    const month = std.meta.stringToEnum(Datetime.Month, &retry_after_month) orelse return error.CannotFindMonth;
     const day = try std.fmt.parseInt(Datetime.Day, retry_after[5..7], 10);
     const hour = try std.fmt.parseInt(Datetime.Hour, retry_after[17..19], 10);
     const minute = try std.fmt.parseInt(Datetime.Minute, retry_after[20..22], 10);
@@ -1400,7 +1391,7 @@ fn parseRetryAfter(io: Io, header_iter: *std.http.HeaderIterator) !?u32 {
         .minute = minute,
         .second = second,
     };
-    const timestamp_retry_after: Io.Timestamp = try datetime.asTimestamp();
+    const timestamp_retry_after = try datetime.asTimestamp();
     const timestamp_cur = try Io.Clock.now(.real, io);
 
     // If Retry-After is before or equal to now, disregard it and calc delay as usual
