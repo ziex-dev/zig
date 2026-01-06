@@ -506,17 +506,6 @@ pub const Retry = struct {
     /// Maximum time a jittered retry delay could be
     const max_retry_jitter_ms = 1500;
 
-    fn calcRetryDelayMs(r: *Retry) i64 {
-        if (r.retry_delay_override_ms) |delay| {
-            r.retry_delay_override_ms = null;
-            return delay;
-        }
-        if (r.cur_retries == 0) {
-            return std.crypto.random.intRangeAtMost(i64, min_retry_jitter_ms, max_retry_jitter_ms);
-        }
-        return @min(r.cur_retries * 3 * 1000, max_retry_sleep_ms);
-    }
-
     fn callWithRetries(
         r: *Retry,
         io: Io,
@@ -527,7 +516,7 @@ pub const Retry = struct {
         while (true) {
             return @call(.auto, callback, args) catch |err| {
                 if (maybeSpurious(err) and r.cur_retries < r.max_retries) {
-                    const delay = Io.Duration.fromMilliseconds(r.calcRetryDelayMs());
+                    const delay = Io.Duration.fromMilliseconds(r.calcRetryDelayMs(io));
                     io.sleep(delay, .awake) catch |sleep_err| switch (sleep_err) {
                         // If canceled, cotinue to retry
                         Io.Cancelable.Canceled => {},
@@ -540,6 +529,31 @@ pub const Retry = struct {
                 return err;
             };
         }
+    }
+
+    fn calcRetryDelayMs(r: *Retry, io: Io) i64 {
+        if (r.retry_delay_override_ms) |delay| {
+            r.retry_delay_override_ms = null;
+            return delay;
+        }
+        if (r.cur_retries == 0) {
+            return r.calcJitter(io);
+        }
+        return @min(r.cur_retries * 3 * 1000, max_retry_sleep_ms);
+    }
+
+    fn calcJitter(_: *Retry, io: Io) i64 {
+        const maybe_now = Io.Clock.now(.real, io) catch null;
+        const seed = if (maybe_now) |now| blk: {
+            break :blk @as(u64, @bitCast(@as(i64, @truncate(now.nanoseconds))));
+        } else blk: {
+            var x: u64 = undefined;
+            io.random(@ptrCast(&x));
+            break :blk x;
+        };
+        var prng_storage = std.Random.DefaultPrng.init(seed);
+        const rand = prng_storage.random();
+        return rand.intRangeAtMost(i64, min_retry_jitter_ms, max_retry_jitter_ms);
     }
 };
 
