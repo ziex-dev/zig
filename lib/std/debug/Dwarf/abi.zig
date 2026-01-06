@@ -291,7 +291,7 @@ pub fn regBytes(
             else => error.UnimplementedOs,
         },
         .aarch64, .aarch64_be => switch (builtin.os.tag) {
-            .macos, .ios, .watchos => switch (reg_number) {
+            .macos, .ios, .tvos, .watchos => switch (reg_number) {
                 0...28 => mem.asBytes(&ucontext_ptr.mcontext.ss.regs[reg_number]),
                 29 => mem.asBytes(&ucontext_ptr.mcontext.ss.fp),
                 30 => mem.asBytes(&ucontext_ptr.mcontext.ss.lr),
