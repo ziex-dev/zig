@@ -216,10 +216,33 @@ pub fn State(comptime endian: std.builtin.Endian) type {
         ///
         /// Note: Uses the last `rounds` round constants from the full set
         pub fn permuteR(state: *Self, comptime rounds: u4) void {
-            const rks = [16]u64{ 0x3c, 0x2d, 0x1e, 0x0f, 0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87, 0x78, 0x69, 0x5a, 0x4b };
-            inline for (rks[rks.len - rounds ..]) |rk| {
+            if (rounds == 0 or rounds > 16) @compileError("rounds must be between 1 and 16 inclusive");
+
+            const rki = [16]u64{ 0x3c, 0x2d, 0x1e, 0x0f, 0xf0, 0xe1, 0xd2, 0xc3, 0xb4, 0xa5, 0x96, 0x87, 0x78, 0x69, 0x5a, 0x4b };
+            // round key with previous ~ operation applied, ~0x3c is not needed since it'll always be first
+            const rks = [15]u64{
+                0xffffffffffffffd2,
+                0xffffffffffffffe1,
+                0xfffffffffffffff0,
+                0xffffffffffffff0f,
+                0xffffffffffffff1e,
+                0xffffffffffffff2d,
+                0xffffffffffffff3c,
+                0xffffffffffffff4b,
+                0xffffffffffffff5a,
+                0xffffffffffffff69,
+                0xffffffffffffff78,
+                0xffffffffffffff87,
+                0xffffffffffffff96,
+                0xffffffffffffffa5,
+                0xffffffffffffffb4,
+            };
+
+            state.round(rki[rki.len - rounds]);
+            inline for (rks[rki.len - rounds ..]) |rk| {
                 state.round(rk);
             }
+            state.st[2] = ~state.st[2];
         }
 
         /// Apply a full-round permutation to the state.
@@ -249,16 +272,16 @@ pub fn State(comptime endian: std.builtin.Endian) type {
         /// Core Ascon permutation round function.
         ///
         /// Parameters:
-        ///   - rk: Round constant for this round
+        ///   - rk: Round constant for this round, must be inverted after first iteration
         ///
-        /// Implements one round of the Ascon permutation with S-box and linear layer.
+        /// Implements one round of the Ascon permutation with S-box and linear layer without the final not operation. Caller must manually apply not operation after final round.
         fn round(state: *Self, rk: u64) void {
             const x = &state.st;
             x[2] ^= rk;
 
+            x[2] ^= x[1];
             x[0] ^= x[4];
             x[4] ^= x[3];
-            x[2] ^= x[1];
             var t: Block = .{
                 x[0] ^ (~x[1] & x[2]),
                 x[1] ^ (~x[2] & x[3]),
@@ -267,20 +290,19 @@ pub fn State(comptime endian: std.builtin.Endian) type {
                 x[4] ^ (~x[0] & x[1]),
             };
             t[1] ^= t[0];
-            t[3] ^= t[2];
             t[0] ^= t[4];
+            t[3] ^= t[2];
 
-            x[2] = t[2] ^ rotr(u64, t[2], 6 - 1);
             x[3] = t[3] ^ rotr(u64, t[3], 17 - 10);
+            x[2] = t[2] ^ rotr(u64, t[2], 6 - 1);
             x[4] = t[4] ^ rotr(u64, t[4], 41 - 7);
             x[0] = t[0] ^ rotr(u64, t[0], 28 - 19);
             x[1] = t[1] ^ rotr(u64, t[1], 61 - 39);
-            x[2] = t[2] ^ rotr(u64, x[2], 1);
             x[3] = t[3] ^ rotr(u64, x[3], 10);
+            x[2] = t[2] ^ rotr(u64, x[2], 1);
             x[4] = t[4] ^ rotr(u64, x[4], 7);
             x[0] = t[0] ^ rotr(u64, x[0], 19);
             x[1] = t[1] ^ rotr(u64, x[1], 39);
-            x[2] = ~x[2];
         }
     };
 }
