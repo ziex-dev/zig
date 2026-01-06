@@ -11997,8 +11997,8 @@ fn netLookupFallible(
         var canon_name: ?[*:0]const u16 = null;
         while (it) |info| : (it = info.next) {
             const addr = info.addr orelse continue;
-            const storage: WsaAddress = .{ .any = addr.* };
-            try resolved.putOne(t_io, .{ .address = addressFromWsa(&storage) });
+            const storage: *const WsaAddress = @ptrCast(@alignCast(addr));
+            try resolved.putOne(t_io, .{ .address = addressFromWsa(storage) });
 
             if (info.canonname) |n| {
                 if (canon_name == null) {
@@ -12153,8 +12153,8 @@ fn netLookupFallible(
         var canon_name: ?[*:0]const u8 = null;
         while (it) |info| : (it = info.next) {
             const addr = info.addr orelse continue;
-            const storage: PosixAddress = .{ .any = addr.* };
-            try resolved.putOne(t_io, .{ .address = addressFromPosix(&storage) });
+            const storage: *const PosixAddress = @ptrCast(@alignCast(addr));
+            try resolved.putOne(t_io, .{ .address = addressFromPosix(storage) });
 
             if (info.canonname) |n| {
                 if (canon_name == null) {
