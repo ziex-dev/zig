@@ -485,7 +485,6 @@ add_library(zigcpp STATIC ${ZIG_CPP_SOURCES})
 # Sync with minimum C++ standard required to build LLVM
 # and with "exe_cflags" in build.zig
 target_compile_features(zigcpp PRIVATE cxx_std_17)
-set_target_properties(zigcpp PROPERTIES POSITION_INDEPENDENT_CODE ${ZIG_PIE})
 
 if(LLVM_LINK_MODE STREQUAL "static")
   target_compile_definitions(zigcpp PRIVATE
@@ -623,6 +622,15 @@ else()
   else()
     set(ZIG2_LINK_FLAGS "-Wl,-z,stack-size=0x10000000")
   endif()
+endif()
+
+# Illumos does not like PIE but PIC is needed to bootstrap stage3.
+# This case presents when using lld as opposed to the system linker,
+# likely due to lld being more strict.
+if (ZIG_HOST_TARGET_OS STREQUAL "illumos")
+  set_target_properties(zigcpp PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
+else()
+  set_target_properties(zigcpp PROPERTIES POSITION_INDEPENDENT_CODE ${ZIG_PIE})
 endif()
 
 set(ZIG1_WASM_MODULE "${PROJECT_SOURCE_DIR}/stage1/zig1.wasm")
