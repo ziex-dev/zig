@@ -1039,7 +1039,7 @@ const Thread = struct {
                     .BUSY => {}, // ptr != expect
                     .AGAIN => {}, // maybe timed out, or paged out, or hit 2s kernel refresh
                     .INTR => {}, // spurious wake
-                    .INVAL => unreachable, // invalid timeout
+                    .INVAL => unreachable, // invalid parameter, typically timeout
                     else => unreachable,
                 };
             },
@@ -1116,6 +1116,7 @@ const Thread = struct {
                 }
             },
             .openbsd => {
+                // returns the number of woken threads
                 const rc = std.c.futex(
                     ptr,
                     std.c.FUTEX.WAKE | std.c.FUTEX.PRIVATE_FLAG,
@@ -1123,14 +1124,16 @@ const Thread = struct {
                     null, // timeout is ignored
                     null, // uaddr2 is ignored
                 );
+                // kernel audit: no errors are possible
                 assert(rc >= 0);
             },
             .dragonfly => {
                 // will generally return 0 unless the address is bad
-                _ = std.c.umtx_wakeup(
+                const rc = std.c.umtx_wakeup(
                     @ptrCast(ptr),
                     @min(max_waiters, std.math.maxInt(c_int)),
                 );
+                if (is_debug and rc != 0) unreachable; // address is bad
             },
             else => @compileError("unimplemented: futexWake"),
         }
