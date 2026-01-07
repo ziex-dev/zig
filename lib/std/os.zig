@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const native_os = builtin.os.tag;
 
+pub const illumos = @import("os/illumos.zig");
 pub const linux = @import("os/linux.zig");
 pub const plan9 = @import("os/plan9.zig");
 pub const uefi = @import("os/uefi.zig");

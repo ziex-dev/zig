@@ -18117,7 +18117,27 @@ fn park(
                 }
             }
         },
-        .illumos => @panic("TODO: illumos lwp_park"),
+        .illumos => {
+            var ts_buf: posix.timespec = undefined;
+            const ts: ?*posix.timespec = switch (timeout) {
+                .none => null,
+                .deadline => |timestamp| timeout: {
+                    ts_buf = timestampToPosix(timestamp.raw.nanoseconds);
+                    break :timeout &ts_buf;
+                },
+                .duration => |duration| timeout: {
+                    ts_buf = timestampToPosix(duration.raw.nanoseconds);
+                    break :timeout &ts_buf;
+                },
+            };
+            switch (posix.errno(std.os.illumos._lwp_park(ts, 0))) {
+                .SUCCESS, .INTR => return,
+                .INVAL => unreachable, // invalid timeout
+                .FAULT => unreachable, // invalid or inaccessible userspace address
+                .TIME => return error.Timeout, // timeout
+                else => unreachable,
+            }
+        },
         else => comptime unreachable,
     }
 }
@@ -18159,7 +18179,19 @@ fn unpark(tids: []const UnparkTid, addr_hint: ?*const anyopaque) void {
                 }
             }
         },
-        .illumos => @panic("TODO: illumos lwp_unpark"),
+        .illumos => {
+            switch (posix.errno(std.os.illumos._lwp_unpark_all(@ptrCast(tids.ptr), @intCast(tids.len)))) {
+                .SUCCESS => return,
+                .INVAL => recoverableOsBugDetected(), // nids <= 0
+                .FAULT => recoverableOsBugDetected(), // invalid or inaccessible userspace address
+                .SRCH => {
+                    // This can happen in a rare race: the thread might have been spuriously
+                    // unparked, so already observed the changing status, and from there have
+                    // exited. That's okay, because the thread has woken up like we wanted.
+                },
+                else => recoverableOsBugDetected(),
+            }
+        },
         else => comptime unreachable,
     }
 }

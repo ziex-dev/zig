@@ -4,11 +4,12 @@ const SIG = std.c.SIG;
 const caddr_t = std.c.caddr_t;
 const gid_t = std.c.gid_t;
 const iovec = std.c.iovec;
+const lwpid_t = std.c.lwpid_t;
 const pid_t = std.c.pid_t;
 const socklen_t = std.c.socklen_t;
 const uid_t = std.c.uid_t;
 
-pub extern "c" fn lwp_gettid() c_int;
+pub extern "c" fn lwp_gettid() lwpid_t;
 pub extern "c" fn ptrace(request: c_int, pid: pid_t, addr: caddr_t, data: c_int) c_int;
 pub extern "c" fn umtx_sleep(ptr: *const volatile c_int, value: c_int, timeout: c_int) c_int;
 pub extern "c" fn umtx_wakeup(ptr: *const volatile c_int, count: c_int) c_int;
