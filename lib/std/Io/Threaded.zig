@@ -5815,7 +5815,11 @@ fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
         // illumos dirent doesn't expose type, so we have to call stat to get it.
-        const stat = try posixStatFile(dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW);
+        const stat = posixStatFile(dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
+            error.SystemResources => return error.SystemResources,
+            // Skip entries for any stat failure. This is what `ls.c` does on illumos.
+            else => continue,
+        };
 
         buffer[buffer_index] = .{
             .name = name,
