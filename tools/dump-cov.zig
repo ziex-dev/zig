@@ -12,24 +12,27 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
 
-    const target_query_str = switch (args.len) {
-        3 => "native",
-        4 => args[3],
-        else => return fatal(
-            \\usage: {0s} path/to/exe path/to/coverage [target]
-            \\  if omitted, 'target' defaults to 'native'
-            \\  example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
-        , .{if (args.len == 0) "dump-cov" else args[0]}),
-    };
+    const stderr = std.debug.lockStderr(&.{});
+    const args = try std.cli.parse(struct {
+        named: struct {},
+        positional: struct {
+            exe_file: [:0]const u8,
+            cov_file: [:0]const u8,
+            target: [:0]const u8 = "native",
+        },
+    }, io, arena, init.minimal.args, .{
+        .exit = true,
+        .writer = stderr.terminal().writer,
+    });
+    std.debug.unlockStderr();
+
+    const exe_file_name = args.positional.exe_file;
+    const cov_file_name = args.positional.cov_file;
 
     const target = std.zig.resolveTargetQueryOrFatal(io, try .parse(.{
-        .arch_os_abi = target_query_str,
+        .arch_os_abi = args.positional.target,
     }));
-
-    const exe_file_name = args[1];
-    const cov_file_name = args[2];
 
     const exe_path: Path = .{
         .root_dir = .cwd(),
