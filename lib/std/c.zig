@@ -10546,7 +10546,7 @@ const sigrt_private = struct {
         return switch (native_os) {
             .freebsd => 65,
             .netbsd => 33,
-            .illumos => @truncate(sysconf(@intFromEnum(_SC.SIGRT_MIN))),
+            .illumos => @intCast(sysconf(@intFromEnum(_SC.SIGRT_MIN))),
             else => @truncate(@as(c_uint, @bitCast(private.__libc_current_sigrtmin()))),
         };
     }
@@ -10555,7 +10555,7 @@ const sigrt_private = struct {
         return switch (native_os) {
             .freebsd => 126,
             .netbsd => 63,
-            .illumos => @truncate(sysconf(@intFromEnum(_SC.SIGRT_MAX))),
+            .illumos => @intCast(sysconf(@intFromEnum(_SC.SIGRT_MAX))),
             else => @truncate(@as(c_uint, @bitCast(private.__libc_current_sigrtmax()))),
         };
     }
