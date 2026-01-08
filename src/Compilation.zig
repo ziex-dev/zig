@@ -758,10 +758,7 @@ pub const Directories = struct {
             search,
             global,
         },
-        wasi_preopens: switch (builtin.target.os.tag) {
-            .wasi => fs.wasi.Preopens,
-            else => void,
-        },
+        preopens: std.process.Preopens,
         self_exe_path: switch (builtin.target.os.tag) {
             .wasi => void,
             else => []const u8,
@@ -776,7 +773,7 @@ pub const Directories = struct {
 
         const zig_lib: Cache.Directory = d: {
             if (override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/lib");
+            if (wasi) break :d getPreopen(preopens, "/lib");
             break :d introspect.findZigLibDirFromSelfExe(arena, io, cwd, self_exe_path) catch |err| {
                 fatal("unable to find zig installation directory '{s}': {t}", .{ self_exe_path, err });
             };
@@ -784,7 +781,7 @@ pub const Directories = struct {
 
         const global_cache: Cache.Directory = d: {
             if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
+            if (wasi) break :d getPreopen(preopens, "/cache");
             const path = introspect.resolveGlobalCacheDir(arena, environ_map) catch |err| {
                 fatal("unable to resolve zig cache directory: {t}", .{err});
             };
@@ -817,11 +814,12 @@ pub const Directories = struct {
             .local_cache = local_cache,
         };
     }
-    fn openWasiPreopen(preopens: fs.wasi.Preopens, name: []const u8) Cache.Directory {
+    fn getPreopen(preopens: std.process.Preopens, name: []const u8) Cache.Directory {
         return .{
             .path = if (std.mem.eql(u8, name, ".")) null else name,
-            .handle = .{
-                .handle = preopens.find(name) orelse fatal("WASI preopen not found: '{s}'", .{name}),
+            .handle = switch (preopens.get(name) orelse fatal("preopen not found: '{s}'", .{name})) {
+                .file => fatal("preopen {s} is not a directory", .{name}),
+                .dir => |d| d,
             },
         };
     }
@@ -2942,7 +2940,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         .none => |none| {
             assert(none.tmp_artifact_directory == null);
             none.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -3023,7 +3021,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
 
             // Compile the artifacts to a temporary directory.
             whole.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -3460,7 +3458,7 @@ fn renameTmpIntoCache(
                 },
                 else => return error.AccessDenied,
             },
-            error.PathAlreadyExists => {
+            error.DirNotEmpty => {
                 try cache_directory.handle.deleteTree(io, o_sub_path);
                 continue;
             },
@@ -5759,7 +5757,11 @@ pub fn translateC(
 
     const gpa = comp.gpa;
     const io = comp.io;
-    const tmp_basename = std.fmt.hex(std.crypto.random.int(u64));
+    const tmp_basename = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r std.fmt.hex(x);
+    };
     const tmp_sub_path = "tmp" ++ fs.path.sep_str ++ tmp_basename;
     const cache_dir = comp.dirs.local_cache.handle;
     var cache_tmp_dir = try cache_dir.createDirPathOpen(io, tmp_sub_path, .{});
@@ -6889,8 +6891,13 @@ fn spawnZigRc(
 }
 
 pub fn tmpFilePath(comp: Compilation, ally: Allocator, suffix: []const u8) error{OutOfMemory}![]const u8 {
+    const io = comp.io;
+    const rand_int = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r x;
+    };
     const s = fs.path.sep_str;
-    const rand_int = std.crypto.random.int(u64);
     if (comp.dirs.local_cache.path) |p| {
         return std.fmt.allocPrint(ally, "{s}" ++ s ++ "tmp" ++ s ++ "{x}-{s}", .{ p, rand_int, suffix });
     } else {
