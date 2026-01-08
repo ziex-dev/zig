@@ -108,14 +108,11 @@ pub const start = @import("start.zig");
 
 const root = @import("root");
 
-/// Stdlib-wide options that can be overridden by the root file.
+/// Compile-time known settings overridable by the root source file.
 pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options else .{};
 
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
-
-    /// Function used to implement `std.fs.cwd` for WASI.
-    wasiCwd: fn () os.wasi.fd_t = fs.defaultWasiCwd,
 
     /// The current log level.
     log_level: log.Level = log.default_level,
@@ -129,6 +126,8 @@ pub const Options = struct {
         args: anytype,
     ) void = log.defaultLog,
 
+    logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode,
+
     /// Overrides `std.heap.page_size_min`.
     page_size_min: ?usize = null,
     /// Overrides `std.heap.page_size_max`.
@@ -137,12 +136,6 @@ pub const Options = struct {
     queryPageSize: fn () usize = heap.defaultQueryPageSize,
 
     fmt_max_depth: usize = fmt.default_max_depth,
-
-    cryptoRandomSeed: fn (buffer: []u8) void = @import("crypto/tlcsprng.zig").defaultRandomSeed,
-
-    crypto_always_getrandom: bool = false,
-
-    crypto_fork_safety: bool = true,
 
     /// By default, std.http.Client will support HTTPS connections.  Set this option to `true` to
     /// disable TLS support.
@@ -173,6 +166,38 @@ pub const Options = struct {
     /// If this is `false`, then captured stack traces will always be empty, and attempts to write
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
+
+    /// TODO This is a separate decl instead of a field as a workaround around
+    /// compilation errors due to zig not being lazy enough.
+    pub const elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").object_format) {
+        .elf => debug.ElfFile.DebugInfoSearchPaths,
+        else => void,
+    } = if (@hasDecl(root, "std_options_elf_debug_info_search_paths"))
+        root.std_options_elf_debug_info_search_paths
+    else
+        null;
+
+    pub const debug_threaded_io: ?*Io.Threaded = if (@hasDecl(root, "std_options_debug_threaded_io"))
+        root.std_options_debug_threaded_io
+    else
+        Io.Threaded.global_single_threaded;
+
+    /// The `Io` instance that `std.debug` uses for `std.debug.print`,
+    /// capturing stack traces, loading debug info, finding the executable's
+    /// own path, and environment variables that affect terminal mode
+    /// detection. The default is to use statically initialized singleton that
+    /// is independent from the application's `Io` instance in order to make
+    /// debugging more straightforward. For example, while debugging an `Io`
+    /// implementation based on coroutines, one likely wants `std.debug.print`
+    /// to directly write to stderr without trying to interact with the code
+    /// being debugged.
+    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.ioBasic();
+
+    /// Overrides `std.Io.File.Permissions`.
+    pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;
+
+    /// Overrides `std.Io.Dir.cwd`.
+    pub const cwd: ?fn () Io.Dir = if (@hasDecl(root, "std_options_cwd")) root.std_options_cwd else null;
 };
 
 // This forces the start.zig file to be imported, and the comptime logic inside that

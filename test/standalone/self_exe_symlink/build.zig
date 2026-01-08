@@ -9,9 +9,7 @@ pub fn build(b: *std.Build) void {
     const optimize: std.builtin.OptimizeMode = .Debug;
     const target = b.graph.host;
 
-    // The test requires getFdPath in order to to get the path of the
-    // File returned by openSelfExe
-    if (!std.os.isGetFdPathSupportedOnTarget(target.result.os)) return;
+    if (target.result.os.tag == .openbsd) return; // realpath not supported
 
     const main = b.addExecutable(.{
         .name = "main",

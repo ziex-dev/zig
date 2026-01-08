@@ -20,7 +20,7 @@ const Error = pwhash.Error;
 
 const max_size = math.maxInt(usize);
 const max_int = max_size >> 1;
-const default_salt_len = 32;
+pub const default_salt_len = 32;
 const default_hash_len = 32;
 const max_salt_len = 64;
 const max_hash_len = 64;
@@ -358,7 +358,7 @@ const crypt_format = struct {
             fn intDecode(comptime T: type, src: *const [(@bitSizeOf(T) + 5) / 6]u8) !T {
                 var v: T = 0;
                 for (src, 0..) |x, i| {
-                    const vi = mem.indexOfScalar(u8, &map64, x) orelse return EncodingError.InvalidEncoding;
+                    const vi = mem.findScalar(u8, &map64, x) orelse return EncodingError.InvalidEncoding;
                     v |= @as(T, @intCast(vi)) << @as(math.Log2Int(T), @intCast(i * 6));
                 }
                 return v;
@@ -417,10 +417,9 @@ const PhcFormatHasher = struct {
         password: []const u8,
         params: Params,
         buf: []u8,
+        /// Filled with cryptographically secure entropy.
+        salt: []const u8,
     ) HasherError![]const u8 {
-        var salt: [default_salt_len]u8 = undefined;
-        crypto.random.bytes(&salt);
-
         var hash: [default_hash_len]u8 = undefined;
         try kdf(allocator, &hash, password, &salt, params);
 
@@ -466,9 +465,9 @@ const CryptFormatHasher = struct {
         password: []const u8,
         params: Params,
         buf: []u8,
+        /// Filled with cryptographically secure entropy.
+        salt_bin: []const u8,
     ) HasherError![]const u8 {
-        var salt_bin: [default_salt_len]u8 = undefined;
-        crypto.random.bytes(&salt_bin);
         const salt = crypt_format.saltFromBin(salt_bin.len, salt_bin);
 
         var hash: [default_hash_len]u8 = undefined;

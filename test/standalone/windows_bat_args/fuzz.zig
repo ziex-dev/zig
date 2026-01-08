@@ -1,16 +1,16 @@
-const std = @import("std");
 const builtin = @import("builtin");
+
+const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-pub fn main() anyerror!void {
-    var debug_alloc_inst: std.heap.DebugAllocator(.{}) = .init;
-    defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
-    const gpa = debug_alloc_inst.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var it = try std.process.argsWithAllocator(gpa);
+    var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
-    const child_exe_path_orig = it.next() orelse unreachable;
 
     const iterations: u64 = iterations: {
         const arg = it.next() orelse "0";
@@ -22,7 +22,7 @@ pub fn main() anyerror!void {
         const seed_arg = it.next() orelse {
             rand_seed = true;
             var buf: [8]u8 = undefined;
-            try std.posix.getrandom(&buf);
+            io.random(&buf);
             break :seed std.mem.readInt(u64, &buf, builtin.cpu.arch.endian());
         };
         break :seed try std.fmt.parseUnsigned(u64, seed_arg, 10);
@@ -36,55 +36,24 @@ pub fn main() anyerror!void {
         std.debug.print("rand seed: {}\n", .{seed});
     }
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.setAsCwd();
-    defer tmp.parent_dir.setAsCwd() catch {};
-
-    // `child_exe_path_orig` might be relative; make it relative to our new cwd.
-    const child_exe_path = try std.fs.path.resolve(gpa, &.{ "..\\..\\..", child_exe_path_orig });
-    defer gpa.free(child_exe_path);
-
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(gpa);
-    try buf.print(gpa,
-        \\@echo off
-        \\"{s}"
-    , .{child_exe_path});
-    // Trailing newline intentionally omitted above so we can add args.
-    const preamble_len = buf.items.len;
-
-    try buf.appendSlice(gpa, " %*");
-    try tmp.dir.writeFile(.{ .sub_path = "args1.bat", .data = buf.items });
-    buf.shrinkRetainingCapacity(preamble_len);
-
-    try buf.appendSlice(gpa, " %1 %2 %3 %4 %5 %6 %7 %8 %9");
-    try tmp.dir.writeFile(.{ .sub_path = "args2.bat", .data = buf.items });
-    buf.shrinkRetainingCapacity(preamble_len);
-
-    try buf.appendSlice(gpa, " \"%~1\" \"%~2\" \"%~3\" \"%~4\" \"%~5\" \"%~6\" \"%~7\" \"%~8\" \"%~9\"");
-    try tmp.dir.writeFile(.{ .sub_path = "args3.bat", .data = buf.items });
-    buf.shrinkRetainingCapacity(preamble_len);
-
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) {
         const rand_arg = try randomArg(gpa, rand);
         defer gpa.free(rand_arg);
 
-        try testExec(gpa, &.{rand_arg}, null);
+        try testExec(gpa, io, &.{rand_arg}, null);
 
         i += 1;
     }
 }
 
-fn testExec(gpa: std.mem.Allocator, args: []const []const u8, env: ?*std.process.EnvMap) !void {
-    try testExecBat(gpa, "args1.bat", args, env);
-    try testExecBat(gpa, "args2.bat", args, env);
-    try testExecBat(gpa, "args3.bat", args, env);
+fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
+    try testExecBat(gpa, io, "args1.bat", args, env);
+    try testExecBat(gpa, io, "args2.bat", args, env);
+    try testExecBat(gpa, io, "args3.bat", args, env);
 }
 
-fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
     const argv = try gpa.alloc([]const u8, 1 + args.len);
     defer gpa.free(argv);
     argv[0] = bat;
@@ -92,9 +61,8 @@ fn testExecBat(gpa: std.mem.Allocator, bat: []const u8, args: []const []const u8
 
     const can_have_trailing_empty_args = std.mem.eql(u8, bat, "args3.bat");
 
-    const result = try std.process.Child.run(.{
-        .allocator = gpa,
-        .env_map = env,
+    const result = try std.process.run(gpa, io, .{
+        .environ_map = env,
         .argv = argv,
     });
     defer gpa.free(result.stdout);

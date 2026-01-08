@@ -32,7 +32,6 @@
 
 const std = @import("../std.zig");
 const Tls = @This();
-const net = std.net;
 const mem = std.mem;
 const crypto = std.crypto;
 const assert = std.debug.assert;
@@ -134,6 +133,8 @@ pub const ExtensionType = enum(u16) {
     signature_algorithms_cert = 50,
     /// RFC 8446
     key_share = 51,
+    /// RFC 9000
+    quic_transport_parameters = 57,
 
     _,
 };

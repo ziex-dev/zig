@@ -234,7 +234,7 @@ pub fn tokenLocation(self: Ast, start_offset: ByteOffset, token_index: TokenInde
     const token_start = self.tokenStart(token_index);
 
     // Scan to by line until we go past the token start
-    while (std.mem.indexOfScalarPos(u8, self.source, loc.line_start, '\n')) |i| {
+    while (std.mem.findScalarPos(u8, self.source, loc.line_start, '\n')) |i| {
         if (i >= token_start) {
             break; // Went past
         }
@@ -476,7 +476,7 @@ pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void 
             });
         },
         .invalid_bit_range => {
-            return w.writeAll("bit range not allowed on slices and arrays");
+            return w.writeAll("bit range only allowed on single item pointers");
         },
         .same_line_doc_comment => {
             return w.writeAll("same line documentation comment");
@@ -1315,7 +1315,7 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
 
 pub fn tokensOnSameLine(tree: Ast, token1: TokenIndex, token2: TokenIndex) bool {
     const source = tree.source[tree.tokenStart(token1)..tree.tokenStart(token2)];
-    return mem.indexOfScalar(u8, source, '\n') == null;
+    return mem.findScalar(u8, source, '\n') == null;
 }
 
 pub fn getNodeSource(tree: Ast, node: Node.Index) []const u8 {

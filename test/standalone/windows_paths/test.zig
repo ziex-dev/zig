@@ -1,11 +1,10 @@
 const std = @import("std");
+const Io = std.Io;
 
-pub fn main() anyerror!void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
+    const io = init.io;
 
     if (args.len < 2) return error.MissingArgs;
 
@@ -22,10 +21,10 @@ pub fn main() anyerror!void {
     const alt_drive_letter = try getAltDriveLetter(cwd_path);
     const alt_drive_cwd_key = try std.fmt.allocPrint(arena, "={c}:", .{alt_drive_letter});
     const alt_drive_cwd = try std.fmt.allocPrint(arena, "{c}:\\baz", .{alt_drive_letter});
-    var alt_drive_env_map = std.process.EnvMap.init(arena);
+    var alt_drive_env_map = std.process.Environ.Map.init(arena);
     try alt_drive_env_map.put(alt_drive_cwd_key, alt_drive_cwd);
 
-    const empty_env = std.process.EnvMap.init(arena);
+    const empty_env = std.process.Environ.Map.init(arena);
 
     {
         const drive_rel = try std.fmt.allocPrint(arena, "{c}:foo", .{alt_drive_letter});
@@ -33,39 +32,39 @@ pub fn main() anyerror!void {
 
         // With the special =X: environment variable set, drive-relative paths that
         // don't match the CWD's drive letter are resolved against that env var.
-        try checkRelative(arena, "..\\..\\bar", &.{ exe_path, drive_rel, drive_abs }, null, &alt_drive_env_map);
-        try checkRelative(arena, "..\\baz\\foo", &.{ exe_path, drive_abs, drive_rel }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "..\\..\\bar", &.{ exe_path, drive_rel, drive_abs }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "..\\baz\\foo", &.{ exe_path, drive_abs, drive_rel }, null, &alt_drive_env_map);
 
         // Without that environment variable set, drive-relative paths that don't match the
         // CWD's drive letter are resolved against the root of the drive.
-        try checkRelative(arena, "..\\bar", &.{ exe_path, drive_rel, drive_abs }, null, &empty_env);
-        try checkRelative(arena, "..\\foo", &.{ exe_path, drive_abs, drive_rel }, null, &empty_env);
+        try checkRelative(arena, io, "..\\bar", &.{ exe_path, drive_rel, drive_abs }, null, &empty_env);
+        try checkRelative(arena, io, "..\\foo", &.{ exe_path, drive_abs, drive_rel }, null, &empty_env);
 
         // Bare drive-relative path with no components
-        try checkRelative(arena, "bar", &.{ exe_path, drive_rel[0..2], drive_abs }, null, &empty_env);
-        try checkRelative(arena, "..", &.{ exe_path, drive_abs, drive_rel[0..2] }, null, &empty_env);
+        try checkRelative(arena, io, "bar", &.{ exe_path, drive_rel[0..2], drive_abs }, null, &empty_env);
+        try checkRelative(arena, io, "..", &.{ exe_path, drive_abs, drive_rel[0..2] }, null, &empty_env);
 
         // Bare drive-relative path with no components, drive-CWD set
-        try checkRelative(arena, "..\\bar", &.{ exe_path, drive_rel[0..2], drive_abs }, null, &alt_drive_env_map);
-        try checkRelative(arena, "..\\baz", &.{ exe_path, drive_abs, drive_rel[0..2] }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "..\\bar", &.{ exe_path, drive_rel[0..2], drive_abs }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "..\\baz", &.{ exe_path, drive_abs, drive_rel[0..2] }, null, &alt_drive_env_map);
 
         // Bare drive-relative path relative to the CWD should be equivalent if drive-CWD is set
-        try checkRelative(arena, "", &.{ exe_path, alt_drive_cwd, drive_rel[0..2] }, null, &alt_drive_env_map);
-        try checkRelative(arena, "", &.{ exe_path, drive_rel[0..2], alt_drive_cwd }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "", &.{ exe_path, alt_drive_cwd, drive_rel[0..2] }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "", &.{ exe_path, drive_rel[0..2], alt_drive_cwd }, null, &alt_drive_env_map);
 
         // Bare drive-relative should always be equivalent to itself
-        try checkRelative(arena, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &alt_drive_env_map);
-        try checkRelative(arena, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &alt_drive_env_map);
-        try checkRelative(arena, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &empty_env);
-        try checkRelative(arena, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &empty_env);
+        try checkRelative(arena, io, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &alt_drive_env_map);
+        try checkRelative(arena, io, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &empty_env);
+        try checkRelative(arena, io, "", &.{ exe_path, drive_rel[0..2], drive_rel[0..2] }, null, &empty_env);
     }
 
     if (parsed_cwd_path.kind == .unc_absolute) {
         const drive_abs_path = try std.fmt.allocPrint(arena, "{c}:\\foo\\bar", .{alt_drive_letter});
 
         {
-            try checkRelative(arena, drive_abs_path, &.{ exe_path, cwd_path, drive_abs_path }, null, &empty_env);
-            try checkRelative(arena, cwd_path, &.{ exe_path, drive_abs_path, cwd_path }, null, &empty_env);
+            try checkRelative(arena, io, drive_abs_path, &.{ exe_path, cwd_path, drive_abs_path }, null, &empty_env);
+            try checkRelative(arena, io, cwd_path, &.{ exe_path, drive_abs_path, cwd_path }, null, &empty_env);
         }
     } else if (parsed_cwd_path.kind == .drive_absolute) {
         const cur_drive_letter = parsed_cwd_path.root[0];
@@ -73,14 +72,14 @@ pub fn main() anyerror!void {
         const unc_cwd = try std.fmt.allocPrint(arena, "\\\\127.0.0.1\\{c}$\\{s}", .{ cur_drive_letter, path_beyond_root });
 
         {
-            try checkRelative(arena, cwd_path, &.{ exe_path, unc_cwd, cwd_path }, null, &empty_env);
-            try checkRelative(arena, unc_cwd, &.{ exe_path, cwd_path, unc_cwd }, null, &empty_env);
+            try checkRelative(arena, io, cwd_path, &.{ exe_path, unc_cwd, cwd_path }, null, &empty_env);
+            try checkRelative(arena, io, unc_cwd, &.{ exe_path, cwd_path, unc_cwd }, null, &empty_env);
         }
         {
             const drive_abs = cwd_path;
             const drive_rel = parsed_cwd_path.root[0..2];
-            try checkRelative(arena, "", &.{ exe_path, drive_abs, drive_rel }, null, &empty_env);
-            try checkRelative(arena, "", &.{ exe_path, drive_rel, drive_abs }, null, &empty_env);
+            try checkRelative(arena, io, "", &.{ exe_path, drive_abs, drive_rel }, null, &empty_env);
+            try checkRelative(arena, io, "", &.{ exe_path, drive_rel, drive_abs }, null, &empty_env);
         }
     } else {
         return error.UnexpectedPathType;
@@ -89,16 +88,16 @@ pub fn main() anyerror!void {
 
 fn checkRelative(
     allocator: std.mem.Allocator,
+    io: Io,
     expected_stdout: []const u8,
     argv: []const []const u8,
     cwd: ?[]const u8,
-    env_map: ?*const std.process.EnvMap,
+    environ_map: ?*const std.process.Environ.Map,
 ) !void {
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
+    const result = try std.process.run(allocator, io, .{
         .argv = argv,
         .cwd = cwd,
-        .env_map = env_map,
+        .environ_map = environ_map,
     });
     defer allocator.free(result.stdout);
     defer allocator.free(result.stderr);

@@ -46,23 +46,16 @@ pub const SrcHasher = std.crypto.hash.Blake3;
 pub const SrcHash = [16]u8;
 
 pub const Color = enum {
-    /// Determine whether stderr is a terminal or not automatically.
+    /// Auto-detect whether stream supports terminal colors.
     auto,
-    /// Assume stderr is not a terminal.
+    /// Force-enable colors.
     off,
-    /// Assume stderr is a terminal.
+    /// Suppress colors.
     on,
 
-    pub fn getTtyConf(color: Color, detected: Io.tty.Config) Io.tty.Config {
+    pub fn terminalMode(color: Color) ?Io.Terminal.Mode {
         return switch (color) {
-            .auto => detected,
-            .on => .escape_codes,
-            .off => .no_color,
-        };
-    }
-    pub fn detectTtyConf(color: Color) Io.tty.Config {
-        return switch (color) {
-            .auto => .detect(.stderr()),
+            .auto => null,
             .on => .escape_codes,
             .off => .no_color,
         };
@@ -639,7 +632,7 @@ pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![
     return buffer.toOwnedSliceSentinel(gpa, 0);
 }
 
-pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color: Color) !void {
+pub fn printAstErrorsToStderr(gpa: Allocator, io: Io, tree: Ast, path: []const u8, color: Color) !void {
     var wip_errors: std.zig.ErrorBundle.Wip = undefined;
     try wip_errors.init(gpa);
     defer wip_errors.deinit();
@@ -648,7 +641,7 @@ pub fn printAstErrorsToStderr(gpa: Allocator, tree: Ast, path: []const u8, color
 
     var error_bundle = try wip_errors.toOwnedBundle("");
     defer error_bundle.deinit(gpa);
-    error_bundle.renderToStdErr(.{}, color);
+    return error_bundle.renderToStderr(io, .{}, color);
 }
 
 pub fn putAstErrorsIntoBundle(
@@ -746,27 +739,39 @@ pub const EnvVar = enum {
     ZIG_VERBOSE_CC,
     ZIG_BTRFS_WORKAROUND,
     ZIG_DEBUG_CMD,
+    ZIG_IS_DETECTING_LIBC_PATHS,
+    ZIG_IS_TRYING_TO_NOT_CALL_ITSELF,
+
+    // C toolchain integration
+    NIX_CFLAGS_COMPILE,
+    NIX_CFLAGS_LINK,
+    NIX_LDFLAGS,
+    C_INCLUDE_PATH,
+    CPLUS_INCLUDE_PATH,
+    LIBRARY_PATH,
     CC,
+
+    // Terminal integration
     NO_COLOR,
     CLICOLOR_FORCE,
+
+    // Debug info integration
     XDG_CACHE_HOME,
+    LOCALAPPDATA,
     HOME,
 
-    pub fn isSet(comptime ev: EnvVar) bool {
-        return std.process.hasNonEmptyEnvVarConstant(@tagName(ev));
+    // Windows SDK integration
+    PROGRAMDATA,
+
+    // Homebrew integration
+    HOMEBREW_PREFIX,
+
+    pub fn isSet(ev: EnvVar, map: *const std.process.Environ.Map) bool {
+        return map.contains(@tagName(ev));
     }
 
-    pub fn get(ev: EnvVar, arena: std.mem.Allocator) !?[]u8 {
-        if (std.process.getEnvVarOwned(arena, @tagName(ev))) |value| {
-            return value;
-        } else |err| switch (err) {
-            error.EnvironmentVariableNotFound => return null,
-            else => |e| return e,
-        }
-    }
-
-    pub fn getPosix(comptime ev: EnvVar) ?[:0]const u8 {
-        return std.posix.getenvZ(@tagName(ev));
+    pub fn get(ev: EnvVar, map: *const std.process.Environ.Map) ?[]const u8 {
+        return map.get(@tagName(ev));
     }
 };
 

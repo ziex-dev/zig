@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const process = std.process;
@@ -133,8 +134,9 @@ strip: bool = false,
 unwindlib: ?[]const u8 = null,
 
 pub fn deinit(d: *Driver) void {
+    const io = d.comp.io;
     for (d.link_objects.items[d.link_objects.items.len - d.temp_file_count ..]) |obj| {
-        std.fs.deleteFileAbsolute(obj) catch {};
+        Io.Dir.deleteFileAbsolute(io, obj) catch {};
         d.comp.gpa.free(obj);
     }
     d.inputs.deinit(d.comp.gpa);
@@ -1061,7 +1063,7 @@ pub fn printDiagnosticsStats(d: *Driver) void {
     }
 }
 
-pub fn detectConfig(d: *Driver, file: std.fs.File) std.Io.tty.Config {
+pub fn detectConfig(d: *Driver, file: Io.File) std.Io.tty.Config {
     if (d.diagnostics.color == false) return .no_color;
     const force_color = d.diagnostics.color == true;
 
@@ -1109,7 +1111,7 @@ pub fn main(d: *Driver, tc: *Toolchain, args: []const []const u8, comptime fast_
         defer macro_buf.deinit(d.comp.gpa);
 
         var stdout_buf: [256]u8 = undefined;
-        var stdout = std.fs.File.stdout().writer(&stdout_buf);
+        var stdout = Io.File.stdout().writer(&stdout_buf);
         if (parseArgs(d, &stdout.interface, &macro_buf, args) catch |er| switch (er) {
             error.WriteFailed => return d.fatal("failed to write to stdout: {s}", .{errorDescription(er)}),
             error.OutOfMemory => return error.OutOfMemory,
@@ -1215,13 +1217,14 @@ pub fn getDepFileName(d: *Driver, source: Source, buf: *[std.fs.max_name_bytes]u
 }
 
 fn getRandomFilename(d: *Driver, buf: *[std.fs.max_name_bytes]u8, extension: []const u8) ![]const u8 {
+    const io = d.comp.io;
     const random_bytes_count = 12;
-    const sub_path_len = comptime std.fs.base64_encoder.calcSize(random_bytes_count);
+    const sub_path_len = comptime std.base64.url_safe.Encoder.calcSize(random_bytes_count);
 
     var random_bytes: [random_bytes_count]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
     var random_name: [sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&random_name, &random_bytes);
+    _ = std.base64.url_safe.Encoder.encode(&random_name, &random_bytes);
 
     const fmt_template = "/tmp/{s}{s}";
     const fmt_args = .{
@@ -1248,21 +1251,25 @@ fn getOutFileName(d: *Driver, source: Source, buf: *[std.fs.max_name_bytes]u8) !
 }
 
 fn invokeAssembler(d: *Driver, tc: *Toolchain, input_path: []const u8, output_path: []const u8) !void {
+    const io = d.comp.io;
     var assembler_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const assembler_path = try tc.getAssemblerPath(&assembler_path_buf);
     const argv = [_][]const u8{ assembler_path, input_path, "-o", output_path };
 
-    var child = std.process.Child.init(&argv, d.comp.gpa);
-    // TODO handle better
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-
-    const term = child.spawnAndWait() catch |er| {
+    var child = std.process.spawn(io, .{
+        .argv = &argv,
+        // TODO handle better
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    }) catch |er| {
         return d.fatal("unable to spawn linker: {s}", .{errorDescription(er)});
     };
+    const term = child.wait(io) catch |er| {
+        return d.fatal("unable to wait linker: {s}", .{errorDescription(er)});
+    };
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             const e = d.fatal("assembler exited with an error code", .{});
             return e;
         },
@@ -1285,6 +1292,8 @@ fn processSource(
     const gpa = d.comp.gpa;
     d.comp.generated_buf.items.len = 0;
     const prev_total = d.diagnostics.errors;
+
+    const io = d.comp.io;
 
     var pp = try Preprocessor.initDefault(d.comp);
     defer pp.deinit();
@@ -1324,13 +1333,13 @@ fn processSource(
         const dep_file_name = try d.getDepFileName(source, writer_buf[0..std.fs.max_name_bytes]);
 
         const file = if (dep_file_name) |path|
-            d.comp.cwd.createFile(path, .{}) catch |er|
+            d.comp.cwd.createFile(io, path, .{}) catch |er|
                 return d.fatal("unable to create dependency file '{s}': {s}", .{ path, errorDescription(er) })
         else
-            std.fs.File.stdout();
-        defer if (dep_file_name != null) file.close();
+            Io.File.stdout();
+        defer if (dep_file_name != null) file.close(io);
 
-        var file_writer = file.writer(&writer_buf);
+        var file_writer = file.writer(io, &writer_buf);
         dep_file.write(&file_writer.interface) catch
             return d.fatal("unable to write dependency file: {s}", .{errorDescription(file_writer.err.?)});
     }
@@ -1349,13 +1358,13 @@ fn processSource(
         }
 
         const file = if (d.output_name) |some|
-            d.comp.cwd.createFile(some, .{}) catch |er|
+            d.comp.cwd.createFile(io, some, .{}) catch |er|
                 return d.fatal("unable to create output file '{s}': {s}", .{ some, errorDescription(er) })
         else
-            std.fs.File.stdout();
-        defer if (d.output_name != null) file.close();
+            Io.File.stdout();
+        defer if (d.output_name != null) file.close(io);
 
-        var file_writer = file.writer(&writer_buf);
+        var file_writer = file.writer(io, &writer_buf);
         pp.prettyPrintTokens(&file_writer.interface, dump_mode) catch
             return d.fatal("unable to write result: {s}", .{errorDescription(file_writer.err.?)});
 
@@ -1367,7 +1376,7 @@ fn processSource(
     defer tree.deinit();
 
     if (d.verbose_ast) {
-        var stdout = std.fs.File.stdout().writer(&writer_buf);
+        var stdout = Io.File.stdout().writer(&writer_buf);
         tree.dump(d.detectConfig(stdout.file), &stdout.interface) catch {};
     }
 
@@ -1402,9 +1411,9 @@ fn processSource(
         defer assembly.deinit(gpa);
 
         if (d.only_preprocess_and_compile) {
-            const out_file = d.comp.cwd.createFile(out_file_name, .{}) catch |er|
+            const out_file = d.comp.cwd.createFile(io, out_file_name, .{}) catch |er|
                 return d.fatal("unable to create output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
-            defer out_file.close();
+            defer out_file.close(io);
 
             assembly.writeToFile(out_file) catch |er|
                 return d.fatal("unable to write to output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
@@ -1416,9 +1425,9 @@ fn processSource(
         // then assemble to out_file_name
         var assembly_name_buf: [std.fs.max_name_bytes]u8 = undefined;
         const assembly_out_file_name = try d.getRandomFilename(&assembly_name_buf, ".s");
-        const out_file = d.comp.cwd.createFile(assembly_out_file_name, .{}) catch |er|
+        const out_file = d.comp.cwd.createFile(io, assembly_out_file_name, .{}) catch |er|
             return d.fatal("unable to create output file '{s}': {s}", .{ assembly_out_file_name, errorDescription(er) });
-        defer out_file.close();
+        defer out_file.close(io);
         assembly.writeToFile(out_file) catch |er|
             return d.fatal("unable to write to output file '{s}': {s}", .{ assembly_out_file_name, errorDescription(er) });
         try d.invokeAssembler(tc, assembly_out_file_name, out_file_name);
@@ -1431,7 +1440,7 @@ fn processSource(
         defer ir.deinit(gpa);
 
         if (d.verbose_ir) {
-            var stdout = std.fs.File.stdout().writer(&writer_buf);
+            var stdout = Io.File.stdout().writer(&writer_buf);
             ir.dump(gpa, d.detectConfig(stdout.file), &stdout.interface) catch {};
         }
 
@@ -1452,11 +1461,11 @@ fn processSource(
         };
         defer obj.deinit();
 
-        const out_file = d.comp.cwd.createFile(out_file_name, .{}) catch |er|
+        const out_file = d.comp.cwd.createFile(io, out_file_name, .{}) catch |er|
             return d.fatal("unable to create output file '{s}': {s}", .{ out_file_name, errorDescription(er) });
-        defer out_file.close();
+        defer out_file.close(io);
 
-        var file_writer = out_file.writer(&writer_buf);
+        var file_writer = out_file.writer(io, &writer_buf);
         obj.finish(&file_writer.interface) catch
             return d.fatal("could not output to object file '{s}': {s}", .{ out_file_name, errorDescription(file_writer.err.?) });
     }
@@ -1486,6 +1495,7 @@ fn dumpLinkerArgs(w: *std.Io.Writer, items: []const []const u8) !void {
 /// **MAY call `exit` if `fast_exit` is set.**
 pub fn invokeLinker(d: *Driver, tc: *Toolchain, comptime fast_exit: bool) Compilation.Error!void {
     const gpa = d.comp.gpa;
+    const io = d.comp.io;
     var argv: std.ArrayList([]const u8) = .empty;
     defer argv.deinit(gpa);
 
@@ -1497,22 +1507,25 @@ pub fn invokeLinker(d: *Driver, tc: *Toolchain, comptime fast_exit: bool) Compil
 
     if (d.verbose_linker_args) {
         var stdout_buf: [4096]u8 = undefined;
-        var stdout = std.fs.File.stdout().writer(&stdout_buf);
+        var stdout = Io.File.stdout().writer(&stdout_buf);
         dumpLinkerArgs(&stdout.interface, argv.items) catch {
             return d.fatal("unable to dump linker args: {s}", .{errorDescription(stdout.err.?)});
         };
     }
-    var child = std.process.Child.init(argv.items, d.comp.gpa);
-    // TODO handle better
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-
-    const term = child.spawnAndWait() catch |er| {
+    var child = std.process.spawn(io, .{
+        .argv = argv.items,
+        // TODO handle better
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    }) catch |er| {
         return d.fatal("unable to spawn linker: {s}", .{errorDescription(er)});
     };
+    const term = child.wait(io) catch |er| {
+        return d.fatal("unable to wait linker: {s}", .{errorDescription(er)});
+    };
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             const e = d.fatal("linker exited with an error code", .{});
             if (fast_exit) d.exitWithCleanup(code);
             return e;

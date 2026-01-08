@@ -221,7 +221,6 @@ set(ZIG_STAGE2_SOURCES
     lib/compiler_rt/aulldiv.zig
     lib/compiler_rt/aullrem.zig
     lib/compiler_rt/bswap.zig
-    lib/compiler_rt/ceil.zig
     lib/compiler_rt/clear_cache.zig
     lib/compiler_rt/cmp.zig
     lib/compiler_rt/cmpdf2.zig
@@ -312,7 +311,7 @@ set(ZIG_STAGE2_SOURCES
     lib/compiler_rt/floatuntisf.zig
     lib/compiler_rt/floatuntitf.zig
     lib/compiler_rt/floatuntixf.zig
-    lib/compiler_rt/floor.zig
+    lib/compiler_rt/floor_ceil.zig
     lib/compiler_rt/fma.zig
     lib/compiler_rt/fmax.zig
     lib/compiler_rt/fmin.zig
@@ -411,7 +410,6 @@ set(ZIG_STAGE2_SOURCES
     lib/std/Thread.zig
     lib/std/Thread/Futex.zig
     lib/std/Thread/Mutex.zig
-    lib/std/Thread/Pool.zig
     lib/std/Thread/WaitGroup.zig
     lib/std/array_hash_map.zig
     lib/std/array_list.zig
@@ -437,10 +435,6 @@ set(ZIG_STAGE2_SOURCES
     lib/std/fmt.zig
     lib/std/fmt/parse_float.zig
     lib/std/fs.zig
-    lib/std/fs/AtomicFile.zig
-    lib/std/fs/Dir.zig
-    lib/std/fs/File.zig
-    lib/std/fs/get_app_data_dir.zig
     lib/std/fs/path.zig
     lib/std/hash.zig
     lib/std/hash/auto_hash.zig
@@ -518,7 +512,6 @@ set(ZIG_STAGE2_SOURCES
     src/Builtin.zig
     src/Compilation.zig
     src/Compilation/Config.zig
-    src/DarwinPosixSpawn.zig
     src/InternPool.zig
     src/Package.zig
     src/Package/Fetch.zig
@@ -553,6 +546,7 @@ set(ZIG_STAGE2_SOURCES
     src/libs/freebsd.zig
     src/libs/glibc.zig
     src/libs/netbsd.zig
+    src/libs/openbsd.zig
     src/introspect.zig
     src/libs/libcxx.zig
     src/libs/libtsan.zig
@@ -792,6 +786,11 @@ else()
   set(ZIG_WASM2C_COMPILE_FLAGS "-std=c99 -O2")
   set(ZIG1_COMPILE_FLAGS "-std=c99 -Os")
   set(ZIG2_COMPILE_FLAGS "-std=c99 -O0 -fno-sanitize=undefined -fno-stack-protector")
+  # Must match the condition in build.zig.
+  if(ZIG_HOST_TARGET_ARCH MATCHES "^powerpc(64)?(le)?$")
+    set(ZIG1_COMPILE_FLAGS "${ZIG1_COMPILE_FLAGS} -ffunction-sections -fdata-sections")
+    set(ZIG2_COMPILE_FLAGS "${ZIG2_COMPILE_FLAGS} -ffunction-sections -fdata-sections")
+  endif()
   if(APPLE)
     set(ZIG2_LINK_FLAGS "-Wl,-stack_size,0x10000000")
   elseif(MINGW)

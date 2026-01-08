@@ -43,8 +43,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("crt1", .Obj, .@"musl crt1.o", prog_node, &files, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .no_builtin = true,
             });
@@ -63,8 +61,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("rcrt1", .Obj, .@"musl rcrt1.o", prog_node, &files, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .pic = true,
                 .no_builtin = true,
@@ -84,8 +80,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
             };
             return comp.build_crt_file("Scrt1", .Obj, .@"musl Scrt1.o", prog_node, &files, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .pic = true,
                 .no_builtin = true,
@@ -172,8 +166,6 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 };
             }
             return comp.build_crt_file("c", .Lib, .@"musl libc.a", prog_node, c_source_files.items, .{
-                .function_sections = true,
-                .data_sections = true,
                 .omit_frame_pointer = true,
                 .no_builtin = true,
             });
@@ -248,12 +240,12 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
 
             var sub_create_diag: Compilation.CreateDiagnostic = undefined;
             const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+                .thread_limit = comp.thread_limit,
                 .dirs = comp.dirs.withoutLocalCache(),
                 .self_exe_path = comp.self_exe_path,
                 .cache_mode = .whole,
                 .config = config,
                 .root_mod = root_mod,
-                .thread_pool = comp.thread_pool,
                 .root_name = "c",
                 .libc_installation = comp.libc_installation,
                 .emit_bin = .yes_cache,
@@ -272,6 +264,7 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 },
                 .skip_linker_dependencies = true,
                 .soname = "libc.so",
+                .environ_map = comp.environ_map,
             }) catch |err| switch (err) {
                 error.CreateFail => {
                     comp.lockAndSetMiscFailure(misc_task, "sub-compilation of {t} failed: {f}", .{ misc_task, sub_create_diag });
@@ -287,10 +280,10 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             errdefer comp.gpa.free(basename);
 
             const crt_file = try sub_compilation.toCrtFile();
-            comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+            try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
             {
-                comp.mutex.lock();
-                defer comp.mutex.unlock();
+                comp.mutex.lockUncancelable(io);
+                defer comp.mutex.unlock(io);
                 try comp.crt_files.ensureUnusedCapacity(comp.gpa, 1);
                 comp.crt_files.putAssumeCapacityNoClobber(basename, crt_file);
             }
@@ -899,13 +892,9 @@ const src_files = [_][]const u8{
     "musl/src/math/exp10.c",
     "musl/src/math/exp10f.c",
     "musl/src/math/exp10l.c",
-    "musl/src/math/exp2.c",
-    "musl/src/math/exp2f.c",
     "musl/src/math/exp2f_data.c",
     "musl/src/math/exp2l.c",
-    "musl/src/math/exp.c",
     "musl/src/math/exp_data.c",
-    "musl/src/math/expf.c",
     "musl/src/math/expl.c",
     "musl/src/math/expm1.c",
     "musl/src/math/expm1f.c",
@@ -926,9 +915,6 @@ const src_files = [_][]const u8{
     "musl/src/math/fmin.c",
     "musl/src/math/fminf.c",
     "musl/src/math/fminl.c",
-    "musl/src/math/fmod.c",
-    "musl/src/math/fmodf.c",
-    "musl/src/math/fmodl.c",
     "musl/src/math/__fpclassify.c",
     "musl/src/math/__fpclassifyf.c",
     "musl/src/math/__fpclassifyl.c",
@@ -1023,23 +1009,17 @@ const src_files = [_][]const u8{
     "musl/src/math/llround.c",
     "musl/src/math/llroundf.c",
     "musl/src/math/llroundl.c",
-    "musl/src/math/log10.c",
-    "musl/src/math/log10f.c",
     "musl/src/math/log10l.c",
     "musl/src/math/log1p.c",
     "musl/src/math/log1pf.c",
     "musl/src/math/log1pl.c",
-    "musl/src/math/log2.c",
     "musl/src/math/log2_data.c",
-    "musl/src/math/log2f.c",
     "musl/src/math/log2f_data.c",
     "musl/src/math/log2l.c",
     "musl/src/math/logb.c",
     "musl/src/math/logbf.c",
     "musl/src/math/logbl.c",
-    "musl/src/math/log.c",
     "musl/src/math/log_data.c",
-    "musl/src/math/logf.c",
     "musl/src/math/logf_data.c",
     "musl/src/math/logl.c",
     "musl/src/math/lrint.c",
@@ -1738,20 +1718,13 @@ const src_files = [_][]const u8{
     "musl/src/stdlib/atol.c",
     "musl/src/stdlib/atoll.c",
     "musl/src/stdlib/bsearch.c",
-    "musl/src/stdlib/div.c",
     "musl/src/stdlib/ecvt.c",
     "musl/src/stdlib/fcvt.c",
     "musl/src/stdlib/gcvt.c",
-    "musl/src/stdlib/imaxdiv.c",
-    "musl/src/stdlib/ldiv.c",
-    "musl/src/stdlib/lldiv.c",
-    "musl/src/stdlib/qsort.c",
-    "musl/src/stdlib/qsort_nr.c",
     "musl/src/stdlib/strtod.c",
     "musl/src/stdlib/strtol.c",
     "musl/src/stdlib/wcstod.c",
     "musl/src/stdlib/wcstol.c",
-    "musl/src/string/bcmp.c",
     "musl/src/string/bcopy.c",
     "musl/src/string/explicit_bzero.c",
     "musl/src/string/index.c",

@@ -127,12 +127,10 @@ pub const Edwards25519 = struct {
     /// Check that the point does not generate a low-order group.
     /// Return a `WeakPublicKey` error if it does.
     pub fn rejectLowOrder(p: Edwards25519) WeakPublicKeyError!void {
-        const zi = p.z.invert();
-        const x = p.x.mul(zi);
-        const y = p.y.mul(zi);
-        const x_neg = x.neg();
-        const iy = Fe.sqrtm1.mul(y);
-        if (x.isZero() or y.isZero() or iy.equivalent(x) or iy.equivalent(x_neg)) {
+        const y_sqrtm1 = Fe.sqrtm1.mul(p.y);
+        if (p.x.isZero() or p.y.isZero() or p.z.isZero() or
+            y_sqrtm1.sub(p.x).isZero() or y_sqrtm1.add(p.x).isZero())
+        {
             return error.WeakPublicKey;
         }
     }
@@ -577,10 +575,11 @@ test "packing/unpacking" {
 }
 
 test "point addition/subtraction" {
+    const io = std.testing.io;
     var s1: [32]u8 = undefined;
     var s2: [32]u8 = undefined;
-    crypto.random.bytes(&s1);
-    crypto.random.bytes(&s2);
+    io.random(&s1);
+    io.random(&s2);
     const p = try Edwards25519.basePoint.clampedMul(s1);
     const q = try Edwards25519.basePoint.clampedMul(s2);
     const r = p.add(q).add(q).sub(q).sub(q);
@@ -624,9 +623,10 @@ test "implicit reduction of invalid scalars" {
 }
 
 test "subgroup check" {
+    const io = std.testing.io;
     for (0..100) |_| {
         var p = Edwards25519.basePoint;
-        const s = Edwards25519.scalar.random();
+        const s = Edwards25519.scalar.random(io);
         p = try p.mulPublic(s);
         try p.rejectUnexpectedSubgroup();
     }

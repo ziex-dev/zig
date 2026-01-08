@@ -1963,50 +1963,39 @@ fn parseTypeExpr(p: *Parse) Error!?Node.Index {
                 _ = try p.expectToken(.r_bracket);
                 const mods = try p.parsePtrModifiers();
                 const elem_type = try p.expectTypeExpr();
-                if (mods.bit_range_start == .none) {
-                    if (sentinel == null and mods.addrspace_node == .none) {
-                        return try p.addNode(.{
-                            .tag = .ptr_type_aligned,
-                            .main_token = l_bracket,
-                            .data = .{ .opt_node_and_node = .{
-                                mods.align_node,
-                                elem_type,
-                            } },
-                        });
-                    } else if (mods.align_node == .none and mods.addrspace_node == .none) {
-                        return try p.addNode(.{
-                            .tag = .ptr_type_sentinel,
-                            .main_token = l_bracket,
-                            .data = .{ .opt_node_and_node = .{
-                                .fromOptional(sentinel),
-                                elem_type,
-                            } },
-                        });
-                    } else {
-                        return try p.addNode(.{
-                            .tag = .ptr_type,
-                            .main_token = l_bracket,
-                            .data = .{ .extra_and_node = .{
-                                try p.addExtra(Node.PtrType{
-                                    .sentinel = .fromOptional(sentinel),
-                                    .align_node = mods.align_node,
-                                    .addrspace_node = mods.addrspace_node,
-                                }),
-                                elem_type,
-                            } },
-                        });
-                    }
+                if (mods.bit_range_start.unwrap()) |bit_range_start| {
+                    try p.warnMsg(.{
+                        .tag = .invalid_bit_range,
+                        .token = p.nodeMainToken(bit_range_start),
+                    });
+                }
+                if (sentinel == null and mods.addrspace_node == .none) {
+                    return try p.addNode(.{
+                        .tag = .ptr_type_aligned,
+                        .main_token = l_bracket,
+                        .data = .{ .opt_node_and_node = .{
+                            mods.align_node,
+                            elem_type,
+                        } },
+                    });
+                } else if (mods.align_node == .none and mods.addrspace_node == .none) {
+                    return try p.addNode(.{
+                        .tag = .ptr_type_sentinel,
+                        .main_token = l_bracket,
+                        .data = .{ .opt_node_and_node = .{
+                            .fromOptional(sentinel),
+                            elem_type,
+                        } },
+                    });
                 } else {
                     return try p.addNode(.{
-                        .tag = .ptr_type_bit_range,
+                        .tag = .ptr_type,
                         .main_token = l_bracket,
                         .data = .{ .extra_and_node = .{
-                            try p.addExtra(Node.PtrTypeBitRange{
+                            try p.addExtra(Node.PtrType{
                                 .sentinel = .fromOptional(sentinel),
-                                .align_node = mods.align_node.unwrap().?,
+                                .align_node = mods.align_node,
                                 .addrspace_node = mods.addrspace_node,
-                                .bit_range_start = mods.bit_range_start.unwrap().?,
-                                .bit_range_end = mods.bit_range_end.unwrap().?,
                             }),
                             elem_type,
                         } },
@@ -3803,7 +3792,7 @@ fn eatDocComments(p: *Parse) Allocator.Error!?TokenIndex {
 }
 
 fn tokensOnSameLine(p: *Parse, token1: TokenIndex, token2: TokenIndex) bool {
-    return std.mem.indexOfScalar(u8, p.source[p.tokenStart(token1)..p.tokenStart(token2)], '\n') == null;
+    return std.mem.findScalar(u8, p.source[p.tokenStart(token1)..p.tokenStart(token2)], '\n') == null;
 }
 
 fn eatToken(p: *Parse, tag: Token.Tag) ?TokenIndex {

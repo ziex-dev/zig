@@ -146,6 +146,8 @@ pub const JobQueue = struct {
     pub const UnlazySet = std.AutoArrayHashMapUnmanaged(Package.Hash, void);
 
     pub fn deinit(jq: *JobQueue) void {
+        const io = jq.io;
+        jq.group.cancel(io);
         if (jq.all_fetches.items.len == 0) return;
         const gpa = jq.all_fetches.items[0].arena.child_allocator;
         jq.table.deinit(gpa);
@@ -383,14 +385,14 @@ pub fn run(f: *Fetch) RunError!void {
         },
         .remote => |remote| remote,
         .path_or_url => |path_or_url| {
-            if (fs.cwd().openDir(path_or_url, .{ .iterate = true })) |dir| {
+            if (Io.Dir.cwd().openDir(io, path_or_url, .{ .iterate = true })) |dir| {
                 var resource: Resource = .{ .dir = dir };
                 return f.runResource(path_or_url, &resource, null);
             } else |dir_err| {
                 var server_header_buffer: [init_resource_buffer_size]u8 = undefined;
 
                 const file_err = if (dir_err == error.NotDir) e: {
-                    if (fs.cwd().openFile(path_or_url, .{})) |file| {
+                    if (Io.Dir.cwd().openFile(io, path_or_url, .{})) |file| {
                         var resource: Resource = .{ .file = file.reader(io, &server_header_buffer) };
                         return f.runResource(path_or_url, &resource, null);
                     } else |err| break :e err;
@@ -418,7 +420,7 @@ pub fn run(f: *Fetch) RunError!void {
         const prefixed_pkg_sub_path = prefixed_pkg_sub_path_buffer[0 .. 2 + hash_slice.len];
         const prefix_len: usize = if (f.job_queue.read_only) "p/".len else 0;
         const pkg_sub_path = prefixed_pkg_sub_path[prefix_len..];
-        if (cache_root.handle.access(pkg_sub_path, .{})) |_| {
+        if (cache_root.handle.access(io, pkg_sub_path, .{})) |_| {
             assert(f.lazy_status != .unavailable);
             f.package_root = .{
                 .root_dir = cache_root,
@@ -492,7 +494,11 @@ fn runResource(
     const eb = &f.error_bundle;
     const s = fs.path.sep_str;
     const cache_root = f.job_queue.global_cache;
-    const rand_int = std.crypto.random.int(u64);
+    const rand_int = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r x;
+    };
     const tmp_dir_sub_path = "tmp" ++ s ++ std.fmt.hex(rand_int);
 
     const package_sub_path = blk: {
@@ -500,12 +506,12 @@ fn runResource(
         var tmp_directory: Cache.Directory = .{
             .path = tmp_directory_path,
             .handle = handle: {
-                const dir = cache_root.handle.makeOpenPath(tmp_dir_sub_path, .{
-                    .iterate = true,
+                const dir = cache_root.handle.createDirPathOpen(io, tmp_dir_sub_path, .{
+                    .open_options = .{ .iterate = true },
                 }) catch |err| {
                     try eb.addRootErrorMessage(.{
-                        .msg = try eb.printString("unable to create temporary directory '{s}': {s}", .{
-                            tmp_directory_path, @errorName(err),
+                        .msg = try eb.printString("unable to create temporary directory '{s}': {t}", .{
+                            tmp_directory_path, err,
                         }),
                     });
                     return error.FetchFailed;
@@ -513,7 +519,7 @@ fn runResource(
                 break :handle dir;
             },
         };
-        defer tmp_directory.handle.close();
+        defer tmp_directory.handle.close(io);
 
         // Fetch and unpack a resource into a temporary directory.
         var unpack_result = try unpackResource(f, resource, uri_path, tmp_directory);
@@ -523,9 +529,9 @@ fn runResource(
         // Apply btrfs workaround if needed. Reopen tmp_directory.
         if (native_os == .linux and f.job_queue.work_around_btrfs_bug) {
             // https://github.com/ziglang/zig/issues/17095
-            pkg_path.root_dir.handle.close();
-            pkg_path.root_dir.handle = cache_root.handle.makeOpenPath(tmp_dir_sub_path, .{
-                .iterate = true,
+            pkg_path.root_dir.handle.close(io);
+            pkg_path.root_dir.handle = cache_root.handle.createDirPathOpen(io, tmp_dir_sub_path, .{
+                .open_options = .{ .iterate = true },
             }) catch @panic("btrfs workaround failed");
         }
 
@@ -567,7 +573,7 @@ fn runResource(
         .root_dir = cache_root,
         .sub_path = try std.fmt.allocPrint(arena, "p" ++ s ++ "{s}", .{computed_package_hash.toSlice()}),
     };
-    renameTmpIntoCache(cache_root.handle, package_sub_path, f.package_root.sub_path) catch |err| {
+    renameTmpIntoCache(io, cache_root.handle, package_sub_path, f.package_root.sub_path) catch |err| {
         const src = try cache_root.join(arena, &.{tmp_dir_sub_path});
         const dest = try cache_root.join(arena, &.{f.package_root.sub_path});
         try eb.addRootErrorMessage(.{ .msg = try eb.printString(
@@ -578,7 +584,7 @@ fn runResource(
     };
     // Remove temporary directory root if not already renamed to global cache.
     if (!std.mem.eql(u8, package_sub_path, tmp_dir_sub_path)) {
-        cache_root.handle.deleteDir(tmp_dir_sub_path) catch {};
+        cache_root.handle.deleteDir(io, tmp_dir_sub_path) catch {};
     }
 
     // Validate the computed hash against the expected hash. If invalid, this
@@ -637,8 +643,9 @@ pub fn computedPackageHash(f: *const Fetch) Package.Hash {
 /// `computeHash` gets a free check for the existence of `build.zig`, but when
 /// not computing a hash, we need to do a syscall to check for it.
 fn checkBuildFileExistence(f: *Fetch) RunError!void {
+    const io = f.job_queue.io;
     const eb = &f.error_bundle;
-    if (f.package_root.access(Package.build_zig_basename, .{})) |_| {
+    if (f.package_root.access(io, Package.build_zig_basename, .{})) |_| {
         f.has_build_zig = true;
     } else |err| switch (err) {
         error.FileNotFound => {},
@@ -655,9 +662,11 @@ fn checkBuildFileExistence(f: *Fetch) RunError!void {
 
 /// This function populates `f.manifest` or leaves it `null`.
 fn loadManifest(f: *Fetch, pkg_root: Cache.Path) RunError!void {
+    const io = f.job_queue.io;
     const eb = &f.error_bundle;
     const arena = f.arena.allocator();
     const manifest_bytes = pkg_root.root_dir.handle.readFileAllocOptions(
+        io,
         try fs.path.join(arena, &.{ pkg_root.sub_path, Manifest.basename }),
         arena,
         .limited(Manifest.max_bytes),
@@ -685,7 +694,9 @@ fn loadManifest(f: *Fetch, pkg_root: Cache.Path) RunError!void {
         return error.FetchFailed;
     }
 
-    f.manifest = try Manifest.parse(arena, ast.*, .{
+    const rng: std.Random.IoSource = .{ .io = io };
+
+    f.manifest = try Manifest.parse(arena, ast.*, rng.interface(), .{
         .allow_missing_paths_field = f.allow_missing_paths_field,
         .allow_missing_fingerprint = f.allow_missing_fingerprint,
         .allow_name_string = f.allow_name_string,
@@ -838,13 +849,13 @@ pub fn relativePathDigest(pkg_root: Cache.Path, cache_root: Cache.Directory) Pac
     return .initPath(pkg_root.sub_path, pkg_root.root_dir.eql(cache_root));
 }
 
-pub fn workerRun(f: *Fetch, prog_name: []const u8) void {
+pub fn workerRun(f: *Fetch, prog_name: []const u8) Io.Cancelable!void {
     const prog_node = f.prog_node.start(prog_name, 0);
     defer prog_node.end();
 
     run(f) catch |err| switch (err) {
         error.OutOfMemory => f.oom_flag = true,
-        error.Canceled => {},
+        error.Canceled => |e| return e,
         error.FetchFailed => {
             // Nothing to do because the errors are already reported in `error_bundle`,
             // and a reference is kept to the `Fetch` task inside `all_fetches`.
@@ -882,10 +893,10 @@ fn fail(f: *Fetch, msg_tok: std.zig.Ast.TokenIndex, msg_str: u32) RunError {
 }
 
 const Resource = union(enum) {
-    file: fs.File.Reader,
+    file: Io.File.Reader,
     http_request: HttpRequest,
     git: Git,
-    dir: fs.Dir,
+    dir: Io.Dir,
 
     const Git = struct {
         session: git.Session,
@@ -908,7 +919,7 @@ const Resource = union(enum) {
             .git => |*git_resource| {
                 git_resource.fetch_stream.deinit();
             },
-            .dir => |*dir| dir.close(),
+            .dir => |*dir| dir.close(io),
         }
         resource.* = undefined;
     }
@@ -995,7 +1006,7 @@ fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u
 
     if (ascii.eqlIgnoreCase(uri.scheme, "file")) {
         const path = try uri.path.toRawMaybeAlloc(arena);
-        const file = f.parent_package_root.openFile(path, .{}) catch |err| {
+        const file = f.parent_package_root.openFile(io, path, .{}) catch |err| {
             return f.fail(f.location_tok, try eb.printString("unable to open '{f}{s}': {t}", .{
                 f.parent_package_root, path, err,
             }));
@@ -1247,13 +1258,14 @@ fn unpackResource(
     }
 }
 
-fn unpackTarball(f: *Fetch, out_dir: fs.Dir, reader: *Io.Reader) RunError!UnpackResult {
+fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!UnpackResult {
     const eb = &f.error_bundle;
     const arena = f.arena.allocator();
+    const io = f.job_queue.io;
 
     var diagnostics: std.tar.Diagnostics = .{ .allocator = arena };
 
-    std.tar.pipeToFileSystem(out_dir, reader, .{
+    std.tar.pipeToFileSystem(io, out_dir, reader, .{
         .diagnostics = &diagnostics,
         .strip_components = 0,
         .mode_mode = .ignore,
@@ -1280,7 +1292,7 @@ fn unpackTarball(f: *Fetch, out_dir: fs.Dir, reader: *Io.Reader) RunError!Unpack
 
 fn unzip(
     f: *Fetch,
-    out_dir: fs.Dir,
+    out_dir: Io.Dir,
     reader: *Io.Reader,
 ) error{ ReadFailed, OutOfMemory, Canceled, FetchFailed }!UnpackResult {
     // We write the entire contents to a file first because zip files
@@ -1299,10 +1311,14 @@ fn unzip(
     zip_path[prefix.len + random_len ..].* = suffix.*;
 
     var zip_file = while (true) {
-        const random_integer = std.crypto.random.int(u64);
+        const random_integer = r: {
+            var x: u64 = undefined;
+            io.random(@ptrCast(&x));
+            break :r x;
+        };
         zip_path[prefix.len..][0..random_len].* = std.fmt.hex(random_integer);
 
-        break cache_root.handle.createFile(&zip_path, .{
+        break cache_root.handle.createFile(io, &zip_path, .{
             .exclusive = true,
             .read = true,
         }) catch |err| switch (err) {
@@ -1314,10 +1330,10 @@ fn unzip(
             ),
         };
     };
-    defer zip_file.close();
+    defer zip_file.close(io);
     var zip_file_buffer: [4096]u8 = undefined;
     var zip_file_reader = b: {
-        var zip_file_writer = zip_file.writer(&zip_file_buffer);
+        var zip_file_writer = zip_file.writer(io, &zip_file_buffer);
 
         _ = reader.streamRemaining(&zip_file_writer.interface) catch |err| switch (err) {
             error.ReadFailed => return error.ReadFailed,
@@ -1330,7 +1346,7 @@ fn unzip(
             f.location_tok,
             try eb.printString("failed writing temporary zip file: {t}", .{err}),
         );
-        break :b zip_file_writer.moveToReader(io);
+        break :b zip_file_writer.moveToReader();
     };
 
     var diagnostics: std.zip.Diagnostics = .{ .allocator = f.arena.allocator() };
@@ -1343,13 +1359,13 @@ fn unzip(
         .diagnostics = &diagnostics,
     }) catch |err| return f.fail(f.location_tok, try eb.printString("zip extract failed: {t}", .{err}));
 
-    cache_root.handle.deleteFile(&zip_path) catch |err|
+    cache_root.handle.deleteFile(io, &zip_path) catch |err|
         return f.fail(f.location_tok, try eb.printString("delete temporary zip failed: {t}", .{err}));
 
     return .{ .root_dir = diagnostics.root_dir };
 }
 
-fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!UnpackResult {
+fn unpackGitPack(f: *Fetch, out_dir: Io.Dir, resource: *Resource.Git) anyerror!UnpackResult {
     const io = f.job_queue.io;
     const arena = f.arena.allocator();
     // TODO don't try to get a gpa from an arena. expose this dependency higher up
@@ -1362,23 +1378,23 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!U
     // we do not attempt to replicate the exact structure of a real .git
     // directory, since that isn't relevant for fetching a package.
     {
-        var pack_dir = try out_dir.makeOpenPath(".git", .{});
-        defer pack_dir.close();
-        var pack_file = try pack_dir.createFile("pkg.pack", .{ .read = true });
-        defer pack_file.close();
+        var pack_dir = try out_dir.createDirPathOpen(io, ".git", .{});
+        defer pack_dir.close(io);
+        var pack_file = try pack_dir.createFile(io, "pkg.pack", .{ .read = true });
+        defer pack_file.close(io);
         var pack_file_buffer: [4096]u8 = undefined;
         var pack_file_reader = b: {
-            var pack_file_writer = pack_file.writer(&pack_file_buffer);
+            var pack_file_writer = pack_file.writer(io, &pack_file_buffer);
             const fetch_reader = &resource.fetch_stream.reader;
             _ = try fetch_reader.streamRemaining(&pack_file_writer.interface);
             try pack_file_writer.interface.flush();
-            break :b pack_file_writer.moveToReader(io);
+            break :b pack_file_writer.moveToReader();
         };
 
-        var index_file = try pack_dir.createFile("pkg.idx", .{ .read = true });
-        defer index_file.close();
+        var index_file = try pack_dir.createFile(io, "pkg.idx", .{ .read = true });
+        defer index_file.close(io);
         var index_file_buffer: [2000]u8 = undefined;
-        var index_file_writer = index_file.writer(&index_file_buffer);
+        var index_file_writer = index_file.writer(io, &index_file_buffer);
         {
             const index_prog_node = f.prog_node.start("Index pack", 0);
             defer index_prog_node.end();
@@ -1393,7 +1409,7 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!U
             try repository.init(gpa, object_format, &pack_file_reader, &index_file_reader);
             defer repository.deinit();
             var diagnostics: git.Diagnostics = .{ .allocator = arena };
-            try repository.checkout(out_dir, resource.want_oid, &diagnostics);
+            try repository.checkout(io, out_dir, resource.want_oid, &diagnostics);
 
             if (diagnostics.errors.items.len > 0) {
                 try res.allocErrors(arena, diagnostics.errors.items.len, "unable to unpack packfile");
@@ -1407,41 +1423,37 @@ fn unpackGitPack(f: *Fetch, out_dir: fs.Dir, resource: *Resource.Git) anyerror!U
         }
     }
 
-    try out_dir.deleteTree(".git");
+    try out_dir.deleteTree(io, ".git");
     return res;
 }
 
-fn recursiveDirectoryCopy(f: *Fetch, dir: fs.Dir, tmp_dir: fs.Dir) anyerror!void {
+fn recursiveDirectoryCopy(f: *Fetch, dir: Io.Dir, tmp_dir: Io.Dir) anyerror!void {
     const gpa = f.arena.child_allocator;
+    const io = f.job_queue.io;
     // Recursive directory copy.
     var it = try dir.walk(gpa);
     defer it.deinit();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         switch (entry.kind) {
             .directory => {}, // omit empty directories
             .file => {
-                dir.copyFile(
-                    entry.path,
-                    tmp_dir,
-                    entry.path,
-                    .{},
-                ) catch |err| switch (err) {
+                dir.copyFile(entry.path, tmp_dir, entry.path, io, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
-                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(dirname);
-                        try dir.copyFile(entry.path, tmp_dir, entry.path, .{});
+                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.createDirPath(io, dirname);
+                        try dir.copyFile(entry.path, tmp_dir, entry.path, io, .{});
                     },
                     else => |e| return e,
                 };
             },
             .sym_link => {
                 var buf: [fs.max_path_bytes]u8 = undefined;
-                const link_name = try dir.readLink(entry.path, &buf);
+                const link_name = buf[0..try dir.readLink(io, entry.path, &buf)];
                 // TODO: if this would create a symlink to outside
                 // the destination directory, fail with an error instead.
-                tmp_dir.symLink(link_name, entry.path, .{}) catch |err| switch (err) {
+                tmp_dir.symLink(io, link_name, entry.path, .{}) catch |err| switch (err) {
                     error.FileNotFound => {
-                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.makePath(dirname);
-                        try tmp_dir.symLink(link_name, entry.path, .{});
+                        if (fs.path.dirname(entry.path)) |dirname| try tmp_dir.createDirPath(io, dirname);
+                        try tmp_dir.symLink(io, link_name, entry.path, .{});
                     },
                     else => |e| return e,
                 };
@@ -1451,22 +1463,22 @@ fn recursiveDirectoryCopy(f: *Fetch, dir: fs.Dir, tmp_dir: fs.Dir) anyerror!void
     }
 }
 
-pub fn renameTmpIntoCache(cache_dir: fs.Dir, tmp_dir_sub_path: []const u8, dest_dir_sub_path: []const u8) !void {
+pub fn renameTmpIntoCache(io: Io, cache_dir: Io.Dir, tmp_dir_sub_path: []const u8, dest_dir_sub_path: []const u8) !void {
     assert(dest_dir_sub_path[1] == fs.path.sep);
     var handled_missing_dir = false;
     while (true) {
-        cache_dir.rename(tmp_dir_sub_path, dest_dir_sub_path) catch |err| switch (err) {
+        cache_dir.rename(tmp_dir_sub_path, cache_dir, dest_dir_sub_path, io) catch |err| switch (err) {
             error.FileNotFound => {
                 if (handled_missing_dir) return err;
-                cache_dir.makeDir(dest_dir_sub_path[0..1]) catch |mkd_err| switch (mkd_err) {
+                cache_dir.createDir(io, dest_dir_sub_path[0..1], .default_dir) catch |mkd_err| switch (mkd_err) {
                     error.PathAlreadyExists => handled_missing_dir = true,
                     else => |e| return e,
                 };
                 continue;
             },
-            error.PathAlreadyExists, error.AccessDenied => {
+            error.DirNotEmpty, error.AccessDenied => {
                 // Package has been already downloaded and may already be in use on the system.
-                cache_dir.deleteTree(tmp_dir_sub_path) catch {
+                cache_dir.deleteTree(io, tmp_dir_sub_path) catch {
                     // Garbage files leftover in zig-cache/tmp/ is, as they say
                     // on Star Trek, "operating within normal parameters".
                 };
@@ -1517,12 +1529,12 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
         // The final hash will be a hash of each file hashed independently. This
         // allows hashing in parallel.
         var group: Io.Group = .init;
-        defer group.wait(io);
+        defer group.cancel(io);
 
-        while (walker.next() catch |err| {
+        while (walker.next(io) catch |err| {
             try eb.addRootErrorMessage(.{ .msg = try eb.printString(
-                "unable to walk temporary directory '{f}': {s}",
-                .{ pkg_path, @errorName(err) },
+                "unable to walk temporary directory '{f}': {t}",
+                .{ pkg_path, err },
             ) });
             return error.FetchFailed;
         }) |entry| {
@@ -1542,7 +1554,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
                     .fs_path = fs_path,
                     .failure = undefined, // to be populated by the worker
                 };
-                group.async(io, workerDeleteFile, .{ root_dir, deleted_file });
+                group.async(io, workerDeleteFile, .{ io, root_dir, deleted_file });
                 try deleted_files.append(deleted_file);
                 continue;
             }
@@ -1552,8 +1564,8 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
                 .file => .file,
                 .sym_link => .link,
                 else => return f.fail(f.location_tok, try eb.printString(
-                    "package contains '{s}' which has illegal file type '{s}'",
-                    .{ entry.path, @tagName(entry.kind) },
+                    "package contains '{s}' which has illegal file type '{t}'",
+                    .{ entry.path, entry.kind },
                 )),
             };
 
@@ -1570,9 +1582,11 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
                 .failure = undefined, // to be populated by the worker
                 .size = undefined, // to be populated by the worker
             };
-            group.async(io, workerHashFile, .{ root_dir, hashed_file });
+            group.async(io, workerHashFile, .{ io, root_dir, hashed_file });
             try all_files.append(hashed_file);
         }
+
+        try group.await(io);
     }
 
     {
@@ -1588,7 +1602,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
         var i: usize = 0;
         while (i < sus_dirs.count()) : (i += 1) {
             const sus_dir = sus_dirs.keys()[i];
-            root_dir.deleteDir(sus_dir) catch |err| switch (err) {
+            root_dir.deleteDir(io, sus_dir) catch |err| switch (err) {
                 error.DirNotEmpty => continue,
                 error.FileNotFound => continue,
                 else => |e| {
@@ -1638,7 +1652,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
         assert(!f.job_queue.recursive);
         // Print something to stdout that can be text diffed to figure out why
         // the package hash is different.
-        dumpHashInfo(all_files.items) catch |err| {
+        dumpHashInfo(io, all_files.items) catch |err| {
             std.debug.print("unable to write to stdout: {s}\n", .{@errorName(err)});
             std.process.exit(1);
         };
@@ -1650,9 +1664,9 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
     };
 }
 
-fn dumpHashInfo(all_files: []const *const HashedFile) !void {
+fn dumpHashInfo(io: Io, all_files: []const *const HashedFile) !void {
     var stdout_buffer: [1024]u8 = undefined;
-    var stdout_writer: fs.File.Writer = .initStreaming(.stdout(), &stdout_buffer);
+    var stdout_writer: Io.File.Writer = .initStreaming(.stdout(), io, &stdout_buffer);
     const w = &stdout_writer.interface;
     for (all_files) |hashed_file| {
         try w.print("{t}: {x}: {s}\n", .{ hashed_file.kind, &hashed_file.hash, hashed_file.normalized_path });
@@ -1660,15 +1674,15 @@ fn dumpHashInfo(all_files: []const *const HashedFile) !void {
     try w.flush();
 }
 
-fn workerHashFile(dir: fs.Dir, hashed_file: *HashedFile) void {
-    hashed_file.failure = hashFileFallible(dir, hashed_file);
+fn workerHashFile(io: Io, dir: Io.Dir, hashed_file: *HashedFile) void {
+    hashed_file.failure = hashFileFallible(io, dir, hashed_file);
 }
 
-fn workerDeleteFile(dir: fs.Dir, deleted_file: *DeletedFile) void {
-    deleted_file.failure = deleteFileFallible(dir, deleted_file);
+fn workerDeleteFile(io: Io, dir: Io.Dir, deleted_file: *DeletedFile) void {
+    deleted_file.failure = deleteFileFallible(io, dir, deleted_file);
 }
 
-fn hashFileFallible(dir: fs.Dir, hashed_file: *HashedFile) HashedFile.Error!void {
+fn hashFileFallible(io: Io, dir: Io.Dir, hashed_file: *HashedFile) HashedFile.Error!void {
     var buf: [8000]u8 = undefined;
     var hasher = Package.Hash.Algo.init(.{});
     hasher.update(hashed_file.normalized_path);
@@ -1676,24 +1690,24 @@ fn hashFileFallible(dir: fs.Dir, hashed_file: *HashedFile) HashedFile.Error!void
 
     switch (hashed_file.kind) {
         .file => {
-            var file = try dir.openFile(hashed_file.fs_path, .{});
-            defer file.close();
+            var file = try dir.openFile(io, hashed_file.fs_path, .{});
+            defer file.close(io);
             // Hard-coded false executable bit: https://github.com/ziglang/zig/issues/17463
             hasher.update(&.{ 0, 0 });
             var file_header: FileHeader = .{};
             while (true) {
-                const bytes_read = try file.read(&buf);
+                const bytes_read = try file.readPositional(io, &.{&buf}, file_size);
                 if (bytes_read == 0) break;
                 file_size += bytes_read;
                 hasher.update(buf[0..bytes_read]);
                 file_header.update(buf[0..bytes_read]);
             }
             if (file_header.isExecutable()) {
-                try setExecutable(file);
+                try setExecutable(io, file);
             }
         },
         .link => {
-            const link_name = try dir.readLink(hashed_file.fs_path, &buf);
+            const link_name = buf[0..try dir.readLink(io, hashed_file.fs_path, &buf)];
             if (fs.path.sep != canonical_sep) {
                 // Package hashes are intended to be consistent across
                 // platforms which means we must normalize path separators
@@ -1707,16 +1721,13 @@ fn hashFileFallible(dir: fs.Dir, hashed_file: *HashedFile) HashedFile.Error!void
     hashed_file.size = file_size;
 }
 
-fn deleteFileFallible(dir: fs.Dir, deleted_file: *DeletedFile) DeletedFile.Error!void {
-    try dir.deleteFile(deleted_file.fs_path);
+fn deleteFileFallible(io: Io, dir: Io.Dir, deleted_file: *DeletedFile) DeletedFile.Error!void {
+    try dir.deleteFile(io, deleted_file.fs_path);
 }
 
-fn setExecutable(file: fs.File) !void {
-    if (!std.fs.has_executable_bit) return;
-
-    const S = std.posix.S;
-    const mode = fs.File.default_mode | S.IXUSR | S.IXGRP | S.IXOTH;
-    try file.chmod(mode);
+fn setExecutable(io: Io, file: Io.File) !void {
+    if (!Io.File.Permissions.has_executable_bit) return;
+    try file.setPermissions(io, .executable_file);
 }
 
 const DeletedFile = struct {
@@ -1724,8 +1735,8 @@ const DeletedFile = struct {
     failure: Error!void,
 
     const Error =
-        fs.Dir.DeleteFileError ||
-        fs.Dir.DeleteDirError;
+        Io.Dir.DeleteFileError ||
+        Io.Dir.DeleteDirError;
 };
 
 const HashedFile = struct {
@@ -1737,11 +1748,11 @@ const HashedFile = struct {
     size: u64,
 
     const Error =
-        fs.File.OpenError ||
-        fs.File.ReadError ||
-        fs.File.StatError ||
-        fs.File.ChmodError ||
-        fs.Dir.ReadLinkError;
+        Io.File.OpenError ||
+        Io.File.ReadPositionalError ||
+        Io.File.StatError ||
+        Io.File.SetPermissionsError ||
+        Io.Dir.ReadLinkError;
 
     const Kind = enum { file, link };
 
@@ -2043,7 +2054,7 @@ const UnpackResult = struct {
         defer errors.deinit(gpa);
         var aw: Io.Writer.Allocating = .init(gpa);
         defer aw.deinit();
-        try errors.renderToWriter(.{}, &aw.writer, .no_color);
+        try errors.renderToWriter(.{}, &aw.writer);
         try std.testing.expectEqualStrings(
             \\error: unable to unpack
             \\    note: unable to create symlink from 'dir2/file2' to 'filename': SymlinkError
@@ -2074,7 +2085,7 @@ test "tarball with duplicate paths" {
     defer tmp.cleanup();
 
     const tarball_name = "duplicate_paths.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2107,7 +2118,7 @@ test "tarball with excluded duplicate paths" {
     defer tmp.cleanup();
 
     const tarball_name = "duplicate_paths_excluded.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2153,7 +2164,7 @@ test "tarball without root folder" {
     defer tmp.cleanup();
 
     const tarball_name = "no_root.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2178,7 +2189,7 @@ test "tarball without root folder" {
 }
 
 test "set executable bit based on file content" {
-    if (!std.fs.has_executable_bit) return error.SkipZigTest;
+    if (!Io.File.Permissions.has_executable_bit) return error.SkipZigTest;
     const gpa = std.testing.allocator;
     const io = std.testing.io;
 
@@ -2186,7 +2197,7 @@ test "set executable bit based on file content" {
     defer tmp.cleanup();
 
     const tarball_name = "executables.tar.gz";
-    try saveEmbedFile(tarball_name, tmp.dir);
+    try saveEmbedFile(io, tarball_name, tmp.dir);
     const tarball_path = try std.fmt.allocPrint(gpa, ".zig-cache/tmp/{s}/{s}", .{ tmp.sub_path, tarball_name });
     defer gpa.free(tarball_path);
 
@@ -2210,16 +2221,16 @@ test "set executable bit based on file content" {
     );
 
     var out = try fb.packageDir();
-    defer out.close();
+    defer out.close(io);
     const S = std.posix.S;
     // expect executable bit not set
-    try std.testing.expect((try out.statFile("file1")).mode & S.IXUSR == 0);
-    try std.testing.expect((try out.statFile("script_without_shebang")).mode & S.IXUSR == 0);
+    try std.testing.expect((try out.statFile(io, "file1", .{})).permissions.toMode() & S.IXUSR == 0);
+    try std.testing.expect((try out.statFile(io, "script_without_shebang", .{})).permissions.toMode() & S.IXUSR == 0);
     // expect executable bit set
-    try std.testing.expect((try out.statFile("hello")).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile("script")).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile("script_with_shebang_without_exec_bit")).mode & S.IXUSR != 0);
-    try std.testing.expect((try out.statFile("hello_ln")).mode & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "hello", .{})).permissions.toMode() & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "script", .{})).permissions.toMode() & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "script_with_shebang_without_exec_bit", .{})).permissions.toMode() & S.IXUSR != 0);
+    try std.testing.expect((try out.statFile(io, "hello_ln", .{})).permissions.toMode() & S.IXUSR != 0);
 
     //
     // $ ls -al zig-cache/tmp/OCz9ovUcstDjTC_U/zig-global-cache/p/1220fecb4c06a9da8673c87fe8810e15785f1699212f01728eadce094d21effeeef3
@@ -2231,12 +2242,12 @@ test "set executable bit based on file content" {
     // -rwxrwxr-x 1    17 Apr   script_with_shebang_without_exec_bit
 }
 
-fn saveEmbedFile(comptime tarball_name: []const u8, dir: fs.Dir) !void {
+fn saveEmbedFile(io: Io, comptime tarball_name: []const u8, dir: Io.Dir) !void {
     //const tarball_name = "duplicate_paths_excluded.tar.gz";
     const tarball_content = @embedFile("Fetch/testdata/" ++ tarball_name);
-    var tmp_file = try dir.createFile(tarball_name, .{});
-    defer tmp_file.close();
-    try tmp_file.writeAll(tarball_content);
+    var tmp_file = try dir.createFile(io, tarball_name, .{});
+    defer tmp_file.close(io);
+    try tmp_file.writeStreamingAll(io, tarball_content);
 }
 
 // Builds Fetch with required dependencies, clears dependencies on deinit().
@@ -2250,10 +2261,10 @@ const TestFetchBuilder = struct {
         self: *TestFetchBuilder,
         allocator: std.mem.Allocator,
         io: Io,
-        cache_parent_dir: std.fs.Dir,
+        cache_parent_dir: std.Io.Dir,
         path_or_url: []const u8,
     ) !*Fetch {
-        const cache_dir = try cache_parent_dir.makeOpenPath("zig-global-cache", .{});
+        const cache_dir = try cache_parent_dir.createDirPathOpen(io, "zig-global-cache", .{});
 
         self.http_client = .{ .allocator = allocator, .io = io };
         self.global_cache_directory = .{ .handle = cache_dir, .path = null };
@@ -2301,35 +2312,40 @@ const TestFetchBuilder = struct {
     }
 
     fn deinit(self: *TestFetchBuilder) void {
+        const io = self.job_queue.io;
         self.fetch.deinit();
         self.job_queue.deinit();
         self.fetch.prog_node.end();
-        self.global_cache_directory.handle.close();
+        self.global_cache_directory.handle.close(io);
         self.http_client.deinit();
     }
 
-    fn packageDir(self: *TestFetchBuilder) !fs.Dir {
+    fn packageDir(self: *TestFetchBuilder) !Io.Dir {
+        const io = self.job_queue.io;
         const root = self.fetch.package_root;
-        return try root.root_dir.handle.openDir(root.sub_path, .{ .iterate = true });
+        return try root.root_dir.handle.openDir(io, root.sub_path, .{ .iterate = true });
     }
 
     // Test helper, asserts thet package dir constains expected_files.
     // expected_files must be sorted.
     fn expectPackageFiles(self: *TestFetchBuilder, expected_files: []const []const u8) !void {
+        const io = self.job_queue.io;
+        const gpa = std.testing.allocator;
+
         var package_dir = try self.packageDir();
-        defer package_dir.close();
+        defer package_dir.close(io);
 
         var actual_files: std.ArrayList([]u8) = .empty;
-        defer actual_files.deinit(std.testing.allocator);
-        defer for (actual_files.items) |file| std.testing.allocator.free(file);
-        var walker = try package_dir.walk(std.testing.allocator);
+        defer actual_files.deinit(gpa);
+        defer for (actual_files.items) |file| gpa.free(file);
+        var walker = try package_dir.walk(gpa);
         defer walker.deinit();
-        while (try walker.next()) |entry| {
+        while (try walker.next(io)) |entry| {
             if (entry.kind != .file) continue;
-            const path = try std.testing.allocator.dupe(u8, entry.path);
-            errdefer std.testing.allocator.free(path);
+            const path = try gpa.dupe(u8, entry.path);
+            errdefer gpa.free(path);
             std.mem.replaceScalar(u8, path, std.fs.path.sep, '/');
-            try actual_files.append(std.testing.allocator, path);
+            try actual_files.append(gpa, path);
         }
         std.mem.sortUnstable([]u8, actual_files.items, {}, struct {
             fn lessThan(_: void, a: []u8, b: []u8) bool {
@@ -2346,17 +2362,19 @@ const TestFetchBuilder = struct {
 
     // Test helper, asserts that fetch has failed with `msg` error message.
     fn expectFetchErrors(self: *TestFetchBuilder, notes_len: usize, msg: []const u8) !void {
+        const gpa = std.testing.allocator;
+
         var errors = try self.fetch.error_bundle.toOwnedBundle("");
-        defer errors.deinit(std.testing.allocator);
+        defer errors.deinit(gpa);
 
         const em = errors.getErrorMessage(errors.getMessages()[0]);
         try std.testing.expectEqual(1, em.count);
         if (notes_len > 0) {
             try std.testing.expectEqual(notes_len, em.notes_len);
         }
-        var aw: Io.Writer.Allocating = .init(std.testing.allocator);
+        var aw: Io.Writer.Allocating = .init(gpa);
         defer aw.deinit();
-        try errors.renderToWriter(.{}, &aw.writer, .no_color);
+        try errors.renderToWriter(.{}, &aw.writer);
         try std.testing.expectEqualStrings(msg, aw.written());
     }
 };

@@ -359,6 +359,7 @@ fn linkAsArchive(lld: *Lld, arena: Allocator) !void {
 fn coffLink(lld: *Lld, arena: Allocator) !void {
     const comp = lld.base.comp;
     const gpa = comp.gpa;
+    const io = comp.io;
     const base = &lld.base;
     const coff = &lld.ofmt.coff;
 
@@ -400,11 +401,12 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
             // regarding eliding redundant object -> object transformations.
             return error.NoObjectsToLink;
         };
-        try std.fs.Dir.copyFile(
+        try Io.Dir.copyFile(
             the_object_path.root_dir.handle,
             the_object_path.sub_path,
             directory.handle,
             base.emit.sub_path,
+            io,
             .{},
         );
     } else {
@@ -718,13 +720,13 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
                 argv.appendAssumeCapacity(try crt_file.full_object_path.toString(arena));
                 continue;
             }
-            if (try findLib(arena, lib_basename, coff.lib_directories)) |full_path| {
+            if (try findLib(arena, io, lib_basename, coff.lib_directories)) |full_path| {
                 argv.appendAssumeCapacity(full_path);
                 continue;
             }
             if (target.abi.isGnu()) {
                 const fallback_name = try allocPrint(arena, "lib{s}.dll.a", .{key});
-                if (try findLib(arena, fallback_name, coff.lib_directories)) |full_path| {
+                if (try findLib(arena, io, fallback_name, coff.lib_directories)) |full_path| {
                     argv.appendAssumeCapacity(full_path);
                     continue;
                 }
@@ -741,9 +743,9 @@ fn coffLink(lld: *Lld, arena: Allocator) !void {
         try spawnLld(comp, arena, argv.items);
     }
 }
-fn findLib(arena: Allocator, name: []const u8, lib_directories: []const Cache.Directory) !?[]const u8 {
+fn findLib(arena: Allocator, io: Io, name: []const u8, lib_directories: []const Cache.Directory) !?[]const u8 {
     for (lib_directories) |lib_directory| {
-        lib_directory.handle.access(name, .{}) catch |err| switch (err) {
+        lib_directory.handle.access(io, name, .{}) catch |err| switch (err) {
             error.FileNotFound => continue,
             else => |e| return e,
         };
@@ -755,6 +757,7 @@ fn findLib(arena: Allocator, name: []const u8, lib_directories: []const Cache.Di
 fn elfLink(lld: *Lld, arena: Allocator) !void {
     const comp = lld.base.comp;
     const gpa = comp.gpa;
+    const io = comp.io;
     const diags = &comp.link_diags;
     const base = &lld.base;
     const elf = &lld.ofmt.elf;
@@ -816,11 +819,12 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
             // regarding eliding redundant object -> object transformations.
             return error.NoObjectsToLink;
         };
-        try std.fs.Dir.copyFile(
+        try Io.Dir.copyFile(
             the_object_path.root_dir.handle,
             the_object_path.sub_path,
             directory.handle,
             base.emit.sub_path,
+            io,
             .{},
         );
     } else {
@@ -1206,6 +1210,13 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
                         });
                         try argv.append(lib_path);
                     }
+                } else if (target.isOpenBSDLibC()) {
+                    for (openbsd.libs) |lib| {
+                        const lib_path = try std.fmt.allocPrint(arena, "{f}{c}lib{s}.so", .{
+                            comp.openbsd_so_files.?.dir_path, fs.path.sep, lib.name,
+                        });
+                        try argv.append(lib_path);
+                    }
                 } else {
                     diags.flags.missing_libc = true;
                 }
@@ -1326,6 +1337,7 @@ fn getLDMOption(target: *const std.Target) ?[]const u8 {
 }
 fn wasmLink(lld: *Lld, arena: Allocator) !void {
     const comp = lld.base.comp;
+    const diags = &comp.link_diags;
     const shared_memory = comp.config.shared_memory;
     const export_memory = comp.config.export_memory;
     const import_memory = comp.config.import_memory;
@@ -1334,6 +1346,7 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
     const wasm = &lld.ofmt.wasm;
 
     const gpa = comp.gpa;
+    const io = comp.io;
 
     const directory = base.emit.root_dir; // Just an alias to make it shorter to type.
     const full_out_path = try directory.join(arena, &[_][]const u8{base.emit.sub_path});
@@ -1371,11 +1384,12 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
             // regarding eliding redundant object -> object transformations.
             return error.NoObjectsToLink;
         };
-        try fs.Dir.copyFile(
+        try Io.Dir.copyFile(
             the_object_path.root_dir.handle,
             the_object_path.sub_path,
             directory.handle,
             base.emit.sub_path,
+            io,
             .{},
         );
     } else {
@@ -1565,27 +1579,23 @@ fn wasmLink(lld: *Lld, arena: Allocator) !void {
         // is not the case, it means we will get "exec format error" when trying to run
         // it, and then can react to that in the same way as trying to run an ELF file
         // from a foreign CPU architecture.
-        if (fs.has_executable_bit and target.os.tag == .wasi and
+        if (Io.File.Permissions.has_executable_bit and target.os.tag == .wasi and
             comp.config.output_mode == .Exe)
         {
-            // TODO: what's our strategy for reporting linker errors from this function?
-            // report a nice error here with the file path if it fails instead of
-            // just returning the error code.
             // chmod does not interact with umask, so we use a conservative -rwxr--r-- here.
-            std.posix.fchmodat(fs.cwd().fd, full_out_path, 0o744, 0) catch |err| switch (err) {
-                error.OperationNotSupported => unreachable, // Not a symlink.
-                else => |e| return e,
-            };
+            Io.Dir.cwd().setFilePermissions(io, full_out_path, .fromMode(0o744), .{}) catch |err|
+                return diags.fail("{s}: failed to enable executable permissions: {t}", .{ full_out_path, err });
         }
     }
 }
 
 fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !void {
     const io = comp.io;
+    const gpa = comp.gpa;
 
     if (comp.verbose_link) {
         // Skip over our own name so that the LLD linker name is the first argv item.
-        Compilation.dump_argv(argv[1..]);
+        try Compilation.dumpArgv(io, argv[1..]);
     }
 
     // If possible, we run LLD as a child process because it does not always
@@ -1599,38 +1609,47 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
     }
 
     var stderr: []u8 = &.{};
-    defer comp.gpa.free(stderr);
+    defer gpa.free(stderr);
 
-    var child = std.process.Child.init(argv, arena);
+    // TODO rework this awkward logic to call child.kill() in the failure case
     const term = (if (comp.clang_passthrough_mode) term: {
-        child.stdin_behavior = .Inherit;
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdin = .inherit,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        }) catch |err| break :term err;
 
-        break :term child.spawnAndWait();
+        break :term child.wait(io);
     } else term: {
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Pipe;
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .pipe,
+        }) catch |err| break :term err;
 
-        child.spawn() catch |err| break :term err;
         var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
-        stderr = try stderr_reader.interface.allocRemaining(comp.gpa, .unlimited);
-        break :term child.wait();
+        stderr = try stderr_reader.interface.allocRemaining(gpa, .unlimited);
+        break :term child.wait(io);
     }) catch |first_err| term: {
         const err = switch (first_err) {
             error.NameTooLong => err: {
                 const s = fs.path.sep_str;
-                const rand_int = std.crypto.random.int(u64);
+                const rand_int = r: {
+                    var x: u64 = undefined;
+                    io.random(@ptrCast(&x));
+                    break :r x;
+                };
                 const rsp_path = "tmp" ++ s ++ std.fmt.hex(rand_int) ++ ".rsp";
 
-                const rsp_file = try comp.dirs.local_cache.handle.createFile(rsp_path, .{});
-                defer comp.dirs.local_cache.handle.deleteFileZ(rsp_path) catch |err|
-                    log.warn("failed to delete response file {s}: {s}", .{ rsp_path, @errorName(err) });
+                const rsp_file = try comp.dirs.local_cache.handle.createFile(io, rsp_path, .{});
+                defer comp.dirs.local_cache.handle.deleteFile(io, rsp_path) catch |err|
+                    log.warn("failed to delete response file {s}: {t}", .{ rsp_path, err });
                 {
-                    defer rsp_file.close();
+                    defer rsp_file.close(io);
                     var rsp_file_buffer: [1024]u8 = undefined;
-                    var rsp_file_writer = rsp_file.writer(&rsp_file_buffer);
+                    var rsp_file_writer = rsp_file.writer(io, &rsp_file_buffer);
                     const rsp_writer = &rsp_file_writer.interface;
                     for (argv[2..]) |arg| {
                         try rsp_writer.writeByte('"');
@@ -1647,37 +1666,35 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                     try rsp_writer.flush();
                 }
 
-                var rsp_child = std.process.Child.init(&.{ argv[0], argv[1], try std.fmt.allocPrint(
-                    arena,
-                    "@{s}",
-                    .{try comp.dirs.local_cache.join(arena, &.{rsp_path})},
-                ) }, arena);
+                var rsp_child = std.process.spawn(io, .{
+                    .argv = &.{
+                        argv[0],
+                        argv[1],
+                        try std.fmt.allocPrint(arena, "@{s}", .{
+                            try comp.dirs.local_cache.join(arena, &.{rsp_path}),
+                        }),
+                    },
+                    .stdin = if (comp.clang_passthrough_mode) .inherit else .ignore,
+                    .stdout = if (comp.clang_passthrough_mode) .inherit else .ignore,
+                    .stderr = if (comp.clang_passthrough_mode) .inherit else .pipe,
+                }) catch |err| break :err err;
                 if (comp.clang_passthrough_mode) {
-                    rsp_child.stdin_behavior = .Inherit;
-                    rsp_child.stdout_behavior = .Inherit;
-                    rsp_child.stderr_behavior = .Inherit;
-
-                    break :term rsp_child.spawnAndWait() catch |err| break :err err;
+                    break :term rsp_child.wait(io) catch |err| break :err err;
                 } else {
-                    rsp_child.stdin_behavior = .Ignore;
-                    rsp_child.stdout_behavior = .Ignore;
-                    rsp_child.stderr_behavior = .Pipe;
-
-                    rsp_child.spawn() catch |err| break :err err;
                     var stderr_reader = rsp_child.stderr.?.readerStreaming(io, &.{});
-                    stderr = try stderr_reader.interface.allocRemaining(comp.gpa, .unlimited);
-                    break :term rsp_child.wait() catch |err| break :err err;
+                    stderr = try stderr_reader.interface.allocRemaining(gpa, .unlimited);
+                    break :term rsp_child.wait(io) catch |err| break :err err;
                 }
             },
             else => first_err,
         };
-        log.err("unable to spawn LLD {s}: {s}", .{ argv[0], @errorName(err) });
+        log.err("unable to spawn LLD {s}: {t}", .{ argv[0], err });
         return error.UnableToSpawnSelf;
     };
 
     const diags = &comp.link_diags;
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             if (comp.clang_passthrough_mode) std.process.exit(code);
             diags.lockAndParseLldStderr(argv[1], stderr);
             return error.LinkFailure;
@@ -1692,6 +1709,7 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
 }
 
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 const allocPrint = std.fmt.allocPrint;
@@ -1706,6 +1724,7 @@ const dev = @import("../dev.zig");
 const freebsd = @import("../libs/freebsd.zig");
 const glibc = @import("../libs/glibc.zig");
 const netbsd = @import("../libs/netbsd.zig");
+const openbsd = @import("../libs/openbsd.zig");
 const wasi_libc = @import("../libs/wasi_libc.zig");
 const link = @import("../link.zig");
 const lldMain = @import("../main.zig").lldMain;

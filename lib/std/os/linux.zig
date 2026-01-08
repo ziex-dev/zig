@@ -95,15 +95,14 @@ pub fn clone(
 pub const ARCH = arch_bits.ARCH;
 pub const HWCAP = arch_bits.HWCAP;
 pub const SC = arch_bits.SC;
-pub const Stat = arch_bits.Stat;
 pub const VDSO = arch_bits.VDSO;
-pub const blkcnt_t = arch_bits.blkcnt_t;
-pub const blksize_t = arch_bits.blksize_t;
-pub const dev_t = arch_bits.dev_t;
-pub const ino_t = arch_bits.ino_t;
-pub const mode_t = arch_bits.mode_t;
-pub const nlink_t = arch_bits.nlink_t;
-pub const off_t = arch_bits.off_t;
+pub const blkcnt_t = u64;
+pub const blksize_t = u32;
+pub const dev_t = u64;
+pub const ino_t = u64;
+pub const mode_t = u32;
+pub const nlink_t = u32;
+pub const off_t = i64;
 pub const time_t = arch_bits.time_t;
 pub const user_desc = arch_bits.user_desc;
 
@@ -325,6 +324,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -347,6 +347,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -369,6 +370,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -394,6 +396,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _27: u6 = 0,
     },
@@ -418,6 +421,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         _20: u1 = 0,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -440,6 +444,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -460,13 +465,16 @@ pub const O = switch (native_arch) {
         NOFOLLOW: bool = false,
         NOATIME: bool = false,
         CLOEXEC: bool = false,
-        _20: u1 = 0,
+        /// This is typically invalid without also setting `TMPFILE1` and `DIRECTORY`.
+        TMPFILE0: bool = false,
         PATH: bool = false,
-        _22: u10 = 0,
+        _22: u4 = 0,
+        /// This is typically invalid without also setting `TMPFILE0` and `DIRECTORY`.
+        TMPFILE1: bool = false,
+        _27: u5 = 0,
 
         // #define O_RSYNC    04010000
         // #define O_SYNC     04010000
-        // #define O_TMPFILE 020200000
         // #define O_NDELAY O_NONBLOCK
     },
     .m68k => packed struct(u32) {
@@ -491,6 +499,15 @@ pub const O = switch (native_arch) {
         _22: u10 = 0,
     },
     else => @compileError("missing std.os.linux.O constants for this architecture"),
+};
+
+pub const RENAME = packed struct(u32) {
+    /// Cannot be set together with `EXCHANGE`.
+    NOREPLACE: bool = false,
+    /// Cannot be set together with `NOREPLACE`.
+    EXCHANGE: bool = false,
+    WHITEOUT: bool = false,
+    _: u29 = 0,
 };
 
 /// Set by startup code, used by `getauxval`.
@@ -1338,9 +1355,22 @@ pub fn rename(old: [*:0]const u8, new: [*:0]const u8) usize {
     if (@hasField(SYS, "rename")) {
         return syscall2(.rename, @intFromPtr(old), @intFromPtr(new));
     } else if (@hasField(SYS, "renameat")) {
-        return syscall4(.renameat, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new));
+        return syscall4(
+            .renameat,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+        );
     } else {
-        return syscall5(.renameat2, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new), 0);
+        return syscall5(
+            .renameat2,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+            0,
+        );
     }
 }
 
@@ -1365,14 +1395,14 @@ pub fn renameat(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]co
     }
 }
 
-pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: u32) usize {
+pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: RENAME) usize {
     return syscall5(
         .renameat2,
         @as(usize, @bitCast(@as(isize, oldfd))),
         @intFromPtr(oldpath),
         @as(usize, @bitCast(@as(isize, newfd))),
         @intFromPtr(newpath),
-        flags,
+        @as(u32, @bitCast(flags)),
     );
 }
 
@@ -1421,7 +1451,7 @@ pub fn chmod(path: [*:0]const u8, mode: mode_t) usize {
     if (@hasField(SYS, "chmod")) {
         return syscall2(.chmod, @intFromPtr(path), mode);
     } else {
-        return fchmodat(AT.FDCWD, path, mode, 0);
+        return fchmodat(AT.FDCWD, path, mode);
     }
 }
 
@@ -1433,7 +1463,7 @@ pub fn fchown(fd: i32, owner: uid_t, group: gid_t) usize {
     }
 }
 
-pub fn fchmodat(fd: i32, path: [*:0]const u8, mode: mode_t, _: u32) usize {
+pub fn fchmodat(fd: i32, path: [*:0]const u8, mode: mode_t) usize {
     return syscall3(.fchmodat, @bitCast(@as(isize, fd)), @intFromPtr(path), mode);
 }
 
@@ -1562,14 +1592,14 @@ pub fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) usize {
     }
 }
 
-pub fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: i32) usize {
+pub fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: u32) usize {
     return syscall5(
         .linkat,
         @as(usize, @bitCast(@as(isize, oldfd))),
         @intFromPtr(oldpath),
         @as(usize, @bitCast(@as(isize, newfd))),
         @intFromPtr(newpath),
-        @as(usize, @bitCast(@as(isize, flags))),
+        flags,
     );
 }
 
@@ -1599,8 +1629,15 @@ pub fn wait4(pid: pid_t, status: *u32, flags: u32, usage: ?*rusage) usize {
     );
 }
 
-pub fn waitid(id_type: P, id: i32, infop: *siginfo_t, flags: u32) usize {
-    return syscall5(.waitid, @intFromEnum(id_type), @as(usize, @bitCast(@as(isize, id))), @intFromPtr(infop), flags, 0);
+pub fn waitid(id_type: P, id: i32, infop: *siginfo_t, flags: u32, usage: ?*rusage) usize {
+    return syscall5(
+        .waitid,
+        @intFromEnum(id_type),
+        @as(usize, @bitCast(@as(isize, id))),
+        @intFromPtr(infop),
+        flags,
+        @intFromPtr(usage),
+    );
 }
 
 pub const F = struct {
@@ -2199,61 +2236,13 @@ pub fn accept4(fd: i32, noalias addr: ?*sockaddr, noalias len: ?*socklen_t, flag
     return syscall4(.accept4, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(addr), @intFromPtr(len), flags);
 }
 
-pub fn fstat(fd: i32, stat_buf: *Stat) usize {
-    if (native_arch == .riscv32 or native_arch.isLoongArch()) {
-        // riscv32 and loongarch have made the interesting decision to not implement some of
-        // the older stat syscalls, including this one.
-        @compileError("No fstat syscall on this architecture.");
-    } else if (@hasField(SYS, "fstat64")) {
-        return syscall2(.fstat64, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(stat_buf));
-    } else {
-        return syscall2(.fstat, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(stat_buf));
-    }
-}
-
-pub fn stat(pathname: [*:0]const u8, statbuf: *Stat) usize {
-    if (native_arch == .riscv32 or native_arch.isLoongArch()) {
-        // riscv32 and loongarch have made the interesting decision to not implement some of
-        // the older stat syscalls, including this one.
-        @compileError("No stat syscall on this architecture.");
-    } else if (@hasField(SYS, "stat64")) {
-        return syscall2(.stat64, @intFromPtr(pathname), @intFromPtr(statbuf));
-    } else {
-        return syscall2(.stat, @intFromPtr(pathname), @intFromPtr(statbuf));
-    }
-}
-
-pub fn lstat(pathname: [*:0]const u8, statbuf: *Stat) usize {
-    if (native_arch == .riscv32 or native_arch.isLoongArch()) {
-        // riscv32 and loongarch have made the interesting decision to not implement some of
-        // the older stat syscalls, including this one.
-        @compileError("No lstat syscall on this architecture.");
-    } else if (@hasField(SYS, "lstat64")) {
-        return syscall2(.lstat64, @intFromPtr(pathname), @intFromPtr(statbuf));
-    } else {
-        return syscall2(.lstat, @intFromPtr(pathname), @intFromPtr(statbuf));
-    }
-}
-
-pub fn fstatat(dirfd: i32, path: [*:0]const u8, stat_buf: *Stat, flags: u32) usize {
-    if (native_arch == .riscv32 or native_arch.isLoongArch()) {
-        // riscv32 and loongarch have made the interesting decision to not implement some of
-        // the older stat syscalls, including this one.
-        @compileError("No fstatat syscall on this architecture.");
-    } else if (@hasField(SYS, "fstatat64")) {
-        return syscall4(.fstatat64, @as(usize, @bitCast(@as(isize, dirfd))), @intFromPtr(path), @intFromPtr(stat_buf), flags);
-    } else {
-        return syscall4(.fstatat, @as(usize, @bitCast(@as(isize, dirfd))), @intFromPtr(path), @intFromPtr(stat_buf), flags);
-    }
-}
-
-pub fn statx(dirfd: i32, path: [*:0]const u8, flags: u32, mask: u32, statx_buf: *Statx) usize {
+pub fn statx(dirfd: i32, path: [*:0]const u8, flags: u32, mask: STATX, statx_buf: *Statx) usize {
     return syscall5(
         .statx,
         @as(usize, @bitCast(@as(isize, dirfd))),
         @intFromPtr(path),
         flags,
-        mask,
+        @as(u32, @bitCast(mask)),
         @intFromPtr(statx_buf),
     );
 }
@@ -3665,14 +3654,14 @@ pub const W = struct {
     pub fn EXITSTATUS(s: u32) u8 {
         return @as(u8, @intCast((s & 0xff00) >> 8));
     }
-    pub fn TERMSIG(s: u32) u32 {
-        return s & 0x7f;
+    pub fn TERMSIG(s: u32) SIG {
+        return @enumFromInt(s & 0x7f);
     }
     pub fn STOPSIG(s: u32) u32 {
         return EXITSTATUS(s);
     }
     pub fn IFEXITED(s: u32) bool {
-        return TERMSIG(s) == 0;
+        return (s & 0x7f) == 0;
     }
     pub fn IFSTOPPED(s: u32) bool {
         return @as(u16, @truncate(((s & 0xffff) *% 0x10001) >> 8)) > 0x7f00;
@@ -6089,7 +6078,7 @@ pub const dirent64 = extern struct {
     off: u64,
     reclen: u16,
     type: u8,
-    name: u8, // field address is the address of first byte of name https://github.com/ziglang/zig/issues/173
+    name: [0]u8,
 };
 
 pub const dl_phdr_info = extern struct {
@@ -6252,6 +6241,16 @@ const siginfo_fields_union = extern union {
         syscall: i32,
         native_arch: u32,
     },
+};
+
+pub const CLD = enum(i32) {
+    EXITED = 1,
+    KILLED = 2,
+    DUMPED = 3,
+    TRAPPED = 4,
+    STOPPED = 5,
+    CONTINUED = 6,
+    _,
 };
 
 pub const siginfo_t = if (is_mips)
@@ -6940,96 +6939,159 @@ pub const utsname = extern struct {
 };
 pub const HOST_NAME_MAX = 64;
 
-pub const STATX_TYPE = 0x0001;
-pub const STATX_MODE = 0x0002;
-pub const STATX_NLINK = 0x0004;
-pub const STATX_UID = 0x0008;
-pub const STATX_GID = 0x0010;
-pub const STATX_ATIME = 0x0020;
-pub const STATX_MTIME = 0x0040;
-pub const STATX_CTIME = 0x0080;
-pub const STATX_INO = 0x0100;
-pub const STATX_SIZE = 0x0200;
-pub const STATX_BLOCKS = 0x0400;
-pub const STATX_BASIC_STATS = 0x07ff;
+pub const STATX = packed struct(u32) {
+    /// Want `mode & S.IFMT`.
+    TYPE: bool = false,
+    /// Want `mode & ~S.IFMT`.
+    MODE: bool = false,
+    /// Want the `nlink` member.
+    NLINK: bool = false,
+    /// Want the `uid` member.
+    UID: bool = false,
+    /// Want the `gid` member.
+    GID: bool = false,
+    /// Want the `atime` member.
+    ATIME: bool = false,
+    /// Want the `mtime` member.
+    MTIME: bool = false,
+    /// Want the `ctime` member.
+    CTIME: bool = false,
+    /// Want the `ino` member.
+    INO: bool = false,
+    /// Want the `size` member.
+    SIZE: bool = false,
+    /// Want the `blocks` member.
+    BLOCKS: bool = false,
+    /// Want the `btime` member.
+    BTIME: bool = false,
+    /// Want the `mnt_id` member.
+    MNT_ID: bool = false,
+    /// Want the `dio_mem_align` and `dio_offset_align` members.
+    DIOALIGN: bool = false,
+    /// Want the `stx_mnt_id` member.
+    MNT_ID_UNIQUE: bool = false,
+    /// Want the `sub` member.
+    SUBVOL: bool = false,
+    /// Want the `atomic_write_unit_min`, `atomic_write_unit_max` and
+    /// `atomic_write_segments_max` members.
+    WRITE_ATOMIC: bool = false,
+    /// Want the `dio_read_offset_align` member.
+    DIO_READ_ALIGN: bool = false,
+    __pad: u13 = 0,
+    /// Reserved for future expansion; must not be set.
+    __RESERVED: bool = false,
 
-pub const STATX_BTIME = 0x0800;
+    pub const BASIC_STATS: STATX = @bitCast(@as(u32, 0x7ff));
+};
 
-pub const STATX_ATTR_COMPRESSED = 0x0004;
-pub const STATX_ATTR_IMMUTABLE = 0x0010;
-pub const STATX_ATTR_APPEND = 0x0020;
-pub const STATX_ATTR_NODUMP = 0x0040;
-pub const STATX_ATTR_ENCRYPTED = 0x0800;
-pub const STATX_ATTR_AUTOMOUNT = 0x1000;
+/// Attributes about the state or features of a file as a bitmask.
+/// Flags marked [I] correspond to the `FS_IOC_SETFLAGS` values semantically.
+/// See [FS_IOC_SETFLAGS(2const)](https://man7.org/linux/man-pages/man2/FS_IOC_GETFLAGS.2const.html)
+/// for more.
+pub const STATX_ATTR = packed struct(u64) {
+    __pad1: u3 = 0,
+    /// [I] File is compressed by the fs.
+    COMPRESSED: bool = false,
+    __pad2: u1 = 0,
+    /// [I] File is marked immutable.
+    IMMUTABLE: bool = false,
+    /// [I] File is append-only.
+    APPEND: bool = false,
+    /// [I] File is not to be dumped.
+    NODUMP: bool = false,
+    /// [I] File requires a key to decrypt in the filesystem.
+    ENCRYPTED: bool = false,
+    /// File names a directory that triggers an automount.
+    AUTOMOUNT: bool = false,
+    /// File names the root of a mount.
+    MOUNT_ROOT: bool = false,
+    /// [I] File is protected by the `dm-verity` device.
+    VERITY: bool = false,
+    /// File is currently in the CPU direct access state.
+    /// Does not correspond to the per-inode DAX flag that some filesystems support.
+    DAX: bool = false,
+    /// File supports atomic write operations.
+    WRITE_ATOMIC: bool = false,
+    __pad3: u50 = 0,
+};
 
 pub const statx_timestamp = extern struct {
+    /// Number of seconds before or after `1970-01-01T00:00:00Z`.
     sec: i64,
+    /// Number of nanoseconds (0..999,999,999) after `sec`.
     nsec: u32,
+    // Reserved for future increases in resolution.
     __pad1: u32,
 };
 
 /// Renamed to `Statx` to not conflict with the `statx` function.
 pub const Statx = extern struct {
-    /// Mask of bits indicating filled fields
-    mask: u32,
-
-    /// Block size for filesystem I/O
+    /// Mask of bits indicating filled fields. Updated with what information
+    /// the kernel returned. Callers must check this field since support varies
+    /// by kernel version and filesystem.
+    mask: STATX,
+    /// Block size for filesystem I/O.
     blksize: u32,
-
-    /// Extra file attribute indicators
-    attributes: u64,
-
-    /// Number of hard links
+    /// Extra file attribute indicators.
+    attributes: STATX_ATTR,
+    /// Number of hard links.
     nlink: u32,
-
-    /// User ID of owner
+    /// User ID of owner.
     uid: uid_t,
-
-    /// Group ID of owner
+    /// Group ID of owner.
     gid: gid_t,
-
-    /// File type and mode
+    /// File type and mode.
     mode: u16,
-    __pad1: u16,
-
-    /// Inode number
+    __spare0: u16,
+    /// Inode number.
     ino: u64,
-
-    /// Total size in bytes
+    /// Total size in bytes.
     size: u64,
-
-    /// Number of 512B blocks allocated
+    /// Number of 512B blocks allocated.
     blocks: u64,
-
     /// Mask to show what's supported in `attributes`.
-    attributes_mask: u64,
-
-    /// Last access file timestamp
+    attributes_mask: STATX_ATTR,
+    /// Last access file timestamp.
     atime: statx_timestamp,
-
-    /// Creation file timestamp
+    /// Creation file timestamp.
     btime: statx_timestamp,
-
-    /// Last status change file timestamp
+    /// Last status change file timestamp.
     ctime: statx_timestamp,
-
-    /// Last modification file timestamp
+    /// Last modification file timestamp.
     mtime: statx_timestamp,
-
     /// Major ID, if this file represents a device.
     rdev_major: u32,
-
     /// Minor ID, if this file represents a device.
     rdev_minor: u32,
-
     /// Major ID of the device containing the filesystem where this file resides.
     dev_major: u32,
-
     /// Minor ID of the device containing the filesystem where this file resides.
     dev_minor: u32,
-
-    __pad2: [14]u64,
+    /// Mount ID
+    mnt_id: u64,
+    /// Memory buffer alignment for direct I/O.
+    dio_mem_align: u32,
+    /// File offset alignment for direct I/O.
+    dio_offset_align: u32,
+    /// Subvolume identifier.
+    subvol: u64,
+    /// Min atomic write unit in bytes.
+    atomic_write_unit_min: u32,
+    /// Max atomic write unit in bytes.
+    atomic_write_unit_max: u32,
+    /// Max atomic write segment count.
+    atomic_write_segments_max: u32,
+    /// File offset alignment for direct I/O reads.
+    dio_read_offset_align: u32,
+    /// Optimised max atomic write unit in bytes.
+    atomic_write_unit_max_opt: u32,
+    __spare2: [1]u32,
+    __spare3: [8]u64,
 };
+
+comptime {
+    assert(@sizeOf(Statx) == 0x100);
+}
 
 pub const addrinfo = extern struct {
     flags: AI,
@@ -8403,12 +8465,36 @@ pub const timezone = extern struct {
 pub const kernel_timespec = extern struct {
     sec: i64,
     nsec: i64,
+
+    /// For use with `utimensat` and `futimens`.
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    /// For use with `utimensat` and `futimens`.
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
 };
 
 // https://github.com/ziglang/zig/issues/4726#issuecomment-2190337877
 pub const timespec = if (native_arch == .hexagon or native_arch == .riscv32) kernel_timespec else extern struct {
     sec: isize,
     nsec: isize,
+
+    /// For use with `utimensat` and `futimens`.
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    /// For use with `utimensat` and `futimens`.
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
 };
 
 pub const XDP = struct {
@@ -9611,6 +9697,7 @@ pub const PERF = struct {
         pub const PERIOD = 1074275332;
         pub const SET_OUTPUT = 9221;
         pub const SET_FILTER = 1074275334;
+        pub const ID = 2148017159;
         pub const SET_BPF = 1074013192;
         pub const PAUSE_OUTPUT = 1074013193;
         pub const QUERY_BPF = 3221758986;
@@ -9854,126 +9941,4 @@ pub const cmsghdr = extern struct {
     len: usize,
     level: i32,
     type: i32,
-};
-
-/// The syscalls, but with Zig error sets, going through libc if linking libc,
-/// and with some footguns eliminated.
-pub const wrapped = struct {
-    pub const lfs64_abi = builtin.link_libc and (builtin.abi.isGnu() or builtin.abi.isAndroid());
-    const system = if (builtin.link_libc) std.c else std.os.linux;
-
-    pub const SendfileError = std.posix.UnexpectedError || error{
-        /// `out_fd` is an unconnected socket, or out_fd closed its read end.
-        BrokenPipe,
-        /// Descriptor is not valid or locked, or an mmap(2)-like operation is not available for in_fd.
-        UnsupportedOperation,
-        /// Nonblocking I/O has been selected but the write would block.
-        WouldBlock,
-        /// Unspecified error while reading from in_fd.
-        InputOutput,
-        /// Insufficient kernel memory to read from in_fd.
-        SystemResources,
-        /// `offset` is not `null` but the input file is not seekable.
-        Unseekable,
-    };
-
-    pub fn sendfile(
-        out_fd: fd_t,
-        in_fd: fd_t,
-        in_offset: ?*off_t,
-        in_len: usize,
-    ) SendfileError!usize {
-        const adjusted_len = @min(in_len, 0x7ffff000); // Prevents EOVERFLOW.
-        const sendfileSymbol = if (lfs64_abi) system.sendfile64 else system.sendfile;
-        const rc = sendfileSymbol(out_fd, in_fd, in_offset, adjusted_len);
-        switch (system.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .BADF => return invalidApiUsage(), // Always a race condition.
-            .FAULT => return invalidApiUsage(), // Segmentation fault.
-            .OVERFLOW => return unexpectedErrno(.OVERFLOW), // We avoid passing too large of a `count`.
-            .NOTCONN => return error.BrokenPipe, // `out_fd` is an unconnected socket
-            .INVAL => return error.UnsupportedOperation,
-            .AGAIN => return error.WouldBlock,
-            .IO => return error.InputOutput,
-            .PIPE => return error.BrokenPipe,
-            .NOMEM => return error.SystemResources,
-            .NXIO => return error.Unseekable,
-            .SPIPE => return error.Unseekable,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-
-    pub const CopyFileRangeError = std.posix.UnexpectedError || error{
-        /// One of:
-        /// * One or more file descriptors are not valid.
-        /// * fd_in is not open for reading; or fd_out is not open for writing.
-        /// * The O_APPEND flag is set for the open file description referred
-        /// to by the file descriptor fd_out.
-        BadFileFlags,
-        /// One of:
-        /// * An attempt was made to write at a position past the maximum file
-        ///   offset the kernel supports.
-        /// * An attempt was made to write a range that exceeds the allowed
-        ///   maximum file size. The maximum file size differs between
-        ///   filesystem implementations and can be different from the maximum
-        ///   allowed file offset.
-        /// * An attempt was made to write beyond the process's file size
-        ///   resource limit. This may also result in the process receiving a
-        ///   SIGXFSZ signal.
-        FileTooBig,
-        /// One of:
-        /// * either fd_in or fd_out is not a regular file
-        /// * flags argument is not zero
-        /// * fd_in and fd_out refer to the same file and the source and target ranges overlap.
-        InvalidArguments,
-        /// A low-level I/O error occurred while copying.
-        InputOutput,
-        /// Either fd_in or fd_out refers to a directory.
-        IsDir,
-        OutOfMemory,
-        /// There is not enough space on the target filesystem to complete the copy.
-        NoSpaceLeft,
-        /// (since Linux 5.19) the filesystem does not support this operation.
-        OperationNotSupported,
-        /// The requested source or destination range is too large to represent
-        /// in the specified data types.
-        Overflow,
-        /// fd_out refers to an immutable file.
-        PermissionDenied,
-        /// Either fd_in or fd_out refers to an active swap file.
-        SwapFile,
-        /// The files referred to by fd_in and fd_out are not on the same
-        /// filesystem, and the source and target filesystems are not of the
-        /// same type, or do not support cross-filesystem copy.
-        NotSameFileSystem,
-    };
-
-    pub fn copy_file_range(fd_in: fd_t, off_in: ?*i64, fd_out: fd_t, off_out: ?*i64, len: usize, flags: u32) CopyFileRangeError!usize {
-        const use_c = std.c.versionCheck(if (builtin.abi.isAndroid()) .{ .major = 34, .minor = 0, .patch = 0 } else .{ .major = 2, .minor = 27, .patch = 0 });
-        const sys = if (use_c) std.c else std.os.linux;
-        const rc = sys.copy_file_range(fd_in, off_in, fd_out, off_out, len, flags);
-        switch (sys.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .BADF => return error.BadFileFlags,
-            .FBIG => return error.FileTooBig,
-            .INVAL => return error.InvalidArguments,
-            .IO => return error.InputOutput,
-            .ISDIR => return error.IsDir,
-            .NOMEM => return error.OutOfMemory,
-            .NOSPC => return error.NoSpaceLeft,
-            .OPNOTSUPP => return error.OperationNotSupported,
-            .OVERFLOW => return error.Overflow,
-            .PERM => return error.PermissionDenied,
-            .TXTBSY => return error.SwapFile,
-            .XDEV => return error.NotSameFileSystem,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-
-    const unexpectedErrno = std.posix.unexpectedErrno;
-
-    fn invalidApiUsage() error{Unexpected} {
-        if (builtin.mode == .Debug) @panic("invalid API usage");
-        return error.Unexpected;
-    }
 };

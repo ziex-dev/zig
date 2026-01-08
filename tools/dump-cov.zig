@@ -2,25 +2,17 @@
 //! including file:line:column information for each PC.
 
 const std = @import("std");
+const Io = std.Io;
 const fatal = std.process.fatal;
 const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
-pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
-    const gpa = debug_allocator.allocator();
-
-    var arena_instance: std.heap.ArenaAllocator = .init(gpa);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa);
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
     const target_query_str = switch (args.len) {
         3 => "native",
@@ -51,12 +43,13 @@ pub fn main() !void {
     var coverage: std.debug.Coverage = .init;
     defer coverage.deinit(gpa);
 
-    var debug_info = std.debug.Info.load(gpa, exe_path, &coverage, target.ofmt, target.cpu.arch) catch |err| {
-        fatal("failed to load debug info for {f}: {s}", .{ exe_path, @errorName(err) });
+    var debug_info = std.debug.Info.load(gpa, io, exe_path, &coverage, target.ofmt, target.cpu.arch) catch |err| {
+        fatal("failed to load debug info for {f}: {t}", .{ exe_path, err });
     };
     defer debug_info.deinit(gpa);
 
     const cov_bytes = cov_path.root_dir.handle.readFileAllocOptions(
+        io,
         cov_path.sub_path,
         arena,
         .limited(1 << 30),
@@ -67,7 +60,7 @@ pub fn main() !void {
     };
 
     var stdout_buffer: [4000]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     const header: *SeenPcsHeader = @ptrCast(cov_bytes);
@@ -83,7 +76,7 @@ pub fn main() !void {
     std.mem.sortUnstable(usize, sorted_pcs, {}, std.sort.asc(usize));
 
     const source_locations = try arena.alloc(std.debug.Coverage.SourceLocation, sorted_pcs.len);
-    try debug_info.resolveAddresses(gpa, sorted_pcs, source_locations);
+    try debug_info.resolveAddresses(gpa, io, sorted_pcs, source_locations);
 
     const seen_pcs = header.seenBits();
 

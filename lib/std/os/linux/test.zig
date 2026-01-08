@@ -10,16 +10,18 @@ const expectEqual = std.testing.expectEqual;
 const fs = std.fs;
 
 test "fallocate" {
-    if (builtin.cpu.arch.isMIPS64() and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23809
+    if (builtin.cpu.arch.isMIPS64() and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30220
+
+    const io = std.testing.io;
 
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const path = "test_fallocate";
-    const file = try tmp.dir.createFile(path, .{ .truncate = true, .mode = 0o666 });
-    defer file.close();
+    const file = try tmp.dir.createFile(io, path, .{ .truncate = true, .permissions = .fromMode(0o666) });
+    defer file.close(io);
 
-    try expect((try file.stat()).size == 0);
+    try expect((try file.stat(io)).size == 0);
 
     const len: i64 = 65536;
     switch (linux.errno(linux.fallocate(file.handle, 0, 0, len))) {
@@ -29,7 +31,7 @@ test "fallocate" {
         else => |errno| std.debug.panic("unhandled errno: {}", .{errno}),
     }
 
-    try expect((try file.stat()).size == len);
+    try expect((try file.stat(io)).size == len);
 }
 
 test "getpid" {
@@ -77,33 +79,31 @@ test "timer" {
 }
 
 test "statx" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const tmp_file_name = "just_a_temporary_file.txt";
-    var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
+    defer file.close(io);
 
-    var statx_buf: linux.Statx = undefined;
-    switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, linux.STATX_BASIC_STATS, &statx_buf))) {
+    var buf: linux.Statx = undefined;
+    switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .BASIC_STATS, &buf))) {
         .SUCCESS => {},
         else => unreachable,
     }
 
-    if (builtin.cpu.arch == .riscv32 or builtin.cpu.arch.isLoongArch()) return error.SkipZigTest; // No fstatat, so the rest of the test is meaningless.
-
-    var stat_buf: linux.Stat = undefined;
-    switch (linux.errno(linux.fstatat(file.handle, "", &stat_buf, linux.AT.EMPTY_PATH))) {
-        .SUCCESS => {},
-        else => unreachable,
-    }
-
-    try expect(stat_buf.mode == statx_buf.mode);
-    try expect(@as(u32, @bitCast(stat_buf.uid)) == statx_buf.uid);
-    try expect(@as(u32, @bitCast(stat_buf.gid)) == statx_buf.gid);
-    try expect(@as(u64, @bitCast(@as(i64, stat_buf.size))) == statx_buf.size);
-    try expect(@as(u64, @bitCast(@as(i64, stat_buf.blksize))) == statx_buf.blksize);
-    try expect(@as(u64, @bitCast(@as(i64, stat_buf.blocks))) == statx_buf.blocks);
+    const uid = linux.getuid();
+    const gid = linux.getgid();
+    if (buf.mask.MODE)
+        try expectEqual(@as(linux.mode_t, linux.S.IFREG), buf.mode & linux.S.IFMT);
+    if (buf.mask.UID)
+        try expectEqual(uid, buf.uid);
+    if (buf.mask.GID)
+        try expectEqual(gid, buf.gid);
+    if (buf.mask.SIZE)
+        try expectEqual(@as(u64, 0), buf.size);
 }
 
 test "user and group ids" {
@@ -115,15 +115,17 @@ test "user and group ids" {
 }
 
 test "fadvise" {
+    const io = std.testing.io;
+
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
     const tmp_file_name = "temp_posix_fadvise.txt";
-    var file = try tmp.dir.createFile(tmp_file_name, .{});
-    defer file.close();
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
+    defer file.close(io);
 
     var buf: [2048]u8 = undefined;
-    try file.writeAll(&buf);
+    try file.writeStreamingAll(io, &buf);
 
     const ret = linux.fadvise(file.handle, 0, 0, linux.POSIX_FADV.SEQUENTIAL);
     try expectEqual(@as(usize, 0), ret);
@@ -403,14 +405,6 @@ test "futex2_requeue" {
 
     const rc = linux.futex2_requeue(&futexes, .{}, 2, 2);
     try expectEqual(0, rc);
-}
-
-test "copy_file_range error" {
-    const fds = try std.posix.pipe();
-    defer std.posix.close(fds[0]);
-    defer std.posix.close(fds[1]);
-
-    try std.testing.expectError(error.InvalidArguments, linux.wrapped.copy_file_range(fds[0], null, fds[1], null, 1, 0));
 }
 
 test {

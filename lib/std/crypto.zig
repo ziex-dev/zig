@@ -184,7 +184,7 @@ pub const pwhash = struct {
 
     pub const Error = HasherError || error{AllocatorRequired};
     pub const HasherError = KdfError || phc_format.Error;
-    pub const KdfError = errors.Error || std.mem.Allocator.Error || std.Thread.SpawnError;
+    pub const KdfError = errors.Error || std.mem.Allocator.Error || std.Thread.SpawnError || std.Io.Cancelable;
 
     pub const argon2 = @import("crypto/argon2.zig");
     pub const bcrypt = @import("crypto/bcrypt.zig");
@@ -234,9 +234,6 @@ pub const nacl = struct {
 
 /// Finite-field arithmetic.
 pub const ff = @import("crypto/ff.zig");
-
-/// This is a thread-local, cryptographically secure pseudo random number generator.
-pub const random = @import("crypto/tlcsprng.zig").interface;
 
 /// Encoding and decoding
 pub const codecs = @import("crypto/codecs.zig");
@@ -306,6 +303,9 @@ test {
     _ = dh.X25519;
 
     _ = kem.kyber_d00;
+    _ = kem.hybrid;
+    _ = kem.kyber_d00;
+    _ = kem.ml_kem;
 
     _ = ecc.Curve25519;
     _ = ecc.Edwards25519;
@@ -343,6 +343,7 @@ test {
 
     _ = sign.Ed25519;
     _ = sign.ecdsa;
+    _ = sign.mldsa;
 
     _ = stream.chacha.ChaCha20IETF;
     _ = stream.chacha.ChaCha12IETF;
@@ -364,18 +365,10 @@ test {
     _ = secureZero;
     _ = timing_safe;
     _ = ff;
-    _ = random;
     _ = errors;
     _ = tls;
     _ = Certificate;
     _ = codecs;
-}
-
-test "CSPRNG" {
-    const a = random.int(u64);
-    const b = random.int(u64);
-    const c = random.int(u64);
-    try std.testing.expect(a ^ b ^ c != 0);
 }
 
 test "issue #4532: no index out of bounds" {

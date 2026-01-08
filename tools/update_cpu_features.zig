@@ -1,6 +1,8 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const fs = std.fs;
+
+const std = @import("std");
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const mem = std.mem;
 const json = std.json;
 const assert = std.debug.assert;
@@ -1881,12 +1883,11 @@ const targets = [_]ArchTarget{
     },
 };
 
-pub fn main() anyerror!void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
 
-    var args = try std.process.argsWithAllocator(arena);
+    var args = try init.minimal.args.iterateAllocator(arena);
     const args0 = args.next().?;
 
     const llvm_tblgen_exe = args.next() orelse
@@ -1919,51 +1920,40 @@ pub fn main() anyerror!void {
     // there shouldn't be any more argument after the optional filter
     if (args.skip()) usageAndExit(args0, 1);
 
-    var zig_src_dir = try fs.cwd().openDir(zig_src_root, .{});
-    defer zig_src_dir.close();
+    var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
+    defer zig_src_dir.close(io);
 
-    const root_progress = std.Progress.start(.{ .estimated_total_items = targets.len });
+    const root_progress = std.Progress.start(io, .{ .estimated_total_items = targets.len });
     defer root_progress.end();
 
-    if (builtin.single_threaded) {
-        for (targets) |target| {
-            if (filter) |zig_name| if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
-            try processOneTarget(.{
-                .llvm_tblgen_exe = llvm_tblgen_exe,
-                .llvm_src_root = llvm_src_root,
-                .zig_src_dir = zig_src_dir,
-                .root_progress = root_progress,
-                .target = target,
-            });
-        }
-    } else {
-        var pool: std.Thread.Pool = undefined;
-        try pool.init(.{ .allocator = arena, .n_jobs = targets.len });
-        defer pool.deinit();
+    var group: Io.Group = .init;
+    defer group.cancel(io);
 
-        for (targets) |target| {
-            if (filter) |zig_name| if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
-            const job = Job{
-                .llvm_tblgen_exe = llvm_tblgen_exe,
-                .llvm_src_root = llvm_src_root,
-                .zig_src_dir = zig_src_dir,
-                .root_progress = root_progress,
-                .target = target,
-            };
-            try pool.spawn(processOneTarget, .{job});
+    for (targets) |target| {
+        if (filter) |zig_name| {
+            if (!std.mem.eql(u8, target.zig_name, zig_name)) continue;
         }
+        group.async(io, processOneTarget, .{ io, .{
+            .llvm_tblgen_exe = llvm_tblgen_exe,
+            .llvm_src_root = llvm_src_root,
+            .zig_src_dir = zig_src_dir,
+            .root_progress = root_progress,
+            .target = target,
+        } });
     }
+
+    try group.await(io);
 }
 
 const Job = struct {
     llvm_tblgen_exe: []const u8,
     llvm_src_root: []const u8,
-    zig_src_dir: std.fs.Dir,
+    zig_src_dir: Dir,
     root_progress: std.Progress.Node,
     target: ArchTarget,
 };
 
-fn processOneTarget(job: Job) void {
+fn processOneTarget(io: Io, job: Job) void {
     errdefer |err| std.debug.panic("panic: {s}", .{@errorName(err)});
     const target = job.target;
 
@@ -1995,8 +1985,7 @@ fn processOneTarget(job: Job) void {
             }),
         };
 
-        const child_result = try std.process.Child.run(.{
-            .allocator = arena,
+        const child_result = try std.process.run(arena, io, .{
             .argv = &child_args,
             .max_output_bytes = 500 * 1024 * 1024,
         });
@@ -2006,7 +1995,7 @@ fn processOneTarget(job: Job) void {
         }
 
         const json_text = switch (child_result.term) {
-            .Exited => |code| if (code == 0) child_result.stdout else {
+            .exited => |code| if (code == 0) child_result.stdout else {
                 std.debug.print("llvm-tblgen exited with code {d}\n", .{code});
                 std.process.exit(1);
             },
@@ -2243,15 +2232,15 @@ fn processOneTarget(job: Job) void {
 
     const render_progress = progress_node.start("rendering Zig code", 0);
 
-    var target_dir = try job.zig_src_dir.openDir("lib/std/Target", .{});
-    defer target_dir.close();
+    var target_dir = try job.zig_src_dir.openDir(io, "lib/std/Target", .{});
+    defer target_dir.close(io);
 
     const zig_code_basename = try std.fmt.allocPrint(arena, "{s}.zig", .{target.zig_name});
-    var zig_code_file = try target_dir.createFile(zig_code_basename, .{});
-    defer zig_code_file.close();
+    var zig_code_file = try target_dir.createFile(io, zig_code_basename, .{});
+    defer zig_code_file.close(io);
 
     var zig_code_file_buffer: [4096]u8 = undefined;
-    var zig_code_file_writer = zig_code_file.writer(&zig_code_file_buffer);
+    var zig_code_file_writer = zig_code_file.writer(io, &zig_code_file_buffer);
     const w = &zig_code_file_writer.interface;
 
     try w.writeAll(
@@ -2427,8 +2416,9 @@ fn processOneTarget(job: Job) void {
 }
 
 fn usageAndExit(arg0: []const u8, code: u8) noreturn {
-    const stderr, _ = std.debug.lockStderrWriter(&.{});
-    stderr.print(
+    const stderr = std.debug.lockStderr(&.{});
+    const w = &stderr.file_writer.interface;
+    w.print(
         \\Usage: {s} /path/to/llvm-tblgen /path/git/llvm-project /path/git/zig [zig_name filter]
         \\
         \\Updates lib/std/target/<target>.zig from llvm/lib/Target/<Target>/<Target>.td .

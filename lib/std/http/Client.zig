@@ -321,8 +321,8 @@ pub const Connection = struct {
             assert(base.ptr + alloc_len == socket_read_buffer.ptr + socket_read_buffer.len);
             @memcpy(host_buffer, remote_host.bytes);
             const tls: *Tls = @ptrCast(base);
-            var random_buffer: [176]u8 = undefined;
-            std.crypto.random.bytes(&random_buffer);
+            var random_buffer: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
+            io.random(&random_buffer);
             tls.* = .{
                 .connection = .{
                     .client = client,
@@ -1307,7 +1307,7 @@ pub fn deinit(client: *Client) void {
 /// Asserts the client has no active connections.
 /// Uses `arena` for a few small allocations that must outlive the client, or
 /// at least until those fields are set to different values.
-pub fn initDefaultProxies(client: *Client, arena: Allocator) !void {
+pub fn initDefaultProxies(client: *Client, arena: Allocator, environ_map: *std.process.Environ.Map) !void {
     // Prevent any new connections from being created.
     client.connection_pool.mutex.lock();
     defer client.connection_pool.mutex.unlock();
@@ -1315,27 +1315,26 @@ pub fn initDefaultProxies(client: *Client, arena: Allocator) !void {
     assert(client.connection_pool.used.first == null); // There are active requests.
 
     if (client.http_proxy == null) {
-        client.http_proxy = try createProxyFromEnvVar(arena, &.{
+        client.http_proxy = try createProxyFromEnvVar(arena, environ_map, &.{
             "http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY",
         });
     }
 
     if (client.https_proxy == null) {
-        client.https_proxy = try createProxyFromEnvVar(arena, &.{
+        client.https_proxy = try createProxyFromEnvVar(arena, environ_map, &.{
             "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY",
         });
     }
 }
 
-fn createProxyFromEnvVar(arena: Allocator, env_var_names: []const []const u8) !?*Proxy {
+fn createProxyFromEnvVar(
+    arena: Allocator,
+    environ_map: *std.process.Environ.Map,
+    env_var_names: []const []const u8,
+) !?*Proxy {
     const content = for (env_var_names) |name| {
-        const content = std.process.getEnvVarOwned(arena, name) catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => continue,
-            else => |e| return e,
-        };
-
+        const content = environ_map.get(name) orelse continue;
         if (content.len == 0) continue;
-
         break content;
     } else return null;
 
@@ -1473,6 +1472,8 @@ pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{N
 ///
 /// This function is threadsafe.
 pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connection {
+    const io = client.io;
+
     if (client.connection_pool.findConnection(.{
         .host = path,
         .port = 0,
@@ -1485,7 +1486,7 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     conn.* = .{ .data = undefined };
 
     const stream = try Io.net.connectUnixSocket(path);
-    errdefer stream.close();
+    errdefer stream.close(io);
 
     conn.data = .{
         .stream = stream,
@@ -1674,14 +1675,14 @@ pub fn request(
     if (std.debug.runtime_safety) {
         for (options.extra_headers) |header| {
             assert(header.name.len != 0);
-            assert(std.mem.indexOfScalar(u8, header.name, ':') == null);
-            assert(std.mem.indexOfPosLinear(u8, header.name, 0, "\r\n") == null);
-            assert(std.mem.indexOfPosLinear(u8, header.value, 0, "\r\n") == null);
+            assert(std.mem.findScalar(u8, header.name, ':') == null);
+            assert(std.mem.findPosLinear(u8, header.name, 0, "\r\n") == null);
+            assert(std.mem.findPosLinear(u8, header.value, 0, "\r\n") == null);
         }
         for (options.privileged_headers) |header| {
             assert(header.name.len != 0);
-            assert(std.mem.indexOfPosLinear(u8, header.name, 0, "\r\n") == null);
-            assert(std.mem.indexOfPosLinear(u8, header.value, 0, "\r\n") == null);
+            assert(std.mem.findPosLinear(u8, header.name, 0, "\r\n") == null);
+            assert(std.mem.findPosLinear(u8, header.value, 0, "\r\n") == null);
         }
     }
 

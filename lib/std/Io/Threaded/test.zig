@@ -1,3 +1,5 @@
+//! Tests belong here if they access internal state of std.Io.Threaded or
+//! otherwise assume details of that particular implementation.
 const builtin = @import("builtin");
 
 const std = @import("std");
@@ -11,7 +13,10 @@ test "concurrent vs main prevents deadlock via oversubscription" {
         return error.SkipZigTest;
     }
 
-    var threaded: Io.Threaded = .init(std.testing.allocator);
+    var threaded: Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -44,7 +49,10 @@ test "concurrent vs concurrent prevents deadlock via oversubscription" {
         return error.SkipZigTest;
     }
 
-    var threaded: Io.Threaded = .init(std.testing.allocator);
+    var threaded: Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -78,7 +86,10 @@ test "async/concurrent context and result alignment" {
     var buffer: [2048]u8 align(@alignOf(ByteArray512)) = undefined;
     var fba: std.heap.FixedBufferAllocator = .init(&buffer);
 
-    var threaded: std.Io.Threaded = .init(fba.allocator());
+    var threaded: std.Io.Threaded = .init(fba.allocator(), .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -111,7 +122,10 @@ test "Group.async context alignment" {
     var buffer: [2048]u8 align(@alignOf(ByteArray512)) = undefined;
     var fba: std.heap.FixedBufferAllocator = .init(&buffer);
 
-    var threaded: std.Io.Threaded = .init(fba.allocator());
+    var threaded: std.Io.Threaded = .init(fba.allocator(), .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -122,7 +136,7 @@ test "Group.async context alignment" {
     var group: std.Io.Group = .init;
     var result: ByteArray512 = undefined;
     group.async(io, concatByteArraysResultPtr, .{ a, b, &result });
-    group.wait(io);
+    try group.await(io);
     try std.testing.expectEqualSlices(u8, &expected.x, &result.x);
 }
 
@@ -131,11 +145,62 @@ fn returnArray() [32]u8 {
 }
 
 test "async with array return type" {
-    var threaded: std.Io.Threaded = .init(std.testing.allocator);
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
     defer threaded.deinit();
     const io = threaded.io();
 
     var future = io.async(returnArray, .{});
     const result = future.await(io);
     try std.testing.expectEqualSlices(u8, &@as([32]u8, @splat(5)), &result);
+}
+
+test "cancel blocked read from pipe" {
+    const global = struct {
+        fn readFromPipe(io: Io, pipe: Io.File) !void {
+            var buf: [1]u8 = undefined;
+            if (pipe.readStreaming(io, &.{&buf})) |_| {
+                return error.UnexpectedData;
+            } else |err| switch (err) {
+                error.Canceled => return,
+                else => |e| return e,
+            }
+        }
+    };
+
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    var read_end: Io.File = undefined;
+    var write_end: Io.File = undefined;
+    switch (builtin.target.os.tag) {
+        .wasi => return error.SkipZigTest,
+        .windows => try std.os.windows.CreatePipe(&read_end.handle, &write_end.handle, &.{
+            .nLength = @sizeOf(std.os.windows.SECURITY_ATTRIBUTES),
+            .lpSecurityDescriptor = null,
+            .bInheritHandle = std.os.windows.FALSE,
+        }),
+        else => {
+            const pipe = try std.Io.Threaded.pipe2(.{});
+            read_end = .{ .handle = pipe[0] };
+            write_end = .{ .handle = pipe[1] };
+        },
+    }
+    defer {
+        read_end.close(io);
+        write_end.close(io);
+    }
+
+    var future = io.concurrent(global.readFromPipe, .{ io, read_end }) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+    defer _ = future.cancel(io) catch {};
+    try io.sleep(.fromMilliseconds(10), .awake);
+    try future.cancel(io);
 }

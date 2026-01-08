@@ -1,5 +1,13 @@
 //! A helper type for loading an ELF file and collecting its DWARF debug information, unwind
 //! information, and symbol table.
+const ElfFile = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const Endian = std.builtin.Endian;
+const Dwarf = std.debug.Dwarf;
+const Allocator = std.mem.Allocator;
+const elf = std.elf;
 
 is_64: bool,
 endian: Endian,
@@ -59,15 +67,16 @@ pub const DebugInfoSearchPaths = struct {
     };
 
     pub fn native(exe_path: []const u8) DebugInfoSearchPaths {
-        return .{
+        if (std.Options.elf_debug_info_search_paths) |f| return f(exe_path);
+        if (std.Options.debug_threaded_io) |t| return .{
             .debuginfod_client = p: {
-                if (std.posix.getenv("DEBUGINFOD_CACHE_PATH")) |p| {
+                if (t.environString("DEBUGINFOD_CACHE_PATH")) |p| {
                     break :p .{ p, "" };
                 }
-                if (std.posix.getenv("XDG_CACHE_HOME")) |cache_path| {
+                if (t.environString("XDG_CACHE_HOME")) |cache_path| {
                     break :p .{ cache_path, "/debuginfod_client" };
                 }
-                if (std.posix.getenv("HOME")) |home_path| {
+                if (t.environString("HOME")) |home_path| {
                     break :p .{ home_path, "/.cache/debuginfod_client" };
                 }
                 break :p null;
@@ -77,6 +86,7 @@ pub const DebugInfoSearchPaths = struct {
             },
             .exe_dir = std.fs.path.dirname(exe_path) orelse ".",
         };
+        @compileError("std.Options.elf_debug_info_search_paths must be provided");
     }
 };
 
@@ -115,7 +125,8 @@ pub const LoadError = error{
 
 pub fn load(
     gpa: Allocator,
-    elf_file: std.fs.File,
+    io: Io,
+    elf_file: Io.File,
     opt_build_id: ?[]const u8,
     di_search_paths: *const DebugInfoSearchPaths,
 ) LoadError!ElfFile {
@@ -123,7 +134,7 @@ pub fn load(
     errdefer arena_instance.deinit();
     const arena = arena_instance.allocator();
 
-    var result = loadInner(arena, elf_file, null) catch |err| switch (err) {
+    var result = loadInner(arena, io, elf_file, null) catch |err| switch (err) {
         error.CrcMismatch => unreachable, // we passed crc as null
         else => |e| return e,
     };
@@ -148,7 +159,7 @@ pub fn load(
             if (build_id.len < 3) break :build_id;
 
             for (di_search_paths.global_debug) |global_debug| {
-                if (try loadSeparateDebugFile(arena, &result, null, "{s}/.build-id/{x}/{x}.debug", .{
+                if (try loadSeparateDebugFile(arena, io, &result, null, "{s}/.build-id/{x}/{x}.debug", .{
                     global_debug,
                     build_id[0..1],
                     build_id[1..],
@@ -156,7 +167,7 @@ pub fn load(
             }
 
             if (di_search_paths.debuginfod_client) |components| {
-                if (try loadSeparateDebugFile(arena, &result, null, "{s}{s}/{x}/debuginfo", .{
+                if (try loadSeparateDebugFile(arena, io, &result, null, "{s}{s}/{x}/debuginfo", .{
                     components[0],
                     components[1],
                     build_id,
@@ -173,18 +184,18 @@ pub fn load(
 
             const exe_dir = di_search_paths.exe_dir orelse break :debug_link;
 
-            if (try loadSeparateDebugFile(arena, &result, debug_crc, "{s}/{s}", .{
+            if (try loadSeparateDebugFile(arena, io, &result, debug_crc, "{s}/{s}", .{
                 exe_dir,
                 debug_filename,
             })) |mapped| break :load_di mapped;
-            if (try loadSeparateDebugFile(arena, &result, debug_crc, "{s}/.debug/{s}", .{
+            if (try loadSeparateDebugFile(arena, io, &result, debug_crc, "{s}/.debug/{s}", .{
                 exe_dir,
                 debug_filename,
             })) |mapped| break :load_di mapped;
             for (di_search_paths.global_debug) |global_debug| {
                 // This looks like a bug; it isn't. They really do embed the absolute path to the
                 // exe's dirname, *under* the global debug path.
-                if (try loadSeparateDebugFile(arena, &result, debug_crc, "{s}/{s}/{s}", .{
+                if (try loadSeparateDebugFile(arena, io, &result, debug_crc, "{s}/{s}/{s}", .{
                     global_debug,
                     exe_dir,
                     debug_filename,
@@ -358,12 +369,19 @@ const Section = struct {
     const Array = std.enums.EnumArray(Section.Id, ?Section);
 };
 
-fn loadSeparateDebugFile(arena: Allocator, main_loaded: *LoadInnerResult, opt_crc: ?u32, comptime fmt: []const u8, args: anytype) Allocator.Error!?[]align(std.heap.page_size_min) const u8 {
+fn loadSeparateDebugFile(
+    arena: Allocator,
+    io: Io,
+    main_loaded: *LoadInnerResult,
+    opt_crc: ?u32,
+    comptime fmt: []const u8,
+    args: anytype,
+) Allocator.Error!?[]align(std.heap.page_size_min) const u8 {
     const path = try std.fmt.allocPrint(arena, fmt, args);
-    const elf_file = std.fs.cwd().openFile(path, .{}) catch return null;
-    defer elf_file.close();
+    const elf_file = Io.Dir.cwd().openFile(io, path, .{}) catch return null;
+    defer elf_file.close(io);
 
-    const result = loadInner(arena, elf_file, opt_crc) catch |err| switch (err) {
+    const result = loadInner(arena, io, elf_file, opt_crc) catch |err| switch (err) {
         error.OutOfMemory => |e| return e,
         error.CrcMismatch => return null,
         else => return null,
@@ -408,13 +426,14 @@ const LoadInnerResult = struct {
 };
 fn loadInner(
     arena: Allocator,
-    elf_file: std.fs.File,
+    io: Io,
+    elf_file: Io.File,
     opt_crc: ?u32,
 ) (LoadError || error{ CrcMismatch, Streaming, Canceled })!LoadInnerResult {
     const mapped_mem: []align(std.heap.page_size_min) const u8 = mapped: {
         const file_len = std.math.cast(
             usize,
-            elf_file.getEndPos() catch |err| switch (err) {
+            elf_file.length(io) catch |err| switch (err) {
                 error.PermissionDenied => unreachable, // not asking for PROT_EXEC
                 else => |e| return e,
             },
@@ -529,10 +548,3 @@ fn loadInner(
         .mapped_mem = mapped_mem,
     };
 }
-
-const std = @import("std");
-const Endian = std.builtin.Endian;
-const Dwarf = std.debug.Dwarf;
-const ElfFile = @This();
-const Allocator = std.mem.Allocator;
-const elf = std.elf;

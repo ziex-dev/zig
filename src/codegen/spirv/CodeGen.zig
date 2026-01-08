@@ -254,7 +254,7 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
             try cg.module.debugName(func_result_id, nav.fqn.toSlice(ip));
         },
         .global => {
-            assert(ip.indexToKey(val.toIntern()) == .@"extern");
+            const key = ip.indexToKey(val.toIntern()).@"extern";
 
             const storage_class = cg.module.storageClass(nav.getAddrspace());
             assert(storage_class != .generic); // These should be instance globals
@@ -277,14 +277,32 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
                         }
                     }
 
-                    switch (ip.indexToKey(ty.toIntern())) {
-                        .func_type, .opaque_type => {},
-                        else => {
-                            try cg.module.decorate(ptr_ty_id, .{
-                                .array_stride = .{ .array_stride = @intCast(ty.abiSize(zcu)) },
+                    try cg.module.decorate(ptr_ty_id, .{
+                        .array_stride = .{ .array_stride = @intCast(ty.abiSize(zcu)) },
+                    });
+
+                    if (key.decoration) |decoration| switch (decoration) {
+                        .location => |location| {
+                            if (storage_class != .output and storage_class != .input and storage_class != .uniform_constant) {
+                                return cg.fail("storage class must be one of (output, input, uniform_constant) but is {s}", .{@tagName(storage_class)});
+                            }
+                            try cg.module.decorate(result_id, .{
+                                .location = .{ .location = location },
                             });
                         },
-                    }
+                        .descriptor => |descriptor| {
+                            if (storage_class != .storage_buffer and storage_class != .uniform and storage_class != .uniform_constant) {
+                                return cg.fail("storage class must be one of (storage_buffer, uniform, uniform_constant) but is {s}", .{@tagName(storage_class)});
+                            }
+                            try cg.module.decorate(result_id, .{
+                                .binding = .{ .binding_point = descriptor.binding },
+                            });
+
+                            try cg.module.decorate(result_id, .{
+                                .descriptor_set = .{ .descriptor_set = descriptor.set },
+                            });
+                        },
+                    };
                 },
                 else => {},
             }
@@ -2270,6 +2288,9 @@ fn buildWideMul(
 ) !struct { Temporary, Temporary } {
     const pt = cg.pt;
     const zcu = cg.module.zcu;
+    const comp = zcu.comp;
+    const gpa = comp.gpa;
+    const io = comp.io;
     const target = cg.module.zcu.getTarget();
     const ip = &zcu.intern_pool;
 
@@ -2297,14 +2318,14 @@ fn buildWideMul(
             };
 
             for (0..ops) |i| {
-                try cg.body.emit(cg.module.gpa, .OpIMul, .{
+                try cg.body.emit(gpa, .OpIMul, .{
                     .id_result_type = arith_op_ty_id,
                     .id_result = value_results.at(i),
                     .operand_1 = lhs_op.at(i),
                     .operand_2 = rhs_op.at(i),
                 });
 
-                try cg.body.emit(cg.module.gpa, .OpExtInst, .{
+                try cg.body.emit(gpa, .OpExtInst, .{
                     .id_result_type = arith_op_ty_id,
                     .id_result = overflow_results.at(i),
                     .set = set,
@@ -2316,7 +2337,7 @@ fn buildWideMul(
         .vulkan, .opengl => {
             // Operations return a struct{T, T}
             // where T is maybe vectorized.
-            const op_result_ty: Type = .fromInterned(try ip.getTupleType(zcu.gpa, pt.tid, .{
+            const op_result_ty: Type = .fromInterned(try ip.getTupleType(gpa, io, pt.tid, .{
                 .types = &.{ arith_op_ty.toIntern(), arith_op_ty.toIntern() },
                 .values = &.{ .none, .none },
             }));
@@ -2330,7 +2351,7 @@ fn buildWideMul(
             for (0..ops) |i| {
                 const op_result = cg.module.allocId();
 
-                try cg.body.emitRaw(cg.module.gpa, opcode, 4);
+                try cg.body.emitRaw(gpa, opcode, 4);
                 cg.body.writeOperand(Id, op_result_ty_id);
                 cg.body.writeOperand(Id, op_result);
                 cg.body.writeOperand(Id, lhs_op.at(i));
@@ -2340,14 +2361,14 @@ fn buildWideMul(
                 // Temporary to deal with the fact that these are structs eventually,
                 // but for now, take the struct apart and return two separate vectors.
 
-                try cg.body.emit(cg.module.gpa, .OpCompositeExtract, .{
+                try cg.body.emit(gpa, .OpCompositeExtract, .{
                     .id_result_type = arith_op_ty_id,
                     .id_result = value_results.at(i),
                     .composite = op_result,
                     .indexes = &.{0},
                 });
 
-                try cg.body.emit(cg.module.gpa, .OpCompositeExtract, .{
+                try cg.body.emit(gpa, .OpCompositeExtract, .{
                     .id_result_type = arith_op_ty_id,
                     .id_result = overflow_results.at(i),
                     .composite = op_result,

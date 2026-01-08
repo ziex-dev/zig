@@ -17,7 +17,7 @@ var fba: std.heap.FixedBufferAllocator = .init(&fba_buffer);
 var fba_buffer: [8192]u8 = undefined;
 var stdin_buffer: [4096]u8 = undefined;
 var stdout_buffer: [4096]u8 = undefined;
-var runner_threaded_io: Io.Threaded = .init_single_threaded;
+const runner_threaded_io: Io = Io.Threaded.global_single_threaded.ioBasic();
 
 /// Keep in sync with logic in `std.Build.addRunArtifact` which decides whether
 /// the test runner will communicate with the build runner via `std.zig.Server`.
@@ -29,7 +29,7 @@ const need_simple = switch (builtin.zig_backend) {
     else => false,
 };
 
-pub fn main() void {
+pub fn main(init: std.process.Init.Minimal) void {
     @disableInstrumentation();
 
     if (builtin.cpu.arch.isSpirV()) {
@@ -38,11 +38,10 @@ pub fn main() void {
     }
 
     if (need_simple) {
-        return mainSimple() catch @panic("test failure\n");
+        return mainSimple() catch @panic("test failure");
     }
 
-    const args = std.process.argsAlloc(fba.allocator()) catch
-        @panic("unable to parse command line args");
+    const args = init.args.toSlice(fba.allocator()) catch @panic("unable to parse command line args");
 
     var listen = false;
     var opt_cache_dir: ?[]const u8 = null;
@@ -66,16 +65,16 @@ pub fn main() void {
     }
 
     if (listen) {
-        return mainServer() catch @panic("internal test runner failure");
+        return mainServer(init) catch @panic("internal test runner failure");
     } else {
-        return mainTerminal();
+        return mainTerminal(init);
     }
 }
 
-fn mainServer() !void {
+fn mainServer(init: std.process.Init.Minimal) !void {
     @disableInstrumentation();
-    var stdin_reader = std.fs.File.stdin().readerStreaming(runner_threaded_io.io(), &stdin_buffer);
-    var stdout_writer = std.fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdin_reader = Io.File.stdin().readerStreaming(runner_threaded_io, &stdin_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(runner_threaded_io, &stdout_buffer);
     var server = try std.zig.Server.init(.{
         .in = &stdin_reader.interface,
         .out = &stdout_writer.interface,
@@ -131,7 +130,10 @@ fn mainServer() !void {
 
             .run_test => {
                 testing.allocator_instance = .{};
-                testing.io_instance = .init(testing.allocator);
+                testing.io_instance = .init(testing.allocator, .{
+                    .argv0 = .init(init.args),
+                    .environ = init.environ,
+                });
                 log_err_count = 0;
                 const index = try server.receiveBody_u32();
                 const test_fn = builtin.test_functions[index];
@@ -215,7 +217,7 @@ fn mainServer() !void {
     }
 }
 
-fn mainTerminal() void {
+fn mainTerminal(init: std.process.Init.Minimal) void {
     @disableInstrumentation();
     if (builtin.fuzz) @panic("fuzz test requires server");
 
@@ -224,16 +226,19 @@ fn mainTerminal() void {
     var skip_count: usize = 0;
     var fail_count: usize = 0;
     var fuzz_count: usize = 0;
-    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(.{
+    const root_node = if (builtin.fuzz) std.Progress.Node.none else std.Progress.start(runner_threaded_io, .{
         .root_name = "Test",
         .estimated_total_items = test_fn_list.len,
     });
-    const have_tty = std.fs.File.stderr().isTty();
+    const have_tty = Io.File.stderr().isTty(runner_threaded_io) catch unreachable;
 
     var leaks: usize = 0;
     for (test_fn_list, 0..) |test_fn, i| {
         testing.allocator_instance = .{};
-        testing.io_instance = .init(testing.allocator);
+        testing.io_instance = .init(testing.allocator, .{
+            .argv0 = .init(init.args),
+            .environ = init.environ,
+        });
         defer {
             testing.io_instance.deinit();
             if (testing.allocator_instance.deinit() == .leak) leaks += 1;
@@ -318,7 +323,7 @@ pub fn log(
 /// work-in-progress backends can handle it.
 pub fn mainSimple() anyerror!void {
     @disableInstrumentation();
-    // is the backend capable of calling `std.fs.File.writeAll`?
+    // is the backend capable of calling `Io.File.writeAll`?
     const enable_write = switch (builtin.zig_backend) {
         .stage2_aarch64, .stage2_riscv64 => true,
         else => false,
@@ -329,35 +334,37 @@ pub fn mainSimple() anyerror!void {
         else => false,
     };
 
+    testing.io_instance = .init(testing.allocator, .{});
+
     var passed: u64 = 0;
     var skipped: u64 = 0;
     var failed: u64 = 0;
 
     // we don't want to bring in File and Writer if the backend doesn't support it
-    const stdout = if (enable_write) std.fs.File.stdout() else {};
+    const stdout = if (enable_write) Io.File.stdout() else {};
 
     for (builtin.test_functions) |test_fn| {
         if (enable_write) {
-            stdout.writeAll(test_fn.name) catch {};
-            stdout.writeAll("... ") catch {};
+            stdout.writeStreamingAll(runner_threaded_io, test_fn.name) catch {};
+            stdout.writeStreamingAll(runner_threaded_io, "... ") catch {};
         }
         if (test_fn.func()) |_| {
-            if (enable_write) stdout.writeAll("PASS\n") catch {};
+            if (enable_write) stdout.writeStreamingAll(runner_threaded_io, "PASS\n") catch {};
         } else |err| {
             if (err != error.SkipZigTest) {
-                if (enable_write) stdout.writeAll("FAIL\n") catch {};
+                if (enable_write) stdout.writeStreamingAll(runner_threaded_io, "FAIL\n") catch {};
                 failed += 1;
                 if (!enable_write) return err;
                 continue;
             }
-            if (enable_write) stdout.writeAll("SKIP\n") catch {};
+            if (enable_write) stdout.writeStreamingAll(runner_threaded_io, "SKIP\n") catch {};
             skipped += 1;
             continue;
         }
         passed += 1;
     }
     if (enable_print) {
-        var stdout_writer = stdout.writer(&.{});
+        var stdout_writer = stdout.writer(runner_threaded_io, &.{});
         stdout_writer.interface.print("{} passed, {} skipped, {} failed\n", .{ passed, skipped, failed }) catch {};
     }
     if (failed != 0) std.process.exit(1);
@@ -405,15 +412,19 @@ pub fn fuzz(
             testOne(ctx, input.toSlice()) catch |err| switch (err) {
                 error.SkipZigTest => return,
                 else => {
-                    std.debug.lockStdErr();
-                    if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace);
-                    std.debug.print("failed with error.{t}\n", .{err});
+                    const stderr = std.debug.lockStderr(&.{}).terminal();
+                    p: {
+                        if (@errorReturnTrace()) |trace| {
+                            std.debug.writeStackTrace(trace, stderr) catch break :p;
+                        }
+                        stderr.writer.print("failed with error.{t}\n", .{err}) catch break :p;
+                    }
                     std.process.exit(1);
                 },
             };
             if (log_err_count != 0) {
-                std.debug.lockStdErr();
-                std.debug.print("error logs detected\n", .{});
+                const stderr = std.debug.lockStderr(&.{}).terminal();
+                stderr.writer.print("error logs detected\n", .{}) catch {};
                 std.process.exit(1);
             }
         }

@@ -106,7 +106,7 @@ pub const BuildError = error{
     OutOfMemory,
     AlreadyReported,
     ZigCompilerNotBuiltWithLLVMExtensions,
-};
+} || std.Io.Cancelable;
 
 pub fn buildLibCxx(comp: *Compilation, prog_node: std.Progress.Node) BuildError!void {
     if (!build_options.have_llvm) {
@@ -256,15 +256,17 @@ pub fn buildLibCxx(comp: *Compilation, prog_node: std.Progress.Node) BuildError!
 
     var sub_create_diag: Compilation.CreateDiagnostic = undefined;
     const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+        .thread_limit = comp.thread_limit,
         .dirs = comp.dirs.withoutLocalCache(),
         .self_exe_path = comp.self_exe_path,
         .cache_mode = .whole,
         .config = config,
         .root_mod = root_mod,
         .root_name = root_name,
-        .thread_pool = comp.thread_pool,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
+        .function_sections = true,
+        .data_sections = true,
         .c_source_files = c_source_files.items,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
@@ -275,6 +277,7 @@ pub fn buildLibCxx(comp: *Compilation, prog_node: std.Progress.Node) BuildError!
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| {
         switch (err) {
             else => comp.lockAndSetMiscFailure(misc_task, "unable to build libc++: create compilation failed: {t}", .{err}),
@@ -295,7 +298,7 @@ pub fn buildLibCxx(comp: *Compilation, prog_node: std.Progress.Node) BuildError!
     assert(comp.libcxx_static_lib == null);
     const crt_file = try sub_compilation.toCrtFile();
     comp.libcxx_static_lib = crt_file;
-    comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+    try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
 }
 
 pub fn buildLibCxxAbi(comp: *Compilation, prog_node: std.Progress.Node) BuildError!void {
@@ -449,15 +452,17 @@ pub fn buildLibCxxAbi(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
 
     var sub_create_diag: Compilation.CreateDiagnostic = undefined;
     const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+        .thread_limit = comp.thread_limit,
         .dirs = comp.dirs.withoutLocalCache(),
         .self_exe_path = comp.self_exe_path,
         .cache_mode = .whole,
         .config = config,
         .root_mod = root_mod,
         .root_name = root_name,
-        .thread_pool = comp.thread_pool,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
+        .function_sections = true,
+        .data_sections = true,
         .c_source_files = c_source_files.items,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
@@ -468,6 +473,7 @@ pub fn buildLibCxxAbi(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| {
         switch (err) {
             else => comp.lockAndSetMiscFailure(misc_task, "unable to build libc++abi: create compilation failed: {t}", .{err}),
@@ -492,7 +498,7 @@ pub fn buildLibCxxAbi(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
     assert(comp.libcxxabi_static_lib == null);
     const crt_file = try sub_compilation.toCrtFile();
     comp.libcxxabi_static_lib = crt_file;
-    comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
+    try comp.queuePrelinkTaskMode(crt_file.full_object_path, &config);
 }
 
 pub fn addCxxArgs(

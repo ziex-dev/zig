@@ -1,6 +1,13 @@
 //! Zig Object Intermediate Representation.
 //! Simplified AST for the ZON (Zig Object Notation) format.
 //! `ZonGen` converts `Ast` to `Zoir`.
+const Zoir = @This();
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const Allocator = std.mem.Allocator;
+const Ast = std.zig.Ast;
 
 nodes: std.MultiArrayList(Node.Repr).Slice,
 extra: []u32,
@@ -25,7 +32,7 @@ pub const Header = extern struct {
     /// making it more likely that following Valgrind warnings will be taken seriously.
     unused: u64 = 0,
 
-    stat_inode: std.fs.File.INode,
+    stat_inode: Io.File.INode,
     stat_size: u64,
     stat_mtime: i128,
 
@@ -221,7 +228,7 @@ pub const Node = union(enum) {
 pub const NullTerminatedString = enum(u32) {
     _,
     pub fn get(nts: NullTerminatedString, zoir: Zoir) [:0]const u8 {
-        const idx = std.mem.indexOfScalar(u8, zoir.string_bytes[@intFromEnum(nts)..], 0).?;
+        const idx = std.mem.findScalar(u8, zoir.string_bytes[@intFromEnum(nts)..], 0).?;
         return zoir.string_bytes[@intFromEnum(nts)..][0..idx :0];
     }
 };
@@ -254,9 +261,3 @@ pub const CompileError = extern struct {
         assert(std.meta.hasUniqueRepresentation(Note));
     }
 };
-
-const std = @import("std");
-const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
-const Ast = std.zig.Ast;
-const Zoir = @This();

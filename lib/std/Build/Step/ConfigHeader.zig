@@ -1,5 +1,7 @@
-const std = @import("std");
 const ConfigHeader = @This();
+
+const std = @import("std");
+const Io = std.Io;
 const Step = std.Build.Step;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -182,6 +184,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     const gpa = b.allocator;
     const arena = b.allocator;
+    const io = b.graph.io;
 
     var man = b.graph.cache.obtain();
     defer man.deinit();
@@ -205,7 +208,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         .autoconf_undef, .autoconf_at => |file_source| {
             try bw.writeAll(c_generated_line);
             const src_path = file_source.getPath2(b, step);
-            const contents = std.fs.cwd().readFileAlloc(src_path, arena, .limited(config_header.max_bytes)) catch |err| {
+            const contents = Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(config_header.max_bytes)) catch |err| {
                 return step.fail("unable to read autoconf input file '{s}': {s}", .{
                     src_path, @errorName(err),
                 });
@@ -219,7 +222,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         .cmake => |file_source| {
             try bw.writeAll(c_generated_line);
             const src_path = file_source.getPath2(b, step);
-            const contents = std.fs.cwd().readFileAlloc(src_path, arena, .limited(config_header.max_bytes)) catch |err| {
+            const contents = Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(config_header.max_bytes)) catch |err| {
                 return step.fail("unable to read cmake input file '{s}': {s}", .{
                     src_path, @errorName(err),
                 });
@@ -255,13 +258,13 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     const sub_path = b.pathJoin(&.{ "o", &digest, config_header.include_path });
     const sub_path_dirname = std.fs.path.dirname(sub_path).?;
 
-    b.cache_root.handle.makePath(sub_path_dirname) catch |err| {
+    b.cache_root.handle.createDirPath(io, sub_path_dirname) catch |err| {
         return step.fail("unable to make path '{f}{s}': {s}", .{
             b.cache_root, sub_path_dirname, @errorName(err),
         });
     };
 
-    b.cache_root.handle.writeFile(.{ .sub_path = sub_path, .data = output }) catch |err| {
+    b.cache_root.handle.writeFile(io, .{ .sub_path = sub_path, .data = output }) catch |err| {
         return step.fail("unable to write file '{f}{s}': {s}", .{
             b.cache_root, sub_path, @errorName(err),
         });
@@ -578,12 +581,12 @@ fn expand_variables_autoconf_at(
     var source_offset: usize = 0;
     while (curr < contents.len) : (curr += 1) {
         if (contents[curr] != '@') continue;
-        if (std.mem.indexOfScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
+        if (std.mem.findScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
             if (close_pos == curr + 1) {
                 // closed immediately, preserve as a literal
                 continue;
             }
-            const valid_varname_end = std.mem.indexOfNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
+            const valid_varname_end = std.mem.findNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
             if (valid_varname_end != close_pos) {
                 // contains invalid characters, preserve as a literal
                 continue;
@@ -635,12 +638,12 @@ fn expand_variables_cmake(
     loop: while (curr < contents.len) : (curr += 1) {
         switch (contents[curr]) {
             '@' => blk: {
-                if (std.mem.indexOfScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
+                if (std.mem.findScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
                     if (close_pos == curr + 1) {
                         // closed immediately, preserve as a literal
                         break :blk;
                     }
-                    const valid_varname_end = std.mem.indexOfNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
+                    const valid_varname_end = std.mem.findNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
                     if (valid_varname_end != close_pos) {
                         // contains invalid characters, preserve as a literal
                         break :blk;
@@ -731,7 +734,7 @@ fn expand_variables_cmake(
             else => {},
         }
 
-        if (var_stack.items.len > 0 and std.mem.indexOfScalar(u8, valid_varname_chars, contents[curr]) == null) {
+        if (var_stack.items.len > 0 and std.mem.findScalar(u8, valid_varname_chars, contents[curr]) == null) {
             return error.InvalidCharacter;
         }
     }

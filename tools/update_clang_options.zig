@@ -10,7 +10,7 @@
 //! would mean that the next parameter specifies the target.
 
 const std = @import("std");
-const fs = std.fs;
+const Io = std.Io;
 const assert = std.debug.assert;
 const json = std.json;
 
@@ -627,15 +627,13 @@ const cpu_targets = struct {
     pub const xtensa = std.Target.xtensa;
 };
 
-pub fn main() anyerror!void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    const allocator = arena.allocator();
-    const args = try std.process.argsAlloc(allocator);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
+    const io = init.io;
 
     var stdout_buffer: [4000]u8 = undefined;
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
     if (args.len <= 1) printUsageAndExit(args[0]);
@@ -654,7 +652,7 @@ pub fn main() anyerror!void {
     const llvm_src_root = args[2];
     if (std.mem.startsWith(u8, llvm_src_root, "-")) printUsageAndExit(args[0]);
 
-    var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(allocator);
+    var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(arena);
 
     inline for (@typeInfo(cpu_targets).@"struct".decls) |decl| {
         const Feature = @field(cpu_targets, decl.name).Feature;
@@ -671,13 +669,12 @@ pub fn main() anyerror!void {
     const child_args = [_][]const u8{
         llvm_tblgen_exe,
         "--dump-json",
-        try std.fmt.allocPrint(allocator, "{s}/clang/include/clang/Driver/Options.td", .{llvm_src_root}),
-        try std.fmt.allocPrint(allocator, "-I={s}/llvm/include", .{llvm_src_root}),
-        try std.fmt.allocPrint(allocator, "-I={s}/clang/include/clang/Driver", .{llvm_src_root}),
+        try std.fmt.allocPrint(arena, "{s}/clang/include/clang/Driver/Options.td", .{llvm_src_root}),
+        try std.fmt.allocPrint(arena, "-I={s}/llvm/include", .{llvm_src_root}),
+        try std.fmt.allocPrint(arena, "-I={s}/clang/include/clang/Driver", .{llvm_src_root}),
     };
 
-    const child_result = try std.process.Child.run(.{
-        .allocator = allocator,
+    const child_result = try std.process.run(arena, io, .{
         .argv = &child_args,
         .max_output_bytes = 100 * 1024 * 1024,
     });
@@ -685,7 +682,7 @@ pub fn main() anyerror!void {
     std.debug.print("{s}\n", .{child_result.stderr});
 
     const json_text = switch (child_result.term) {
-        .Exited => |code| if (code == 0) child_result.stdout else {
+        .exited => |code| if (code == 0) child_result.stdout else {
             std.debug.print("llvm-tblgen exited with code {d}\n", .{code});
             std.process.exit(1);
         },
@@ -695,11 +692,11 @@ pub fn main() anyerror!void {
         },
     };
 
-    const parsed = try json.parseFromSlice(json.Value, allocator, json_text, .{});
+    const parsed = try json.parseFromSlice(json.Value, arena, json_text, .{});
     defer parsed.deinit();
     const root_map = &parsed.value.object;
 
-    var all_objects = std.array_list.Managed(*json.ObjectMap).init(allocator);
+    var all_objects = std.array_list.Managed(*json.ObjectMap).init(arena);
     {
         var it = root_map.iterator();
         it_map: while (it.next()) |kv| {
@@ -961,8 +958,8 @@ fn objectLessThan(context: void, a: *json.ObjectMap, b: *json.ObjectMap) bool {
 }
 
 fn printUsageAndExit(arg0: []const u8) noreturn {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
+    const stderr = std.debug.lockStderr(&.{});
+    const w = &stderr.file_writer.interface;
     printUsage(w, arg0) catch std.process.exit(2);
     std.process.exit(1);
 }
