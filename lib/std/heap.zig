@@ -12,6 +12,7 @@ const Alignment = std.mem.Alignment;
 pub const ArenaAllocator = @import("heap/arena_allocator.zig").ArenaAllocator;
 pub const SmpAllocator = @import("heap/SmpAllocator.zig");
 pub const FixedBufferAllocator = @import("heap/FixedBufferAllocator.zig");
+pub const StackFirstAllocator = @import("heap/StackFirstAllocator.zig");
 pub const PageAllocator = @import("heap/PageAllocator.zig");
 pub const SbrkAllocator = @import("heap/sbrk_allocator.zig").SbrkAllocator;
 pub const ThreadSafeAllocator = @import("heap/ThreadSafeAllocator.zig");
