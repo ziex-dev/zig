@@ -466,9 +466,7 @@ pub fn spawnPath(io: Io, dir: Io.Dir, options: SpawnOptions) SpawnError!Child {
     return io.vtable.processSpawnPath(io.userdata, dir, options);
 }
 
-pub const RunError = posix.GetCwdError || posix.ReadError || SpawnError || posix.PollError || error{
-    StreamTooLong,
-};
+pub const RunError = SpawnError || Child.CollectOutputError;
 
 pub const RunOptions = struct {
     argv: []const []const u8,
@@ -548,13 +546,15 @@ pub fn run(gpa: Allocator, io: Io, options: RunOptions) RunError!RunResult {
 
     const term = try child.wait(io);
 
-    const owned_stdout = try stdout.toOwnedSlice(gpa);
-    errdefer gpa.free(owned_stdout);
-    const owned_stderr = try stderr.toOwnedSlice(gpa);
+    const stdout_slice = try stdout.toOwnedSlice(gpa);
+    errdefer gpa.free(stdout_slice);
+
+    const stderr_slice = try stderr.toOwnedSlice(gpa);
+    errdefer gpa.free(stderr_slice);
 
     return .{
-        .stdout = owned_stdout,
-        .stderr = owned_stderr,
+        .stdout = stdout_slice,
+        .stderr = stderr_slice,
         .term = term,
     };
 }
