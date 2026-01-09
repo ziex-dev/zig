@@ -3,10 +3,17 @@
 const std = @import("std");
 const Io = std.Io;
 
+const Args = struct {
+    pub const description = "zig run this file inside the test_parsing/ directory of this repo: https://github.com/nst/JSONTestSuite";
+};
+
 pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
     const allocator = init.gpa;
     const io = init.io;
 
+    _ = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    
     var stdout_buffer: [2000]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const output = &stdout_writer.interface;
