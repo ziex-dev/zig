@@ -685,6 +685,15 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             return items;
         }
 
+        /// The caller owns the returned memory. ArrayList becomes empty.
+        /// Asserts what the capacity is equal to the length + 1.
+        pub fn toOwnedSliceSentinelAssert(self: *Self, comptime sentinel: T) SentinelSlice(sentinel) {
+            std.debug.assert(self.items.len + 1 == self.capacity);
+            self.appendAssumeCapacity(sentinel);
+            const result = self.toOwnedSliceAssert();
+            return result[0 .. result.len - 1 :sentinel];
+        }
+
         /// Creates a copy of this ArrayList.
         pub fn clone(self: Self, gpa: Allocator) Allocator.Error!Self {
             var cloned = try Self.initCapacity(gpa, self.capacity);
@@ -1158,6 +1167,25 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         /// If succeds it is safe to call toOwnedSliceAssert().
         pub fn shrinkToLen(self: *Self, gpa: Allocator) Allocator.Error!void {
             try self.shrinkAndFreePrecise(gpa, self.items.len);
+        }
+
+        /// Shrinks or expands capacity to match length + 1.
+        /// May invalidate element pointers.
+        /// If succeds it is safe to call toOwnedSliceSentinelAssert().
+        pub fn shrinkToLenSentinel(self: *Self, gpa: Allocator) Allocator.Error!void {
+            std.debug.assert(self.items.len <= self.capacity);
+            const required_len = self.items.len + 1;
+            switch (std.math.order(required_len, self.capacity)) {
+                .eq => return,
+                .gt => {
+                    try self.ensureTotalCapacityPrecise(gpa, required_len);
+                },
+                .lt => {
+                    self.items.len += 1;
+                    defer self.items.len -= 1;
+                    try self.shrinkToLen(gpa);
+                },
+            }
         }
 
         /// Reduce length to `new_len`.
@@ -2288,6 +2316,26 @@ test "toOwnedSliceAssert" {
     try std.testing.expectEqual(Aligned(u8, null).empty, list);
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, slice);
 }
+
+test "toOwnedSliceSentinelAssert" {
+    const a = testing.allocator;
+
+    var list: Aligned(u8, null) = try .initCapacity(a, 6);
+    list.appendSliceAssumeCapacity(&.{ 1, 2, 3 });
+
+    // shrinkToLenSentinel shrinks array
+    try list.shrinkToLenSentinel(a);
+
+    // shrinkToLenSentinel expands array
+    try list.shrinkToLen(a);
+    try list.shrinkToLenSentinel(a);
+
+    const slice = list.toOwnedSliceSentinelAssert(10);
+    defer a.free(slice);
+
+    try std.testing.expectEqualSentinel(u8, 10, &.{ 1, 2, 3 }, slice);
+}
+
 test "accepts unaligned slices" {
     const a = testing.allocator;
     {
