@@ -23,6 +23,8 @@ const haiku = @import("c/haiku.zig");
 const openbsd = @import("c/openbsd.zig");
 const serenity = @import("c/serenity.zig");
 
+const root = @import("root");
+
 // These constants are shared among all operating systems even when not linking
 // libc.
 
@@ -871,6 +873,7 @@ pub const E = switch (native_os) {
         SRCNOTFOUND = 82,
         _,
     },
+    .other => root.os.E,
     else => void,
 };
 pub const Elf_Symndx = switch (native_os) {
@@ -7129,6 +7132,7 @@ pub const _errno = switch (native_os) {
     .haiku => haiku._errnop,
     // https://github.com/SerenityOS/serenity/blob/a353ceecf13b6f156a078e32f1ddf1d21366934c/Userland/Libraries/LibC/errno.h#L33
     .serenity => private.__errno_location,
+    .other => root.os._errno,
     else => {},
 };
 
