@@ -3446,10 +3446,20 @@ fn buildOutputType(
         src.src_path = try dirs.local_cache.join(arena, &.{sub_path});
     }
 
-    if (build_options.have_llvm and emit_asm_resolved != .no) {
-        // LLVM has no way to set this non-globally.
-        const argv = [_][*:0]const u8{ "zig (LLVM option parsing)", "--x86-asm-syntax=intel" };
-        @import("codegen/llvm/bindings.zig").ParseCommandLineOptions(argv.len, &argv);
+    if (build_options.have_llvm) {
+        // LLVM has no way to set these options non-globally.
+        var argv: std.ArrayList([*:0]const u8) = .empty;
+        defer argv.deinit(arena);
+        if (emit_asm_resolved != .no) {
+            try argv.append(arena, "--x86-asm-syntax=intel");
+        }
+        if (target.cpu.arch.isBpf() and stack_size != null) {
+            try argv.append(arena, try std.fmt.allocPrintSentinel(arena, "-bpf-stack-size={d}", .{stack_size.?}, 0));
+        }
+        if (argv.items.len > 0) {
+            try argv.insert(arena, 0, "zig (LLVM option parsing)");
+            @import("codegen/llvm/bindings.zig").ParseCommandLineOptions(argv.items.len, argv.items.ptr);
+        }
     }
 
     const clang_passthrough_mode = switch (arg_mode) {
