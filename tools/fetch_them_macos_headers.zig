@@ -52,34 +52,23 @@ const Target = struct {
 
 const headers_source_prefix: []const u8 = "headers";
 
-const usage =
-    \\fetch_them_macos_headers [options] [cc args]
-    \\
-    \\Options:
-    \\  --sysroot     Path to macOS SDK
-    \\
-    \\General Options:
-    \\-h, --help                    Print this help and exit
-;
+const Args = struct {
+     named: struct {
+        sysroot: []const u8 = "",
+        pub const sysroot_help = "Path to macOS SDK";
+    },
+    positional: struct {
+        cc_args: []const [:0]const u8 = &.{},
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
-    const args = try init.minimal.args.toSlice(arena);
 
-    var argv = std.array_list.Managed([]const u8).init(arena);
-    var sysroot: ?[]const u8 = null;
+    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
 
-    var args_iter = ArgsIterator{ .args = args[1..] };
-    while (args_iter.next()) |arg| {
-        if (mem.eql(u8, arg, "--help") or mem.eql(u8, arg, "-h")) {
-            return info(usage, .{});
-        } else if (mem.eql(u8, arg, "--sysroot")) {
-            sysroot = args_iter.nextOrFatal();
-        } else try argv.append(arg);
-    }
-
-    const sysroot_path = sysroot orelse blk: {
+    const sysroot_path = if (args.named.sysroot.len > 0) args.named.sysroot else blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
         break :blk std.zig.system.darwin.getSdk(arena, io, &target) orelse
             fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
@@ -107,14 +96,14 @@ pub fn main(init: std.process.Init) !void {
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(arena, io, argv.items, sysroot_path, target, version, tmp_dir);
+        try fetchTarget(arena, io, args.positional.cc_args, sysroot_path, target, version, tmp_dir);
     }
 }
 
 fn fetchTarget(
     arena: Allocator,
     io: Io,
-    args: []const []const u8,
+    cc_args: []const []const u8,
     sysroot: []const u8,
     target: Target,
     ver: Version,
@@ -152,7 +141,7 @@ fn fetchTarget(
         "-MF",
         headers_list_path,
     });
-    try cc_argv.appendSlice(args);
+    try cc_argv.appendSlice(cc_args);
 
     const res = try std.process.run(arena, io, .{ .argv = cc_argv.items });
 
