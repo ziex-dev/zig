@@ -127,48 +127,29 @@ const LibCVendor = enum {
     netbsd,
 };
 
+const Args = struct {
+    named: struct {
+        @"search-path": []const []const u8 = &.{},
+        out: []const u8,
+        abi: enum { musl, glibc, freebsd, netbsd },
+
+        pub const @"search-path_help" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu";
+        pub const out_help = "a dir that will be created, and populated with the results";
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
     const cwd_path = try std.process.getCwdAlloc(arena);
     const environ_map = init.environ_map;
 
-    var search_paths = std.array_list.Managed([]const u8).init(arena);
-    var opt_out_dir: ?[]const u8 = null;
-    var opt_abi: ?[]const u8 = null;
+    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
 
-    var arg_i: usize = 1;
-    while (arg_i < args.len) : (arg_i += 1) {
-        if (std.mem.eql(u8, args[arg_i], "--help"))
-            usageAndExit(args[0]);
-        if (arg_i + 1 >= args.len) {
-            std.debug.print("expected argument after '{s}'\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        if (std.mem.eql(u8, args[arg_i], "--search-path")) {
-            try search_paths.append(args[arg_i + 1]);
-        } else if (std.mem.eql(u8, args[arg_i], "--out")) {
-            assert(opt_out_dir == null);
-            opt_out_dir = args[arg_i + 1];
-        } else if (std.mem.eql(u8, args[arg_i], "--abi")) {
-            assert(opt_abi == null);
-            opt_abi = args[arg_i + 1];
-        } else {
-            std.debug.print("unrecognized argument: {s}\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        arg_i += 1;
-    }
-
-    const out_dir = opt_out_dir orelse usageAndExit(args[0]);
-    const abi_name = opt_abi orelse usageAndExit(args[0]);
-    const vendor = std.meta.stringToEnum(LibCVendor, abi_name) orelse {
-        std.debug.print("unrecognized C ABI: {s}\n", .{abi_name});
-        usageAndExit(args[0]);
-    };
+    const search_paths = args.named.@"search-path";
+    const out_dir = args.named.out;
+    const vendor = args.named.abi;
+    const abi_name = @tagName(vendor);
 
     const generic_name = try std.fmt.allocPrint(arena, "generic-{s}", .{abi_name});
     const libc_targets = switch (vendor) {
@@ -229,7 +210,7 @@ pub fn main(init: std.process.Init) !void {
             @tagName(libc_target.abi),
         });
 
-        search: for (search_paths.items) |search_path| {
+        search: for (search_paths) |search_path| {
             const sub_path = switch (vendor) {
                 .glibc,
                 .freebsd,
