@@ -12,13 +12,20 @@ const exempt_files = [_][]const u8{
     "abilists",
 };
 
+const Args = struct {
+    positional: struct {
+        netbsd_src_path: [:0]const u8,
+        zig_src_path: [:0]const u8,
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
 
-    const netbsd_src_path = args[1];
-    const zig_src_path = args[2];
+    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const netbsd_src_path = args.positional.netbsd_src_path;
+    const zig_src_path = args.positional.zig_src_path;
 
     const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/netbsd", .{zig_src_path});
 
