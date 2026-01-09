@@ -141,39 +141,27 @@ const HashToContents = std.StringHashMap(Contents);
 const TargetToHash = std.ArrayHashMap(DestTarget, []const u8, DestTarget.HashContext, true);
 const PathTable = std.StringHashMap(*TargetToHash);
 
+const Args = struct {
+        named: struct {
+            @"search-path": []const []const u8 = &.{},
+            out: []const u8,
+
+            pub const @"search-path_help" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu";
+            pub const out_help = "a dir that will be created, and populated with the results";
+        },
+     };
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
     const environ_map = init.environ_map;
     const cwd = try std.process.getCwdAlloc(arena);
 
-    var search_paths = std.array_list.Managed([]const u8).init(arena);
-    var opt_out_dir: ?[]const u8 = null;
+    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    
+    const search_paths = args.named.@"search-path";
+    const out_dir = args.named.out;
 
-    var arg_i: usize = 1;
-    while (arg_i < args.len) : (arg_i += 1) {
-        if (std.mem.eql(u8, args[arg_i], "--help"))
-            usageAndExit(args[0]);
-        if (arg_i + 1 >= args.len) {
-            std.debug.print("expected argument after '{s}'\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        if (std.mem.eql(u8, args[arg_i], "--search-path")) {
-            try search_paths.append(args[arg_i + 1]);
-        } else if (std.mem.eql(u8, args[arg_i], "--out")) {
-            assert(opt_out_dir == null);
-            opt_out_dir = args[arg_i + 1];
-        } else {
-            std.debug.print("unrecognized argument: {s}\n", .{args[arg_i]});
-            usageAndExit(args[0]);
-        }
-
-        arg_i += 1;
-    }
-
-    const out_dir = opt_out_dir orelse usageAndExit(args[0]);
     const generic_name = "any-linux-any";
 
     var path_table = PathTable.init(arena);
@@ -187,7 +175,7 @@ pub fn main(init: std.process.Init) !void {
         const dest_target = DestTarget{
             .arch = linux_target.arch,
         };
-        search: for (search_paths.items) |search_path| {
+        search: for (search_paths) |search_path| {
             const target_include_dir = try Dir.path.join(arena, &.{
                 search_path, linux_target.name, "include",
             });
