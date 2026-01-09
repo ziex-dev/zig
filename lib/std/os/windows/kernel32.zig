@@ -5,6 +5,7 @@ const ACCESS_MASK = windows.ACCESS_MASK;
 const BOOL = windows.BOOL;
 const CONDITION_VARIABLE = windows.CONDITION_VARIABLE;
 const CONSOLE_SCREEN_BUFFER_INFO = windows.CONSOLE_SCREEN_BUFFER_INFO;
+const CONTEXT = windows.CONTEXT;
 const COORD = windows.COORD;
 const DWORD = windows.DWORD;
 const FARPROC = windows.FARPROC;
@@ -475,3 +476,46 @@ pub extern "kernel32" fn SetLastError(
 pub extern "kernel32" fn GetSystemInfo(
     lpSystemInfo: *SYSTEM_INFO,
 ) callconv(.winapi) void;
+
+pub extern "kernel32" fn VirtualAllocEx(hProcess: HANDLE, lpAddress: ?LPVOID, dwSize: SIZE_T, flAllocationType: DWORD, flProtect: DWORD) callconv(.winapi) ?LPVOID;
+
+pub extern "kernel32" fn VirtualFreeEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, dwFreeType: DWORD) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn VirtualQueryEx(hProcess: HANDLE, lpAddress: ?LPCVOID, lpBuffer: PMEMORY_BASIC_INFORMATION, dwLength: SIZE_T) callconv(.winapi) SIZE_T;
+
+pub extern "kernel32" fn VirtualProtectEx(
+    hProcess: HANDLE,
+    lpAddress: LPVOID,
+    dwSize: SIZE_T,
+    flNewProtect: DWORD,
+    lpflOldProtect: *DWORD,
+) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: DWORD,
+    bInheritHandle: BOOL,
+    dwProcessId: DWORD,
+) callconv(.winapi) ?HANDLE;
+
+pub extern "kernel32" fn CreateRemoteThread(
+    hProcess: HANDLE,
+    lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
+    dwStackSize: SIZE_T,
+    lpStartAddress: LPTHREAD_START_ROUTINE,
+    lpParameter: LPVOID,
+    dwCreationFlags: DWORD,
+    lpThreadId: ?*DWORD,
+) callconv(.winapi) ?HANDLE;
+
+pub extern "kernel32" fn GetThreadContext(
+    hThread: HANDLE,
+    lpContext: *CONTEXT,
+) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) callconv(.winapi) BOOL;
+
+pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
+
+pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
+
+pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
