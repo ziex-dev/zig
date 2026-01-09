@@ -581,3 +581,7 @@ pub extern "ntdll" fn NtCancelSynchronousIoFile(
     RequestToCancel: ?*IO_STATUS_BLOCK,
     IoStatusBlock: *IO_STATUS_BLOCK,
 ) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn RtlNtStatusToDosError(
+    Status: NTSTATUS,
+) callconv(.winapi) ULONG;

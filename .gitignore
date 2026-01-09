@@ -8,7 +8,7 @@
 #
 # Cheers!
 # -andrewrk
-
+.vscode
 .zig-cache/
 zig-out/
 /release/

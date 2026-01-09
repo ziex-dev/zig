@@ -1,4 +1,7 @@
 const std = @import("../../std.zig");
+const ntdll = @import("ntdll.zig");
+const ntstatus = @import("ntstatus.zig");
+
 const windows = std.os.windows;
 
 const ACCESS_MASK = windows.ACCESS_MASK;
@@ -477,8 +480,6 @@ pub extern "kernel32" fn GetSystemInfo(
     lpSystemInfo: *SYSTEM_INFO,
 ) callconv(.winapi) void;
 
-pub extern "kernel32" fn VirtualAllocEx(hProcess: HANDLE, lpAddress: ?LPVOID, dwSize: SIZE_T, flAllocationType: DWORD, flProtect: DWORD) callconv(.winapi) ?LPVOID;
-
 pub extern "kernel32" fn VirtualFreeEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, dwFreeType: DWORD) callconv(.winapi) BOOL;
 
 pub extern "kernel32" fn VirtualQueryEx(hProcess: HANDLE, lpAddress: ?LPCVOID, lpBuffer: PMEMORY_BASIC_INFORMATION, dwLength: SIZE_T) callconv(.winapi) SIZE_T;
@@ -519,3 +520,94 @@ pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
 pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
 
 pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
+
+pub fn GetCurrentProcess() HANDLE {
+    return @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+}
+
+const MEM = windows.MEM;
+const PAGE = windows.PAGE;
+
+pub fn VirtualAllocEx(
+    ProcessHandle: HANDLE,
+    BaseAddress: ?LPVOID,
+    RegionSize: SIZE_T,
+    AllocationType: MEM.ALLOCATE,
+    Protect: PAGE,
+) !LPVOID {
+    var base_addr: ?LPVOID = BaseAddress;
+    var region_size: SIZE_T = RegionSize;
+
+    const status = ntdll.NtAllocateVirtualMemory(
+        ProcessHandle,
+        @ptrCast(&base_addr),
+        0,
+        &region_size,
+        AllocationType,
+        Protect,
+    );
+
+    if (status == .SUCCESS) {
+        return base_addr orelse error.Unexpected;
+    }
+
+    const code: Win32Error = @enumFromInt(@as(u16, @truncate(ntdll.RtlNtStatusToDosError(status))));
+    return switch (code) {
+        .ACCESS_DENIED => error.AccessDenied,
+        .NOT_ENOUGH_MEMORY, .OUTOFMEMORY => error.OutOfMemory,
+        .INVALID_PARAMETER => error.InvalidParameter,
+        .INVALID_HANDLE => error.InvalidHandle,
+        .SUCCESS => error.Unexpected,
+        else => error.UnexpectedError,
+    };
+}
+
+pub fn VirtualAlloc(
+    BaseAddress: ?LPVOID,
+    RegionSize: SIZE_T,
+    AllocationType: MEM.ALLOCATE,
+    Protect: PAGE,
+) !LPVOID {
+    return try VirtualAllocEx(
+        GetCurrentProcess(),
+        BaseAddress,
+        RegionSize,
+        AllocationType,
+        Protect,
+    );
+}
+
+// --- 单元测试用例 ---
+
+const MEM_COMMIT = 0x1000;
+const MEM_RESERVE = 0x2000;
+const PAGE_READWRITE = 0x04;
+
+test "VirtualAlloc - 成功分配并写入内存" {
+    const size = 4096;
+
+    const ptr = try VirtualAlloc(null, size, windows.MEM.ALLOCATE{ .RESERVE = true, .COMMIT = true }, PAGE{ .READWRITE = true });
+
+    // 确保分配到了地址
+    try std.testing.expect(@intFromPtr(ptr) != 0);
+
+    // 测试内存可读写性
+    const slice: [*]u8 = @ptrCast(ptr);
+    slice[0] = 0xDE;
+    slice[size - 1] = 0xAD;
+
+    try std.testing.expectEqual(slice[0], 0xDE);
+    try std.testing.expectEqual(slice[size - 1], 0xAD);
+}
+
+test "VirtualAllocEx - 错误处理测试 (非法参数)" {
+    const result = VirtualAllocEx(
+        GetCurrentProcess(),
+        null,
+        4096,
+        windows.MEM.ALLOCATE{ .RESERVE = false, .COMMIT = false }, // 非法参数
+        PAGE{ .READWRITE = true },
+    );
+
+    try std.testing.expectError(error.InvalidParameter, result);
+}
