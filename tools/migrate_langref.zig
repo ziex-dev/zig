@@ -11,14 +11,24 @@ const fatal = std.process.fatal;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
+const Args = struct {
+
+
+        positional: struct {
+            input_file: [:0]const u8,
+            output_file: [:0]const u8,
+        },
+    };
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
 
-    const input_file = args[1];
-    const output_file = args[2];
+    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
 
+    const input_file = args.positional.input_file;
+    const output_file = args.positional.output_file;
+    
     var in_file = try Dir.cwd().openFile(io, input_file, .{ .mode = .read_only });
     defer in_file.close(io);
 
