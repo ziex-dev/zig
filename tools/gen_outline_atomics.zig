@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    //const args = try std.process.argsAlloc(arena);
+    _ = try std.cli.parse(struct {}, io, arena, init.minimal.args, .{});    //const args = try std.process.argsAlloc(arena);
 
     var stdout_buffer: [2000]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
