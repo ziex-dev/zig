@@ -2,14 +2,21 @@ const std = @import("std");
 const Io = std.Io;
 const Dir = std.Io.Dir;
 
+const Args = struct {
+        positional: struct {
+            zig_src_lib_path: [:0]const u8,
+            mingw_src_path: [:0]const u8,
+        },
+     };
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-
-    const zig_src_lib_path = args[1];
-    const mingw_src_path = args[2];
-
+    
+    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const zig_src_lib_path = args.positional.zig_src_lib_path;
+    const mingw_src_path = args.positional.mingw_src_path;
+    
     const dest_mingw_crt_path = try Dir.path.join(arena, &.{
         zig_src_lib_path, "libc", "mingw",
     });
