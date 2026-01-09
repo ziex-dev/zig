@@ -674,6 +674,17 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             return result[0 .. result.len - 1 :sentinel];
         }
 
+        /// The caller owns the returned memory. Empties this ArrayList.
+        /// Its capacity is cleared, making deinit() safe but unnecessary to call.
+        ///
+        /// Asserts what the capacity is equal to the length.
+        pub fn toOwnedSliceAssert(self: *Self) Slice {
+            assert(self.items.len == self.capacity);
+            const items = self.items;
+            self.* = .empty;
+            return items;
+        }
+
         /// Creates a copy of this ArrayList.
         pub fn clone(self: Self, gpa: Allocator) Allocator.Error!Self {
             var cloned = try Self.initCapacity(gpa, self.capacity);
@@ -1140,6 +1151,13 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             gpa.free(old_memory);
             self.items = new_memory;
             self.capacity = new_memory.len;
+        }
+
+        /// Shrinks capacity to match length.
+        /// May invalidate element pointers.
+        /// If succeds it is safe to call toOwnedSliceAssert().
+        pub fn shrinkToLen(self: *Self, gpa: Allocator) Allocator.Error!void {
+            try self.shrinkAndFreePrecise(gpa, self.items.len);
         }
 
         /// Reduce length to `new_len`.
@@ -2251,6 +2269,25 @@ test "toOwnedSliceSentinel" {
     }
 }
 
+test "toOwnedSliceAssert" {
+    var failing_allocator: testing.FailingAllocator = .init(testing.allocator, .{
+        .fail_index = 2,
+    });
+    const a = failing_allocator.allocator();
+
+    var list: Aligned(u8, null) = try .initCapacity(a, 6); // first alloc
+    list.appendSliceAssumeCapacity(&.{ 1, 2, 3 });
+
+    try list.shrinkToLen(a); // first resize
+    try std.testing.expectEqual(list.items.len, list.capacity);
+    try list.shrinkToLen(a); // no alloc or resize
+
+    const slice = list.toOwnedSliceAssert();
+    defer a.free(slice);
+
+    try std.testing.expectEqual(Aligned(u8, null).empty, list);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3 }, slice);
+}
 test "accepts unaligned slices" {
     const a = testing.allocator;
     {
