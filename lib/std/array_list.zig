@@ -1106,6 +1106,20 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         /// May invalidate element pointers.
         /// Asserts that the new length is less than or equal to the previous length.
         pub fn shrinkAndFree(self: *Self, gpa: Allocator, new_len: usize) void {
+            self.shrinkAndFreePrecise(gpa, new_len) catch |e| switch (e) {
+                error.OutOfMemory => {
+                    // No problem, capacity is still correct then.
+                    self.items.len = new_len;
+                    return;
+                },
+            };
+        }
+
+        /// Reduce allocated capacity to `new_len`.
+        /// May invalidate element pointers.
+        /// Asserts that the new length is less than or equal to the previous length.
+        /// If succeds capacity is guaranteed to be equal to the length.
+        pub fn shrinkAndFreePrecise(self: *Self, gpa: Allocator, new_len: usize) Allocator.Error!void {
             assert(new_len <= self.items.len);
 
             if (@sizeOf(T) == 0) {
@@ -1120,13 +1134,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
                 return;
             }
 
-            const new_memory = gpa.alignedAlloc(T, alignment, new_len) catch |e| switch (e) {
-                error.OutOfMemory => {
-                    // No problem, capacity is still correct then.
-                    self.items.len = new_len;
-                    return;
-                },
-            };
+            const new_memory = try gpa.alignedAlloc(T, alignment, new_len);
 
             @memcpy(new_memory, self.items[0..new_len]);
             gpa.free(old_memory);
@@ -2087,6 +2095,30 @@ test "shrinkAndFree with a copy" {
     try list.appendNTimes(3, 16);
     list.shrinkAndFree(4);
     try testing.expect(mem.eql(i32, list.items, &.{ 3, 3, 3, 3 }));
+}
+
+test "shrinkAndFreePrecise without resize succeeds" {
+    var failing_allocator = testing.FailingAllocator.init(testing.allocator, .{ .resize_fail_index = 0 });
+    const a = failing_allocator.allocator();
+
+    var list: Aligned(i32, null) = .empty;
+    defer list.deinit(a);
+
+    try list.appendNTimes(a, 3, 16);
+    try list.shrinkAndFreePrecise(a, 4);
+    try testing.expectEqualSlices(i32, &.{ 3, 3, 3, 3 }, list.items);
+    try testing.expectEqual(list.items.len, list.capacity);
+}
+
+test "shrinkAndFreePrecise without resize and no copy failes" {
+    var failing_allocator = testing.FailingAllocator.init(testing.allocator, .{ .resize_fail_index = 0, .fail_index = 1 });
+    const a = failing_allocator.allocator();
+
+    var list: Aligned(i32, null) = .empty;
+    defer list.deinit(a);
+
+    try list.appendNTimes(a, 3, 16);
+    try std.testing.expectError(error.OutOfMemory, list.shrinkAndFreePrecise(a, 4));
 }
 
 test "addManyAsArray" {
