@@ -78,6 +78,7 @@ test validate {
     try validate("127.0.0.1"); // Also a valid hostname
     try validate("a" ** 63 ++ ".com"); // Label exactly 63 chars (valid)
     try validate("a." ** 127 ++ "a"); // Total length 255 (valid)
+    try validate("a." ** 127 ++ "a."); // Total length 255 + trailing dot (valid)
 
     // Invalid hostnames
     try std.testing.expectError(error.InvalidHostName, validate(""));
@@ -86,12 +87,14 @@ test validate {
     try std.testing.expectError(error.InvalidHostName, validate("host..domain"));
     try std.testing.expectError(error.InvalidHostName, validate("-hostname"));
     try std.testing.expectError(error.InvalidHostName, validate("hostname-"));
+    try std.testing.expectError(error.InvalidHostName, validate("hostname-.com"));
     try std.testing.expectError(error.InvalidHostName, validate("a.-.b"));
     try std.testing.expectError(error.InvalidHostName, validate("host_name.com"));
     try std.testing.expectError(error.InvalidHostName, validate("."));
     try std.testing.expectError(error.InvalidHostName, validate(".."));
     try std.testing.expectError(error.InvalidHostName, validate("a" ** 64 ++ ".com")); // Label length 64 (too long)
     try std.testing.expectError(error.NameTooLong, validate("a." ** 127 ++ "ab")); // Total length 256 (too long)
+    try std.testing.expectError(error.NameTooLong, validate("a." ** 127 ++ "ab.")); // Total length 256 + trailing dot (too long)
 }
 
 pub fn init(bytes: []const u8) ValidateError!HostName {
