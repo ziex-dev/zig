@@ -6,18 +6,23 @@ const ascii = std.ascii;
 
 const catalog_txt = @embedFile("crc/catalog.txt");
 
+const Args = struct {
+         positional: struct {
+
+
+            @"/path/git/zig": [:0]const u8,
+        },
+    };
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
+    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
     return @"i like cheese"(arena, io, args);
 }
 
-fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) !void {
-    if (args.len <= 1) printUsageAndExit(args[0]);
-
-    const zig_src_root = args[1];
-    if (mem.startsWith(u8, zig_src_root, "-")) printUsageAndExit(args[0]);
+fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: Args) !void {
+    const zig_src_root = args.positional.@"/path/git/zig";
 
     var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
     defer zig_src_dir.close(io);
@@ -190,18 +195,4 @@ fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) 
 
     try code_writer.flush();
     try test_writer.flush();
-}
-
-fn printUsageAndExit(arg0: []const u8) noreturn {
-    const stderr = std.debug.lockStderr(&.{});
-    const w = &stderr.file_writer.interface;
-    printUsage(w, arg0) catch std.process.exit(2);
-    std.process.exit(1);
-}
-
-fn printUsage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
-    return w.print(
-        \\Usage: {s} /path/git/zig
-        \\
-    , .{arg0});
 }
