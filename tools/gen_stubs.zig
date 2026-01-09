@@ -284,10 +284,14 @@ const Parse = struct {
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-    const build_all_path = args[1];
 
-    var build_all_dir = try Io.Dir.cwd().openDir(io, build_all_path, .{});
+    const args = try std.cli.parse(struct {
+        positional: struct {
+            build_all_path: [:0]const u8,
+        },
+     }, io, arena, init.minimal.args, .{});
+    
+    var build_all_dir = try Io.Dir.cwd().openDir(io, args.positional.build_all_path, .{});
 
     var sym_table = std.StringArrayHashMap(MultiSym).init(arena);
     var sections = std.StringArrayHashMap(void).init(arena);
@@ -307,7 +311,7 @@ pub fn main(init: std.process.Init) !void {
             null,
         ) catch |err| {
             std.debug.panic("unable to read '{s}/{s}': {s}", .{
-                build_all_path, libc_so_path, @errorName(err),
+                args.positional.build_all_path, libc_so_path, @errorName(err),
             });
         };
         var stream: std.Io.Reader = .fixed(elf_bytes);
