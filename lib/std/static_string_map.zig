@@ -63,6 +63,26 @@ pub fn StaticStringMapWithEql(
         const empty_keys = [0][]const u8{};
         const empty_vals = [0]V{};
 
+        pub const Iterator = struct {
+            kvs: *const KVs,
+            index: usize = 0,
+
+            pub fn next(it: *Iterator) ?KV {
+                std.debug.assert(it.index <= it.kvs.len);
+                if (it.index >= it.kvs.len) return null;
+
+                const kv: KV = .{
+                    .key = it.kvs.keys[it.index],
+                    .value = it.kvs.values[it.index],
+                };
+                it.index += 1;
+                return kv;
+            }
+            pub fn reset(it: *Iterator) void {
+                it.index = 0;
+            }
+        };
+
         /// Returns a map backed by static, comptime allocated memory.
         ///
         /// `kvs_list` must be either a list of `struct { []const u8, V }`
@@ -256,6 +276,10 @@ pub fn StaticStringMapWithEql(
         pub fn values(self: Self) []const V {
             const kvs = self.kvs.*;
             return kvs.values[0..kvs.len];
+        }
+
+        pub fn iterator(self: Self) Iterator {
+            return .{ .kvs = self.kvs };
         }
     };
 }
@@ -535,4 +559,27 @@ test "sorting kvs doesn't exceed eval branch quota" {
         .{ "t1", 1 },
     });
     try testing.expectEqual(1, TypeToByteSizeLUT.get("t1"));
+}
+
+test "iterator" {
+    const kvs: []const struct { []const u8, u32 } = &.{
+        .{ "these", 1 },
+        .{ "have", 2 },
+        .{ "nothing", 3 },
+        .{ "incommon", 9 },
+        .{ "samelen", 13 },
+    };
+    const map = StaticStringMap(u32).initComptime(kvs);
+
+    var total: u32 = 0;
+    for (kvs) |kv| {
+        total += kv.@"1";
+    }
+
+    var sum: u32 = 0;
+    var it = map.iterator();
+    while (it.next()) |kv| {
+        sum += kv.value;
+    }
+    try testing.expectEqual(total, sum);
 }

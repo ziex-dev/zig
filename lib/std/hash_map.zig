@@ -655,6 +655,9 @@ pub fn HashMapUnmanaged(
 
                 return null;
             }
+            pub fn reset(it: *Iterator) void {
+                it.index = 0;
+            }
         };
 
         pub const KeyIterator = FieldIterator(K);
