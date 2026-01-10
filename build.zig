@@ -97,6 +97,7 @@ pub fn build(b: *std.Build) !void {
     const skip_wasm = b.option(bool, "skip-wasm", "Main test suite skips targets with wasm32/wasm64 architecture") orelse false;
     const skip_freebsd = b.option(bool, "skip-freebsd", "Main test suite skips targets with freebsd OS") orelse false;
     const skip_netbsd = b.option(bool, "skip-netbsd", "Main test suite skips targets with netbsd OS") orelse false;
+    const skip_openbsd = b.option(bool, "skip-openbsd", "Main test suite skips targets with openbsd OS") orelse false;
     const skip_windows = b.option(bool, "skip-windows", "Main test suite skips targets with windows OS") orelse false;
     const skip_darwin = b.option(bool, "skip-darwin", "Main test suite skips targets with darwin OSs") orelse false;
     const skip_linux = b.option(bool, "skip-linux", "Main test suite skips targets with linux OS") orelse false;
@@ -261,7 +262,7 @@ pub fn build(b: *std.Build) !void {
             "--git-dir", ".git", // affected by the -C argument
             "describe", "--match",    "*.*.*", //
             "--tags",   "--abbrev=9",
-        }, &code, .Ignore) catch {
+        }, &code, .ignore) catch {
             break :v version_string;
         };
         const git_describe = mem.trim(u8, git_describe_untrimmed, " \n\r");
@@ -431,6 +432,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -464,21 +466,19 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
         .skip_llvm = skip_llvm,
         .skip_libc = skip_libc,
         .max_rss = switch (b.graph.host.result.os.tag) {
-            .freebsd => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 1_060_217_241,
-                else => 1_100_000_000,
-            },
+            .freebsd => 2_000_000_000,
             .linux => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 659_809_075,
                 .loongarch64 => 598_902_374,
-                .powerpc64le => 550_656_409,
-                .riscv64 => 731_258_880,
+                .powerpc64le => 627_431_833,
+                .riscv64 => 827_043_430,
                 .s390x => 580_596_121,
                 .x86_64 => 3_290_894_745,
                 else => 3_300_000_000,
@@ -511,6 +511,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -555,6 +556,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -580,6 +582,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -590,15 +593,7 @@ pub fn build(b: *std.Build) !void {
                 .x86_64 => 3_756_422_348,
                 else => 3_800_000_000,
             },
-            .linux => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 6_732_817_203,
-                .loongarch64 => 3_216_349_593,
-                .powerpc64le => 3_090_179_276,
-                .riscv64 => 3_570_899_763,
-                .s390x => 3_652_514_201,
-                .x86_64 => 3_249_546_854,
-                else => 6_800_000_000,
-            },
+            .linux => 6_800_000_000,
             .macos => switch (b.graph.host.result.cpu.arch) {
                 .aarch64 => 8_273_795_481,
                 else => 8_300_000_000,
@@ -645,6 +640,7 @@ pub fn build(b: *std.Build) !void {
         .skip_wasm = skip_wasm,
         .skip_freebsd = skip_freebsd,
         .skip_netbsd = skip_netbsd,
+        .skip_openbsd = skip_openbsd,
         .skip_windows = skip_windows,
         .skip_darwin = skip_darwin,
         .skip_linux = skip_linux,
@@ -829,33 +825,16 @@ fn addCompilerMod(b: *std.Build, options: AddCompilerModOptions) *std.Build.Modu
 fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Step.Compile {
     const exe = b.addExecutable(.{
         .name = "zig",
-        .max_rss = switch (b.graph.host.result.os.tag) {
-            .freebsd => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 6_044_158_771,
-                else => 6_100_000_000,
-            },
-            .linux => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 6_240_805_683,
-                .loongarch64 => 5_024_158_515,
-                .powerpc64le => 5_224_914_534,
-                .riscv64 => 6_996_309_196,
-                .s390x => 4_997_174_476,
-                .x86_64 => 6_664_025_702,
-                else => 7_000_000_000,
-            },
-            .macos => switch (b.graph.host.result.cpu.arch) {
-                .aarch64 => 6_639_145_779,
-                else => 6_700_000_000,
-            },
-            .windows => switch (b.graph.host.result.cpu.arch) {
-                .x86_64 => 5_770_394_009,
-                else => 5_800_000_000,
-            },
-            else => 7_000_000_000,
-        },
+        .max_rss = 7_900_000_000,
         .root_module = addCompilerMod(b, options),
     });
     exe.stack_size = stack_size;
+
+    // Must match the condition in CMakeLists.txt.
+    const function_data_sections = options.target.result.cpu.arch.isPowerPC();
+
+    exe.link_function_sections = function_data_sections;
+    exe.link_data_sections = function_data_sections;
 
     return exe;
 }

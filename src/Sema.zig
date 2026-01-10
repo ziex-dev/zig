@@ -25916,6 +25916,7 @@ fn resolveExternOptions(
     is_thread_local: bool,
     is_dll_import: bool,
     relocation: std.builtin.ExternOptions.Relocation,
+    decoration: ?std.builtin.ExternOptions.Decoration,
 } {
     const pt = sema.pt;
     const zcu = pt.zcu;
@@ -25935,6 +25936,7 @@ fn resolveExternOptions(
     const thread_local_src = block.src(.{ .init_field_thread_local = src.offset.node_offset_builtin_call_arg.builtin_call_node });
     const dll_import_src = block.src(.{ .init_field_dll_import = src.offset.node_offset_builtin_call_arg.builtin_call_node });
     const relocation_src = block.src(.{ .init_field_relocation = src.offset.node_offset_builtin_call_arg.builtin_call_node });
+    const decoration_src = block.src(.{ .init_field_decoration = src.offset.node_offset_builtin_call_arg.builtin_call_node });
 
     const name_ref = try sema.fieldVal(block, src, options, try ip.getOrPutString(gpa, io, pt.tid, "name", .no_embedded_nulls), name_src);
     const name = try sema.toConstString(block, name_src, name_ref, .{ .simple = .extern_options });
@@ -25969,6 +25971,10 @@ fn resolveExternOptions(
     const relocation_val = try sema.resolveConstDefinedValue(block, relocation_src, relocation_ref, .{ .simple = .extern_options });
     const relocation = try sema.interpretBuiltinType(block, relocation_src, relocation_val, std.builtin.ExternOptions.Relocation);
 
+    const decoration_ref = try sema.fieldVal(block, src, options, try ip.getOrPutString(gpa, io, pt.tid, "decoration", .no_embedded_nulls), decoration_src);
+    const decoration_val = try sema.resolveConstDefinedValue(block, decoration_src, decoration_ref, .{ .simple = .extern_options });
+    const decoration = try sema.interpretBuiltinType(block, decoration_src, decoration_val, ?std.builtin.ExternOptions.Decoration);
+
     if (name.len == 0) {
         return sema.fail(block, name_src, "extern symbol name cannot be empty", .{});
     }
@@ -25985,6 +25991,7 @@ fn resolveExternOptions(
         .is_thread_local = is_thread_local_val.toBool(),
         .is_dll_import = is_dll_import_val.toBool(),
         .relocation = relocation,
+        .decoration = decoration,
     };
 }
 
@@ -26044,6 +26051,7 @@ fn zirBuiltinExtern(
         .is_threadlocal = options.is_thread_local,
         .is_dll_import = options.is_dll_import,
         .relocation = options.relocation,
+        .decoration = options.decoration,
         .is_const = ptr_info.flags.is_const,
         .alignment = ptr_info.flags.alignment,
         .@"addrspace" = ptr_info.flags.address_space,
@@ -32264,9 +32272,15 @@ fn analyzeSlice(
     var runtime_src: ?LazySrcLoc = null;
 
     // requirement: start <= end
-    if (try sema.resolveDefinedValue(block, end_src, end)) |end_val| {
-        if (try sema.resolveDefinedValue(block, start_src, start)) |start_val| {
-            if (!by_length and !(try sema.compareAll(start_val, .lte, end_val, .usize))) {
+    if (try sema.resolveDefinedValue(block, start_src, start)) |start_val| {
+        if (try sema.compareAll(start_val, .eq, .zero_usize, .usize)) {
+            checked_start_lte_end = true;
+        }
+        if (try sema.resolveDefinedValue(block, end_src, end)) |end_val| {
+            if (!checked_start_lte_end and
+                !by_length and
+                !(try sema.compareAll(start_val, .lte, end_val, .usize)))
+            {
                 return sema.fail(
                     block,
                     start_src,
@@ -32322,10 +32336,10 @@ fn analyzeSlice(
                 runtime_src = ptr_src;
             }
         } else {
-            runtime_src = start_src;
+            runtime_src = end_src;
         }
     } else {
-        runtime_src = end_src;
+        runtime_src = start_src;
     }
 
     if (!checked_start_lte_end and block.wantSafety() and !block.isComptime()) {
@@ -32388,7 +32402,9 @@ fn analyzeSlice(
                     else
                         end;
 
-                    try sema.addSafetyCheckIndexOob(block, src, actual_end, actual_len, .cmp_lte);
+                    if (try sema.resolveDefinedValue(block, src, actual_len) == null or
+                        try sema.resolveDefinedValue(block, src, actual_end) == null)
+                        try sema.addSafetyCheckIndexOob(block, src, actual_end, actual_len, .cmp_lte);
                 }
 
                 // requirement: result[new_len] == slice_sentinel
@@ -32453,9 +32469,6 @@ fn analyzeSlice(
                 end;
             try sema.addSafetyCheckIndexOob(block, src, actual_end, len_inst, .cmp_lte);
         }
-
-        // requirement: start <= end
-        try sema.addSafetyCheckIndexOob(block, src, start, end, .cmp_lte);
     }
     const result = try block.addInst(.{
         .tag = .slice,

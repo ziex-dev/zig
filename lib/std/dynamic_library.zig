@@ -31,12 +31,20 @@ pub const DynLib = struct {
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
     pub fn open(path: []const u8) Error!DynLib {
-        return .{ .inner = try InnerType.open(path) };
+        if (InnerType == ElfDynLib) {
+            return .{ .inner = try InnerType.open(path, null) };
+        } else {
+            return .{ .inner = try InnerType.open(path) };
+        }
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
     pub fn openZ(path_c: [*:0]const u8) Error!DynLib {
-        return .{ .inner = try InnerType.openZ(path_c) };
+        if (InnerType == ElfDynLib) {
+            return .{ .inner = try InnerType.openZ(path_c, null) };
+        } else {
+            return .{ .inner = try InnerType.openZ(path_c) };
+        }
     }
 
     /// Trusts the file.
@@ -140,7 +148,7 @@ const ElfDynLibError = error{
     ElfHashTableNotFound,
     Canceled,
     Streaming,
-} || posix.OpenError || posix.MMapError;
+} || Io.File.OpenError || posix.MMapError;
 
 pub const ElfDynLib = struct {
     strings: [*:0]u8,
@@ -169,27 +177,20 @@ pub const ElfDynLib = struct {
         return parent;
     }
 
-    fn resolveFromSearchPath(io: Io, search_path: []const u8, file_name: []const u8, delim: u8) ?posix.fd_t {
+    fn resolveFromSearchPath(io: Io, search_path: []const u8, file_name: []const u8, delim: u8) ?Io.File {
         var paths = std.mem.tokenizeScalar(u8, search_path, delim);
         while (paths.next()) |p| {
             var dir = openPath(io, p) catch continue;
             defer dir.close(io);
-            const fd = posix.openat(dir.handle, file_name, .{
-                .ACCMODE = .RDONLY,
-                .CLOEXEC = true,
-            }, 0) catch continue;
-            return fd;
+            return dir.openFile(io, file_name, .{}) catch continue;
         }
         return null;
     }
 
-    fn resolveFromParent(io: Io, dir_path: []const u8, file_name: []const u8) ?posix.fd_t {
+    fn resolveFromParent(io: Io, dir_path: []const u8, file_name: []const u8) ?Io.File {
         var dir = Io.Dir.cwd().openDir(io, dir_path, .{}) catch return null;
         defer dir.close(io);
-        return posix.openat(dir.handle, file_name, .{
-            .ACCMODE = .RDONLY,
-            .CLOEXEC = true,
-        }, 0) catch null;
+        return dir.openFile(io, file_name, .{}) catch null;
     }
 
     // This implements enough to be able to load system libraries in general
@@ -197,37 +198,36 @@ pub const ElfDynLib = struct {
     // - DT_RPATH of the calling binary is not used as a search path
     // - DT_RUNPATH of the calling binary is not used as a search path
     // - /etc/ld.so.cache is not read
-    fn resolveFromName(io: Io, path_or_name: []const u8) !posix.fd_t {
+    fn resolveFromName(io: Io, path_or_name: []const u8, LD_LIBRARY_PATH: ?[]const u8) !Io.File {
         // If filename contains a slash ("/"), then it is interpreted as a (relative or absolute) pathname
         if (std.mem.findScalarPos(u8, path_or_name, 0, '/')) |_| {
-            return posix.open(path_or_name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+            return Io.Dir.cwd().openFile(io, path_or_name, .{});
         }
 
         // Only read LD_LIBRARY_PATH if the binary is not setuid/setgid
         if (std.os.linux.geteuid() == std.os.linux.getuid() and
             std.os.linux.getegid() == std.os.linux.getgid())
         {
-            if (posix.getenvZ("LD_LIBRARY_PATH")) |ld_library_path| {
-                if (resolveFromSearchPath(io, ld_library_path, path_or_name, ':')) |fd| {
-                    return fd;
+            if (LD_LIBRARY_PATH) |ld_library_path| {
+                if (resolveFromSearchPath(io, ld_library_path, path_or_name, ':')) |file| {
+                    return file;
                 }
             }
         }
 
         // Lastly the directories /lib and /usr/lib are searched (in this exact order)
-        if (resolveFromParent(io, "/lib", path_or_name)) |fd| return fd;
-        if (resolveFromParent(io, "/usr/lib", path_or_name)) |fd| return fd;
+        if (resolveFromParent(io, "/lib", path_or_name)) |file| return file;
+        if (resolveFromParent(io, "/usr/lib", path_or_name)) |file| return file;
         return error.FileNotFound;
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
-    pub fn open(path: []const u8) Error!ElfDynLib {
+    pub fn open(path: []const u8, LD_LIBRARY_PATH: ?[]const u8) Error!ElfDynLib {
         const io = std.Options.debug_io;
 
-        const fd = try resolveFromName(io, path);
-        defer posix.close(fd);
+        const file = try resolveFromName(io, path, LD_LIBRARY_PATH);
+        defer file.close(io);
 
-        const file: Io.File = .{ .handle = fd };
         const stat = try file.stat(io);
         const size = std.math.cast(usize, stat.size) orelse return error.FileTooBig;
 
@@ -240,7 +240,7 @@ pub const ElfDynLib = struct {
             mem.alignForward(usize, size, page_size),
             posix.PROT.READ,
             .{ .TYPE = .PRIVATE },
-            fd,
+            file.handle,
             0,
         );
         defer posix.munmap(file_bytes);
@@ -310,7 +310,7 @@ pub const ElfDynLib = struct {
                                 extended_memsz,
                                 prot,
                                 .{ .TYPE = .PRIVATE, .FIXED = true },
-                                fd,
+                                file.handle,
                                 ph.p_offset - extra_bytes,
                             );
                         } else {
@@ -371,8 +371,8 @@ pub const ElfDynLib = struct {
     }
 
     /// Trusts the file. Malicious file will be able to execute arbitrary code.
-    pub fn openZ(path_c: [*:0]const u8) Error!ElfDynLib {
-        return open(mem.sliceTo(path_c, 0));
+    pub fn openZ(path_c: [*:0]const u8, LD_LIBRARY_PATH: ?[]const u8) Error!ElfDynLib {
+        return open(mem.sliceTo(path_c, 0), LD_LIBRARY_PATH);
     }
 
     /// Trusts the file
@@ -554,8 +554,8 @@ fn checkver(def_arg: *elf.Verdef, vsym_arg: elf.Versym, vername: []const u8, str
 
 test "ElfDynLib" {
     if (native_os != .linux) return error.SkipZigTest;
-    try testing.expectError(error.FileNotFound, ElfDynLib.open("invalid_so.so"));
-    try testing.expectError(error.FileNotFound, ElfDynLib.openZ("invalid_so.so"));
+    try testing.expectError(error.FileNotFound, ElfDynLib.open("invalid_so.so", null));
+    try testing.expectError(error.FileNotFound, ElfDynLib.openZ("invalid_so.so", null));
 }
 
 /// Separated to avoid referencing `WindowsDynLib`, because its field types may not

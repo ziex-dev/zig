@@ -155,7 +155,8 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .main_mod = null,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = comp.function_sections,
+        .function_sections = true,
+        .data_sections = true,
         .c_source_files = &c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
@@ -166,6 +167,7 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| {
         switch (err) {
             else => comp.lockAndSetMiscFailure(misc_task, "unable to build {t}: create compilation failed: {t}", .{ misc_task, err }),

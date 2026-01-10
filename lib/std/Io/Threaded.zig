@@ -13,6 +13,7 @@ const File = std.Io.File;
 const Dir = std.Io.Dir;
 const HostName = std.Io.net.HostName;
 const IpAddress = std.Io.net.IpAddress;
+const process = std.process;
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 const assert = std.debug.assert;
@@ -37,9 +38,8 @@ cpu_count_error: ?std.Thread.CpuCountError,
 /// available count, subtract this from either `async_limit` or
 /// `concurrent_limit`.
 busy_count: usize = 0,
-main_thread: Thread,
+worker_threads: std.atomic.Value(?*Thread),
 pid: Pid = .unknown,
-robust_cancel: RobustCancel,
 
 wsa: if (is_windows) Wsa else struct {} = .{},
 
@@ -64,24 +64,57 @@ stderr_writer_initialized: bool = false,
 argv0: Argv0,
 environ: Environ,
 
-pub const Argv0 = switch (native_os) {
-    .openbsd, .haiku => struct {
-        value: ?[*:0]const u8 = null,
+null_file: NullFile = .{},
+random_file: RandomFile = .{},
+
+csprng: Csprng = .{},
+
+pub const Csprng = struct {
+    rng: std.Random.DefaultCsprng = .{
+        .state = undefined,
+        .offset = std.math.maxInt(usize),
     },
-    else => struct {},
+
+    pub const seed_len = std.Random.DefaultCsprng.secret_seed_length;
+
+    pub fn isInitialized(c: *const Csprng) bool {
+        return c.rng.offset != std.math.maxInt(usize);
+    }
 };
 
-pub const Environ = struct {
+pub const Argv0 = switch (native_os) {
+    .openbsd, .haiku => struct {
+        value: ?[*:0]const u8,
+
+        pub const empty: Argv0 = .{ .value = null };
+
+        pub fn init(args: process.Args) Argv0 {
+            return .{ .value = args.vector[0] };
+        }
+    },
+    else => struct {
+        pub const empty: Argv0 = .{};
+
+        pub fn init(args: process.Args) Argv0 {
+            _ = args;
+            return .{};
+        }
+    },
+};
+
+const Environ = struct {
     /// Unmodified data directly from the OS.
-    block: Block = &.{},
+    process_environ: process.Environ = .empty,
     /// Protected by `mutex`. Determines whether the other fields have been
-    /// memoized based on `block`.
+    /// memoized based on `process_environ`.
     initialized: bool = false,
-    /// Protected by `mutex`. Memoized based on `block`. Tracks whether the
+    /// Protected by `mutex`. Memoized based on `process_environ`. Tracks whether the
     /// environment variables are present, ignoring their value.
     exist: Exist = .{},
-    /// Protected by `mutex`. Memoized based on `block`.
+    /// Protected by `mutex`. Memoized based on `process_environ`.
     string: String = .{},
+    /// ZIG_PROGRESS
+    zig_progress_handle: std.Progress.ParentFileError!u31 = error.EnvironmentVariableMissing,
     /// Protected by `mutex`. Tracks the problem, if any, that occurred when
     /// trying to scan environment variables.
     ///
@@ -90,26 +123,57 @@ pub const Environ = struct {
 
     pub const Error = Allocator.Error || Io.UnexpectedError;
 
-    pub const Block = []const [*:0]const u8;
-
     pub const Exist = struct {
         NO_COLOR: bool = false,
         CLICOLOR_FORCE: bool = false,
     };
 
     pub const String = switch (native_os) {
-        .openbsd, .haiku => struct {
+        .windows, .wasi => struct {},
+        else => struct {
             PATH: ?[:0]const u8 = null,
+            DEBUGINFOD_CACHE_PATH: ?[:0]const u8 = null,
+            XDG_CACHE_HOME: ?[:0]const u8 = null,
+            HOME: ?[:0]const u8 = null,
         },
-        else => struct {},
     };
 };
 
-pub const RobustCancel = if (std.Thread.use_pthreads or native_os == .linux) enum {
-    enabled,
-    disabled,
-} else enum {
-    disabled,
+pub const NullFile = switch (native_os) {
+    .windows => struct {
+        handle: ?windows.HANDLE = null,
+
+        fn deinit(this: *@This()) void {
+            if (this.handle) |handle| {
+                windows.CloseHandle(handle);
+                this.handle = null;
+            }
+        }
+    },
+    .wasi, .ios, .tvos, .visionos, .watchos => struct {
+        fn deinit(this: @This()) void {
+            _ = this;
+        }
+    },
+    else => struct {
+        fd: posix.fd_t = -1,
+
+        fn deinit(this: *@This()) void {
+            if (this.fd >= 0) {
+                posix.close(this.fd);
+                this.fd = -1;
+            }
+        }
+    },
+};
+
+pub const RandomFile = switch (native_os) {
+    .windows => NullFile,
+    else => if (use_dev_urandom) NullFile else struct {
+        fn deinit(this: @This()) void {
+            _ = this;
+        }
+    },
 };
 
 pub const Pid = if (native_os == .linux) enum(posix.pid_t) {
@@ -153,129 +217,509 @@ pub const UseFchmodat2 = if (have_fchmodat2 and !have_fchmodat_flags) enum {
     pub const default: UseFchmodat2 = .disabled;
 };
 
+const Runnable = struct {
+    node: std.SinglyLinkedList.Node,
+    startFn: *const fn (*Runnable, *Thread, *Threaded) void,
+};
+
+const Group = struct {
+    ptr: *Io.Group,
+
+    /// Returns a correctly-typed pointer to the `Io.Group.token` field.
+    ///
+    /// The status indicates how many pending tasks are in the group, whether the group has been
+    /// canceled, and whether the group has been awaited.
+    ///
+    /// Note that the zero value of `Status` intentionally represents the initial group state (empty
+    /// with no awaiters). This is a requirement of `Io.Group`.
+    fn status(g: Group) *std.atomic.Value(Status) {
+        return @ptrCast(&g.ptr.token);
+    }
+    /// Returns a correctly-typed pointer to the `Io.Group.state` field. The double-pointer here is
+    /// intentional, because the `state` field itself stores a pointer, and this function returns a
+    /// pointer to that field.
+    ///
+    /// On completion of the whole group, if `status` indicates that there is an awaiter, the last
+    /// task must increment this `u32` and do a futex wake on it to signal that awaiter.
+    fn awaiter(g: Group) **std.atomic.Value(u32) {
+        return @ptrCast(&g.ptr.state);
+    }
+
+    const Status = packed struct(usize) {
+        num_running: @Int(.unsigned, @bitSizeOf(usize) - 2),
+        have_awaiter: bool,
+        canceled: bool,
+    };
+
+    const Task = struct {
+        runnable: Runnable,
+        group: *Io.Group,
+        func: *const fn (context: *const anyopaque) Io.Cancelable!void,
+        context_alignment: Alignment,
+        alloc_len: usize,
+
+        /// `Task.runnable.node` is `undefined` in the created `Task`.
+        fn create(
+            gpa: Allocator,
+            group: Group,
+            context: []const u8,
+            context_alignment: Alignment,
+            func: *const fn (context: *const anyopaque) Io.Cancelable!void,
+        ) Allocator.Error!*Task {
+            const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(Task);
+            const worst_case_context_offset = context_alignment.forward(@sizeOf(Task) + max_context_misalignment);
+            const alloc_len = worst_case_context_offset + context.len;
+
+            const task: *Task = @ptrCast(@alignCast(try gpa.alignedAlloc(u8, .of(Task), alloc_len)));
+            errdefer comptime unreachable;
+
+            task.* = .{
+                .runnable = .{
+                    .node = undefined,
+                    .startFn = &start,
+                },
+                .group = group.ptr,
+                .func = func,
+                .context_alignment = context_alignment,
+                .alloc_len = alloc_len,
+            };
+            @memcpy(task.contextPointer()[0..context.len], context);
+            return task;
+        }
+
+        fn destroy(task: *Task, gpa: Allocator) void {
+            const base: [*]align(@alignOf(Task)) u8 = @ptrCast(task);
+            gpa.free(base[0..task.alloc_len]);
+        }
+
+        fn contextPointer(task: *Task) [*]u8 {
+            const base: [*]u8 = @ptrCast(task);
+            const offset = task.context_alignment.forward(@intFromPtr(base) + @sizeOf(Task)) - @intFromPtr(base);
+            return base + offset;
+        }
+
+        fn start(r: *Runnable, thread: *Thread, t: *Threaded) void {
+            const task: *Task = @fieldParentPtr("runnable", r);
+            const group: Group = .{ .ptr = task.group };
+
+            // This would be a simple store, but it's upgraded to an RMW so we can use `.acquire` to
+            // enforce the ordering between this and the `group.status().load` below. Paired with
+            // the `.release` rmw on `Thread.status` in `cancelThreads`, this creates a StoreLoad
+            // barrier which guarantees that when a group is canceled, either we see the cancelation
+            // in the group status, or the canceler sees our thread status so can directly notify us
+            // of the cancelation.
+            _ = thread.status.swap(.{
+                .cancelation = .none,
+                .awaitable = .fromGroup(group.ptr),
+            }, .acquire);
+            if (group.status().load(.monotonic).canceled) {
+                thread.status.store(.{
+                    .cancelation = .canceling,
+                    .awaitable = .fromGroup(group.ptr),
+                }, .monotonic);
+            }
+
+            const result = task.func(task.contextPointer());
+            const cancel_acknowledged = switch (thread.status.load(.monotonic).cancelation) {
+                .none, .canceling => false,
+                .canceled => true,
+                .parked => unreachable,
+                .blocked => unreachable,
+                .blocked_windows_dns => unreachable,
+                .blocked_canceling => unreachable,
+            };
+            if (result) {
+                assert(!cancel_acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
+            } else |err| switch (err) {
+                error.Canceled => assert(cancel_acknowledged), // group task returned `error.Canceled` but was never canceled
+            }
+
+            thread.status.store(.{ .cancelation = .none, .awaitable = .null }, .monotonic);
+            const old_status = group.status().fetchSub(.{
+                .num_running = 1,
+                .have_awaiter = false,
+                .canceled = false,
+            }, .acq_rel); // acquire `group.awaiter()`, release task results
+            assert(old_status.num_running > 0);
+            if (old_status.have_awaiter and old_status.num_running == 1) {
+                const to_signal = group.awaiter().*;
+                // `awaiter` should only be modified by us. For another thread to see `num_running`
+                // drop to 0 after this point would indicate that another task started up, meaning
+                // `async`/`cancel` was racing with awaited group completion.
+                group.awaiter().* = undefined;
+                _ = to_signal.fetchAdd(1, .release); // release results
+                Thread.futexWake(&to_signal.raw, 1);
+            }
+
+            // Task completed. Self-destruct sequence initiated.
+            task.destroy(t.allocator);
+        }
+    };
+
+    /// Assumes the caller has already atomically updated the group status to indicate cancelation,
+    /// and notifies any already-running threads of this cancelation.
+    fn cancelThreads(g: Group, t: *Threaded) bool {
+        var any_blocked = false;
+        var it = t.worker_threads.load(.acquire); // acquire `Thread` values
+        while (it) |thread| : (it = thread.next) {
+            // This non-mutating RMW exists for ordering reasons: see comment in `Group.Task.start` for reasons.
+            _ = thread.status.fetchOr(.{ .cancelation = @enumFromInt(0), .awaitable = .null }, .release);
+            if (thread.cancelAwaitable(.fromGroup(g.ptr))) any_blocked = true;
+        }
+        return any_blocked;
+    }
+
+    /// Uses `Thread.signalCanceledSyscall` to signal any threads which are still blocked in a
+    /// syscall for this group and have not observed a cancelation request yet. Returns `true` if
+    /// more signals may be necessary, in which case the caller must call this again after a delay.
+    fn signalAllCanceledSyscalls(g: Group, t: *Threaded) bool {
+        var any_signaled = false;
+        var it = t.worker_threads.load(.acquire); // acquire `Thread` values
+        while (it) |thread| : (it = thread.next) {
+            if (thread.signalCanceledSyscall(t, .fromGroup(g.ptr))) any_signaled = true;
+        }
+        return any_signaled;
+    }
+
+    /// The caller has canceled `g`. Inform any threads working on that group of the cancelation if
+    /// necessary, and wait for `g` to finish (indicated by `num_completed` being incremented from 0
+    /// to 1), while sending regular signals to threads if necessary for them to unblock from any
+    /// cancelable syscalls.
+    ///
+    /// `skip_signals` means it is already known that no threads are currently working on the group
+    /// so no notifications or signals are necessary.
+    fn waitForCancelWithSignaling(
+        g: Group,
+        t: *Threaded,
+        num_completed: *std.atomic.Value(u32),
+        skip_signals: bool,
+    ) void {
+        var need_signal: bool = !skip_signals and g.cancelThreads(t);
+        var timeout_ns: u64 = 1 << 10;
+        while (true) {
+            need_signal = need_signal and g.signalAllCanceledSyscalls(t);
+            Thread.futexWaitUncancelable(&num_completed.raw, 0, if (need_signal) timeout_ns else null);
+            switch (num_completed.load(.acquire)) { // acquire task results
+                0 => {},
+                1 => break,
+                else => unreachable,
+            }
+            timeout_ns <<|= 1;
+        }
+    }
+};
+
+/// Trailing data:
+/// 1. context
+/// 2. result
+const Future = struct {
+    runnable: Runnable,
+    func: *const fn (context: *const anyopaque, result: *anyopaque) void,
+    status: std.atomic.Value(Status),
+    /// On completion, increment this `u32` and do a futex wake on it.
+    awaiter: *std.atomic.Value(u32),
+    context_alignment: Alignment,
+    result_offset: usize,
+    alloc_len: usize,
+
+    const Status = packed struct(usize) {
+        /// The values of this enum are chosen so that await/cancel can just OR with 0b01 and 0b11
+        /// respectively. That *does* clobber `.done`, but that's actually fine, because if the tag
+        /// is `.done` then only the awaiter is referencing this `Future` anyway.
+        tag: enum(u2) {
+            /// The future is queued or running (depending on whether `thread` is set).
+            pending = 0b00,
+            /// Like `pending`, but the future is being awaited. `Future.awaiter` is populated.
+            pending_awaited = 0b01,
+            /// Like `pending`, but the future is being canceled. `Future.awaiter` is populated.
+            pending_canceled = 0b11,
+            /// The future has already completed. `thread` is `.null`, unless the future terminated
+            /// with an acknowledged cancel request, in which case `thread` is `.all_ones`.
+            done = 0b10,
+        },
+        /// When the future begins execution, this is atomically updated from `null` to the thread running the
+        /// `Future`, so that cancelation knows which thread to cancel.
+        thread: Thread.PackedPtr,
+    };
+
+    /// `Future.runnable.node` is `undefined` in the created `Future`.
+    fn create(
+        gpa: Allocator,
+        result_len: usize,
+        result_alignment: Alignment,
+        context: []const u8,
+        context_alignment: Alignment,
+        func: *const fn (context: *const anyopaque, result: *anyopaque) void,
+    ) Allocator.Error!*Future {
+        const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(Future);
+        const worst_case_context_offset = context_alignment.forward(@sizeOf(Future) + max_context_misalignment);
+        const worst_case_result_offset = result_alignment.forward(worst_case_context_offset + context.len);
+        const alloc_len = worst_case_result_offset + result_len;
+
+        const future: *Future = @ptrCast(@alignCast(try gpa.alignedAlloc(u8, .of(Future), alloc_len)));
+        errdefer comptime unreachable;
+
+        const actual_context_addr = context_alignment.forward(@intFromPtr(future) + @sizeOf(Future));
+        const actual_result_addr = result_alignment.forward(actual_context_addr + context.len);
+        const actual_result_offset = actual_result_addr - @intFromPtr(future);
+        future.* = .{
+            .runnable = .{
+                .node = undefined,
+                .startFn = &start,
+            },
+            .func = func,
+            .status = .init(.{
+                .tag = .pending,
+                .thread = .null,
+            }),
+            .awaiter = undefined,
+            .context_alignment = context_alignment,
+            .result_offset = actual_result_offset,
+            .alloc_len = alloc_len,
+        };
+        @memcpy(future.contextPointer()[0..context.len], context);
+        return future;
+    }
+
+    fn destroy(future: *Future, gpa: Allocator) void {
+        const base: [*]align(@alignOf(Future)) u8 = @ptrCast(future);
+        gpa.free(base[0..future.alloc_len]);
+    }
+
+    fn resultPointer(future: *Future) [*]u8 {
+        const base: [*]u8 = @ptrCast(future);
+        return base + future.result_offset;
+    }
+
+    fn contextPointer(future: *Future) [*]u8 {
+        const base: [*]u8 = @ptrCast(future);
+        const context_offset = future.context_alignment.forward(@intFromPtr(future) + @sizeOf(Future)) - @intFromPtr(future);
+        return base + context_offset;
+    }
+
+    fn start(r: *Runnable, thread: *Thread, t: *Threaded) void {
+        _ = t;
+        const future: *Future = @fieldParentPtr("runnable", r);
+
+        thread.status.store(.{
+            .cancelation = .none,
+            .awaitable = .fromFuture(future),
+        }, .monotonic);
+        {
+            const old_status = future.status.fetchOr(.{
+                .tag = .pending,
+                .thread = .pack(thread),
+            }, .release);
+            assert(old_status.thread == .null);
+            switch (old_status.tag) {
+                .pending, .pending_awaited => {},
+                .pending_canceled => thread.status.store(.{
+                    .cancelation = .canceling,
+                    .awaitable = .fromFuture(future),
+                }, .monotonic),
+                .done => unreachable,
+            }
+        }
+
+        future.func(future.contextPointer(), future.resultPointer());
+
+        const had_acknowledged_cancel = switch (thread.status.load(.monotonic).cancelation) {
+            .none, .canceling => false,
+            .canceled => true,
+            .parked => unreachable,
+            .blocked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .blocked_canceling => unreachable,
+        };
+        thread.status.store(.{ .cancelation = .none, .awaitable = .null }, .monotonic);
+        const old_status = future.status.swap(.{
+            .tag = .done,
+            .thread = if (had_acknowledged_cancel) .all_ones else .null,
+        }, .acq_rel); // acquire `future.awaiter`, release results
+        switch (old_status.tag) {
+            .pending => {},
+            .pending_awaited, .pending_canceled => {
+                const to_signal = future.awaiter;
+                _ = to_signal.fetchAdd(1, .release); // release results
+                Thread.futexWake(&to_signal.raw, 1);
+            },
+            .done => unreachable,
+        }
+    }
+
+    /// The caller has canceled `future`. `thread` is the thread currently running that future.
+    /// Inform `thread` of the cancelation if necessary, and wait for `future` to finish (indicated
+    /// by `num_completed` being incremented from 0 to 1), while sending regular signals to `thread`
+    /// if necessary for it to unblock from a cancelable syscall.
+    fn waitForCancelWithSignaling(
+        future: *Future,
+        t: *Threaded,
+        num_completed: *std.atomic.Value(u32),
+        thread: ?*Thread,
+    ) void {
+        var need_signal: bool = thread != null and thread.?.cancelAwaitable(.fromFuture(future));
+        var timeout_ns: u64 = 1 << 10;
+        while (true) {
+            need_signal = need_signal and thread.?.signalCanceledSyscall(t, .fromFuture(future));
+            Thread.futexWaitUncancelable(&num_completed.raw, 0, if (need_signal) timeout_ns else null);
+            switch (num_completed.load(.acquire)) { // acquire task results
+                0 => {},
+                1 => break,
+                else => unreachable,
+            }
+            timeout_ns <<|= 1;
+        }
+    }
+};
+
+/// A sequence of (ptr_bit_width - 3) bits which uniquely identifies a group or future. The bits are
+/// the MSBs of the `*Io.Group` or `*Future`. These things do not necessarily have 3 zero bits at
+/// the end (they are pointer-aligned, so on 32-bit targets only have 2), but because they both have
+/// a *size* of at least 8 bytes, no two groups/futures in memory at the same time will have the
+/// same value for all of these bits. In other words, given a group/future pointer, the next group
+/// or future must be at least 8 bytes later, so its address will have a different value for one of
+/// the top (ptr_bit_width - 3) bits.
+const AwaitableId = enum(@Int(.unsigned, @bitSizeOf(usize) - 3)) {
+    comptime {
+        assert(@sizeOf(Future) >= 8);
+        assert(@sizeOf(Io.Group) >= 8);
+    }
+    null = 0,
+    all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 3)),
+    _,
+    const Split = packed struct(usize) { low: u3, high: AwaitableId };
+    fn fromGroup(g: *Io.Group) AwaitableId {
+        const split: Split = @bitCast(@intFromPtr(g));
+        return split.high;
+    }
+    fn fromFuture(f: *Future) AwaitableId {
+        const split: Split = @bitCast(@intFromPtr(f));
+        return split.high;
+    }
+};
+
 const Thread = struct {
-    /// The value that needs to be passed to pthread_kill or tgkill in order to
-    /// send a signal.
-    signal_id: SignaleeId,
-    current_closure: ?*Closure,
-    /// Only populated if `current_closure != null`. Indicates the current cancel protection mode.
+    next: ?*Thread,
+
+    id: std.Thread.Id,
+    handle: Handle,
+
+    status: std.atomic.Value(Status),
+
     cancel_protection: Io.CancelProtection,
+    /// Always released when `Status.cancelation` is set to `.parked`.
+    futex_waiter: if (use_parking_futex) ?*parking_futex.Waiter else ?noreturn,
+
+    csprng: Csprng,
+
+    const Handle = Handle: {
+        if (std.Thread.use_pthreads) break :Handle std.c.pthread_t;
+        if (builtin.target.os.tag == .windows) break :Handle windows.HANDLE;
+        break :Handle void;
+    };
+
+    const Status = packed struct(usize) {
+        /// The specific values of these enum fields are chosen to simplify the implementation of
+        /// the transformations we need to apply to this state.
+        cancelation: enum(u3) {
+            /// The thread has not yet been canceled, and is not in a cancelable operation.
+            /// To request cancelation, just set the status to `.canceling`.
+            none = 0b000,
+
+            /// The thread is parked in a cancelable futex wait or sleep.
+            /// Only applicable if `use_parking_futex` or `use_parking_sleep`.
+            /// To request cancelation, set the status to `.canceling` and unpark the thread.
+            /// To unpark for another reason (futex wake), set the status to `.none` and unpark the thread.
+            parked = 0b001,
+
+            /// The thread is blocked in a cancelable system call.
+            /// To request cancelation, set the status to `.blocked_canceling` and repeatedly interrupt the system call until the status changes.
+            blocked = 0b011,
+
+            /// Windows-only: the thread is blocked in a call to `GetAddrInfoExW`.
+            /// To request cancelation, set the status to `.canceling` and call `GetAddrInfoExCancel`.
+            blocked_windows_dns = 0b010,
+
+            /// The thread has an outstanding cancelation request but is not in a cancelable operation.
+            /// When it acknowledges the cancelation, it will set the status to `.canceled`.
+            canceling = 0b110,
+
+            /// The thread has received and acknowledged a cancelation request.
+            /// If `recancel` is called, the status will revert to `.canceling`, but otherwise, the status
+            /// will not change for the remainder of this task's execution.
+            canceled = 0b111,
+
+            /// The thread is blocked in a cancelable system call, and is being canceled. The thread which triggered the cancelation will send signals to this thread
+            /// until its status changes.
+            blocked_canceling = 0b101,
+        },
+
+        /// We cannot turn this value back into a pointer. Instead, it exists so that a task can be
+        /// canceled by a cmpxchg on thread status: if it is running the task we want to cancel,
+        /// then update the `cancelation` field.
+        awaitable: AwaitableId,
+    };
 
     const SignaleeId = if (std.Thread.use_pthreads) std.c.pthread_t else std.Thread.Id;
 
     threadlocal var current: ?*Thread = null;
 
-    fn getCurrent(t: *Threaded) *Thread {
-        return current orelse return &t.main_thread;
-    }
-
-    fn checkCancel(thread: *Thread) error{Canceled}!void {
-        const closure = thread.current_closure orelse return;
-
+    /// The thread is neither in a syscall nor entering one, but we want to check for cancelation
+    /// anyway. If there is a pending cancel request, acknowledge it and return `error.Canceled`.
+    fn checkCancel() Io.Cancelable!void {
+        const thread = Thread.current orelse return;
         switch (thread.cancel_protection) {
-            .unblocked => {},
             .blocked => return,
-        }
-
-        switch (@cmpxchgStrong(
-            CancelStatus,
-            &closure.cancel_status,
-            .requested,
-            .acknowledged,
-            .acq_rel,
-            .acquire,
-        ) orelse return error.Canceled) {
-            .requested => unreachable,
-            .acknowledged => unreachable,
-            .none, _ => {},
-        }
-    }
-
-    fn beginSyscall(thread: *Thread) error{Canceled}!void {
-        const closure = thread.current_closure orelse return;
-
-        switch (thread.cancel_protection) {
             .unblocked => {},
-            .blocked => return,
         }
-
-        switch (@cmpxchgStrong(
-            CancelStatus,
-            &closure.cancel_status,
-            .none,
-            .fromSignaleeId(thread.signal_id),
-            .acq_rel,
-            .acquire,
-        ) orelse return) {
-            .none => unreachable,
-            .requested => {
-                @atomicStore(CancelStatus, &closure.cancel_status, .acknowledged, .release);
+        // Here, unlike `Syscall.checkCancel`, it's not particularly likely that we're canceled, so
+        // it seems preferable to do a cheap atomic load and, in the unlikely case, a separate store
+        // to acknowledge. Besides, the state transitions we need here can't be done with one atomic
+        // OR/AND/XOR on `Status.cancelation`, so we don't actually have any other option.
+        const status = thread.status.load(.monotonic);
+        switch (status.cancelation) {
+            .parked => unreachable,
+            .blocked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .blocked_canceling => unreachable,
+            .none, .canceled => {},
+            .canceling => {
+                thread.status.store(.{
+                    .cancelation = .canceled,
+                    .awaitable = status.awaitable,
+                }, .monotonic);
                 return error.Canceled;
             },
-            .acknowledged => return,
-            _ => unreachable,
         }
     }
 
-    fn endSyscall(thread: *Thread) void {
-        const closure = thread.current_closure orelse return;
-
-        switch (thread.cancel_protection) {
-            .unblocked => {},
-            .blocked => return,
-        }
-
-        _ = @cmpxchgStrong(
-            CancelStatus,
-            &closure.cancel_status,
-            .fromSignaleeId(thread.signal_id),
-            .none,
-            .acq_rel,
-            .acquire,
-        ) orelse return;
+    fn futexWaitUncancelable(ptr: *const u32, expect: u32, timeout_ns: ?u64) void {
+        return Thread.futexWaitInner(ptr, expect, true, timeout_ns) catch unreachable;
     }
 
-    fn endSyscallErrnoBug(thread: *Thread, err: posix.E) Io.UnexpectedError {
-        @branchHint(.cold);
-        thread.endSyscall();
-        return errnoBug(err);
+    fn futexWait(ptr: *const u32, expect: u32, timeout_ns: ?u64) Io.Cancelable!void {
+        return Thread.futexWaitInner(ptr, expect, false, timeout_ns);
     }
 
-    fn endSyscallUnexpectedErrno(thread: *Thread, err: posix.E) Io.UnexpectedError {
-        @branchHint(.cold);
-        thread.endSyscall();
-        return posix.unexpectedErrno(err);
-    }
-
-    /// inline to make error return traces slightly shallower.
-    inline fn endSyscallError(thread: *Thread, err: anytype) @TypeOf(err) {
-        thread.endSyscall();
-        return err;
-    }
-
-    fn currentSignalId() SignaleeId {
-        return if (std.Thread.use_pthreads) std.c.pthread_self() else std.Thread.getCurrentId();
-    }
-
-    fn futexWaitUncancelable(ptr: *const u32, expect: u32) void {
-        return Thread.futexWaitTimed(null, ptr, expect, null) catch unreachable;
-    }
-
-    fn futexWait(thread: *Thread, ptr: *const u32, expect: u32) Io.Cancelable!void {
-        return Thread.futexWaitTimed(thread, ptr, expect, null) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
-            error.Timeout => unreachable,
-        };
-    }
-
-    fn futexWaitTimed(thread: ?*Thread, ptr: *const u32, expect: u32, timeout_ns: ?u64) Io.Cancelable!void {
+    fn futexWaitInner(ptr: *const u32, expect: u32, uncancelable: bool, timeout_ns: ?u64) Io.Cancelable!void {
         @branchHint(.cold);
 
         if (builtin.single_threaded) unreachable; // nobody would ever wake us
 
-        if (builtin.cpu.arch.isWasm()) {
+        if (use_parking_futex) {
+            return parking_futex.wait(
+                ptr,
+                expect,
+                uncancelable,
+                if (timeout_ns) |ns| .{ .duration = .{
+                    .raw = .fromNanoseconds(ns),
+                    .clock = .boot,
+                } } else .none,
+            );
+        } else if (builtin.cpu.arch.isWasm()) {
             comptime assert(builtin.cpu.has(.wasm, .atomics));
-            if (thread) |t| try t.checkCancel();
+            // TODO implement cancelation for WASM futex waits by signaling the futex
+            if (!uncancelable) try Thread.checkCancel();
             const to: i64 = if (timeout_ns) |ns| ns else -1;
             const signed_expect: i32 = @bitCast(expect);
             const result = asm volatile (
@@ -303,9 +747,9 @@ const Thread = struct {
                     ts_buffer = timestampToPosix(ns);
                     break :ts &ts_buffer;
                 } else null;
-                if (thread) |t| try t.beginSyscall();
+                const syscall: Syscall = if (uncancelable) .{ .thread = null } else try .start();
                 const rc = linux.futex_4arg(ptr, .{ .cmd = .WAIT, .private = true }, expect, ts);
-                if (thread) |t| t.endSyscall();
+                syscall.finish();
                 switch (linux.errno(rc)) {
                     .SUCCESS => {}, // notified by `wake()`
                     .INTR => {}, // caller's responsibility to retry
@@ -322,7 +766,7 @@ const Thread = struct {
                     .op = .COMPARE_AND_WAIT,
                     .NO_ERRNO = true,
                 };
-                if (thread) |t| try t.beginSyscall();
+                const syscall: Syscall = if (uncancelable) .{ .thread = null } else try .start();
                 const status = switch (darwin_supports_ulock_wait2) {
                     true => c.__ulock_wait2(flags, ptr, expect, ns: {
                         const ns = timeout_ns orelse break :ns 0;
@@ -336,7 +780,7 @@ const Thread = struct {
                         break :us us;
                     }),
                 };
-                if (thread) |t| t.endSyscall();
+                syscall.finish();
                 if (status >= 0) return;
                 switch (@as(c.E, @enumFromInt(-status))) {
                     .INTR => {}, // spurious wake
@@ -345,24 +789,6 @@ const Thread = struct {
                     // without waiting, but the caller should retry anyway.
                     .FAULT => {},
                     .TIMEDOUT => {}, // timeout
-                    else => recoverableOsBugDetected(),
-                }
-            },
-            .windows => {
-                var timeout_value: windows.LARGE_INTEGER = undefined;
-                var timeout_ptr: ?*const windows.LARGE_INTEGER = null;
-                // NTDLL functions work with time in units of 100 nanoseconds.
-                // Positive values are absolute deadlines while negative values are relative durations.
-                if (timeout_ns) |delay| {
-                    timeout_value = @as(windows.LARGE_INTEGER, @intCast(delay / 100));
-                    timeout_value = -timeout_value;
-                    timeout_ptr = &timeout_value;
-                }
-                if (thread) |t| try t.checkCancel();
-                switch (windows.ntdll.RtlWaitOnAddress(ptr, &expect, @sizeOf(@TypeOf(expect)), timeout_ptr)) {
-                    .SUCCESS => {},
-                    .CANCELLED => {},
-                    .TIMEOUT => {}, // timeout
                     else => recoverableOsBugDetected(),
                 }
             },
@@ -378,9 +804,9 @@ const Thread = struct {
                     tm.clockid = .MONOTONIC;
                     tm.timeout = timestampToPosix(ns);
                 }
-                if (thread) |t| try t.beginSyscall();
+                const syscall: Syscall = if (uncancelable) .{ .thread = null } else try .start();
                 const rc = std.c._umtx_op(@intFromPtr(ptr), flags, @as(c_ulong, expect), tm_size, @intFromPtr(tm_ptr));
-                if (thread) |t| t.endSyscall();
+                syscall.finish();
                 if (is_debug) switch (posix.errno(rc)) {
                     .SUCCESS => {},
                     .FAULT => unreachable, // one of the args points to invalid memory
@@ -397,7 +823,7 @@ const Thread = struct {
                     tm_ptr = &tm;
                     tm = timestampToPosix(ns);
                 }
-                if (thread) |t| try t.beginSyscall();
+                const syscall: Syscall = if (uncancelable) .{ .thread = null } else try .start();
                 const rc = std.c.futex(
                     ptr,
                     std.c.FUTEX.WAIT | std.c.FUTEX.PRIVATE_FLAG,
@@ -405,7 +831,7 @@ const Thread = struct {
                     tm_ptr,
                     null, // uaddr2 is ignored
                 );
-                if (thread) |t| t.endSyscall();
+                syscall.finish();
                 if (is_debug) switch (posix.errno(rc)) {
                     .SUCCESS => {},
                     .NOSYS => unreachable, // constant op known good value
@@ -424,9 +850,9 @@ const Thread = struct {
                 } else {
                     timeout_us = 0;
                 }
-                if (thread) |t| try t.beginSyscall();
+                const syscall: Syscall = if (uncancelable) .{ .thread = null } else try .start();
                 const rc = std.c.umtx_sleep(@ptrCast(ptr), @bitCast(expect), timeout_us);
-                if (thread) |t| t.endSyscall();
+                syscall.finish();
                 if (is_debug) switch (std.posix.errno(rc)) {
                     .SUCCESS => {},
                     .BUSY => {}, // ptr != expect
@@ -436,14 +862,7 @@ const Thread = struct {
                     else => unreachable,
                 };
             },
-            else => if (std.Thread.use_pthreads) {
-                // TODO integrate the following function being called with robust cancelation.
-                return pthreads_futex.wait(ptr, expect, timeout_ns) catch |err| switch (err) {
-                    error.Timeout => {},
-                };
-            } else {
-                @compileError("unimplemented: futexWait");
-            },
+            else => @compileError("unimplemented: futexWait"),
         }
     }
 
@@ -453,7 +872,9 @@ const Thread = struct {
 
         if (builtin.single_threaded) return; // nothing to wake up
 
-        if (builtin.cpu.arch.isWasm()) {
+        if (use_parking_futex) {
+            return parking_futex.wake(ptr, max_waiters);
+        } else if (builtin.cpu.arch.isWasm()) {
             comptime assert(builtin.cpu.has(.wasm, .atomics));
             const woken_count = asm volatile (
                 \\local.get %[ptr]
@@ -498,12 +919,6 @@ const Thread = struct {
                     }
                 }
             },
-            .windows => {
-                switch (max_waiters) {
-                    1 => windows.ntdll.RtlWakeAddressSingle(ptr),
-                    else => windows.ntdll.RtlWakeAddressAll(ptr),
-                }
-            },
             .freebsd => {
                 const rc = std.c._umtx_op(
                     @intFromPtr(ptr),
@@ -536,129 +951,239 @@ const Thread = struct {
                     @min(max_waiters, std.math.maxInt(c_int)),
                 );
             },
-            else => if (std.Thread.use_pthreads) {
-                return pthreads_futex.wake(ptr, max_waiters);
-            } else {
-                @compileError("unimplemented: futexWake");
-            },
+            else => @compileError("unimplemented: futexWake"),
         }
+    }
+
+    /// Cancels `thread` if it is working on `awaitable`.
+    ///
+    /// It is possible that `thread` gets canceled by this function, but is blocked in a syscall. In
+    /// that case, the thread may need to be sent a signal to interrupt the call. This function will
+    /// return `true` to indicate this, in which case the caller must call `signalCanceledSyscall`.
+    fn cancelAwaitable(thread: *Thread, awaitable: AwaitableId) bool {
+        var status = thread.status.load(.monotonic);
+        while (true) {
+            if (status.awaitable != awaitable) return false; // thread is working on something else
+            status = switch (status.cancelation) {
+                .none => thread.status.cmpxchgWeak(
+                    .{ .cancelation = .none, .awaitable = awaitable },
+                    .{ .cancelation = .canceling, .awaitable = awaitable },
+                    .monotonic,
+                    .monotonic,
+                ) orelse return false,
+
+                .parked => thread.status.cmpxchgWeak(
+                    .{ .cancelation = .parked, .awaitable = awaitable },
+                    .{ .cancelation = .canceling, .awaitable = awaitable },
+                    .acquire, // acquire `thread.futex_waiter`
+                    .monotonic,
+                ) orelse {
+                    if (!use_parking_futex and !use_parking_sleep) unreachable;
+                    if (thread.futex_waiter) |futex_waiter| {
+                        parking_futex.removeCanceledWaiter(futex_waiter);
+                    }
+                    unpark(&.{thread.id}, null);
+                    return false;
+                },
+
+                .blocked => thread.status.cmpxchgWeak(
+                    .{ .cancelation = .blocked, .awaitable = awaitable },
+                    .{ .cancelation = .blocked_canceling, .awaitable = awaitable },
+                    .monotonic,
+                    .monotonic,
+                ) orelse return true,
+
+                .blocked_windows_dns => thread.status.cmpxchgWeak(
+                    .{ .cancelation = .blocked_windows_dns, .awaitable = awaitable },
+                    .{ .cancelation = .canceling, .awaitable = awaitable },
+                    .monotonic,
+                    .monotonic,
+                ) orelse {
+                    if (builtin.target.os.tag != .windows) unreachable;
+                    if (true) {
+                        // TODO: cancel Windows DNS queries. This code path is currently impossible
+                        // as `netLookupFallible` doesn't actually use `.blocked_windows_dns` yet.
+                        unreachable;
+                    }
+                    return false;
+                },
+
+                .canceling, .canceled => {
+                    // This can happen when the task start raced with the cancelation, so the thread
+                    // saw the cancelation on the future/group *and* we are trying to signal the
+                    // thread here.
+                    return false;
+                },
+
+                .blocked_canceling => unreachable,
+            };
+        }
+    }
+
+    /// Sends a signal to `thread` if it is still blocked in a syscall (i.e. has not yet observed
+    /// the cancelation request from `cancelAwaitable`).
+    ///
+    /// Unfortunately, the signal could arrive before the syscall actually starts, so the interrupt
+    /// is missed. To handle this, we may need to send multiple signals. As such, if this function
+    /// returns `true`, then it should be called again after a short delay to send another signal if
+    /// the thread is still blocked. For the implementation, `Future.waitForCancelWithSignaling` and
+    /// `Group.waitForCancelWithSignaling`: they use exponential backoff starting at a 1us delay and
+    /// doubling each call. In practice, it is rare to send more than one signal.
+    fn signalCanceledSyscall(thread: *Thread, t: *Threaded, awaitable: AwaitableId) bool {
+        const bad_status: Status = .{ .cancelation = .blocked_canceling, .awaitable = awaitable };
+        if (thread.status.load(.monotonic) != bad_status) return false;
+
+        // The thread ID and/or handle can be read non-atomically because they never change and were
+        // released by the store that made `thread` available to us.
+
+        if (std.Thread.use_pthreads) {
+            return switch (std.c.pthread_kill(thread.handle, .IO)) {
+                0 => true,
+                else => false,
+            };
+        } else switch (builtin.target.os.tag) {
+            .linux => {
+                const pid: posix.pid_t = pid: {
+                    const cached_pid = @atomicLoad(Pid, &t.pid, .monotonic);
+                    if (cached_pid != .unknown) break :pid @intFromEnum(cached_pid);
+                    const pid = std.os.linux.getpid();
+                    @atomicStore(Pid, &t.pid, @enumFromInt(pid), .monotonic);
+                    break :pid pid;
+                };
+                return switch (std.os.linux.tgkill(pid, @bitCast(thread.id), .IO)) {
+                    0 => true,
+                    else => false,
+                };
+            },
+            .windows => {
+                var iosb: windows.IO_STATUS_BLOCK = undefined;
+                return switch (windows.ntdll.NtCancelSynchronousIoFile(thread.handle, null, &iosb)) {
+                    .NOT_FOUND => true, // this might mean the operation hasn't started yet
+                    .SUCCESS => false, // the OS confirmed that our cancelation worked
+                    else => false,
+                };
+            },
+            else => return false,
+        }
+    }
+
+    /// Like a `*Thread`, but 2 bits smaller than a pointer (because the LSBs are always 0 due to
+    /// alignment) so that those two bits can be used in a `packed struct`.
+    const PackedPtr = enum(@Int(.unsigned, @bitSizeOf(usize) - 2)) {
+        null = 0,
+        all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 2)),
+        _,
+
+        const Split = packed struct(usize) { low: u2, high: PackedPtr };
+        fn pack(ptr: *Thread) PackedPtr {
+            const split: Split = @bitCast(@intFromPtr(ptr));
+            assert(split.low == 0);
+            return split.high;
+        }
+        fn unpack(ptr: PackedPtr) ?*Thread {
+            const split: Split = .{ .low = 0, .high = ptr };
+            return @ptrFromInt(@as(usize, @bitCast(split)));
+        }
+    };
+};
+
+const Syscall = struct {
+    thread: ?*Thread,
+    /// Marks entry to a syscall region. This should be tightly scoped around the actual syscall
+    /// to minimize races. The syscall must be marked as "finished" by `checkCancel`, `finish`,
+    /// or one of the wrappers of `finish`.
+    fn start() Io.Cancelable!Syscall {
+        const thread = Thread.current orelse return .{ .thread = null };
+        switch (thread.cancel_protection) {
+            .blocked => return .{ .thread = null },
+            .unblocked => {},
+        }
+        switch (thread.status.fetchOr(.{
+            .cancelation = @enumFromInt(0b011),
+            .awaitable = .null,
+        }, .monotonic).cancelation) {
+            .parked => unreachable,
+            .blocked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .blocked_canceling => unreachable,
+            .none => return .{ .thread = thread }, // new status is `.blocked`
+            .canceling => return error.Canceled, // new status is `.canceled`
+            .canceled => return .{ .thread = null }, // new status is `.canceled` (unchanged)
+        }
+    }
+    /// Checks whether this syscall has been canceled. This should be called when a syscall is
+    /// interrupted through a mechanism which may indicate cancelation, or may be spurious. If
+    /// the syscall was canceled, it is finished and `error.Canceled` is returned. Otherwise,
+    /// the syscall is not marked finished, and the caller should retry.
+    fn checkCancel(s: Syscall) Io.Cancelable!void {
+        const thread = s.thread orelse return;
+        switch (thread.status.fetchOr(.{
+            .cancelation = @enumFromInt(0b010),
+            .awaitable = .null,
+        }, .monotonic).cancelation) {
+            .none => unreachable,
+            .parked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .canceling => unreachable,
+            .canceled => unreachable,
+            .blocked => {}, // new status is `.blocked` (unchanged)
+            .blocked_canceling => return error.Canceled, // new status is `.canceled`
+        }
+    }
+    /// Marks this syscall as finished.
+    fn finish(s: Syscall) void {
+        const thread = s.thread orelse return;
+        switch (thread.status.fetchXor(.{
+            .cancelation = @enumFromInt(0b011),
+            .awaitable = .null,
+        }, .monotonic).cancelation) {
+            .none => unreachable,
+            .parked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .canceling => unreachable,
+            .canceled => unreachable,
+            .blocked => {}, // new status is `.none`
+            .blocked_canceling => {}, // new status is `.canceling`
+        }
+    }
+    /// Convenience wrapper which calls `finish`, then returns `err`.
+    fn fail(s: Syscall, err: anytype) @TypeOf(err) {
+        s.finish();
+        return err;
+    }
+    /// Convenience wrapper which calls `finish`, then calls `Threaded.errnoBug`.
+    fn errnoBug(s: Syscall, err: posix.E) Io.UnexpectedError {
+        @branchHint(.cold);
+        s.finish();
+        return Threaded.errnoBug(err);
+    }
+    /// Convenience wrapper which calls `finish`, then calls `posix.unexpectedErrno`.
+    fn unexpectedErrno(s: Syscall, err: posix.E) Io.UnexpectedError {
+        @branchHint(.cold);
+        s.finish();
+        return posix.unexpectedErrno(err);
+    }
+    /// Convenience wrapper which calls `finish`, then calls `windows.statusBug`.
+    fn ntstatusBug(s: Syscall, status: windows.NTSTATUS) Io.UnexpectedError {
+        @branchHint(.cold);
+        s.finish();
+        return windows.statusBug(status);
+    }
+    /// Convenience wrapper which calls `finish`, then calls `windows.unexpectedStatus`.
+    fn unexpectedNtstatus(s: Syscall, status: windows.NTSTATUS) Io.UnexpectedError {
+        @branchHint(.cold);
+        s.finish();
+        return windows.unexpectedStatus(status);
     }
 };
 
 const max_iovecs_len = 8;
 const splat_buffer_size = 64;
+const default_PATH = "/usr/local/bin:/bin/:/usr/bin";
 
 comptime {
     if (@TypeOf(posix.IOV_MAX) != void) assert(max_iovecs_len <= posix.IOV_MAX);
 }
-
-const CancelStatus = enum(usize) {
-    /// Cancellation has neither been requested, nor checked. The async
-    /// operation will check status before entering a blocking syscall.
-    /// This is also the status used for uninteruptible tasks.
-    none = 0,
-    /// Cancellation has been requested and the status will be checked before
-    /// entering a blocking syscall.
-    requested = std.math.maxInt(usize) - 1,
-    /// Cancellation has been acknowledged and is in progress. Signals should
-    /// not be sent.
-    acknowledged = std.math.maxInt(usize),
-    /// Stores a `Thread.SignaleeId` and indicates that sending a signal to this thread
-    /// is needed in order to cancel. This state is set before going into
-    /// a blocking operation that needs to get unblocked via signal.
-    _,
-
-    const Unpacked = union(enum) {
-        none,
-        requested,
-        acknowledged,
-        signal_id: Thread.SignaleeId,
-    };
-
-    fn unpack(cs: CancelStatus) Unpacked {
-        return switch (cs) {
-            .none => .none,
-            .requested => .requested,
-            .acknowledged => .acknowledged,
-            _ => |signal_id| .{
-                .signal_id = if (std.Thread.use_pthreads)
-                    @ptrFromInt(@intFromEnum(signal_id))
-                else
-                    @truncate(@intFromEnum(signal_id)),
-            },
-        };
-    }
-
-    fn fromSignaleeId(signal_id: Thread.SignaleeId) CancelStatus {
-        return if (std.Thread.use_pthreads)
-            @enumFromInt(@intFromPtr(signal_id))
-        else
-            @enumFromInt(signal_id);
-    }
-};
-
-const Closure = struct {
-    start: Start,
-    node: std.SinglyLinkedList.Node = .{},
-    cancel_status: CancelStatus,
-
-    const Start = *const fn (*Closure, *Threaded) void;
-
-    fn requestCancel(closure: *Closure, t: *Threaded) void {
-        var signal_id = switch (@atomicRmw(CancelStatus, &closure.cancel_status, .Xchg, .requested, .monotonic).unpack()) {
-            .none, .acknowledged, .requested => return,
-            .signal_id => |signal_id| signal_id,
-        };
-        // The task will enter a blocking syscall before checking for cancellation again.
-        // We can send a signal to interrupt the syscall, but if it arrives before
-        // the syscall instruction, it will be missed. Therefore, this code tries
-        // again until the cancellation request is acknowledged.
-
-        // 1 << 10 ns is about 1 microsecond, approximately syscall overhead.
-        // 1 << 20 ns is about 1 millisecond.
-        // 1 << 30 ns is about 1 second.
-        //
-        // On a heavily loaded Linux 6.17.5, I observed a maximum of 20
-        // attempts not acknowledged before the timeout (including exponential
-        // backoff) was sufficient, despite the heavy load.
-        const max_attempts = 22;
-
-        for (0..max_attempts) |attempt_index| {
-            if (std.Thread.use_pthreads) {
-                if (std.c.pthread_kill(signal_id, .IO) != 0) return;
-            } else if (native_os == .linux) {
-                const pid: posix.pid_t = p: {
-                    const cached_pid = @atomicLoad(Pid, &t.pid, .monotonic);
-                    if (cached_pid != .unknown) break :p @intFromEnum(cached_pid);
-                    const pid = std.os.linux.getpid();
-                    @atomicStore(Pid, &t.pid, @enumFromInt(pid), .monotonic);
-                    break :p pid;
-                };
-                if (std.os.linux.tgkill(pid, @bitCast(signal_id), .IO) != 0) return;
-            } else {
-                return;
-            }
-
-            if (t.robust_cancel != .enabled) return;
-
-            var timespec: posix.timespec = .{
-                .sec = 0,
-                .nsec = @as(isize, 1) << @intCast(attempt_index),
-            };
-            if (native_os == .linux) {
-                _ = std.os.linux.clock_nanosleep(posix.CLOCK.MONOTONIC, .{ .ABSTIME = false }, &timespec, &timespec);
-            } else {
-                _ = posix.system.nanosleep(&timespec, &timespec);
-            }
-
-            switch (@atomicRmw(CancelStatus, &closure.cancel_status, .Xchg, .requested, .monotonic).unpack()) {
-                .requested => continue, // Retry needed in case other thread hasn't yet entered the syscall.
-                .none, .acknowledged => return,
-                .signal_id => |new_signal_id| signal_id = new_signal_id,
-            }
-        }
-    }
-};
 
 pub const InitOptions = struct {
     /// Affects how many bytes are memory-mapped for threads.
@@ -681,24 +1206,14 @@ pub const InitOptions = struct {
     /// concurrent tasks. After this number, calls to `Io.concurrent` return
     /// `error.ConcurrencyUnavailable`.
     concurrent_limit: Io.Limit = .unlimited,
-    /// When a cancel request is made, blocking syscalls can be unblocked by
-    /// issuing a signal. However, if the signal arrives after the check and before
-    /// the syscall instruction, it is missed.
-    ///
-    /// This option solves the race condition by retrying the signal delivery
-    /// until it is acknowledged, with an exponential backoff.
-    ///
-    /// Unfortunately, trying again until the cancellation request is acknowledged
-    /// has been observed to be relatively slow, and usually strong cancellation
-    /// guarantees are not needed, so this defaults to off.
-    robust_cancel: RobustCancel = .disabled,
     /// Affects the following operations:
     /// * `processExecutablePath` on OpenBSD and Haiku.
-    argv0: Argv0 = .{},
+    argv0: Argv0 = .empty,
     /// Affects the following operations:
     /// * `fileIsTty`
     /// * `processExecutablePath` on OpenBSD and Haiku (observes "PATH").
-    environ: Environ = .{},
+    /// * `processSpawn`, `processSpawnPath`, `processReplace`, `processReplacePath`
+    environ: process.Environ,
 };
 
 /// Related:
@@ -714,7 +1229,19 @@ pub fn init(
     gpa: Allocator,
     options: InitOptions,
 ) Threaded {
-    if (builtin.single_threaded) return .init_single_threaded;
+    if (builtin.single_threaded) return .{
+        .allocator = gpa,
+        .stack_size = options.stack_size,
+        .async_limit = options.async_limit orelse init_single_threaded.async_limit,
+        .cpu_count_error = init_single_threaded.cpu_count_error,
+        .concurrent_limit = options.concurrent_limit,
+        .old_sig_io = undefined,
+        .old_sig_pipe = undefined,
+        .have_signal_handler = init_single_threaded.have_signal_handler,
+        .argv0 = options.argv0,
+        .environ = .{ .process_environ = options.environ },
+        .worker_threads = init_single_threaded.worker_threads,
+    };
 
     const cpu_count = std.Thread.getCpuCount();
 
@@ -727,14 +1254,9 @@ pub fn init(
         .old_sig_io = undefined,
         .old_sig_pipe = undefined,
         .have_signal_handler = false,
-        .main_thread = .{
-            .signal_id = Thread.currentSignalId(),
-            .current_closure = null,
-            .cancel_protection = .unblocked,
-        },
         .argv0 = options.argv0,
-        .environ = options.environ,
-        .robust_cancel = options.robust_cancel,
+        .environ = .{ .process_environ = options.environ },
+        .worker_threads = .init(null),
     };
 
     if (posix.Sigaction != void) {
@@ -768,14 +1290,9 @@ pub const init_single_threaded: Threaded = .{
     .old_sig_io = undefined,
     .old_sig_pipe = undefined,
     .have_signal_handler = false,
-    .main_thread = .{
-        .signal_id = undefined,
-        .current_closure = null,
-        .cancel_protection = .unblocked,
-    },
-    .robust_cancel = .disabled,
-    .argv0 = .{},
+    .argv0 = .empty,
     .environ = .{},
+    .worker_threads = .init(null),
 };
 
 var global_single_threaded_instance: Threaded = .init_single_threaded;
@@ -806,6 +1323,8 @@ pub fn deinit(t: *Threaded) void {
         if (have_sig_io) posix.sigaction(.IO, &t.old_sig_io, null);
         if (have_sig_pipe) posix.sigaction(.PIPE, &t.old_sig_pipe, null);
     }
+    t.null_file.deinit();
+    t.random_file.deinit();
     t.* = undefined;
 }
 
@@ -822,11 +1341,59 @@ fn join(t: *Threaded) void {
 
 fn worker(t: *Threaded) void {
     var thread: Thread = .{
-        .signal_id = Thread.currentSignalId(),
-        .current_closure = null,
+        .next = undefined,
+        .id = std.Thread.getCurrentId(),
+        .handle = handle: {
+            if (std.Thread.use_pthreads) break :handle std.c.pthread_self();
+            if (builtin.target.os.tag == .windows) break :handle undefined; // populated below
+        },
+        .status = .init(.{
+            .cancelation = .none,
+            .awaitable = .null,
+        }),
         .cancel_protection = .unblocked,
+        .futex_waiter = undefined,
+        .csprng = .{},
     };
     Thread.current = &thread;
+
+    if (builtin.target.os.tag == .windows) {
+        assert(windows.ntdll.NtOpenThread(
+            &thread.handle,
+            .{
+                .SPECIFIC = .{
+                    .THREAD = .{
+                        .TERMINATE = true, // for `NtCancelSynchronousIoFile`
+                    },
+                },
+            },
+            &.{
+                .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+                .RootDirectory = null,
+                .ObjectName = null,
+                .Attributes = .{},
+                .SecurityDescriptor = null,
+                .SecurityQualityOfService = null,
+            },
+            &windows.teb().ClientId,
+        ) == .SUCCESS);
+    }
+    defer if (builtin.target.os.tag == .windows) {
+        windows.CloseHandle(thread.handle);
+    };
+
+    {
+        var head = t.worker_threads.load(.monotonic);
+        while (true) {
+            thread.next = head;
+            head = t.worker_threads.cmpxchgWeak(
+                head,
+                &thread,
+                .release,
+                .monotonic,
+            ) orelse break;
+        }
+    }
 
     defer t.wait_group.finish();
 
@@ -834,10 +1401,11 @@ fn worker(t: *Threaded) void {
     defer t.mutex.unlock();
 
     while (true) {
-        while (t.run_queue.popFirst()) |closure_node| {
+        while (t.run_queue.popFirst()) |runnable_node| {
             t.mutex.unlock();
-            const closure: *Closure = @fieldParentPtr("node", closure_node);
-            closure.start(closure, t);
+            thread.cancel_protection = .unblocked;
+            const runnable: *Runnable = @fieldParentPtr("node", runnable_node);
+            runnable.startFn(runnable, &thread, t);
             t.mutex.lock();
             t.busy_count -= 1;
         }
@@ -876,6 +1444,7 @@ pub fn io(t: *Threaded) Io {
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
+            .dirCreateFileAtomic = dirCreateFileAtomic,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
@@ -885,6 +1454,7 @@ pub fn io(t: *Threaded) Io {
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
             .dirRename = dirRename,
+            .dirRenamePreserve = dirRenamePreserve,
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
             .dirSetOwner = dirSetOwner,
@@ -918,6 +1488,7 @@ pub fn io(t: *Threaded) Io {
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
             .fileRealPath = fileRealPath,
+            .fileHardLink = fileHardLink,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -925,9 +1496,20 @@ pub fn io(t: *Threaded) Io {
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
             .processSetCurrentDir = processSetCurrentDir,
+            .processReplace = processReplace,
+            .processReplacePath = processReplacePath,
+            .processSpawn = processSpawn,
+            .processSpawnPath = processSpawnPath,
+            .childWait = childWait,
+            .childKill = childKill,
+
+            .progressParentFile = progressParentFile,
 
             .now = now,
             .sleep = sleep,
+
+            .random = random,
+            .randomSecure = randomSecure,
 
             .netListenIp = switch (native_os) {
                 .windows => netListenIpWindows,
@@ -1014,6 +1596,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirStatFile = dirStatFile,
             .dirAccess = dirAccess,
             .dirCreateFile = dirCreateFile,
+            .dirCreateFileAtomic = dirCreateFileAtomic,
             .dirOpenFile = dirOpenFile,
             .dirOpenDir = dirOpenDir,
             .dirClose = dirClose,
@@ -1023,6 +1606,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .dirDeleteFile = dirDeleteFile,
             .dirDeleteDir = dirDeleteDir,
             .dirRename = dirRename,
+            .dirRenamePreserve = dirRenamePreserve,
             .dirSymLink = dirSymLink,
             .dirReadLink = dirReadLink,
             .dirSetOwner = dirSetOwner,
@@ -1056,6 +1640,7 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileUnlock = fileUnlock,
             .fileDowngradeLock = fileDowngradeLock,
             .fileRealPath = fileRealPath,
+            .fileHardLink = fileHardLink,
 
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
@@ -1063,9 +1648,20 @@ pub fn ioBasic(t: *Threaded) Io {
             .tryLockStderr = tryLockStderr,
             .unlockStderr = unlockStderr,
             .processSetCurrentDir = processSetCurrentDir,
+            .processReplace = processReplace,
+            .processReplacePath = processReplacePath,
+            .processSpawn = processSpawn,
+            .processSpawnPath = processSpawnPath,
+            .childWait = childWait,
+            .childKill = childKill,
+
+            .progressParentFile = progressParentFile,
 
             .now = now,
             .sleep = sleep,
+
+            .random = random,
+            .randomSecure = randomSecure,
 
             .netListenIp = netListenIpUnavailable,
             .netListenUnix = netListenUnixUnavailable,
@@ -1126,6 +1722,18 @@ const have_fchmod = switch (native_os) {
     else => true,
 };
 
+const have_waitid = switch (native_os) {
+    .linux => @hasField(std.os.linux.SYS, "waitid"),
+    else => false,
+};
+
+const have_wait4 = switch (native_os) {
+    .linux => @hasField(std.os.linux.SYS, "wait4"),
+    .dragonfly, .freebsd, .netbsd, .openbsd, .illumos, .serenity, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => true,
+    else => false,
+};
+
+const open_sym = if (posix.lfs64_abi) posix.system.open64 else posix.system.open;
 const openat_sym = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
 const fstat_sym = if (posix.lfs64_abi) posix.system.fstat64 else posix.system.fstat;
 const fstatat_sym = if (posix.lfs64_abi) posix.system.fstatat64 else posix.system.fstatat;
@@ -1145,102 +1753,22 @@ const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid
 });
 const linux_copy_file_range_sys = if (linux_copy_file_range_use_c) std.c else std.os.linux;
 
-/// Trailing data:
-/// 1. context
-/// 2. result
-const AsyncClosure = struct {
-    closure: Closure,
-    func: *const fn (context: *anyopaque, result: *anyopaque) void,
-    event: Io.Event,
-    select_condition: ?*Io.Event,
-    context_alignment: Alignment,
-    result_offset: usize,
-    alloc_len: usize,
+const statx_use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
+    .{ .major = 30, .minor = 0, .patch = 0 }
+else
+    .{ .major = 2, .minor = 28, .patch = 0 });
 
-    const done_event: *Io.Event = @ptrFromInt(@alignOf(Io.Event));
+const use_libc_getrandom = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
+    .major = 28,
+    .minor = 0,
+    .patch = 0,
+} else .{
+    .major = 2,
+    .minor = 25,
+    .patch = 0,
+});
 
-    fn start(closure: *Closure, t: *Threaded) void {
-        const ac: *AsyncClosure = @alignCast(@fieldParentPtr("closure", closure));
-        const current_thread = Thread.getCurrent(t);
-
-        current_thread.current_closure = closure;
-        current_thread.cancel_protection = .unblocked;
-
-        ac.func(ac.contextPointer(), ac.resultPointer());
-
-        current_thread.current_closure = null;
-        current_thread.cancel_protection = undefined;
-
-        if (@atomicRmw(?*Io.Event, &ac.select_condition, .Xchg, done_event, .release)) |select_event| {
-            assert(select_event != done_event);
-            select_event.set(ioBasic(t));
-        }
-        ac.event.set(ioBasic(t));
-    }
-
-    fn resultPointer(ac: *AsyncClosure) [*]u8 {
-        const base: [*]u8 = @ptrCast(ac);
-        return base + ac.result_offset;
-    }
-
-    fn contextPointer(ac: *AsyncClosure) [*]u8 {
-        const base: [*]u8 = @ptrCast(ac);
-        const context_offset = ac.context_alignment.forward(@intFromPtr(ac) + @sizeOf(AsyncClosure)) - @intFromPtr(ac);
-        return base + context_offset;
-    }
-
-    fn init(
-        gpa: Allocator,
-        result_len: usize,
-        result_alignment: Alignment,
-        context: []const u8,
-        context_alignment: Alignment,
-        func: *const fn (context: *const anyopaque, result: *anyopaque) void,
-    ) Allocator.Error!*AsyncClosure {
-        const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(AsyncClosure);
-        const worst_case_context_offset = context_alignment.forward(@sizeOf(AsyncClosure) + max_context_misalignment);
-        const worst_case_result_offset = result_alignment.forward(worst_case_context_offset + context.len);
-        const alloc_len = worst_case_result_offset + result_len;
-
-        const ac: *AsyncClosure = @ptrCast(@alignCast(try gpa.alignedAlloc(u8, .of(AsyncClosure), alloc_len)));
-        errdefer comptime unreachable;
-
-        const actual_context_addr = context_alignment.forward(@intFromPtr(ac) + @sizeOf(AsyncClosure));
-        const actual_result_addr = result_alignment.forward(actual_context_addr + context.len);
-        const actual_result_offset = actual_result_addr - @intFromPtr(ac);
-        ac.* = .{
-            .closure = .{
-                .cancel_status = .none,
-                .start = start,
-            },
-            .func = func,
-            .context_alignment = context_alignment,
-            .result_offset = actual_result_offset,
-            .alloc_len = alloc_len,
-            .event = .unset,
-            .select_condition = null,
-        };
-        @memcpy(ac.contextPointer()[0..context.len], context);
-        return ac;
-    }
-
-    fn waitAndDeinit(ac: *AsyncClosure, t: *Threaded, result: []u8) void {
-        ac.event.wait(ioBasic(t)) catch |err| switch (err) {
-            error.Canceled => {
-                ac.closure.requestCancel(t);
-                ac.event.waitUncancelable(ioBasic(t));
-                recancel(t);
-            },
-        };
-        @memcpy(result, ac.resultPointer()[0..result.len]);
-        ac.deinit(t.allocator);
-    }
-
-    fn deinit(ac: *AsyncClosure, gpa: Allocator) void {
-        const base: [*]align(@alignOf(AsyncClosure)) u8 = @ptrCast(ac);
-        gpa.free(base[0..ac.alloc_len]);
-    }
-};
+const use_dev_urandom = @TypeOf(posix.system.getrandom) == void and native_os == .linux;
 
 fn async(
     userdata: ?*anyopaque,
@@ -1255,10 +1783,13 @@ fn async(
         start(context.ptr, result.ptr);
         return null;
     }
+
     const gpa = t.allocator;
-    const ac = AsyncClosure.init(gpa, result.len, result_alignment, context, context_alignment, start) catch {
-        start(context.ptr, result.ptr);
-        return null;
+    const future = Future.create(gpa, result.len, result_alignment, context, context_alignment, start) catch |err| switch (err) {
+        error.OutOfMemory => {
+            start(context.ptr, result.ptr);
+            return null;
+        },
     };
 
     t.mutex.lock();
@@ -1267,7 +1798,7 @@ fn async(
 
     if (busy_count >= @intFromEnum(t.async_limit)) {
         t.mutex.unlock();
-        ac.deinit(gpa);
+        future.destroy(gpa);
         start(context.ptr, result.ptr);
         return null;
     }
@@ -1281,17 +1812,18 @@ fn async(
             t.wait_group.finish();
             t.busy_count = busy_count;
             t.mutex.unlock();
-            ac.deinit(gpa);
+            future.destroy(gpa);
             start(context.ptr, result.ptr);
             return null;
         };
         thread.detach();
     }
 
-    t.run_queue.prepend(&ac.closure.node);
+    t.run_queue.prepend(&future.runnable.node);
+
     t.mutex.unlock();
     t.cond.signal();
-    return @ptrCast(ac);
+    return @ptrCast(future);
 }
 
 fn concurrent(
@@ -1307,9 +1839,10 @@ fn concurrent(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     const gpa = t.allocator;
-    const ac = AsyncClosure.init(gpa, result_len, result_alignment, context, context_alignment, start) catch
-        return error.ConcurrencyUnavailable;
-    errdefer ac.deinit(gpa);
+    const future = Future.create(gpa, result_len, result_alignment, context, context_alignment, start) catch |err| switch (err) {
+        error.OutOfMemory => return error.ConcurrencyUnavailable,
+    };
+    errdefer future.destroy(gpa);
 
     t.mutex.lock();
     defer t.mutex.unlock();
@@ -1329,110 +1862,32 @@ fn concurrent(
 
         const thread = std.Thread.spawn(.{ .stack_size = t.stack_size }, worker, .{t}) catch
             return error.ConcurrencyUnavailable;
+
         thread.detach();
     }
 
-    t.run_queue.prepend(&ac.closure.node);
+    t.run_queue.prepend(&future.runnable.node);
+
     t.cond.signal();
-    return @ptrCast(ac);
+    return @ptrCast(future);
 }
-
-const GroupClosure = struct {
-    closure: Closure,
-    group: *Io.Group,
-    /// Points to sibling `GroupClosure`. Used for walking the group to cancel all.
-    node: std.SinglyLinkedList.Node,
-    func: *const fn (*Io.Group, context: *anyopaque) Io.Cancelable!void,
-    context_alignment: Alignment,
-    alloc_len: usize,
-
-    fn start(closure: *Closure, t: *Threaded) void {
-        const gc: *GroupClosure = @alignCast(@fieldParentPtr("closure", closure));
-        const current_thread = Thread.getCurrent(t);
-        const group = gc.group;
-        const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-        const event: *Io.Event = @ptrCast(&group.context);
-        current_thread.current_closure = closure;
-        current_thread.cancel_protection = .unblocked;
-
-        assertResult(closure, gc.func(group, gc.contextPointer()));
-
-        current_thread.current_closure = null;
-        current_thread.cancel_protection = undefined;
-
-        const prev_state = group_state.fetchSub(sync_one_pending, .acq_rel);
-        assert((prev_state / sync_one_pending) > 0);
-        if (prev_state == (sync_one_pending | sync_is_waiting)) event.set(ioBasic(t));
-    }
-
-    fn assertResult(closure: *Closure, result: Io.Cancelable!void) void {
-        if (result) |_| switch (closure.cancel_status.unpack()) {
-            .none, .requested => {},
-            .acknowledged => unreachable, // task illegally swallowed error.Canceled
-            .signal_id => unreachable,
-        } else |err| switch (err) {
-            error.Canceled => assert(closure.cancel_status == .acknowledged),
-        }
-    }
-
-    fn contextPointer(gc: *GroupClosure) [*]u8 {
-        const base: [*]u8 = @ptrCast(gc);
-        const context_offset = gc.context_alignment.forward(@intFromPtr(gc) + @sizeOf(GroupClosure)) - @intFromPtr(gc);
-        return base + context_offset;
-    }
-
-    /// Does not initialize the `node` field.
-    fn init(
-        gpa: Allocator,
-        group: *Io.Group,
-        context: []const u8,
-        context_alignment: Alignment,
-        func: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
-    ) Allocator.Error!*GroupClosure {
-        const max_context_misalignment = context_alignment.toByteUnits() -| @alignOf(GroupClosure);
-        const worst_case_context_offset = context_alignment.forward(@sizeOf(GroupClosure) + max_context_misalignment);
-        const alloc_len = worst_case_context_offset + context.len;
-
-        const gc: *GroupClosure = @ptrCast(@alignCast(try gpa.alignedAlloc(u8, .of(GroupClosure), alloc_len)));
-        errdefer comptime unreachable;
-
-        gc.* = .{
-            .closure = .{
-                .cancel_status = .none,
-                .start = start,
-            },
-            .group = group,
-            .node = undefined,
-            .func = func,
-            .context_alignment = context_alignment,
-            .alloc_len = alloc_len,
-        };
-        @memcpy(gc.contextPointer()[0..context.len], context);
-        return gc;
-    }
-
-    fn deinit(gc: *GroupClosure, gpa: Allocator) void {
-        const base: [*]align(@alignOf(GroupClosure)) u8 = @ptrCast(gc);
-        gpa.free(base[0..gc.alloc_len]);
-    }
-
-    const sync_is_waiting: usize = 1 << 0;
-    const sync_one_pending: usize = 1 << 1;
-};
 
 fn groupAsync(
     userdata: ?*anyopaque,
-    group: *Io.Group,
+    type_erased: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
+    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
 ) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    if (builtin.single_threaded) return start(group, context.ptr) catch unreachable;
+    const g: Group = .{ .ptr = type_erased };
+
+    if (builtin.single_threaded) return groupAsyncEager(start, context.ptr);
 
     const gpa = t.allocator;
-    const gc = GroupClosure.init(gpa, group, context, context_alignment, start) catch
-        return t.assertGroupResult(start(group, context.ptr));
+    const task = Group.Task.create(gpa, g, context, context_alignment, start) catch |err| switch (err) {
+        error.OutOfMemory => return groupAsyncEager(start, context.ptr),
+    };
 
     t.mutex.lock();
 
@@ -1440,8 +1895,8 @@ fn groupAsync(
 
     if (busy_count >= @intFromEnum(t.async_limit)) {
         t.mutex.unlock();
-        gc.deinit(gpa);
-        return t.assertGroupResult(start(group, context.ptr));
+        task.destroy(gpa);
+        return groupAsyncEager(start, context.ptr);
     }
 
     t.busy_count = busy_count + 1;
@@ -1453,48 +1908,84 @@ fn groupAsync(
             t.wait_group.finish();
             t.busy_count = busy_count;
             t.mutex.unlock();
-            gc.deinit(gpa);
-            return t.assertGroupResult(start(group, context.ptr));
+            task.destroy(gpa);
+            return groupAsyncEager(start, context.ptr);
         };
         thread.detach();
     }
 
-    // Append to the group linked list inside the mutex to make `Io.Group.async` thread-safe.
-    gc.node = .{ .next = @ptrCast(@alignCast(group.token.load(.monotonic))) };
-    group.token.store(&gc.node, .monotonic);
-
-    t.run_queue.prepend(&gc.closure.node);
-
-    // This needs to be done before unlocking the mutex to avoid a race with
-    // the associated task finishing.
-    const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-    const prev_state = group_state.fetchAdd(GroupClosure.sync_one_pending, .monotonic);
-    assert((prev_state / GroupClosure.sync_one_pending) < (std.math.maxInt(usize) / GroupClosure.sync_one_pending));
+    // TODO: if this logic is changed to be lock-free, this `fetchAdd` must be released by the queue
+    // prepend so that the task doesn't finish without observing this and try to decrement the count
+    // below zero.
+    _ = g.status().fetchAdd(.{
+        .num_running = 1,
+        .have_awaiter = false,
+        .canceled = false,
+    }, .monotonic);
+    t.run_queue.prepend(&task.runnable.node);
 
     t.mutex.unlock();
     t.cond.signal();
 }
+fn groupAsyncEager(
+    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
+    context: *const anyopaque,
+) void {
+    const pre_acknowledged = if (Thread.current) |thread| ack: {
+        break :ack switch (thread.status.load(.monotonic).cancelation) {
+            .none, .canceling => false,
+            .canceled => true,
+            .parked => unreachable,
+            .blocked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .blocked_canceling => unreachable,
+        };
+    } else false;
+    const result = start(context);
+    const post_acknowledged = if (Thread.current) |thread| ack: {
+        break :ack switch (thread.status.load(.monotonic).cancelation) {
+            .none, .canceling => false,
+            .canceled => true,
+            .parked => unreachable,
+            .blocked => unreachable,
+            .blocked_windows_dns => unreachable,
+            .blocked_canceling => unreachable,
+        };
+    } else false;
 
-fn assertGroupResult(t: *Threaded, result: Io.Cancelable!void) void {
-    const current_thread: *Thread = .getCurrent(t);
-    const current_closure = current_thread.current_closure orelse return;
-    GroupClosure.assertResult(current_closure, result);
+    if (result) {
+        if (pre_acknowledged) {
+            assert(post_acknowledged); // group task called `recancel` but was not canceled
+        } else {
+            assert(!post_acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
+        }
+    } else |err| switch (err) {
+        // Don't swallow the cancelation: make it visible to the `Group.async` caller.
+        error.Canceled => {
+            assert(!pre_acknowledged); // group task called `recancel` but was not canceled
+            assert(post_acknowledged); // group task returned `error.Canceled` but was never canceled
+            recancelInner();
+        },
+    }
 }
 
 fn groupConcurrent(
     userdata: ?*anyopaque,
-    group: *Io.Group,
+    type_erased: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (*Io.Group, context: *const anyopaque) Io.Cancelable!void,
+    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
 ) Io.ConcurrentError!void {
     if (builtin.single_threaded) return error.ConcurrencyUnavailable;
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const g: Group = .{ .ptr = type_erased };
 
     const gpa = t.allocator;
-    const gc = GroupClosure.init(gpa, group, context, context_alignment, start) catch
-        return error.ConcurrencyUnavailable;
+    const task = Group.Task.create(gpa, g, context, context_alignment, start) catch |err| switch (err) {
+        error.OutOfMemory => return error.ConcurrencyUnavailable,
+    };
+    errdefer task.destroy(gpa);
 
     t.mutex.lock();
     defer t.mutex.unlock();
@@ -1514,115 +2005,144 @@ fn groupConcurrent(
 
         const thread = std.Thread.spawn(.{ .stack_size = t.stack_size }, worker, .{t}) catch
             return error.ConcurrencyUnavailable;
+
         thread.detach();
     }
 
-    // Append to the group linked list inside the mutex to make `Io.Group.concurrent` thread-safe.
-    gc.node = .{ .next = @ptrCast(@alignCast(group.token.load(.monotonic))) };
-    group.token.store(&gc.node, .monotonic);
-
-    t.run_queue.prepend(&gc.closure.node);
-
-    // This needs to be done before unlocking the mutex to avoid a race with
-    // the associated task finishing.
-    const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-    const prev_state = group_state.fetchAdd(GroupClosure.sync_one_pending, .monotonic);
-    assert((prev_state / GroupClosure.sync_one_pending) < (std.math.maxInt(usize) / GroupClosure.sync_one_pending));
+    // TODO: if this logic is changed to be lock-free, this `fetchAdd` must be released by the queue
+    // prepend so that the task doesn't finish without observing this and try to decrement the count
+    // below zero.
+    _ = g.status().fetchAdd(.{
+        .num_running = 1,
+        .have_awaiter = false,
+        .canceled = false,
+    }, .monotonic);
+    t.run_queue.prepend(&task.runnable.node);
 
     t.cond.signal();
 }
 
-fn groupAwait(userdata: ?*anyopaque, group: *Io.Group, initial_token: *anyopaque) Io.Cancelable!void {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const gpa = t.allocator;
-
+fn groupAwait(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *anyopaque) Io.Cancelable!void {
     _ = initial_token; // we need to load `token` *after* the group finishes
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const g: Group = .{ .ptr = type_erased };
 
-    if (builtin.single_threaded) unreachable; // we never set `group.token` to non-`null`
+    var num_completed: std.atomic.Value(u32) = .init(0);
+    g.awaiter().* = &num_completed;
 
-    const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-    const event: *Io.Event = @ptrCast(&group.context);
-    const prev_state = group_state.fetchAdd(GroupClosure.sync_is_waiting, .acquire);
-    assert(prev_state & GroupClosure.sync_is_waiting == 0);
-    {
-        errdefer _ = group_state.fetchSub(GroupClosure.sync_is_waiting, .monotonic);
-        // This event.wait can return error.Canceled, in which case this logic does
-        // *not* propagate cancel requests to each group member. Instead, the user
-        // code will likely do this with a defered call to groupCancel, or,
-        // intentionally not do this.
-        if ((prev_state / GroupClosure.sync_one_pending) > 0) try event.wait(ioBasic(t));
+    const pre_await_status = g.status().fetchOr(.{
+        .num_running = 0,
+        .have_awaiter = true,
+        .canceled = false,
+    }, .acq_rel); // acquire results if complete; release `g.awaiter()`
+
+    assert(!pre_await_status.have_awaiter);
+    assert(!pre_await_status.canceled);
+    if (pre_await_status.num_running == 0) {
+        // Already done. Since the group is finished, it's illegal to spawn more tasks in it
+        // until we return, so we can access `g.status()` non-atomically.
+        g.status().raw.have_awaiter = false;
+        return;
     }
 
-    // Since the group has now finished, it's illegal to add more tasks to it until we return. It's
-    // also illegal for us to race with another `await` or `cancel`. Therefore, we must be the only
-    // thread who can access `group` right now.
-    var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.raw));
-    group.token.raw = null;
-    while (it) |node| {
-        it = node.next; // update `it` now, because `deinit` will invalidate `node`
-        const gc: *GroupClosure = @fieldParentPtr("node", node);
-        gc.deinit(gpa);
+    while (Thread.futexWait(&num_completed.raw, 0, null)) {
+        switch (num_completed.load(.acquire)) { // acquire task results
+            0 => continue,
+            1 => break,
+            else => unreachable, // group was reused before `await` returned
+        }
+    } else |err| switch (err) {
+        error.Canceled => {
+            const pre_cancel_status = g.status().fetchOr(.{
+                .num_running = 0,
+                .have_awaiter = false,
+                .canceled = true,
+            }, .acq_rel); // acquire results if complete; release `g.awaiter()`
+            assert(pre_cancel_status.have_awaiter);
+            assert(!pre_cancel_status.canceled);
+
+            // Even if `pre_cancel_status.num_running == 0`, we still need to wait for the signal,
+            // because in that case the last member of the group is already trying to modify it.
+            // However, if we know everything is done, we *can* skip signaling blocked threads.
+            const skip_signals = pre_cancel_status.num_running == 0;
+            g.waitForCancelWithSignaling(t, &num_completed, skip_signals);
+
+            // The group is finished, so it's illegal to spawn more tasks in it until we return, so
+            // we can access `g.status()` non-atomically.
+            g.status().raw.canceled = false;
+            g.status().raw.have_awaiter = false;
+            return error.Canceled;
+        },
     }
+
+    // The group is finished, so it's illegal to spawn more tasks in it until we return, so
+    // we can access `g.status()` non-atomically.
+    g.status().raw.have_awaiter = false;
 }
 
-fn groupCancel(userdata: ?*anyopaque, group: *Io.Group, initial_token: *anyopaque) void {
+fn groupCancel(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *anyopaque) void {
+    _ = initial_token;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const gpa = t.allocator;
+    const g: Group = .{ .ptr = type_erased };
 
-    _ = initial_token; // we need to load `token` *after* the group finishes
+    var num_completed: std.atomic.Value(u32) = .init(0);
+    g.awaiter().* = &num_completed;
 
-    if (builtin.single_threaded) unreachable; // we never set `group.token` to non-`null`
+    const pre_cancel_status = g.status().fetchOr(.{
+        .num_running = 0,
+        .have_awaiter = true,
+        .canceled = true,
+    }, .acq_rel); // acquire results if complete; release `g.awaiter()`
 
-    {
-        var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.load(.monotonic)));
-        while (it) |node| : (it = node.next) {
-            const gc: *GroupClosure = @fieldParentPtr("node", node);
-            gc.closure.requestCancel(t);
-        }
+    assert(!pre_cancel_status.have_awaiter);
+    assert(!pre_cancel_status.canceled);
+    if (pre_cancel_status.num_running == 0) {
+        // Already done. Since the group is finished, it's illegal to spawn more tasks in it
+        // until we return, so we can access `g.status()` non-atomically.
+        g.status().raw.have_awaiter = false;
+        g.status().raw.canceled = false;
+        return;
     }
 
-    const group_state: *std.atomic.Value(usize) = @ptrCast(&group.state);
-    const event: *Io.Event = @ptrCast(&group.context);
-    const prev_state = group_state.fetchAdd(GroupClosure.sync_is_waiting, .acquire);
-    assert(prev_state & GroupClosure.sync_is_waiting == 0);
-    if ((prev_state / GroupClosure.sync_one_pending) > 0) event.waitUncancelable(ioBasic(t));
+    g.waitForCancelWithSignaling(t, &num_completed, false);
 
-    // Since the group has now finished, it's illegal to add more tasks to it until we return. It's
-    // also illegal for us to race with another `await` or `cancel`. Therefore, we must be the only
-    // thread who can access `group` right now.
-    var it: ?*std.SinglyLinkedList.Node = @ptrCast(@alignCast(group.token.raw));
-    group.token.raw = null;
-    while (it) |node| {
-        it = node.next; // update `it` now, because `deinit` will invalidate `node`
-        const gc: *GroupClosure = @fieldParentPtr("node", node);
-        gc.deinit(gpa);
-    }
+    g.status().raw = .{ .num_running = 0, .have_awaiter = false, .canceled = false };
 }
 
 fn recancel(userdata: ?*anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread: *Thread = .getCurrent(t);
-    const cancel_status = &current_thread.current_closure.?.cancel_status;
-    switch (@atomicLoad(CancelStatus, cancel_status, .monotonic)) {
-        .none => unreachable, // called `recancel` when not canceled
-        .requested => unreachable, // called `recancel` when cancelation was already outstanding
-        .acknowledged => {},
-        _ => unreachable, // invalid state: not in a syscall
+    _ = t;
+    recancelInner();
+}
+fn recancelInner() void {
+    const thread = Thread.current.?; // called `recancel` but was not canceled
+    switch (thread.status.fetchXor(.{
+        .cancelation = @enumFromInt(0b001),
+        .awaitable = .null,
+    }, .monotonic).cancelation) {
+        .canceled => {},
+        .none => unreachable, // called `recancel` but was not canceled
+        .canceling => unreachable, // called `recancel` but cancelation was already pending
+        .parked => unreachable,
+        .blocked => unreachable,
+        .blocked_windows_dns => unreachable,
+        .blocked_canceling => unreachable,
     }
-    @atomicStore(CancelStatus, cancel_status, .requested, .monotonic);
 }
 
 fn swapCancelProtection(userdata: ?*anyopaque, new: Io.CancelProtection) Io.CancelProtection {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread: *Thread = .getCurrent(t);
-    const old = current_thread.cancel_protection;
-    current_thread.cancel_protection = new;
+    _ = t;
+    const thread = Thread.current orelse return .unblocked;
+    const old = thread.cancel_protection;
+    thread.cancel_protection = new;
     return old;
 }
 
 fn checkCancel(userdata: ?*anyopaque) Io.Cancelable!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    return Thread.getCurrent(t).checkCancel();
+    _ = t;
+    return Thread.checkCancel();
 }
 
 fn await(
@@ -1633,8 +2153,62 @@ fn await(
 ) void {
     _ = result_alignment;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const closure: *AsyncClosure = @ptrCast(@alignCast(any_future));
-    closure.waitAndDeinit(t, result);
+    const future: *Future = @ptrCast(@alignCast(any_future));
+
+    var num_completed: std.atomic.Value(u32) = .init(0);
+    future.awaiter = &num_completed;
+
+    const pre_await_status = future.status.fetchOr(.{
+        .tag = .pending_awaited,
+        .thread = .null,
+    }, .acq_rel); // acquire results if complete; release `future.awaiter`
+    switch (pre_await_status.tag) {
+        .pending => while (Thread.futexWait(&num_completed.raw, 0, null)) {
+            switch (num_completed.load(.acquire)) { // acquire task results
+                0 => continue,
+                1 => break,
+                else => unreachable, // group was reused before `await` returned
+            }
+        } else |err| switch (err) {
+            error.Canceled => {
+                const pre_cancel_status = future.status.fetchOr(.{
+                    .tag = .pending_canceled,
+                    .thread = .null,
+                }, .acq_rel); // acquire results if complete; release `future.awaiter`
+                const done_status = switch (pre_cancel_status.tag) {
+                    .pending => unreachable, // invalid state: we already awaited
+                    .pending_awaited => done_status: {
+                        const working_thread = pre_cancel_status.thread.unpack();
+                        future.waitForCancelWithSignaling(t, &num_completed, @alignCast(working_thread));
+                        break :done_status future.status.load(.monotonic);
+                    },
+                    .pending_canceled => unreachable, // `await` raced with `cancel`
+                    .done => done_status: {
+                        // The task just finished, but we still need to wait for the signal, because the
+                        // task thread already figured out that they need to update `future.awaiter`.
+                        future.waitForCancelWithSignaling(t, &num_completed, null);
+                        // Also, we have clobbered `future.status.tag` to `.pending_canceled`, but that's
+                        // not actually a problem for the logic below.
+                        break :done_status pre_cancel_status;
+                    },
+                };
+                // If the future did not acknowledge the cancelation, we need to mark it outstanding
+                // for us. Because `done_status.tag == .done`, the information about whether there
+                // was an acknowledged cancelation is encoded in `done_status.thread`.
+                assert(done_status.tag == .done);
+                switch (done_status.thread) {
+                    .null => recancelInner(), // cancelation was not acknowledged, so it's ours
+                    .all_ones => {}, // cancelation was acknowledged, so it was this task's job to propagate it
+                    _ => unreachable,
+                }
+            },
+        },
+        .pending_awaited => unreachable, // `await` raced with `await`
+        .pending_canceled => unreachable, // `await` raced with `cancel`
+        .done => {},
+    }
+    @memcpy(result, future.resultPointer());
+    future.destroy(t.allocator);
 }
 
 fn cancel(
@@ -1645,28 +2219,44 @@ fn cancel(
 ) void {
     _ = result_alignment;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const ac: *AsyncClosure = @ptrCast(@alignCast(any_future));
-    ac.closure.requestCancel(t);
-    ac.waitAndDeinit(t, result);
+    const future: *Future = @ptrCast(@alignCast(any_future));
+
+    var num_completed: std.atomic.Value(u32) = .init(0);
+    future.awaiter = &num_completed;
+
+    const pre_cancel_status = future.status.fetchOr(.{
+        .tag = .pending_canceled,
+        .thread = .null,
+    }, .acq_rel); // acquire results if complete; release `future.awaiter`
+    switch (pre_cancel_status.tag) {
+        .pending => {
+            const working_thread = pre_cancel_status.thread.unpack();
+            future.waitForCancelWithSignaling(t, &num_completed, @alignCast(working_thread));
+        },
+        .pending_awaited => unreachable, // `await` raced with `await`
+        .pending_canceled => unreachable, // `await` raced with `cancel`
+        .done => {},
+    }
+    @memcpy(result, future.resultPointer());
+    future.destroy(t.allocator);
 }
 
 fn futexWait(userdata: ?*anyopaque, ptr: *const u32, expected: u32, timeout: Io.Timeout) Io.Cancelable!void {
     if (builtin.single_threaded) unreachable; // Deadlock.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     const t_io = ioBasic(t);
     const timeout_ns: ?u64 = ns: {
         const d = (timeout.toDurationFromNow(t_io) catch break :ns 10) orelse break :ns null;
         break :ns std.math.lossyCast(u64, d.raw.toNanoseconds());
     };
-    return Thread.futexWaitTimed(current_thread, ptr, expected, timeout_ns);
+    return Thread.futexWait(ptr, expected, timeout_ns);
 }
 
 fn futexWaitUncancelable(userdata: ?*anyopaque, ptr: *const u32, expected: u32) void {
     if (builtin.single_threaded) unreachable; // Deadlock.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    Thread.futexWaitUncancelable(ptr, expected);
+    Thread.futexWaitUncancelable(ptr, expected, null);
 }
 
 fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
@@ -1684,24 +2274,24 @@ const dirCreateDir = switch (native_os) {
 
 fn dirCreateDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.CreateDirError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.mkdirat(dir.handle, sub_path_posix, permissions.toMode()))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -1730,20 +2320,20 @@ fn dirCreateDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, perm
 fn dirCreateDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.CreateDirError!void {
     if (builtin.link_libc) return dirCreateDirPosix(userdata, dir, sub_path, permissions);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.beginSyscall();
+    _ = t;
+    const syscall: Syscall = try .start();
     while (true) {
         switch (std.os.wasi.path_create_directory(dir.handle, sub_path.ptr, sub_path.len)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -1770,27 +2360,35 @@ fn dirCreateDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permi
 
 fn dirCreateDirWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, permissions: Dir.Permissions) Dir.CreateDirError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.checkCancel();
+    _ = t;
 
     const sub_path_w = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
     _ = permissions; // TODO use this value
-    const sub_dir_handle = windows.OpenFile(sub_path_w.span(), .{
-        .dir = dir.handle,
-        .access_mask = .{
-            .GENERIC = .{ .READ = true },
-            .STANDARD = .{ .SYNCHRONIZE = true },
-        },
-        .creation = .CREATE,
-        .filter = .dir_only,
-    }) catch |err| switch (err) {
-        error.IsDir => return error.Unexpected,
-        error.PipeBusy => return error.Unexpected,
-        error.NoDevice => return error.Unexpected,
-        error.WouldBlock => return error.Unexpected,
-        error.AntivirusInterference => return error.Unexpected,
-        else => |e| return e,
+
+    const syscall: Syscall = try .start();
+    const sub_dir_handle = while (true) {
+        break windows.OpenFile(sub_path_w.span(), .{
+            .dir = dir.handle,
+            .access_mask = .{
+                .GENERIC = .{ .READ = true },
+                .STANDARD = .{ .SYNCHRONIZE = true },
+            },
+            .creation = .CREATE,
+            .filter = .dir_only,
+        }) catch |err| switch (err) {
+            error.IsDir => return syscall.fail(error.Unexpected),
+            error.PipeBusy => return syscall.fail(error.Unexpected),
+            error.NoDevice => return syscall.fail(error.Unexpected),
+            error.WouldBlock => return syscall.fail(error.Unexpected),
+            error.AntivirusInterference => return syscall.fail(error.Unexpected),
+            error.OperationCanceled => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |e| return syscall.fail(e),
+        };
     };
+    syscall.finish();
     windows.CloseHandle(sub_dir_handle);
 }
 
@@ -1802,7 +2400,7 @@ fn dirCreateDirPath(
 ) Dir.CreateDirPathError!Dir.CreatePathStatus {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
-    var it = std.fs.path.componentIterator(sub_path);
+    var it = Dir.path.componentIterator(sub_path);
     var status: Dir.CreatePathStatus = .existed;
     var component = it.last() orelse return error.BadPathName;
     while (true) {
@@ -1810,11 +2408,11 @@ fn dirCreateDirPath(
             status = .created;
         } else |err| switch (err) {
             error.PathAlreadyExists => {
-                // stat the file and return an error if it's not a directory
-                // this is important because otherwise a dangling symlink
-                // could cause an infinite loop
-                const fstat = try dirStatFile(t, dir, component.path, .{});
-                if (fstat.kind != .directory) return error.NotDir;
+                // It is important to return an error if it's not a directory
+                // because otherwise a dangling symlink could cause an infinite
+                // loop.
+                const kind = try filePathKind(t, dir, component.path);
+                if (kind != .directory) return error.NotDir;
             },
             error.FileNotFound => |e| {
                 component = it.previous() orelse return e;
@@ -1858,21 +2456,18 @@ fn dirCreateDirPathOpenWindows(
     options: Dir.OpenOptions,
 ) Dir.CreateDirPathOpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     const w = windows;
 
     _ = permissions; // TODO apply these permissions
 
-    var it = std.fs.path.componentIterator(sub_path);
+    var it = Dir.path.componentIterator(sub_path);
     // If there are no components in the path, then create a dummy component with the full path.
-    var component: std.fs.path.NativeComponentIterator.Component = it.last() orelse .{
+    var component: Dir.path.NativeComponentIterator.Component = it.last() orelse .{
         .name = "",
         .path = sub_path,
     };
 
-    while (true) {
-        try current_thread.checkCancel();
-
+    components: while (true) {
         const sub_path_w_array = try w.sliceToPrefixedFileW(dir.handle, component.path);
         const sub_path_w = sub_path_w_array.span();
         const is_last = it.peekNext() == null;
@@ -1887,7 +2482,9 @@ fn dirCreateDirPathOpenWindows(
             .Buffer = @constCast(sub_path_w.ptr),
         };
         var io_status_block: w.IO_STATUS_BLOCK = undefined;
-        const rc = w.ntdll.NtCreateFile(
+
+        const syscall: Syscall = try .start();
+        while (true) switch (w.ntdll.NtCreateFile(
             &result.handle,
             .{
                 .SPECIFIC = .{ .FILE_DIRECTORY = .{
@@ -1903,7 +2500,7 @@ fn dirCreateDirPathOpenWindows(
             },
             &.{
                 .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-                .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+                .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
                 .Attributes = .{},
                 .ObjectName = &nt_name,
                 .SecurityDescriptor = null,
@@ -1922,16 +2519,20 @@ fn dirCreateDirPathOpenWindows(
             },
             null,
             0,
-        );
-
-        switch (rc) {
+        )) {
             .SUCCESS => {
+                syscall.finish();
                 component = it.next() orelse return result;
                 w.CloseHandle(result.handle);
+                continue :components;
+            },
+            .CANCELLED => {
+                try syscall.checkCancel();
                 continue;
             },
-            .OBJECT_NAME_INVALID => return error.BadPathName,
+            .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
             .OBJECT_NAME_COLLISION => {
+                syscall.finish();
                 assert(!is_last);
                 // stat the file and return an error if it's not a directory
                 // this is important because otherwise a dangling symlink
@@ -1942,23 +2543,24 @@ fn dirCreateDirPathOpenWindows(
                 if (fstat.kind != .directory) return error.NotDir;
 
                 component = it.next().?;
-                continue;
+                continue :components;
             },
 
             .OBJECT_NAME_NOT_FOUND,
             .OBJECT_PATH_NOT_FOUND,
             => {
+                syscall.finish();
                 component = it.previous() orelse return error.FileNotFound;
-                continue;
+                continue :components;
             },
 
-            .NOT_A_DIRECTORY => return error.NotDir,
+            .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
             // This can happen if the directory has 'List folder contents' permission set to 'Deny'
             // and the directory is trying to be opened for iteration.
-            .ACCESS_DENIED => return error.AccessDenied,
-            .INVALID_PARAMETER => |err| return w.statusBug(err),
-            else => return w.unexpectedStatus(rc),
-        }
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .INVALID_PARAMETER => |s| return syscall.ntstatusBug(s),
+            else => |s| return syscall.unexpectedNtstatus(s),
+        };
     }
 }
 
@@ -2000,13 +2602,9 @@ fn dirStatFileLinux(
     options: Dir.StatFileOptions,
 ) Dir.StatFileError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const linux = std.os.linux;
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
+    const sys = if (statx_use_c) std.c else std.os.linux;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -2014,20 +2612,20 @@ fn dirStatFileLinux(
     const flags: u32 = linux.AT.NO_AUTOMOUNT |
         @as(u32, if (!options.follow_symlinks) linux.AT.SYMLINK_NOFOLLOW else 0);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
         switch (sys.errno(sys.statx(dir.handle, sub_path_posix, flags, linux_statx_request, &statx))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return statFromLinux(&statx);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2052,31 +2650,31 @@ fn dirStatFilePosix(
     options: Dir.StatFileOptions,
 ) Dir.StatFileError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
 
-    return posixStatFile(current_thread, dir.handle, sub_path_posix, flags);
+    return posixStatFile(dir.handle, sub_path_posix, flags);
 }
 
-fn posixStatFile(current_thread: *Thread, dir_fd: posix.fd_t, sub_path: [:0]const u8, flags: u32) Dir.StatFileError!File.Stat {
-    try current_thread.beginSyscall();
+fn posixStatFile(dir_fd: posix.fd_t, sub_path: [:0]const u8, flags: u32) Dir.StatFileError!File.Stat {
+    const syscall: Syscall = try .start();
     while (true) {
         var stat = std.mem.zeroes(posix.Stat);
         switch (posix.errno(fstatat_sym(dir_fd, sub_path, &stat, flags))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return statFromPosix(&stat);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2118,25 +2716,25 @@ fn dirStatFileWasi(
 ) Dir.StatFileError!File.Stat {
     if (builtin.link_libc) return dirStatFilePosix(userdata, dir, sub_path, options);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const wasi = std.os.wasi;
     const flags: wasi.lookupflags_t = .{
         .SYMLINK_FOLLOW = options.follow_symlinks,
     };
     var stat: wasi.filestat_t = undefined;
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (wasi.path_filestat_get(dir.handle, flags, sub_path.ptr, sub_path.len, &stat)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return statFromWasi(&stat);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2155,28 +2753,56 @@ fn dirStatFileWasi(
     }
 }
 
+fn filePathKind(t: *Threaded, dir: Dir, sub_path: []const u8) !File.Kind {
+    if (native_os == .linux) {
+        var path_buffer: [posix.PATH_MAX]u8 = undefined;
+        const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+
+        const linux = std.os.linux;
+        const syscall: Syscall = try .start();
+        while (true) {
+            var statx = std.mem.zeroes(linux.Statx);
+            switch (linux.errno(linux.statx(dir.handle, sub_path_posix, 0, .{ .TYPE = true }, &statx))) {
+                .SUCCESS => {
+                    syscall.finish();
+                    if (!statx.mask.TYPE) return error.Unexpected;
+                    return statxKind(statx.mode);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .NOMEM => return syscall.fail(error.SystemResources),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
+
+    const stat = try dirStatFile(t, dir, sub_path, .{});
+    return stat.kind;
+}
+
 fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     if (native_os == .linux) {
-        const current_thread = Thread.getCurrent(t);
         const linux = std.os.linux;
 
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             var statx = std.mem.zeroes(linux.Statx);
             switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .{ .SIZE = true }, &statx))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     if (!statx.mask.SIZE) return error.Unexpected;
                     return statx.size;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .ACCES => |err| return errnoBug(err),
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2209,24 +2835,24 @@ const fileStat = switch (native_os) {
 
 fn fileStatPosix(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (posix.Stat == void) return error.Streaming;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         var stat = std.mem.zeroes(posix.Stat);
         switch (posix.errno(fstat_sym(file.handle, &stat))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return statFromPosix(&stat);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2241,28 +2867,24 @@ fn fileStatPosix(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
 
 fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const linux = std.os.linux;
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
+    const sys = if (statx_use_c) std.c else std.os.linux;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
         switch (sys.errno(sys.statx(file.handle, "", linux.AT.EMPTY_PATH, linux_statx_request, &statx))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return statFromLinux(&statx);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2282,21 +2904,32 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
 
 fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.checkCancel();
+    _ = t;
 
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
     var info: windows.FILE.ALL_INFORMATION = undefined;
-    const rc = windows.ntdll.NtQueryInformationFile(file.handle, &io_status_block, &info, @sizeOf(windows.FILE.ALL_INFORMATION), .All);
-    switch (rc) {
-        .SUCCESS => {},
-        // Buffer overflow here indicates that there is more information available than was able to be stored in the buffer
-        // size provided. This is treated as success because the type of variable-length information that this would be relevant for
-        // (name, volume name, etc) we don't care about.
-        .BUFFER_OVERFLOW => {},
-        .INVALID_PARAMETER => |err| return windows.statusBug(err),
-        .ACCESS_DENIED => return error.AccessDenied,
-        else => return windows.unexpectedStatus(rc),
+    {
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtQueryInformationFile(
+            file.handle,
+            &io_status_block,
+            &info,
+            @sizeOf(windows.FILE.ALL_INFORMATION),
+            .All,
+        )) {
+            .SUCCESS => break syscall.finish(),
+            // Buffer overflow here indicates that there is more information available than was able to be stored in the buffer
+            // size provided. This is treated as success because the type of variable-length information that this would be relevant for
+            // (name, volume name, etc) we don't care about.
+            .BUFFER_OVERFLOW => break syscall.finish(),
+            .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |s| return syscall.unexpectedNtstatus(s),
+        };
     }
     return .{
         .inode = info.InternalInformation.IndexNumber,
@@ -2304,15 +2937,25 @@ fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
         .permissions = .default_file,
         .kind = if (info.BasicInformation.FileAttributes.REPARSE_POINT) reparse_point: {
             var tag_info: windows.FILE.ATTRIBUTE_TAG_INFO = undefined;
-            const tag_rc = windows.ntdll.NtQueryInformationFile(file.handle, &io_status_block, &tag_info, @sizeOf(windows.FILE.ATTRIBUTE_TAG_INFO), .AttributeTag);
-            switch (tag_rc) {
-                .SUCCESS => {},
+            const syscall: Syscall = try .start();
+            while (true) switch (windows.ntdll.NtQueryInformationFile(
+                file.handle,
+                &io_status_block,
+                &tag_info,
+                @sizeOf(windows.FILE.ATTRIBUTE_TAG_INFO),
+                .AttributeTag,
+            )) {
+                .SUCCESS => break syscall.finish(),
                 // INFO_LENGTH_MISMATCH and ACCESS_DENIED are the only documented possible errors
                 // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-fscc/d295752f-ce89-4b98-8553-266d37c84f0e
-                .INFO_LENGTH_MISMATCH => |err| return windows.statusBug(err),
-                .ACCESS_DENIED => return error.AccessDenied,
-                else => return windows.unexpectedStatus(rc),
-            }
+                .INFO_LENGTH_MISMATCH => |err| return syscall.ntstatusBug(err),
+                .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+                .CANCELLED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |s| return syscall.unexpectedNtstatus(s),
+            };
             if (tag_info.ReparseTag.IsSurrogate) break :reparse_point .sym_link;
             // Unknown reparse point
             break :reparse_point .unknown;
@@ -2331,22 +2974,22 @@ fn fileStatWasi(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     if (builtin.link_libc) return fileStatPosix(userdata, file);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         var stat: std.os.wasi.filestat_t = undefined;
         switch (std.os.wasi.fd_filestat_get(file.handle, &stat)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return statFromWasi(&stat);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2373,7 +3016,7 @@ fn dirAccessPosix(
     options: Dir.AccessOptions,
 ) Dir.AccessError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -2385,19 +3028,19 @@ fn dirAccessPosix(
         @as(u32, if (options.write) posix.W_OK else 0) |
         @as(u32, if (options.execute) posix.X_OK else 0);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.faccessat(dir.handle, sub_path_posix, mode, flags))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .PERM => return error.PermissionDenied,
@@ -2427,26 +3070,26 @@ fn dirAccessWasi(
 ) Dir.AccessError!void {
     if (builtin.link_libc) return dirAccessPosix(userdata, dir, sub_path, options);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const wasi = std.os.wasi;
     const flags: wasi.lookupflags_t = .{
         .SYMLINK_FOLLOW = options.follow_symlinks,
     };
     var stat: wasi.filestat_t = undefined;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (wasi.path_filestat_get(dir.handle, flags, sub_path.ptr, sub_path.len, &stat)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -2498,8 +3141,7 @@ fn dirAccessWindows(
     options: Dir.AccessOptions,
 ) Dir.AccessError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.checkCancel();
+    _ = t;
 
     _ = options; // TODO
 
@@ -2518,23 +3160,28 @@ fn dirAccessWindows(
     };
     var attr: windows.OBJECT_ATTRIBUTES = .{
         .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+        .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
         .Attributes = .{},
         .ObjectName = &nt_name,
         .SecurityDescriptor = null,
         .SecurityQualityOfService = null,
     };
     var basic_info: windows.FILE.BASIC_INFORMATION = undefined;
-    switch (windows.ntdll.NtQueryAttributesFile(&attr, &basic_info)) {
-        .SUCCESS => return,
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_NAME_INVALID => |err| return windows.statusBug(err),
-        .INVALID_PARAMETER => |err| return windows.statusBug(err),
-        .ACCESS_DENIED => return error.AccessDenied,
-        .OBJECT_PATH_SYNTAX_BAD => |err| return windows.statusBug(err),
-        else => |rc| return windows.unexpectedStatus(rc),
-    }
+    const syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtQueryAttributesFile(&attr, &basic_info)) {
+        .SUCCESS => return syscall.finish(),
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .OBJECT_NAME_INVALID => |err| return syscall.ntstatusBug(err),
+        .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+        .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+        .OBJECT_PATH_SYNTAX_BAD => |err| return syscall.ntstatusBug(err),
+        else => |rc| return syscall.unexpectedNtstatus(rc),
+    };
 }
 
 const dirCreateFile = switch (native_os) {
@@ -2550,7 +3197,7 @@ fn dirCreateFilePosix(
     flags: File.CreateFlags,
 ) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -2579,49 +3226,51 @@ fn dirCreateFilePosix(
         },
     };
 
-    try current_thread.beginSyscall();
-    const fd: posix.fd_t = while (true) {
-        const rc = openat_sym(dir.handle, sub_path_posix, os_flags, flags.permissions.toMode());
-        switch (posix.errno(rc)) {
-            .SUCCESS => {
-                current_thread.endSyscall();
-                break @intCast(rc);
-            },
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => return error.BadPathName,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    .ACCES => return error.AccessDenied,
-                    .FBIG => return error.FileTooBig,
-                    .OVERFLOW => return error.FileTooBig,
-                    .ISDIR => return error.IsDir,
-                    .LOOP => return error.SymLinkLoop,
-                    .MFILE => return error.ProcessFdQuotaExceeded,
-                    .NAMETOOLONG => return error.NameTooLong,
-                    .NFILE => return error.SystemFdQuotaExceeded,
-                    .NODEV => return error.NoDevice,
-                    .NOENT => return error.FileNotFound,
-                    .SRCH => return error.FileNotFound, // Linux when accessing procfs.
-                    .NOMEM => return error.SystemResources,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .NOTDIR => return error.NotDir,
-                    .PERM => return error.PermissionDenied,
-                    .EXIST => return error.PathAlreadyExists,
-                    .BUSY => return error.DeviceBusy,
-                    .OPNOTSUPP => return error.FileLocksUnsupported,
-                    .AGAIN => return error.WouldBlock,
-                    .TXTBSY => return error.FileBusy,
-                    .NXIO => return error.NoDevice,
-                    .ILSEQ => return error.BadPathName,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+    const fd: posix.fd_t = fd: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(dir.handle, sub_path_posix, os_flags, flags.permissions.toMode());
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    break :fd @intCast(rc);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    syscall.finish();
+                    switch (e) {
+                        .FAULT => |err| return errnoBug(err),
+                        .INVAL => return error.BadPathName,
+                        .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                        .ACCES => return error.AccessDenied,
+                        .FBIG => return error.FileTooBig,
+                        .OVERFLOW => return error.FileTooBig,
+                        .ISDIR => return error.IsDir,
+                        .LOOP => return error.SymLinkLoop,
+                        .MFILE => return error.ProcessFdQuotaExceeded,
+                        .NAMETOOLONG => return error.NameTooLong,
+                        .NFILE => return error.SystemFdQuotaExceeded,
+                        .NODEV => return error.NoDevice,
+                        .NOENT => return error.FileNotFound,
+                        .SRCH => return error.FileNotFound, // Linux when accessing procfs.
+                        .NOMEM => return error.SystemResources,
+                        .NOSPC => return error.NoSpaceLeft,
+                        .NOTDIR => return error.NotDir,
+                        .PERM => return error.PermissionDenied,
+                        .EXIST => return error.PathAlreadyExists,
+                        .BUSY => return error.DeviceBusy,
+                        .OPNOTSUPP => return error.FileLocksUnsupported,
+                        .AGAIN => return error.WouldBlock,
+                        .TXTBSY => return error.FileBusy,
+                        .NXIO => return error.NoDevice,
+                        .ILSEQ => return error.BadPathName,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
         }
     };
     errdefer posix.close(fd);
@@ -2634,19 +3283,19 @@ fn dirCreateFilePosix(
             .exclusive => posix.LOCK.EX | lock_nonblocking,
         };
 
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(posix.system.flock(fd, lock_flags))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -2661,40 +3310,42 @@ fn dirCreateFilePosix(
     }
 
     if (have_flock_open_flags and flags.lock_nonblocking) {
-        try current_thread.beginSyscall();
-        var fl_flags: usize = while (true) {
-            const rc = posix.system.fcntl(fd, posix.F.GETFL, @as(usize, 0));
-            switch (posix.errno(rc)) {
-                .SUCCESS => {
-                    current_thread.endSyscall();
-                    break @intCast(rc);
-                },
-                .INTR => {
-                    try current_thread.checkCancel();
-                    continue;
-                },
-                else => |err| {
-                    current_thread.endSyscall();
-                    return posix.unexpectedErrno(err);
-                },
+        var fl_flags: usize = fl: {
+            const syscall: Syscall = try .start();
+            while (true) {
+                const rc = posix.system.fcntl(fd, posix.F.GETFL, @as(usize, 0));
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        break :fl @intCast(rc);
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => |err| {
+                        syscall.finish();
+                        return posix.unexpectedErrno(err);
+                    },
+                }
             }
         };
 
         fl_flags |= @as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
 
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFL, fl_flags))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |err| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return posix.unexpectedErrno(err);
                 },
             }
@@ -2712,28 +3363,41 @@ fn dirCreateFileWindows(
 ) File.OpenError!File {
     const w = windows;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.checkCancel();
+    _ = t;
 
     const sub_path_w_array = try w.sliceToPrefixedFileW(dir.handle, sub_path);
     const sub_path_w = sub_path_w_array.span();
 
-    const handle = try w.OpenFile(sub_path_w, .{
-        .dir = dir.handle,
-        .access_mask = .{
-            .STANDARD = .{ .SYNCHRONIZE = true },
-            .GENERIC = .{
-                .WRITE = true,
-                .READ = flags.read,
-            },
-        },
-        .creation = if (flags.exclusive)
-            .CREATE
-        else if (flags.truncate)
-            .OVERWRITE_IF
-        else
-            .OPEN_IF,
-    });
+    const handle = handle: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            if (w.OpenFile(sub_path_w, .{
+                .dir = dir.handle,
+                .access_mask = .{
+                    .STANDARD = .{ .SYNCHRONIZE = true },
+                    .GENERIC = .{
+                        .WRITE = true,
+                        .READ = flags.read,
+                    },
+                },
+                .creation = if (flags.exclusive)
+                    .CREATE
+                else if (flags.truncate)
+                    .OVERWRITE_IF
+                else
+                    .OPEN_IF,
+            })) |handle| {
+                syscall.finish();
+                break :handle handle;
+            } else |err| switch (err) {
+                error.OperationCanceled => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| return syscall.fail(e),
+            }
+        }
+    };
     errdefer w.CloseHandle(handle);
 
     var io_status_block: w.IO_STATUS_BLOCK = undefined;
@@ -2742,7 +3406,8 @@ fn dirCreateFileWindows(
         .shared => false,
         .exclusive => true,
     };
-    const status = w.ntdll.NtLockFile(
+    const syscall: Syscall = try .start();
+    while (true) switch (w.ntdll.NtLockFile(
         handle,
         null,
         null,
@@ -2753,16 +3418,16 @@ fn dirCreateFileWindows(
         null,
         @intFromBool(flags.lock_nonblocking),
         @intFromBool(exclusive),
-    );
-    switch (status) {
-        .SUCCESS => {},
-        .INSUFFICIENT_RESOURCES => return error.SystemResources,
-        .LOCK_NOT_GRANTED => return error.WouldBlock,
-        .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
-        else => return windows.unexpectedStatus(status),
-    }
-
-    return .{ .handle = handle };
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            return .{ .handle = handle };
+        },
+        .INSUFFICIENT_RESOURCES => return syscall.fail(error.SystemResources),
+        .LOCK_NOT_GRANTED => return syscall.fail(error.WouldBlock),
+        .ACCESS_VIOLATION => |err| return syscall.ntstatusBug(err), // bad io_status_block pointer
+        else => |status| return syscall.unexpectedNtstatus(status),
+    };
 }
 
 fn dirCreateFileWasi(
@@ -2772,7 +3437,7 @@ fn dirCreateFileWasi(
     flags: File.CreateFlags,
 ) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const wasi = std.os.wasi;
     const lookup_flags: wasi.lookupflags_t = .{};
     const oflags: wasi.oflags_t = .{
@@ -2800,19 +3465,19 @@ fn dirCreateFileWasi(
     };
     const inheriting: wasi.rights_t = .{};
     var fd: posix.fd_t = undefined;
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (wasi.path_open(dir.handle, lookup_flags, sub_path.ptr, sub_path.len, oflags, base, inheriting, fdflags, &fd)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return .{ .handle = fd };
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
@@ -2842,6 +3507,171 @@ fn dirCreateFileWasi(
     }
 }
 
+fn dirCreateFileAtomic(
+    userdata: ?*anyopaque,
+    dir: Dir,
+    dest_path: []const u8,
+    options: Dir.CreateFileAtomicOptions,
+) Dir.CreateFileAtomicError!File.Atomic {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const t_io = ioBasic(t);
+
+    // Linux has O_TMPFILE, but linkat() does not support AT_REPLACE, so it's
+    // useless when we have to make up a bogus path name to do the rename()
+    // anyway.
+    if (native_os == .linux and !options.replace) tmpfile: {
+        const flags: posix.O = if (@hasField(posix.O, "TMPFILE")) .{
+            .ACCMODE = .RDWR,
+            .TMPFILE = true,
+            .DIRECTORY = true,
+            .CLOEXEC = true,
+        } else if (@hasField(posix.O, "TMPFILE0") and !@hasField(posix.O, "TMPFILE2")) .{
+            .ACCMODE = .RDWR,
+            .TMPFILE0 = true,
+            .TMPFILE1 = true,
+            .DIRECTORY = true,
+            .CLOEXEC = true,
+        } else break :tmpfile;
+
+        const dest_dirname = Dir.path.dirname(dest_path);
+        if (dest_dirname) |dirname| {
+            // This has a nice side effect of preemptively triggering EISDIR or
+            // ENOENT, avoiding the ambiguity below.
+            if (options.make_path) dir.createDirPath(t_io, dirname) catch |err| switch (err) {
+                // None of these make sense in this context.
+                error.IsDir,
+                error.Streaming,
+                error.DiskQuota,
+                error.PathAlreadyExists,
+                error.LinkQuotaExceeded,
+                error.SharingViolation,
+                error.PipeBusy,
+                error.FileTooBig,
+                error.DeviceBusy,
+                error.FileLocksUnsupported,
+                error.FileBusy,
+                => return error.Unexpected,
+
+                else => |e| return e,
+            };
+        }
+
+        var path_buffer: [posix.PATH_MAX]u8 = undefined;
+        const sub_path_posix = try pathToPosix(dest_dirname orelse ".", &path_buffer);
+
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(dir.handle, sub_path_posix, flags, options.permissions.toMode());
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    return .{
+                        .file = .{ .handle = @intCast(rc) },
+                        .file_basename_hex = 0,
+                        .dest_sub_path = dest_path,
+                        .file_open = true,
+                        .file_exists = false,
+                        .close_dir_on_deinit = false,
+                        .dir = dir,
+                    };
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .ISDIR, .NOENT => {
+                    // Ambiguous error code. It might mean the file system
+                    // does not support O_TMPFILE. Therefore, we must fall
+                    // back to not using O_TMPFILE.
+                    syscall.finish();
+                    break :tmpfile;
+                },
+                .INVAL => return syscall.fail(error.BadPathName),
+                .ACCES => return syscall.fail(error.AccessDenied),
+                .LOOP => return syscall.fail(error.SymLinkLoop),
+                .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+                .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+                .NFILE => return syscall.fail(error.SystemFdQuotaExceeded),
+                .NODEV => return syscall.fail(error.NoDevice),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                .NOTDIR => return syscall.fail(error.NotDir),
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .AGAIN => return syscall.fail(error.WouldBlock),
+                .NXIO => return syscall.fail(error.NoDevice),
+                .ILSEQ => return syscall.fail(error.BadPathName),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
+
+    if (Dir.path.dirname(dest_path)) |dirname| {
+        const new_dir = if (options.make_path)
+            dir.createDirPathOpen(t_io, dirname, .{}) catch |err| switch (err) {
+                // None of these make sense in this context.
+                error.IsDir,
+                error.Streaming,
+                error.DiskQuota,
+                error.PathAlreadyExists,
+                error.LinkQuotaExceeded,
+                error.SharingViolation,
+                error.PipeBusy,
+                error.FileTooBig,
+                error.FileLocksUnsupported,
+                error.FileBusy,
+                error.DeviceBusy,
+                => return error.Unexpected,
+
+                else => |e| return e,
+            }
+        else
+            try dir.openDir(t_io, dirname, .{});
+
+        return atomicFileInit(t_io, Dir.path.basename(dest_path), options.permissions, new_dir, true);
+    }
+
+    return atomicFileInit(t_io, dest_path, options.permissions, dir, false);
+}
+
+fn atomicFileInit(
+    t_io: Io,
+    dest_basename: []const u8,
+    permissions: File.Permissions,
+    dir: Dir,
+    close_dir_on_deinit: bool,
+) Dir.CreateFileAtomicError!File.Atomic {
+    var random_integer: u64 = undefined;
+    while (true) {
+        t_io.random(@ptrCast(&random_integer));
+        const tmp_sub_path = std.fmt.hex(random_integer);
+        const file = dir.createFile(t_io, &tmp_sub_path, .{
+            .permissions = permissions,
+            .exclusive = true,
+        }) catch |err| switch (err) {
+            error.PathAlreadyExists => continue,
+            error.DeviceBusy => continue,
+            error.FileBusy => continue,
+            error.SharingViolation => continue,
+
+            error.IsDir => return error.Unexpected, // No path components.
+            error.FileTooBig => return error.Unexpected, // Creating, not opening.
+            error.FileLocksUnsupported => return error.Unexpected, // Not asking for locks.
+            error.PipeBusy => return error.Unexpected, // Not opening a pipe.
+
+            else => |e| return e,
+        };
+        return .{
+            .file = file,
+            .file_basename_hex = random_integer,
+            .dest_sub_path = dest_basename,
+            .file_open = true,
+            .file_exists = true,
+            .close_dir_on_deinit = close_dir_on_deinit,
+            .dir = dir,
+        };
+    }
+}
+
 const dirOpenFile = switch (native_os) {
     .windows => dirOpenFileWindows,
     .wasi => dirOpenFileWasi,
@@ -2855,7 +3685,6 @@ fn dirOpenFilePosix(
     flags: File.OpenFlags,
 ) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -2895,49 +3724,53 @@ fn dirOpenFilePosix(
         },
     };
 
-    try current_thread.beginSyscall();
-    const fd: posix.fd_t = while (true) {
-        const rc = openat_sym(dir.handle, sub_path_posix, os_flags, @as(posix.mode_t, 0));
-        switch (posix.errno(rc)) {
-            .SUCCESS => {
-                current_thread.endSyscall();
-                break @intCast(rc);
-            },
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => return error.BadPathName,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    .ACCES => return error.AccessDenied,
-                    .FBIG => return error.FileTooBig,
-                    .OVERFLOW => return error.FileTooBig,
-                    .ISDIR => return error.IsDir,
-                    .LOOP => return error.SymLinkLoop,
-                    .MFILE => return error.ProcessFdQuotaExceeded,
-                    .NAMETOOLONG => return error.NameTooLong,
-                    .NFILE => return error.SystemFdQuotaExceeded,
-                    .NODEV => return error.NoDevice,
-                    .NOENT => return error.FileNotFound,
-                    .SRCH => return error.FileNotFound, // Linux when opening procfs files.
-                    .NOMEM => return error.SystemResources,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .NOTDIR => return error.NotDir,
-                    .PERM => return error.PermissionDenied,
-                    .EXIST => return error.PathAlreadyExists,
-                    .BUSY => return error.DeviceBusy,
-                    .OPNOTSUPP => return error.FileLocksUnsupported,
-                    .AGAIN => return error.WouldBlock,
-                    .TXTBSY => return error.FileBusy,
-                    .NXIO => return error.NoDevice,
-                    .ILSEQ => return error.BadPathName,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+    const mode: posix.mode_t = 0;
+
+    const fd: posix.fd_t = fd: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(dir.handle, sub_path_posix, os_flags, mode);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    break :fd @intCast(rc);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    syscall.finish();
+                    switch (e) {
+                        .FAULT => |err| return errnoBug(err),
+                        .INVAL => return error.BadPathName,
+                        .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+                        .ACCES => return error.AccessDenied,
+                        .FBIG => return error.FileTooBig,
+                        .OVERFLOW => return error.FileTooBig,
+                        .ISDIR => return error.IsDir,
+                        .LOOP => return error.SymLinkLoop,
+                        .MFILE => return error.ProcessFdQuotaExceeded,
+                        .NAMETOOLONG => return error.NameTooLong,
+                        .NFILE => return error.SystemFdQuotaExceeded,
+                        .NODEV => return error.NoDevice,
+                        .NOENT => return error.FileNotFound,
+                        .SRCH => return error.FileNotFound, // Linux when opening procfs files.
+                        .NOMEM => return error.SystemResources,
+                        .NOSPC => return error.NoSpaceLeft,
+                        .NOTDIR => return error.NotDir,
+                        .PERM => return error.PermissionDenied,
+                        .EXIST => return error.PathAlreadyExists,
+                        .BUSY => return error.DeviceBusy,
+                        .OPNOTSUPP => return error.FileLocksUnsupported,
+                        .AGAIN => return error.WouldBlock,
+                        .TXTBSY => return error.FileBusy,
+                        .NXIO => return error.NoDevice,
+                        .ILSEQ => return error.BadPathName,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
         }
     };
     errdefer posix.close(fd);
@@ -2961,19 +3794,19 @@ fn dirOpenFilePosix(
             .shared => posix.LOCK.SH | lock_nonblocking,
             .exclusive => posix.LOCK.EX | lock_nonblocking,
         };
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(posix.system.flock(fd, lock_flags))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -2988,40 +3821,42 @@ fn dirOpenFilePosix(
     }
 
     if (have_flock_open_flags and flags.lock_nonblocking) {
-        try current_thread.beginSyscall();
-        var fl_flags: usize = while (true) {
-            const rc = posix.system.fcntl(fd, posix.F.GETFL, @as(usize, 0));
-            switch (posix.errno(rc)) {
-                .SUCCESS => {
-                    current_thread.endSyscall();
-                    break @intCast(rc);
-                },
-                .INTR => {
-                    try current_thread.checkCancel();
-                    continue;
-                },
-                else => |err| {
-                    current_thread.endSyscall();
-                    return posix.unexpectedErrno(err);
-                },
+        var fl_flags: usize = fl: {
+            const syscall: Syscall = try .start();
+            while (true) {
+                const rc = posix.system.fcntl(fd, posix.F.GETFL, @as(usize, 0));
+                switch (posix.errno(rc)) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        break :fl @intCast(rc);
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => |err| {
+                        syscall.finish();
+                        return posix.unexpectedErrno(err);
+                    },
+                }
             }
         };
 
         fl_flags |= @as(usize, 1 << @bitOffsetOf(posix.O, "NONBLOCK"));
 
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFL, fl_flags))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |err| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return posix.unexpectedErrno(err);
                 },
             }
@@ -3038,14 +3873,14 @@ fn dirOpenFileWindows(
     flags: File.OpenFlags,
 ) File.OpenError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
     const sub_path_w_array = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
     const sub_path_w = sub_path_w_array.span();
-    const dir_handle = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle;
-    return dirOpenFileWtf16(t, dir_handle, sub_path_w, flags);
+    const dir_handle = if (Dir.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle;
+    return dirOpenFileWtf16(dir_handle, sub_path_w, flags);
 }
 
 pub fn dirOpenFileWtf16(
-    t: *Threaded,
     dir_handle: ?windows.HANDLE,
     sub_path_w: [:0]const u16,
     flags: File.OpenFlags,
@@ -3054,7 +3889,6 @@ pub fn dirOpenFileWtf16(
     if (!allow_directory and std.mem.eql(u16, sub_path_w, &.{'.'})) return error.IsDir;
     if (!allow_directory and std.mem.eql(u16, sub_path_w, &.{ '.', '.' })) return error.IsDir;
     const path_len_bytes = std.math.cast(u16, sub_path_w.len * 2) orelse return error.NameTooLong;
-    const current_thread = Thread.getCurrent(t);
     const w = windows;
 
     var nt_name: w.UNICODE_STRING = .{
@@ -3076,11 +3910,10 @@ pub fn dirOpenFileWtf16(
     const max_attempts = 13;
     var attempt: u5 = 0;
 
+    var syscall: Syscall = try .start();
     const handle = while (true) {
-        try current_thread.checkCancel();
-
         var result: w.HANDLE = undefined;
-        const rc = w.ntdll.NtCreateFile(
+        switch (w.ntdll.NtCreateFile(
             &result,
             .{
                 .STANDARD = .{ .SYNCHRONIZE = true },
@@ -3102,49 +3935,65 @@ pub fn dirOpenFileWtf16(
             },
             null,
             0,
-        );
-        switch (rc) {
-            .SUCCESS => break result,
-            .OBJECT_NAME_INVALID => return error.BadPathName,
-            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-            .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-            .BAD_NETWORK_PATH => return error.NetworkNotFound, // \\server was not found
-            .BAD_NETWORK_NAME => return error.NetworkNotFound, // \\server was found but \\server\share wasn't
-            .NO_MEDIA_IN_DEVICE => return error.NoDevice,
-            .INVALID_PARAMETER => |err| return w.statusBug(err),
+        )) {
+            .SUCCESS => {
+                syscall.finish();
+                break result;
+            },
+            .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
+            .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .BAD_NETWORK_PATH => return syscall.fail(error.NetworkNotFound), // \\server was not found
+            .BAD_NETWORK_NAME => return syscall.fail(error.NetworkNotFound), // \\server was found but \\server\share wasn't
+            .NO_MEDIA_IN_DEVICE => return syscall.fail(error.NoDevice),
+            .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
             .SHARING_VIOLATION => {
                 // This occurs if the file attempting to be opened is a running
                 // executable. However, there's a kernel bug: the error may be
                 // incorrectly returned for an indeterminate amount of time
                 // after an executable file is closed. Here we work around the
                 // kernel bug with retry attempts.
+                syscall.finish();
                 if (max_attempts - attempt == 0) return error.SharingViolation;
-                _ = w.kernel32.SleepEx((@as(u32, 1) << attempt) >> 1, w.TRUE);
+                try parking_sleep.sleep(.{ .duration = .{
+                    .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
+                    .clock = .awake,
+                } });
                 attempt += 1;
+                syscall = try .start();
                 continue;
             },
-            .ACCESS_DENIED => return error.AccessDenied,
-            .PIPE_BUSY => return error.PipeBusy,
-            .PIPE_NOT_AVAILABLE => return error.NoDevice,
-            .OBJECT_PATH_SYNTAX_BAD => |err| return w.statusBug(err),
-            .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
-            .FILE_IS_A_DIRECTORY => return error.IsDir,
-            .NOT_A_DIRECTORY => return error.NotDir,
-            .USER_MAPPED_FILE => return error.AccessDenied,
-            .INVALID_HANDLE => |err| return w.statusBug(err),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .PIPE_BUSY => return syscall.fail(error.PipeBusy),
+            .PIPE_NOT_AVAILABLE => return syscall.fail(error.NoDevice),
+            .OBJECT_PATH_SYNTAX_BAD => |err| return syscall.ntstatusBug(err),
+            .OBJECT_NAME_COLLISION => return syscall.fail(error.PathAlreadyExists),
+            .FILE_IS_A_DIRECTORY => return syscall.fail(error.IsDir),
+            .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
+            .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
+            .INVALID_HANDLE => |err| return syscall.ntstatusBug(err),
             .DELETE_PENDING => {
                 // This error means that there *was* a file in this location on
                 // the file system, but it was deleted. However, the OS is not
                 // finished with the deletion operation, and so this CreateFile
                 // call has failed. Here, we simulate the kernel bug being
                 // fixed by sleeping and retrying until the error goes away.
+                syscall.finish();
                 if (max_attempts - attempt == 0) return error.SharingViolation;
-                _ = w.kernel32.SleepEx((@as(u32, 1) << attempt) >> 1, w.TRUE);
+                try parking_sleep.sleep(.{ .duration = .{
+                    .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
+                    .clock = .awake,
+                } });
                 attempt += 1;
+                syscall = try .start();
                 continue;
             },
-            .VIRUS_INFECTED, .VIRUS_DELETED => return error.AntivirusInterference,
-            else => return w.unexpectedStatus(rc),
+            .VIRUS_INFECTED, .VIRUS_DELETED => return syscall.fail(error.AntivirusInterference),
+            else => |rc| return syscall.unexpectedNtstatus(rc),
         }
     };
     errdefer w.CloseHandle(handle);
@@ -3154,7 +4003,8 @@ pub fn dirOpenFileWtf16(
         .shared => false,
         .exclusive => true,
     };
-    const status = w.ntdll.NtLockFile(
+    syscall = try .start();
+    while (true) switch (w.ntdll.NtLockFile(
         handle,
         null,
         null,
@@ -3165,14 +4015,13 @@ pub fn dirOpenFileWtf16(
         null,
         @intFromBool(flags.lock_nonblocking),
         @intFromBool(exclusive),
-    );
-    switch (status) {
-        .SUCCESS => {},
-        .INSUFFICIENT_RESOURCES => return error.SystemResources,
-        .LOCK_NOT_GRANTED => return error.WouldBlock,
-        .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
-        else => return windows.unexpectedStatus(status),
-    }
+    )) {
+        .SUCCESS => break syscall.finish(),
+        .INSUFFICIENT_RESOURCES => return syscall.fail(error.SystemResources),
+        .LOCK_NOT_GRANTED => return syscall.fail(error.WouldBlock),
+        .ACCESS_VIOLATION => |err| return syscall.ntstatusBug(err), // bad io_status_block pointer
+        else => |status| return syscall.unexpectedNtstatus(status),
+    };
     return .{ .handle = handle };
 }
 
@@ -3184,7 +4033,6 @@ fn dirOpenFileWasi(
 ) File.OpenError!File {
     if (builtin.link_libc) return dirOpenFilePosix(userdata, dir, sub_path, flags);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     const wasi = std.os.wasi;
     var base: std.os.wasi.rights_t = .{};
     // POLL_FD_READWRITE only grants extra rights if the corresponding FD_READ and/or FD_WRITE
@@ -3214,19 +4062,19 @@ fn dirOpenFileWasi(
     const inheriting: wasi.rights_t = .{};
     const fdflags: wasi.fdflags_t = .{};
     var fd: posix.fd_t = undefined;
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (wasi.path_open(dir.handle, lookup_flags, sub_path.ptr, sub_path.len, oflags, base, inheriting, fdflags, &fd)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -3283,13 +4131,12 @@ fn dirOpenDirPosix(
     options: Dir.OpenOptions,
 ) Dir.OpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
 
     if (is_windows) {
         const sub_path_w = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
-        return dirOpenDirWindows(t, dir, sub_path_w.span(), options);
+        return dirOpenDirWindows(dir, sub_path_w.span(), options);
     }
-
-    const current_thread = Thread.getCurrent(t);
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -3311,20 +4158,22 @@ fn dirOpenDirPosix(
     if (@hasField(posix.O, "PATH") and !options.iterate)
         flags.PATH = true;
 
-    try current_thread.beginSyscall();
+    const mode: posix.mode_t = 0;
+
+    const syscall: Syscall = try .start();
     while (true) {
-        const rc = openat_sym(dir.handle, sub_path_posix, flags, @as(usize, 0));
+        const rc = openat_sym(dir.handle, sub_path_posix, flags, mode);
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return .{ .handle = @intCast(rc) };
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
@@ -3339,7 +4188,7 @@ fn dirOpenDirPosix(
                     .NOMEM => return error.SystemResources,
                     .NOTDIR => return error.NotDir,
                     .PERM => return error.PermissionDenied,
-                    .BUSY => return error.DeviceBusy,
+                    .BUSY => |err| return errnoBug(err), // O_EXCL not passed
                     .NXIO => return error.NoDevice,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
@@ -3356,27 +4205,27 @@ fn dirOpenDirHaiku(
     options: Dir.OpenOptions,
 ) Dir.OpenError!Dir {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
     _ = options;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system._kern_open_dir(dir.handle, sub_path_posix);
         if (rc >= 0) {
-            current_thread.endSyscall();
+            syscall.finish();
             return .{ .handle = rc };
         }
         switch (@as(posix.E, @enumFromInt(rc))) {
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
@@ -3400,12 +4249,10 @@ fn dirOpenDirHaiku(
 }
 
 pub fn dirOpenDirWindows(
-    t: *Io.Threaded,
     dir: Dir,
     sub_path_w: [:0]const u16,
     options: Dir.OpenOptions,
 ) Dir.OpenError!Dir {
-    const current_thread = Thread.getCurrent(t);
     const w = windows;
 
     const path_len_bytes: u16 = @intCast(sub_path_w.len * 2);
@@ -3416,8 +4263,9 @@ pub fn dirOpenDirWindows(
     };
     var io_status_block: w.IO_STATUS_BLOCK = undefined;
     var result: Dir = .{ .handle = undefined };
-    try current_thread.checkCancel();
-    const rc = w.ntdll.NtCreateFile(
+
+    const syscall: Syscall = try .start();
+    while (true) switch (w.ntdll.NtCreateFile(
         &result.handle,
         // TODO remove some of these flags if options.access_sub_paths is false
         .{
@@ -3434,7 +4282,7 @@ pub fn dirOpenDirWindows(
         },
         &.{
             .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+            .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
             .Attributes = .{},
             .ObjectName = &nt_name,
             .SecurityDescriptor = null,
@@ -3453,21 +4301,26 @@ pub fn dirOpenDirWindows(
         },
         null,
         0,
-    );
-
-    switch (rc) {
-        .SUCCESS => return result,
-        .OBJECT_NAME_INVALID => return error.BadPathName,
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            return result;
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
         .OBJECT_NAME_COLLISION => |err| return w.statusBug(err),
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_A_DIRECTORY => return error.NotDir,
+        .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
         // This can happen if the directory has 'List folder contents' permission set to 'Deny'
         // and the directory is trying to be opened for iteration.
-        .ACCESS_DENIED => return error.AccessDenied,
-        .INVALID_PARAMETER => |err| return w.statusBug(err),
-        else => return w.unexpectedStatus(rc),
-    }
+        .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+        .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+        else => |rc| return syscall.unexpectedNtstatus(rc),
+    };
 }
 
 fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
@@ -3490,7 +4343,7 @@ const dirRead = switch (native_os) {
 fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
     const linux = std.os.linux;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     var buffer_index: usize = 0;
     while (buffer.len - buffer_index != 0) {
         if (dr.end - dr.index == 0) {
@@ -3498,26 +4351,26 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
             // buffered data.
             if (buffer_index != 0) break;
             if (dr.state == .reset) {
-                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                posixSeekTo(dr.dir.handle, 0) catch |err| switch (err) {
                     error.Unseekable => return error.Unexpected,
                     else => |e| return e,
                 };
                 dr.state = .reading;
             }
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             const n = while (true) {
                 const rc = linux.getdents64(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
                 switch (linux.errno(rc)) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break rc;
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability.
                             .FAULT => |err| return errnoBug(err),
@@ -3587,7 +4440,7 @@ fn dirReadLinux(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
 
 fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const Header = extern struct {
         seek: i64,
     };
@@ -3606,27 +4459,27 @@ fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Di
             // buffered data.
             if (buffer_index != 0) break;
             if (dr.state == .reset) {
-                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                posixSeekTo(dr.dir.handle, 0) catch |err| switch (err) {
                     error.Unseekable => return error.Unexpected,
                     else => |e| return e,
                 };
                 dr.state = .reading;
             }
             const dents_buffer = dr.buffer[header_end..];
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             const n: usize = while (true) {
                 const rc = posix.system.getdirentries(dr.dir.handle, dents_buffer.ptr, dents_buffer.len, &header.seek);
                 switch (posix.errno(rc)) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break @intCast(rc);
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability.
                             .FAULT => |err| return errnoBug(err),
@@ -3675,7 +4528,7 @@ fn dirReadDarwin(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Di
 
 fn dirReadBsd(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     var buffer_index: usize = 0;
     while (buffer.len - buffer_index != 0) {
         if (dr.end - dr.index == 0) {
@@ -3683,26 +4536,26 @@ fn dirReadBsd(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.R
             // buffered data.
             if (buffer_index != 0) break;
             if (dr.state == .reset) {
-                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                posixSeekTo(dr.dir.handle, 0) catch |err| switch (err) {
                     error.Unseekable => return error.Unexpected,
                     else => |e| return e,
                 };
                 dr.state = .reading;
             }
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             const n: usize = while (true) {
                 const rc = posix.system.getdents(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
                 switch (posix.errno(rc)) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break @intCast(rc);
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability
                             .FAULT => |err| return errnoBug(err),
@@ -3769,7 +4622,7 @@ fn dirReadBsd(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.R
 
 fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     var buffer_index: usize = 0;
     while (buffer.len - buffer_index != 0) {
         if (dr.end - dr.index == 0) {
@@ -3777,26 +4630,26 @@ fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
             // buffered data.
             if (buffer_index != 0) break;
             if (dr.state == .reset) {
-                posixSeekTo(current_thread, dr.dir.handle, 0) catch |err| switch (err) {
+                posixSeekTo(dr.dir.handle, 0) catch |err| switch (err) {
                     error.Unseekable => return error.Unexpected,
                     else => |e| return e,
                 };
                 dr.state = .reading;
             }
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             const n: usize = while (true) {
                 const rc = posix.system.getdents(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
                 switch (posix.errno(rc)) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break rc;
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability
                             .FAULT => |err| return errnoBug(err),
@@ -3822,7 +4675,7 @@ fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
         // illumos dirent doesn't expose type, so we have to call stat to get it.
-        const stat = try posixStatFile(current_thread, dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW);
+        const stat = try posixStatFile(dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW);
 
         buffer[buffer_index] = .{
             .name = name,
@@ -3843,7 +4696,7 @@ fn dirReadHaiku(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir
 
 fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const w = windows;
 
     // We want to be able to use the `dr.buffer` for both the NtQueryDirectoryFile call (which
@@ -3907,9 +4760,9 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
             // buffered data.
             if (buffer_index != 0) break;
 
-            try current_thread.checkCancel();
             var io_status_block: w.IO_STATUS_BLOCK = undefined;
-            const rc = w.ntdll.NtQueryDirectoryFile(
+            const syscall: Syscall = try .start();
+            const rc = while (true) switch (w.ntdll.NtQueryDirectoryFile(
                 dr.dir.handle,
                 null,
                 null,
@@ -3921,7 +4774,16 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
                 w.FALSE,
                 null,
                 @intFromBool(dr.state == .reset),
-            );
+            )) {
+                .CANCELLED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |rc| {
+                    syscall.finish();
+                    break rc;
+                },
+            };
             dr.state = .reading;
             if (io_status_block.Information == 0) {
                 dr.state = .finished;
@@ -3993,7 +4855,7 @@ fn dirReadWasi(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.
     // complexity here.
     const wasi = std.os.wasi;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const Header = extern struct {
         cookie: u64,
     };
@@ -4019,19 +4881,19 @@ fn dirReadWasi(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.
             }
             const dents_buffer = dr.buffer[header_end..];
             var n: usize = undefined;
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             while (true) {
                 switch (wasi.fd_readdir(dr.dir.handle, dents_buffer.ptr, dents_buffer.len, header.cookie, &n)) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break;
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability.
                             .FAULT => |err| return errnoBug(err),
@@ -4107,34 +4969,42 @@ const dirRealPathFile = switch (native_os) {
 
 fn dirRealPathFileWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, out_buffer: []u8) Dir.RealPathFileError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-
-    try current_thread.checkCancel();
+    _ = t;
 
     var path_name_w = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
 
-    const h_file = blk: {
-        const res = windows.OpenFile(path_name_w.span(), .{
-            .dir = dir.handle,
-            .access_mask = .{
-                .GENERIC = .{ .READ = true },
-                .STANDARD = .{ .SYNCHRONIZE = true },
-            },
-            .creation = .OPEN,
-            .filter = .any,
-        }) catch |err| switch (err) {
-            error.WouldBlock => unreachable,
-            else => |e| return e,
-        };
-        break :blk res;
+    const h_file = handle: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            if (windows.OpenFile(path_name_w.span(), .{
+                .dir = dir.handle,
+                .access_mask = .{
+                    .GENERIC = .{ .READ = true },
+                    .STANDARD = .{ .SYNCHRONIZE = true },
+                },
+                .creation = .OPEN,
+                .filter = .any,
+            })) |handle| {
+                syscall.finish();
+                break :handle handle;
+            } else |err| switch (err) {
+                error.WouldBlock => unreachable,
+                error.OperationCanceled => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| return syscall.fail(e),
+            }
+        }
     };
     defer windows.CloseHandle(h_file);
-    return realPathWindows(current_thread, h_file, out_buffer);
+    return realPathWindows(h_file, out_buffer);
 }
 
-fn realPathWindows(current_thread: *Thread, h_file: windows.HANDLE, out_buffer: []u8) File.RealPathError!usize {
-    _ = current_thread; // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
+fn realPathWindows(h_file: windows.HANDLE, out_buffer: []u8) File.RealPathError!usize {
     var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
+    // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
+    try Thread.checkCancel();
     const wide_slice = try windows.GetFinalPathNameByHandle(h_file, .{}, &wide_buf);
 
     const len = std.unicode.calcWtf8Len(wide_slice);
@@ -4148,26 +5018,26 @@ fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, o
     if (native_os == .wasi) return error.OperationUnsupported;
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
     if (builtin.link_libc and dir.handle == posix.AT.FDCWD) {
         if (out_buffer.len < posix.PATH_MAX) return error.NameTooLong;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             if (std.c.realpath(sub_path_posix, out_buffer.ptr)) |redundant_pointer| {
-                current_thread.endSyscall();
+                syscall.finish();
                 assert(redundant_pointer == out_buffer.ptr);
                 return std.mem.indexOfScalar(u8, out_buffer, 0) orelse out_buffer.len;
             }
             const err: posix.E = @enumFromInt(std.c._errno().*);
             if (err == .INTR) {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             }
-            current_thread.endSyscall();
+            syscall.finish();
             switch (err) {
                 .INVAL => return errnoBug(err),
                 .BADF => return errnoBug(err),
@@ -4191,20 +5061,20 @@ fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, o
 
     const mode: posix.mode_t = 0;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     const fd: posix.fd_t = while (true) {
         const rc = openat_sym(dir.handle, sub_path_posix, flags, mode);
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break @intCast(rc);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
@@ -4234,7 +5104,7 @@ fn dirRealPathFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, o
         }
     };
     defer posix.close(fd);
-    return realPathPosix(current_thread, fd, out_buffer);
+    return realPathPosix(fd, out_buffer);
 }
 
 const dirRealPath = switch (native_os) {
@@ -4245,14 +5115,14 @@ const dirRealPath = switch (native_os) {
 fn dirRealPathPosix(userdata: ?*anyopaque, dir: Dir, out_buffer: []u8) Dir.RealPathError!usize {
     if (native_os == .wasi) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    return realPathPosix(current_thread, dir.handle, out_buffer);
+    _ = t;
+    return realPathPosix(dir.handle, out_buffer);
 }
 
 fn dirRealPathWindows(userdata: ?*anyopaque, dir: Dir, out_buffer: []u8) Dir.RealPathError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    return realPathWindows(current_thread, dir.handle, out_buffer);
+    _ = t;
+    return realPathWindows(dir.handle, out_buffer);
 }
 
 const fileRealPath = switch (native_os) {
@@ -4263,35 +5133,35 @@ const fileRealPath = switch (native_os) {
 fn fileRealPathWindows(userdata: ?*anyopaque, file: File, out_buffer: []u8) File.RealPathError!usize {
     if (native_os == .wasi) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    return realPathWindows(current_thread, file.handle, out_buffer);
+    _ = t;
+    return realPathWindows(file.handle, out_buffer);
 }
 
 fn fileRealPathPosix(userdata: ?*anyopaque, file: File, out_buffer: []u8) File.RealPathError!usize {
     if (native_os == .wasi) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    return realPathPosix(current_thread, file.handle, out_buffer);
+    _ = t;
+    return realPathPosix(file.handle, out_buffer);
 }
 
-fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
+fn realPathPosix(fd: posix.fd_t, out_buffer: []u8) File.RealPathError!usize {
     switch (native_os) {
         .netbsd, .dragonfly, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
             var sufficient_buffer: [posix.PATH_MAX]u8 = undefined;
             @memset(&sufficient_buffer, 0);
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             while (true) {
                 switch (posix.errno(posix.system.fcntl(fd, posix.F.GETPATH, &sufficient_buffer))) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break;
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .ACCES => return error.AccessDenied,
                             .BADF => return error.FileNotFound,
@@ -4313,21 +5183,21 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
             var procfs_buf: ["/proc/self/path/-2147483648\x00".len]u8 = undefined;
             const template = if (native_os == .illumos) "/proc/self/path/{d}" else "/proc/self/fd/{d}";
             const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, template, .{fd}, 0) catch unreachable;
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             while (true) {
                 const rc = posix.system.readlink(proc_path, out_buffer.ptr, out_buffer.len);
                 switch (posix.errno(rc)) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         const len: usize = @bitCast(rc);
                         return len;
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .ACCES => return error.AccessDenied,
                             .FAULT => |err| return errnoBug(err),
@@ -4347,23 +5217,23 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
         .freebsd => {
             var k_file: std.c.kinfo_file = undefined;
             k_file.structsize = std.c.KINFO_FILE_SIZE;
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             while (true) {
                 switch (posix.errno(std.c.fcntl(fd, std.c.F.KINFO, @intFromPtr(&k_file)))) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break;
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     .BADF => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         return error.FileNotFound;
                     },
                     else => |err| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         return posix.unexpectedErrno(err);
                     },
                 }
@@ -4376,6 +5246,73 @@ fn realPathPosix(current_thread: *Thread, fd: posix.fd_t, out_buffer: []u8) File
         else => return error.OperationUnsupported,
     }
     comptime unreachable;
+}
+
+fn fileHardLink(
+    userdata: ?*anyopaque,
+    file: File,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    options: File.HardLinkOptions,
+) File.HardLinkError!void {
+    _ = userdata;
+    if (native_os != .linux) return error.OperationUnsupported;
+
+    var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    const flags: u32 = if (options.follow_symlinks)
+        posix.AT.SYMLINK_FOLLOW | posix.AT.EMPTY_PATH
+    else
+        posix.AT.EMPTY_PATH;
+
+    return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags) catch |err| switch (err) {
+        error.FileNotFound => {
+            if (options.follow_symlinks) return error.FileNotFound;
+            var proc_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
+            const proc_path = std.fmt.bufPrintSentinel(&proc_buf, "/proc/self/fd/{d}", .{file.handle}, 0) catch
+                unreachable;
+            return linkat(posix.AT.FDCWD, proc_path, new_dir.handle, new_sub_path_posix, posix.AT.SYMLINK_FOLLOW);
+        },
+        else => |e| return e,
+    };
+}
+
+fn linkat(
+    old_dir: posix.fd_t,
+    old_path: [*:0]const u8,
+    new_dir: posix.fd_t,
+    new_path: [*:0]const u8,
+    flags: u32,
+) File.HardLinkError!void {
+    const syscall: Syscall = try .start();
+    while (true) {
+        switch (posix.errno(posix.system.linkat(old_dir, old_path, new_dir, new_path, flags))) {
+            .SUCCESS => return syscall.finish(),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .DQUOT => return syscall.fail(error.DiskQuota),
+            .EXIST => return syscall.fail(error.PathAlreadyExists),
+            .IO => return syscall.fail(error.HardwareFailure),
+            .LOOP => return syscall.fail(error.SymLinkLoop),
+            .MLINK => return syscall.fail(error.LinkQuotaExceeded),
+            .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+            .NOENT => return syscall.fail(error.FileNotFound),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .NOSPC => return syscall.fail(error.NoSpaceLeft),
+            .NOTDIR => return syscall.fail(error.NotDir),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+            .XDEV => return syscall.fail(error.CrossDevice),
+            .ILSEQ => return syscall.fail(error.BadPathName),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .INVAL => |err| return syscall.errnoBug(err),
+            else => |err| return syscall.unexpectedErrno(err),
+        }
+    }
 }
 
 const dirDeleteFile = switch (native_os) {
@@ -4394,21 +5331,21 @@ fn dirDeleteFileWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) D
 fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteFileError!void {
     if (builtin.link_libc) return dirDeleteFilePosix(userdata, dir, sub_path);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.beginSyscall();
+    _ = t;
+    const syscall: Syscall = try .start();
     while (true) {
         const res = std.os.wasi.path_unlink_file(dir.handle, sub_path.ptr, sub_path.len);
         switch (res) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .PERM => return error.PermissionDenied,
@@ -4435,20 +5372,20 @@ fn dirDeleteFileWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
 
 fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteFileError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.unlinkat(dir.handle, sub_path_posix, 0))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             // Some systems return permission errors when trying to delete a
@@ -4460,15 +5397,15 @@ fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir
                     // Don't follow symlinks to match unlinkat (which acts on symlinks rather than follows them).
                     var st = std.mem.zeroes(posix.Stat);
                     while (true) {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         switch (posix.errno(fstatat_sym(dir.handle, sub_path_posix, &st, posix.AT.SYMLINK_NOFOLLOW))) {
                             .SUCCESS => {
-                                current_thread.endSyscall();
+                                syscall.finish();
                                 break;
                             },
                             .INTR => continue,
                             else => {
-                                current_thread.endSyscall();
+                                syscall.finish();
                                 return error.PermissionDenied;
                             },
                         }
@@ -4480,12 +5417,12 @@ fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir
                         return error.PermissionDenied;
                 },
                 else => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return error.PermissionDenied;
                 },
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .BUSY => return error.FileBusy,
@@ -4525,10 +5462,8 @@ fn dirDeleteDirWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Di
 
 fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remove_dir: bool) (Dir.DeleteDirError || Dir.DeleteFileError)!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const w = windows;
-
-    try current_thread.checkCancel();
 
     const sub_path_w_buf = try w.sliceToPrefixedFileW(dir.handle, sub_path);
     const sub_path_w = sub_path_w_buf.span();
@@ -4552,47 +5487,49 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
 
     var io_status_block: w.IO_STATUS_BLOCK = undefined;
     var tmp_handle: w.HANDLE = undefined;
-    var rc = w.ntdll.NtCreateFile(
-        &tmp_handle,
-        .{ .STANDARD = .{
-            .RIGHTS = .{ .DELETE = true },
-            .SYNCHRONIZE = true,
-        } },
-        &.{
-            .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
-            .Attributes = .{},
-            .ObjectName = &nt_name,
-            .SecurityDescriptor = null,
-            .SecurityQualityOfService = null,
-        },
-        &io_status_block,
-        null,
-        .{},
-        .VALID_FLAGS,
-        .OPEN,
-        .{
-            .DIRECTORY_FILE = remove_dir,
-            .NON_DIRECTORY_FILE = !remove_dir,
-            .OPEN_REPARSE_POINT = true, // would we ever want to delete the target instead?
-        },
-        null,
-        0,
-    );
-    switch (rc) {
-        .SUCCESS => {},
-        .OBJECT_NAME_INVALID => |err| return w.statusBug(err),
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .BAD_NETWORK_PATH => return error.NetworkNotFound, // \\server was not found
-        .BAD_NETWORK_NAME => return error.NetworkNotFound, // \\server was found but \\server\share wasn't
-        .INVALID_PARAMETER => |err| return w.statusBug(err),
-        .FILE_IS_A_DIRECTORY => return error.IsDir,
-        .NOT_A_DIRECTORY => return error.NotDir,
-        .SHARING_VIOLATION => return error.FileBusy,
-        .ACCESS_DENIED => return error.AccessDenied,
-        .DELETE_PENDING => return,
-        else => return w.unexpectedStatus(rc),
+    {
+        const syscall: Syscall = try .start();
+        while (true) switch (w.ntdll.NtCreateFile(
+            &tmp_handle,
+            .{ .STANDARD = .{
+                .RIGHTS = .{ .DELETE = true },
+                .SYNCHRONIZE = true,
+            } },
+            &.{
+                .Length = @sizeOf(w.OBJECT_ATTRIBUTES),
+                .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(sub_path_w)) null else dir.handle,
+                .Attributes = .{},
+                .ObjectName = &nt_name,
+                .SecurityDescriptor = null,
+                .SecurityQualityOfService = null,
+            },
+            &io_status_block,
+            null,
+            .{},
+            .VALID_FLAGS,
+            .OPEN,
+            .{
+                .DIRECTORY_FILE = remove_dir,
+                .NON_DIRECTORY_FILE = !remove_dir,
+                .OPEN_REPARSE_POINT = true, // would we ever want to delete the target instead?
+            },
+            null,
+            0,
+        )) {
+            .SUCCESS => break syscall.finish(),
+            .OBJECT_NAME_INVALID => |err| return syscall.ntstatusBug(err),
+            .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .BAD_NETWORK_PATH => return syscall.fail(error.NetworkNotFound), // \\server was not found
+            .BAD_NETWORK_NAME => return syscall.fail(error.NetworkNotFound), // \\server was found but \\server\share wasn't
+            .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+            .FILE_IS_A_DIRECTORY => return syscall.fail(error.IsDir),
+            .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
+            .SHARING_VIOLATION => return syscall.fail(error.FileBusy),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .DELETE_PENDING => return syscall.finish(),
+            else => |rc| return syscall.unexpectedNtstatus(rc),
+        };
     }
     defer w.CloseHandle(tmp_handle);
 
@@ -4607,9 +5544,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
     //
     // The strategy here is just to try using FileDispositionInformationEx and fall back to
     // FileDispositionInformation if the return value lets us know that some aspect of it is not supported.
-    const need_fallback = need_fallback: {
-        try current_thread.checkCancel();
-
+    const rc = rc: {
         // Deletion with posix semantics if the filesystem supports it.
         const info: w.FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
             .DELETE = true,
@@ -4617,29 +5552,32 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
             .IGNORE_READONLY_ATTRIBUTE = true,
         } };
 
-        rc = w.ntdll.NtSetInformationFile(
+        const syscall: Syscall = try .start();
+        while (true) switch (w.ntdll.NtSetInformationFile(
             tmp_handle,
             &io_status_block,
             &info,
             @sizeOf(w.FILE.DISPOSITION.INFORMATION.EX),
             .DispositionEx,
-        );
-        switch (rc) {
-            .SUCCESS => return,
+        )) {
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
             // The filesystem does not support FileDispositionInformationEx
             .INVALID_PARAMETER,
             // The operating system does not support FileDispositionInformationEx
             .INVALID_INFO_CLASS,
             // The operating system does not support one of the flags
             .NOT_SUPPORTED,
-            => break :need_fallback true,
-            // For all other statuses, fall down to the switch below to handle them.
-            else => break :need_fallback false,
-        }
-    };
+            => break, // use fallback path below; `syscall` still active
 
-    if (need_fallback) {
-        try current_thread.checkCancel();
+            // For all other statuses, fall down to the switch below to handle them.
+            else => |rc| {
+                syscall.finish();
+                break :rc rc;
+            },
+        };
 
         // Deletion with file pending semantics, which requires waiting or moving
         // files to get them removed (from here).
@@ -4647,14 +5585,23 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
             .DeleteFile = w.TRUE,
         };
 
-        rc = w.ntdll.NtSetInformationFile(
+        while (true) switch (w.ntdll.NtSetInformationFile(
             tmp_handle,
             &io_status_block,
             &file_dispo,
             @sizeOf(w.FILE.DISPOSITION.INFORMATION),
             .Disposition,
-        );
-    }
+        )) {
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |rc| {
+                syscall.finish();
+                break :rc rc;
+            },
+        };
+    };
     switch (rc) {
         .SUCCESS => {},
         .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
@@ -4670,22 +5617,22 @@ fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.D
     if (builtin.link_libc) return dirDeleteDirPosix(userdata, dir, sub_path);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const res = std.os.wasi.path_remove_directory(dir.handle, sub_path.ptr, sub_path.len);
         switch (res) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .PERM => return error.PermissionDenied,
@@ -4712,24 +5659,24 @@ fn dirDeleteDirWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.D
 
 fn dirDeleteDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.DeleteDirError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.unlinkat(dir.handle, sub_path_posix, posix.AT.REMOVEDIR))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .PERM => return error.PermissionDenied,
@@ -4768,33 +5715,72 @@ fn dirRenameWindows(
     new_dir: Dir,
     new_sub_path: []const u8,
 ) Dir.RenameError!void {
-    const w = windows;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
+    return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, true) catch |err| switch (err) {
+        error.PathAlreadyExists => return error.Unexpected,
+        error.OperationUnsupported => return error.Unexpected,
+        else => |e| return e,
+    };
+}
 
+fn dirRenamePreserve(
+    userdata: ?*anyopaque,
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+) Dir.RenamePreserveError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    if (is_windows) return dirRenameWindowsInner(old_dir, old_sub_path, new_dir, new_sub_path, false);
+    if (native_os == .linux) return dirRenamePreserveLinux(old_dir, old_sub_path, new_dir, new_sub_path);
+    // Make a hard link then delete the original.
+    try dirHardLink(t, old_dir, old_sub_path, new_dir, new_sub_path, .{ .follow_symlinks = false });
+    const prev = swapCancelProtection(t, .blocked);
+    defer _ = swapCancelProtection(t, prev);
+    dirDeleteFile(t, old_dir, old_sub_path) catch {};
+}
+
+fn dirRenameWindowsInner(
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+    replace_if_exists: bool,
+) Dir.RenamePreserveError!void {
+    const w = windows;
     const old_path_w_buf = try windows.sliceToPrefixedFileW(old_dir.handle, old_sub_path);
     const old_path_w = old_path_w_buf.span();
     const new_path_w_buf = try windows.sliceToPrefixedFileW(new_dir.handle, new_sub_path);
     const new_path_w = new_path_w_buf.span();
-    const replace_if_exists = true;
 
-    try current_thread.checkCancel();
-
-    const src_fd = w.OpenFile(old_path_w, .{
-        .dir = old_dir.handle,
-        .access_mask = .{
-            .GENERIC = .{ .WRITE = true },
-            .STANDARD = .{
-                .RIGHTS = .{ .DELETE = true },
-                .SYNCHRONIZE = true,
-            },
-        },
-        .creation = .OPEN,
-        .filter = .any, // This function is supposed to rename both files and directories.
-        .follow_symlinks = false,
-    }) catch |err| switch (err) {
-        error.WouldBlock => unreachable, // Not possible without `.share_access_nonblocking = true`.
-        else => |e| return e,
+    const src_fd = src_fd: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            if (w.OpenFile(old_path_w, .{
+                .dir = old_dir.handle,
+                .access_mask = .{
+                    .GENERIC = .{ .WRITE = true },
+                    .STANDARD = .{
+                        .RIGHTS = .{ .DELETE = true },
+                        .SYNCHRONIZE = true,
+                    },
+                },
+                .creation = .OPEN,
+                .filter = .any, // This function is supposed to rename both files and directories.
+                .follow_symlinks = false,
+            })) |handle| {
+                syscall.finish();
+                break :src_fd handle;
+            } else |err| switch (err) {
+                error.WouldBlock => unreachable, // Not possible without `.share_access_nonblocking = true`.
+                error.OperationCanceled => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| return e,
+            }
+        }
     };
     defer w.CloseHandle(src_fd);
 
@@ -4817,7 +5803,7 @@ fn dirRenameWindows(
                 .POSIX_SEMANTICS = true,
                 .IGNORE_READONLY_ATTRIBUTE = true,
             },
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
+            .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
             .FileName = new_path_w,
         });
         var io_status_block: w.IO_STATUS_BLOCK = undefined;
@@ -4846,7 +5832,7 @@ fn dirRenameWindows(
     if (need_fallback) {
         const rename_info: w.FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
-            .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
+            .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
             .FileName = new_path_w,
         });
         var io_status_block: w.IO_STATUS_BLOCK = undefined;
@@ -4868,9 +5854,9 @@ fn dirRenameWindows(
         .ACCESS_DENIED => return error.AccessDenied,
         .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
         .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_SAME_DEVICE => return error.RenameAcrossMountPoints,
+        .NOT_SAME_DEVICE => return error.CrossDevice,
         .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
-        .DIRECTORY_NOT_EMPTY => return error.PathAlreadyExists,
+        .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
         .FILE_IS_A_DIRECTORY => return error.IsDir,
         .NOT_A_DIRECTORY => return error.NotDir,
         else => return w.unexpectedStatus(rc),
@@ -4887,18 +5873,18 @@ fn dirRenameWasi(
     if (builtin.link_libc) return dirRenamePosix(userdata, old_dir, old_sub_path, new_dir, new_sub_path);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (std.os.wasi.path_rename(old_dir.handle, old_sub_path.ptr, old_sub_path.len, new_dir.handle, new_sub_path.ptr, new_sub_path.len)) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .PERM => return error.PermissionDenied,
@@ -4914,10 +5900,10 @@ fn dirRenameWasi(
                     .NOTDIR => return error.NotDir,
                     .NOMEM => return error.SystemResources,
                     .NOSPC => return error.NoSpaceLeft,
-                    .EXIST => return error.PathAlreadyExists,
-                    .NOTEMPTY => return error.PathAlreadyExists,
+                    .EXIST => return error.DirNotEmpty,
+                    .NOTEMPTY => return error.DirNotEmpty,
                     .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.RenameAcrossMountPoints,
+                    .XDEV => return error.CrossDevice,
                     .NOTCAPABLE => return error.AccessDenied,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
@@ -4935,7 +5921,7 @@ fn dirRenamePosix(
     new_sub_path: []const u8,
 ) Dir.RenameError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var old_path_buffer: [posix.PATH_MAX]u8 = undefined;
     var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
@@ -4943,16 +5929,112 @@ fn dirRenamePosix(
     const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    try current_thread.beginSyscall();
+    return renameat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix);
+}
+
+fn dirRenamePreserveLinux(
+    old_dir: Dir,
+    old_sub_path: []const u8,
+    new_dir: Dir,
+    new_sub_path: []const u8,
+) Dir.RenamePreserveError!void {
+    const linux = std.os.linux;
+
+    var old_path_buffer: [linux.PATH_MAX]u8 = undefined;
+    var new_path_buffer: [linux.PATH_MAX]u8 = undefined;
+
+    const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
+    const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
+
+    const syscall: Syscall = try .start();
+    while (true) switch (linux.errno(linux.renameat2(
+        old_dir.handle,
+        old_sub_path_posix,
+        new_dir.handle,
+        new_sub_path_posix,
+        .{ .NOREPLACE = true },
+    ))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .PERM => return syscall.fail(error.PermissionDenied),
+        .BUSY => return syscall.fail(error.FileBusy),
+        .DQUOT => return syscall.fail(error.DiskQuota),
+        .ISDIR => return syscall.fail(error.IsDir),
+        .LOOP => return syscall.fail(error.SymLinkLoop),
+        .MLINK => return syscall.fail(error.LinkQuotaExceeded),
+        .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+        .NOENT => return syscall.fail(error.FileNotFound),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        .NOSPC => return syscall.fail(error.NoSpaceLeft),
+        .EXIST => return syscall.fail(error.PathAlreadyExists),
+        .NOTEMPTY => return syscall.fail(error.DirNotEmpty),
+        .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+        .XDEV => return syscall.fail(error.CrossDevice),
+        .ILSEQ => return syscall.fail(error.BadPathName),
+        .FAULT => |err| return syscall.errnoBug(err),
+        .INVAL => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+fn renameat(
+    old_dir: posix.fd_t,
+    old_sub_path: [*:0]const u8,
+    new_dir: posix.fd_t,
+    new_sub_path: [*:0]const u8,
+) Dir.RenameError!void {
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.renameat(old_dir, old_sub_path, new_dir, new_sub_path))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .PERM => return syscall.fail(error.PermissionDenied),
+        .BUSY => return syscall.fail(error.FileBusy),
+        .DQUOT => return syscall.fail(error.DiskQuota),
+        .ISDIR => return syscall.fail(error.IsDir),
+        .IO => return syscall.fail(error.HardwareFailure),
+        .LOOP => return syscall.fail(error.SymLinkLoop),
+        .MLINK => return syscall.fail(error.LinkQuotaExceeded),
+        .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+        .NOENT => return syscall.fail(error.FileNotFound),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        .NOSPC => return syscall.fail(error.NoSpaceLeft),
+        .EXIST => return syscall.fail(error.DirNotEmpty),
+        .NOTEMPTY => return syscall.fail(error.DirNotEmpty),
+        .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+        .XDEV => return syscall.fail(error.CrossDevice),
+        .ILSEQ => return syscall.fail(error.BadPathName),
+        .FAULT => |err| return syscall.errnoBug(err),
+        .INVAL => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+fn renameatPreserve(
+    old_dir: posix.fd_t,
+    old_sub_path: [*:0]const u8,
+    new_dir: posix.fd_t,
+    new_sub_path: [*:0]const u8,
+) Dir.RenameError!void {
+    const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.renameat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix))) {
-            .SUCCESS => return current_thread.endSyscall(),
+        switch (posix.errno(posix.system.renameat(old_dir, old_sub_path, new_dir, new_sub_path))) {
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .PERM => return error.PermissionDenied,
@@ -4971,7 +6053,7 @@ fn dirRenamePosix(
                     .EXIST => return error.PathAlreadyExists,
                     .NOTEMPTY => return error.PathAlreadyExists,
                     .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.RenameAcrossMountPoints,
+                    .XDEV => return error.CrossDevice,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -4994,10 +6076,8 @@ fn dirSymLinkWindows(
     flags: Dir.SymLinkFlags,
 ) Dir.SymLinkError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const w = windows;
-
-    try current_thread.checkCancel();
 
     // Target path does not use sliceToPrefixedFileW because certain paths
     // are handled differently when creating a symlink than they would be
@@ -5028,22 +6108,34 @@ fn dirSymLinkWindows(
         Flags: w.ULONG,
     };
 
-    const symlink_handle = w.OpenFile(sym_link_path_w.span(), .{
-        .access_mask = .{
-            .GENERIC = .{ .READ = true, .WRITE = true },
-            .STANDARD = .{ .SYNCHRONIZE = true },
-        },
-        .dir = dir.handle,
-        .creation = .CREATE,
-        .filter = if (flags.is_directory) .dir_only else .non_directory_only,
-    }) catch |err| switch (err) {
-        error.IsDir => return error.PathAlreadyExists,
-        error.NotDir => return error.Unexpected,
-        error.WouldBlock => return error.Unexpected,
-        error.PipeBusy => return error.Unexpected,
-        error.NoDevice => return error.Unexpected,
-        error.AntivirusInterference => return error.Unexpected,
-        else => |e| return e,
+    const symlink_handle = handle: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            if (w.OpenFile(sym_link_path_w.span(), .{
+                .access_mask = .{
+                    .GENERIC = .{ .READ = true, .WRITE = true },
+                    .STANDARD = .{ .SYNCHRONIZE = true },
+                },
+                .dir = dir.handle,
+                .creation = .CREATE,
+                .filter = if (flags.is_directory) .dir_only else .non_directory_only,
+            })) |handle| {
+                syscall.finish();
+                break :handle handle;
+            } else |err| switch (err) {
+                error.IsDir => return syscall.fail(error.PathAlreadyExists),
+                error.NotDir => return syscall.fail(error.Unexpected),
+                error.WouldBlock => return syscall.fail(error.Unexpected),
+                error.PipeBusy => return syscall.fail(error.Unexpected),
+                error.NoDevice => return syscall.fail(error.Unexpected),
+                error.AntivirusInterference => return syscall.fail(error.Unexpected),
+                error.OperationCanceled => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| return e,
+            }
+        }
     };
     defer w.CloseHandle(symlink_handle);
 
@@ -5061,7 +6153,7 @@ fn dirSymLinkWindows(
             // Already an NT path, no need to do anything to it
             break :target_path target_path_w.span();
         } else {
-            switch (w.getWin32PathType(u16, target_path_w.span())) {
+            switch (Dir.path.getWin32PathType(u16, target_path_w.span())) {
                 // Rooted paths need to avoid getting put through wToPrefixedFileW
                 // (and they are treated as relative in this context)
                 // Note: It seems that rooted paths in symbolic links are relative to
@@ -5071,13 +6163,13 @@ fn dirSymLinkWindows(
                 //       the C:\ drive.
                 .rooted => break :target_path target_path_w.span(),
                 // Keep relative paths relative, but anything else needs to get NT-prefixed.
-                else => if (!std.fs.path.isAbsoluteWindowsWtf16(target_path_w.span()))
+                else => if (!Dir.path.isAbsoluteWindowsWtf16(target_path_w.span()))
                     break :target_path target_path_w.span(),
             }
         }
         var prefixed_target_path = try w.wToPrefixedFileW(dir.handle, target_path_w.span());
         // We do this after prefixing to ensure that drive-relative paths are treated as absolute
-        is_target_absolute = std.fs.path.isAbsoluteWindowsWtf16(prefixed_target_path.span());
+        is_target_absolute = Dir.path.isAbsoluteWindowsWtf16(prefixed_target_path.span());
         break :target_path prefixed_target_path.span();
     };
 
@@ -5085,8 +6177,8 @@ fn dirSymLinkWindows(
     var buffer: [w.MAXIMUM_REPARSE_DATA_BUFFER_SIZE]u8 = undefined;
     const buf_len = @sizeOf(SYMLINK_DATA) + final_target_path.len * 4;
     const header_len = @sizeOf(w.ULONG) + @sizeOf(w.USHORT) * 2;
-    const target_is_absolute = std.fs.path.isAbsoluteWindowsWtf16(final_target_path);
-    const symlink_data = SYMLINK_DATA{
+    const target_is_absolute = Dir.path.isAbsoluteWindowsWtf16(final_target_path);
+    const symlink_data: SYMLINK_DATA = .{
         .ReparseTag = .SYMLINK,
         .ReparseDataLength = @intCast(buf_len - header_len),
         .Reserved = 0,
@@ -5121,18 +6213,18 @@ fn dirSymLinkWasi(
     if (builtin.link_libc) return dirSymLinkPosix(userdata, dir, target_path, sym_link_path, flags);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (std.os.wasi.path_symlink(target_path.ptr, target_path.len, dir.handle, sym_link_path.ptr, sym_link_path.len)) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
@@ -5167,7 +6259,7 @@ fn dirSymLinkPosix(
 ) Dir.SymLinkError!void {
     _ = flags;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var target_path_buffer: [posix.PATH_MAX]u8 = undefined;
     var sym_link_path_buffer: [posix.PATH_MAX]u8 = undefined;
@@ -5175,16 +6267,16 @@ fn dirSymLinkPosix(
     const target_path_posix = try pathToPosix(target_path, &target_path_buffer);
     const sym_link_path_posix = try pathToPosix(sym_link_path, &sym_link_path_buffer);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.symlinkat(target_path_posix, dir.handle, sym_link_path_posix))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
@@ -5216,14 +6308,24 @@ const dirReadLink = switch (native_os) {
 
 fn dirReadLinkWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const w = windows;
-
-    try current_thread.checkCancel();
 
     var sub_path_w_buf = try windows.sliceToPrefixedFileW(dir.handle, sub_path);
 
-    const result_w = try w.ReadLink(dir.handle, sub_path_w_buf.span(), &sub_path_w_buf.data);
+    const syscall: Syscall = try .start();
+    const result_w = while (true) {
+        if (w.ReadLink(dir.handle, sub_path_w_buf.span(), &sub_path_w_buf.data)) |res| {
+            syscall.finish();
+            break res;
+        } else |err| switch (err) {
+            error.OperationCanceled => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |e| return syscall.fail(e),
+        }
+    };
 
     const len = std.unicode.calcWtf8Len(result_w);
     if (len > buffer.len) return error.NameTooLong;
@@ -5235,22 +6337,22 @@ fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer
     if (builtin.link_libc) return dirReadLinkPosix(userdata, dir, sub_path, buffer);
 
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var n: usize = undefined;
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (std.os.wasi.path_readlink(dir.handle, sub_path.ptr, sub_path.len, buffer.ptr, buffer.len, &n)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return n;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .FAULT => |err| return errnoBug(err),
@@ -5272,26 +6374,26 @@ fn dirReadLinkWasi(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer
 
 fn dirReadLinkPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var sub_path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &sub_path_buffer);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.readlinkat(dir.handle, sub_path_posix, buffer.ptr, buffer.len);
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 const len: usize = @bitCast(rc);
                 return len;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .FAULT => |err| return errnoBug(err),
@@ -5326,8 +6428,8 @@ fn dirSetPermissionsWindows(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Pe
 fn dirSetPermissionsPosix(userdata: ?*anyopaque, dir: Dir, permissions: Dir.Permissions) Dir.SetPermissionsError!void {
     if (@sizeOf(Dir.Permissions) == 0) return;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    return setPermissionsPosix(current_thread, dir.handle, permissions.toMode());
+    _ = t;
+    return setPermissionsPosix(dir.handle, permissions.toMode());
 }
 
 fn dirSetFilePermissions(
@@ -5340,7 +6442,6 @@ fn dirSetFilePermissions(
     if (@sizeOf(Dir.Permissions) == 0) return;
     if (is_windows) @panic("TODO implement dirSetFilePermissions windows");
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
@@ -5348,12 +6449,11 @@ fn dirSetFilePermissions(
     const mode = permissions.toMode();
     const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
 
-    return posixFchmodat(t, current_thread, dir.handle, sub_path_posix, mode, flags);
+    return posixFchmodat(t, dir.handle, sub_path_posix, mode, flags);
 }
 
 fn posixFchmodat(
     t: *Threaded,
-    current_thread: *Thread,
     dir_fd: posix.fd_t,
     path: [*:0]const u8,
     mode: posix.mode_t,
@@ -5362,20 +6462,20 @@ fn posixFchmodat(
     // No special handling for linux is needed if we can use the libc fallback
     // or `flags` is empty. Glibc only added the fallback in 2.32.
     if (have_fchmodat_flags or flags == 0) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             const rc = if (have_fchmodat_flags or builtin.link_libc)
                 posix.system.fchmodat(dir_fd, path, mode, flags)
             else
                 posix.system.fchmodat(dir_fd, path, mode);
             switch (posix.errno(rc)) {
-                .SUCCESS => return current_thread.endSyscall(),
+                .SUCCESS => return syscall.finish(),
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .BADF => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
@@ -5400,20 +6500,20 @@ fn posixFchmodat(
     }
 
     if (@atomicLoad(UseFchmodat2, &t.use_fchmodat2, .monotonic) == .disabled)
-        return fchmodatFallback(current_thread, dir_fd, path, mode);
+        return fchmodatFallback(dir_fd, path, mode);
 
     comptime assert(native_os == .linux);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (std.os.linux.errno(std.os.linux.fchmodat2(dir_fd, path, mode, flags))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
@@ -5429,7 +6529,7 @@ fn posixFchmodat(
                     .ROFS => return error.ReadOnlyFileSystem,
                     .NOSYS => {
                         @atomicStore(UseFchmodat2, &t.use_fchmodat2, .disabled, .monotonic);
-                        return fchmodatFallback(current_thread, dir_fd, path, mode);
+                        return fchmodatFallback(dir_fd, path, mode);
                     },
                     else => |err| return posix.unexpectedErrno(err),
                 }
@@ -5439,17 +6539,11 @@ fn posixFchmodat(
 }
 
 fn fchmodatFallback(
-    current_thread: *Thread,
     dir_fd: posix.fd_t,
     path: [*:0]const u8,
     mode: posix.mode_t,
 ) Dir.SetFilePermissionsError!void {
     comptime assert(native_os == .linux);
-    const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-        .{ .major = 30, .minor = 0, .patch = 0 }
-    else
-        .{ .major = 2, .minor = 28, .patch = 0 });
-    const sys = if (use_c) std.c else std.os.linux;
 
     // Fallback to changing permissions using procfs:
     //
@@ -5457,64 +6551,69 @@ fn fchmodatFallback(
     // 2. Stat the fd and check if it isn't a symbolic link.
     // 3. Generate the procfs reference to the fd via `/proc/self/fd/{fd}`.
     // 4. Pass the procfs path to `chmod` with the `mode`.
-    try current_thread.beginSyscall();
-    const path_fd: posix.fd_t = while (true) {
-        const rc = posix.system.openat(dir_fd, path, .{
-            .PATH = true,
-            .NOFOLLOW = true,
-            .CLOEXEC = true,
-        }, @as(posix.mode_t, 0));
-        switch (posix.errno(rc)) {
-            .SUCCESS => {
-                current_thread.endSyscall();
-                break @intCast(rc);
-            },
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .FAULT => |err| return errnoBug(err),
-                    .INVAL => |err| return errnoBug(err),
-                    .ACCES => return error.AccessDenied,
-                    .PERM => return error.PermissionDenied,
-                    .LOOP => return error.SymLinkLoop,
-                    .MFILE => return error.ProcessFdQuotaExceeded,
-                    .NAMETOOLONG => return error.NameTooLong,
-                    .NFILE => return error.SystemFdQuotaExceeded,
-                    .NOENT => return error.FileNotFound,
-                    .NOMEM => return error.SystemResources,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+    const path_fd: posix.fd_t = fd: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = posix.system.openat(dir_fd, path, .{
+                .PATH = true,
+                .NOFOLLOW = true,
+                .CLOEXEC = true,
+            }, @as(posix.mode_t, 0));
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    break :fd @intCast(rc);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    syscall.finish();
+                    switch (e) {
+                        .FAULT => |err| return errnoBug(err),
+                        .INVAL => |err| return errnoBug(err),
+                        .ACCES => return error.AccessDenied,
+                        .PERM => return error.PermissionDenied,
+                        .LOOP => return error.SymLinkLoop,
+                        .MFILE => return error.ProcessFdQuotaExceeded,
+                        .NAMETOOLONG => return error.NameTooLong,
+                        .NFILE => return error.SystemFdQuotaExceeded,
+                        .NOENT => return error.FileNotFound,
+                        .NOMEM => return error.SystemResources,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
         }
     };
     defer posix.close(path_fd);
 
-    try current_thread.beginSyscall();
-    const path_mode = while (true) {
-        var statx = std.mem.zeroes(std.os.linux.Statx);
-        switch (sys.errno(sys.statx(path_fd, "", posix.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
-            .SUCCESS => {
-                current_thread.endSyscall();
-                if (!statx.mask.TYPE) return error.Unexpected;
-                break statx.mode;
-            },
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .LOOP => return error.SymLinkLoop,
-                    .NOMEM => return error.SystemResources,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+    const path_mode = mode: {
+        const sys = if (statx_use_c) std.c else std.os.linux;
+        const syscall: Syscall = try .start();
+        while (true) {
+            var statx = std.mem.zeroes(std.os.linux.Statx);
+            switch (sys.errno(sys.statx(path_fd, "", posix.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
+                .SUCCESS => {
+                    syscall.finish();
+                    if (!statx.mask.TYPE) return error.Unexpected;
+                    break :mode statx.mode;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => |e| {
+                    syscall.finish();
+                    switch (e) {
+                        .ACCES => return error.AccessDenied,
+                        .LOOP => return error.SymLinkLoop,
+                        .NOMEM => return error.SystemResources,
+                        else => |err| return posix.unexpectedErrno(err),
+                    }
+                },
+            }
         }
     };
 
@@ -5524,16 +6623,16 @@ fn fchmodatFallback(
 
     var procfs_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
     const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, "/proc/self/fd/{d}", .{path_fd}, 0) catch unreachable;
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.chmod(proc_path, mode))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .NOENT => return error.OperationUnsupported, // procfs not mounted.
                     .BADF => |err| return errnoBug(err),
@@ -5569,24 +6668,24 @@ fn dirSetOwnerUnsupported(userdata: ?*anyopaque, dir: Dir, owner: ?File.Uid, gro
 fn dirSetOwnerPosix(userdata: ?*anyopaque, dir: Dir, owner: ?File.Uid, group: ?File.Gid) Dir.SetOwnerError!void {
     if (!have_fchown) return error.Unexpected; // Unsupported OS, don't call this function.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const uid = owner orelse ~@as(posix.uid_t, 0);
     const gid = group orelse ~@as(posix.gid_t, 0);
-    return posixFchown(current_thread, dir.handle, uid, gid);
+    return posixFchown(dir.handle, uid, gid);
 }
 
-fn posixFchown(current_thread: *Thread, fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) File.SetOwnerError!void {
+fn posixFchown(fd: posix.fd_t, uid: posix.uid_t, gid: posix.gid_t) File.SetOwnerError!void {
     comptime assert(have_fchown);
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.fchown(fd, uid, gid))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err), // likely fd refers to directory opened without `Dir.OpenOptions.iterate`
                     .FAULT => |err| return errnoBug(err),
@@ -5616,12 +6715,11 @@ fn dirSetFileOwner(
 ) Dir.SetFileOwnerError!void {
     if (!have_fchown) return error.Unexpected; // Unsupported OS, don't call this function.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    _ = current_thread;
     _ = dir;
     _ = sub_path_posix;
     _ = owner;
@@ -5638,35 +6736,43 @@ const fileSync = switch (native_os) {
 
 fn fileSyncWindows(userdata: ?*anyopaque, file: File) File.SyncError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
-    try current_thread.checkCancel();
-
-    if (windows.kernel32.FlushFileBuffers(file.handle) != 0)
-        return;
-
-    switch (windows.GetLastError()) {
-        .SUCCESS => return,
-        .INVALID_HANDLE => unreachable,
-        .ACCESS_DENIED => return error.AccessDenied, // a sync was performed but the system couldn't update the access time
-        .UNEXP_NET_ERR => return error.InputOutput,
-        else => |err| return windows.unexpectedError(err),
+    const syscall: Syscall = try .start();
+    while (true) {
+        if (windows.kernel32.FlushFileBuffers(file.handle) != 0) {
+            return syscall.finish();
+        }
+        switch (windows.GetLastError()) {
+            .SUCCESS => unreachable, // `FlushFileBuffers` returned nonzero
+            .INVALID_HANDLE => unreachable,
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied), // a sync was performed but the system couldn't update the access time
+            .UNEXP_NET_ERR => return syscall.fail(error.InputOutput),
+            .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedError(err);
+            },
+        }
     }
 }
 
 fn fileSyncPosix(userdata: ?*anyopaque, file: File) File.SyncError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.beginSyscall();
+    _ = t;
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.fsync(file.handle))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
@@ -5683,17 +6789,17 @@ fn fileSyncPosix(userdata: ?*anyopaque, file: File) File.SyncError!void {
 
 fn fileSyncWasi(userdata: ?*anyopaque, file: File) File.SyncError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.beginSyscall();
+    _ = t;
+    const syscall: Syscall = try .start();
     while (true) {
         switch (std.os.wasi.fd_sync(file.handle)) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err),
@@ -5710,33 +6816,46 @@ fn fileSyncWasi(userdata: ?*anyopaque, file: File) File.SyncError!void {
 
 fn fileIsTty(userdata: ?*anyopaque, file: File) Io.Cancelable!bool {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    return isTty(current_thread, file);
+    _ = t;
+    return isTty(file);
 }
 
-fn isTty(current_thread: *Thread, file: File) Io.Cancelable!bool {
+fn isTty(file: File) Io.Cancelable!bool {
     if (is_windows) {
-        if (try isCygwinPty(current_thread, file)) return true;
-        try current_thread.checkCancel();
+        if (try isCygwinPty(file)) return true;
         var out: windows.DWORD = undefined;
-        return windows.kernel32.GetConsoleMode(file.handle, &out) != 0;
+        const syscall: Syscall = try .start();
+        while (windows.kernel32.GetConsoleMode(file.handle, &out) == 0) {
+            switch (windows.GetLastError()) {
+                .OPERATION_ABORTED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => {
+                    syscall.finish();
+                    return false;
+                },
+            }
+        }
+        syscall.finish();
+        return true;
     }
 
     if (builtin.link_libc) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             const rc = posix.system.isatty(file.handle);
             switch (posix.errno(rc - 1)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return true;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return false;
                 },
             }
@@ -5760,22 +6879,22 @@ fn isTty(current_thread: *Thread, file: File) Io.Cancelable!bool {
 
     if (native_os == .linux) {
         const linux = std.os.linux;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             var wsz: posix.winsize = undefined;
             const fd: usize = @bitCast(@as(isize, file.handle));
             const rc = linux.syscall3(.ioctl, fd, linux.T.IOCGWINSZ, @intFromPtr(&wsz));
             switch (linux.errno(rc)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return true;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return false;
                 },
             }
@@ -5787,53 +6906,99 @@ fn isTty(current_thread: *Thread, file: File) Io.Cancelable!bool {
 
 fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: File) File.EnableAnsiEscapeCodesError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
-    if (is_windows) {
-        try current_thread.checkCancel();
-
-        // For Windows Terminal, VT Sequences processing is enabled by default.
-        var original_console_mode: windows.DWORD = 0;
-        if (windows.kernel32.GetConsoleMode(file.handle, &original_console_mode) != 0) {
-            if (original_console_mode & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0) return;
-
-            // For Windows Console, VT Sequences processing support was added in Windows 10 build 14361, but disabled by default.
-            // https://devblogs.microsoft.com/commandline/tmux-support-arrives-for-bash-on-ubuntu-on-windows/
-            //
-            // Note: In Microsoft's example for enabling virtual terminal processing, it
-            // shows attempting to enable `DISABLE_NEWLINE_AUTO_RETURN` as well:
-            // https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#example-of-enabling-virtual-terminal-processing
-            // This is avoided because in the old Windows Console, that flag causes \n (as opposed to \r\n)
-            // to behave unexpectedly (the cursor moves down 1 row but remains on the same column).
-            // Additionally, the default console mode in Windows Terminal does not have
-            // `DISABLE_NEWLINE_AUTO_RETURN` set, so by only enabling `ENABLE_VIRTUAL_TERMINAL_PROCESSING`
-            // we end up matching the mode of Windows Terminal.
-            const requested_console_modes = windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-            const console_mode = original_console_mode | requested_console_modes;
-            try current_thread.checkCancel();
-            if (windows.kernel32.SetConsoleMode(file.handle, console_mode) != 0) return;
-        }
-        if (try isCygwinPty(current_thread, file)) return;
-    } else {
-        if (try supportsAnsiEscapeCodes(current_thread, file)) return;
+    if (!is_windows) {
+        if (try supportsAnsiEscapeCodes(file)) return;
+        return error.NotTerminalDevice;
     }
-    return error.NotTerminalDevice;
+
+    // For Windows Terminal, VT Sequences processing is enabled by default.
+    var original_console_mode: windows.DWORD = 0;
+
+    {
+        const syscall: Syscall = try .start();
+        while (windows.kernel32.GetConsoleMode(file.handle, &original_console_mode) == 0) {
+            switch (windows.GetLastError()) {
+                .OPERATION_ABORTED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => {
+                    syscall.finish();
+                    if (try isCygwinPty(file)) return;
+                    return error.NotTerminalDevice;
+                },
+            }
+        }
+        syscall.finish();
+    }
+
+    if (original_console_mode & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0) return;
+
+    // For Windows Console, VT Sequences processing support was added in Windows 10 build 14361, but disabled by default.
+    // https://devblogs.microsoft.com/commandline/tmux-support-arrives-for-bash-on-ubuntu-on-windows/
+    //
+    // Note: In Microsoft's example for enabling virtual terminal processing, it
+    // shows attempting to enable `DISABLE_NEWLINE_AUTO_RETURN` as well:
+    // https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences#example-of-enabling-virtual-terminal-processing
+    // This is avoided because in the old Windows Console, that flag causes \n (as opposed to \r\n)
+    // to behave unexpectedly (the cursor moves down 1 row but remains on the same column).
+    // Additionally, the default console mode in Windows Terminal does not have
+    // `DISABLE_NEWLINE_AUTO_RETURN` set, so by only enabling `ENABLE_VIRTUAL_TERMINAL_PROCESSING`
+    // we end up matching the mode of Windows Terminal.
+    const requested_console_modes = windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+    const console_mode = original_console_mode | requested_console_modes;
+
+    {
+        const syscall: Syscall = try .start();
+        while (windows.kernel32.SetConsoleMode(file.handle, console_mode) == 0) {
+            switch (windows.GetLastError()) {
+                .OPERATION_ABORTED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => {
+                    syscall.finish();
+                    if (try isCygwinPty(file)) return;
+                    return error.NotTerminalDevice;
+                },
+            }
+        }
+        syscall.finish();
+    }
 }
 
 fn fileSupportsAnsiEscapeCodes(userdata: ?*anyopaque, file: File) Io.Cancelable!bool {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    return supportsAnsiEscapeCodes(current_thread, file);
+    _ = t;
+    return supportsAnsiEscapeCodes(file);
 }
 
-fn supportsAnsiEscapeCodes(current_thread: *Thread, file: File) Io.Cancelable!bool {
+fn supportsAnsiEscapeCodes(file: File) Io.Cancelable!bool {
     if (is_windows) {
-        try current_thread.checkCancel();
         var console_mode: windows.DWORD = 0;
-        if (windows.kernel32.GetConsoleMode(file.handle, &console_mode) != 0) {
-            if (console_mode & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0) return true;
+
+        const syscall: Syscall = try .start();
+        while (windows.kernel32.GetConsoleMode(file.handle, &console_mode) == 0) {
+            switch (windows.GetLastError()) {
+                .OPERATION_ABORTED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => {
+                    syscall.finish();
+                    break;
+                },
+            }
+        } else {
+            syscall.finish();
+            if (console_mode & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0) {
+                return true;
+            }
         }
-        return isCygwinPty(current_thread, file);
+
+        return isCygwinPty(file);
     }
 
     if (native_os == .wasi) {
@@ -5843,12 +7008,12 @@ fn supportsAnsiEscapeCodes(current_thread: *Thread, file: File) Io.Cancelable!bo
         return false;
     }
 
-    if (try isTty(current_thread, file)) return true;
+    if (try isTty(file)) return true;
 
     return false;
 }
 
-fn isCygwinPty(current_thread: *Thread, file: File) Io.Cancelable!bool {
+fn isCygwinPty(file: File) Io.Cancelable!bool {
     if (!is_windows) return false;
 
     const handle = file.handle;
@@ -5863,20 +7028,26 @@ fn isCygwinPty(current_thread: *Thread, file: File) Io.Cancelable!bool {
     // This allows us to avoid the more costly NtQueryInformationFile call
     // for handles that aren't named pipes.
     {
-        try current_thread.checkCancel();
         var io_status: windows.IO_STATUS_BLOCK = undefined;
         var device_info: windows.FILE.FS_DEVICE_INFORMATION = undefined;
-        const rc = windows.ntdll.NtQueryVolumeInformationFile(
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtQueryVolumeInformationFile(
             handle,
             &io_status,
             &device_info,
             @sizeOf(windows.FILE.FS_DEVICE_INFORMATION),
             .Device,
-        );
-        switch (rc) {
-            .SUCCESS => {},
-            else => return false,
-        }
+        )) {
+            .SUCCESS => break syscall.finish(),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => {
+                syscall.finish();
+                return false;
+            },
+        };
         if (device_info.DeviceType.FileDevice != .NAMED_PIPE) return false;
     }
 
@@ -5891,19 +7062,25 @@ fn isCygwinPty(current_thread: *Thread, file: File) Io.Cancelable!bool {
     var name_info_bytes align(@alignOf(windows.FILE.NAME_INFORMATION)) = [_]u8{0} ** (name_bytes_offset + num_name_bytes);
 
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-    try current_thread.checkCancel();
-    const rc = windows.ntdll.NtQueryInformationFile(
+    const syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtQueryInformationFile(
         handle,
         &io_status_block,
         &name_info_bytes,
         @intCast(name_info_bytes.len),
         .Name,
-    );
-    switch (rc) {
-        .SUCCESS => {},
+    )) {
+        .SUCCESS => break syscall.finish(),
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
         .INVALID_PARAMETER => unreachable,
-        else => return false,
-    }
+        else => {
+            syscall.finish();
+            return false;
+        },
+    };
 
     const name_info: *const windows.FILE_NAME_INFO = @ptrCast(&name_info_bytes);
     const name_bytes = name_info_bytes[name_bytes_offset .. name_bytes_offset + name_info.FileNameLength];
@@ -5916,47 +7093,49 @@ fn isCygwinPty(current_thread: *Thread, file: File) Io.Cancelable!bool {
 
 fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     const signed_len: i64 = @bitCast(length);
     if (signed_len < 0) return error.FileTooBig; // Avoid ambiguous EINVAL errors.
 
     if (is_windows) {
-        try current_thread.checkCancel();
-
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
         const eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
             .EndOfFile = signed_len,
         };
 
-        const status = windows.ntdll.NtSetInformationFile(
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtSetInformationFile(
             file.handle,
             &io_status_block,
             &eof_info,
             @sizeOf(windows.FILE.END_OF_FILE_INFORMATION),
             .EndOfFile,
-        );
-        switch (status) {
-            .SUCCESS => return,
-            .INVALID_HANDLE => |err| return windows.statusBug(err), // Handle not open for writing.
-            .ACCESS_DENIED => return error.AccessDenied,
-            .USER_MAPPED_FILE => return error.AccessDenied,
-            .INVALID_PARAMETER => return error.FileTooBig,
-            else => return windows.unexpectedStatus(status),
-        }
+        )) {
+            .SUCCESS => return syscall.finish(),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INVALID_HANDLE => |err| return syscall.ntstatusBug(err), // Handle not open for writing.
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
+            .INVALID_PARAMETER => return syscall.fail(error.FileTooBig),
+            else => |status| return syscall.unexpectedNtstatus(status),
+        };
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (std.os.wasi.fd_filestat_set_size(file.handle, length)) {
-                .SUCCESS => return current_thread.endSyscall(),
+                .SUCCESS => return syscall.finish(),
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .FBIG => return error.FileTooBig,
                         .IO => return error.InputOutput,
@@ -5972,16 +7151,16 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
         }
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(ftruncate_sym(file.handle, signed_len))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FBIG => return error.FileTooBig,
                     .IO => return error.InputOutput,
@@ -5999,19 +7178,18 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
 fn fileSetOwner(userdata: ?*anyopaque, file: File, owner: ?File.Uid, group: ?File.Gid) File.SetOwnerError!void {
     if (!have_fchown) return error.Unexpected; // Unsupported OS, don't call this function.
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const uid = owner orelse ~@as(posix.uid_t, 0);
     const gid = group orelse ~@as(posix.gid_t, 0);
-    return posixFchown(current_thread, file.handle, uid, gid);
+    return posixFchown(file.handle, uid, gid);
 }
 
 fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permissions) File.SetPermissionsError!void {
     if (@sizeOf(File.Permissions) == 0) return;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     switch (native_os) {
         .windows => {
-            try current_thread.checkCancel();
             var io_status_block: windows.IO_STATUS_BLOCK = undefined;
             const info: windows.FILE.BASIC_INFORMATION = .{
                 .CreationTime = 0,
@@ -6020,37 +7198,41 @@ fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permi
                 .ChangeTime = 0,
                 .FileAttributes = permissions.toAttributes(),
             };
-            const status = windows.ntdll.NtSetInformationFile(
+            const syscall: Syscall = try .start();
+            while (true) switch (windows.ntdll.NtSetInformationFile(
                 file.handle,
                 &io_status_block,
                 &info,
                 @sizeOf(windows.FILE.BASIC_INFORMATION),
                 .Basic,
-            );
-            switch (status) {
-                .SUCCESS => return,
-                .INVALID_HANDLE => |err| return windows.statusBug(err),
-                .ACCESS_DENIED => return error.AccessDenied,
-                else => return windows.unexpectedStatus(status),
-            }
+            )) {
+                .SUCCESS => return syscall.finish(),
+                .CANCELLED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INVALID_HANDLE => |err| return syscall.ntstatusBug(err),
+                .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+                else => |status| return syscall.unexpectedNtstatus(status),
+            };
         },
         .wasi => return error.Unexpected, // Unsupported OS.
-        else => return setPermissionsPosix(current_thread, file.handle, permissions.toMode()),
+        else => return setPermissionsPosix(file.handle, permissions.toMode()),
     }
 }
 
-fn setPermissionsPosix(current_thread: *Thread, fd: posix.fd_t, mode: posix.mode_t) File.SetPermissionsError!void {
+fn setPermissionsPosix(fd: posix.fd_t, mode: posix.mode_t) File.SetPermissionsError!void {
     comptime assert(have_fchmod);
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.fchmod(fd, mode))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
@@ -6077,7 +7259,7 @@ fn dirSetTimestamps(
     options: Dir.SetTimestampsOptions,
 ) Dir.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
         @panic("TODO implement dirSetTimestamps windows");
@@ -6101,20 +7283,20 @@ fn dirSetTimestamps(
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, times, flags))) {
-        .SUCCESS => return current_thread.endSyscall(),
+        .SUCCESS => return syscall.finish(),
         .INTR => {
-            try current_thread.checkCancel();
+            try syscall.checkCancel();
             continue;
         },
-        .BADF => |err| return current_thread.endSyscallErrnoBug(err), // always a race condition
-        .FAULT => |err| return current_thread.endSyscallErrnoBug(err),
-        .INVAL => |err| return current_thread.endSyscallErrnoBug(err),
-        .ACCES => return current_thread.endSyscallError(error.AccessDenied),
-        .PERM => return current_thread.endSyscallError(error.PermissionDenied),
-        .ROFS => return current_thread.endSyscallError(error.ReadOnlyFileSystem),
-        else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+        .BADF => |err| return syscall.errnoBug(err), // always a race condition
+        .FAULT => |err| return syscall.errnoBug(err),
+        .INVAL => |err| return syscall.errnoBug(err),
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .PERM => return syscall.fail(error.PermissionDenied),
+        .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+        else => |err| return syscall.unexpectedErrno(err),
     };
 }
 
@@ -6124,11 +7306,9 @@ fn fileSetTimestamps(
     options: File.SetTimestampsOptions,
 ) File.SetTimestampsError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
-        try current_thread.checkCancel();
-
         var access_time_buffer: windows.FILETIME = undefined;
         var modify_time_buffer: windows.FILETIME = undefined;
         var system_time_buffer: windows.LARGE_INTEGER = undefined;
@@ -6156,13 +7336,22 @@ fn fileSetTimestamps(
         };
 
         // https://github.com/ziglang/zig/issues/1840
-        const rc = windows.kernel32.SetFileTime(file.handle, null, access_ptr, modify_ptr);
-        if (rc == 0) {
-            switch (windows.GetLastError()) {
-                else => |err| return windows.unexpectedError(err),
+        const syscall: Syscall = try .start();
+        while (true) {
+            switch (windows.kernel32.SetFileTime(file.handle, null, access_ptr, modify_ptr)) {
+                0 => switch (windows.GetLastError()) {
+                    .OPERATION_ABORTED => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => |err| {
+                        syscall.finish();
+                        return windows.unexpectedError(err);
+                    },
+                },
+                else => return syscall.finish(),
             }
         }
-        return;
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
@@ -6188,20 +7377,20 @@ fn fileSetTimestamps(
             },
         }
 
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) switch (std.os.wasi.fd_filestat_set_times(file.handle, atime, mtime, flags)) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
-            .BADF => |err| return current_thread.endSyscallErrnoBug(err), // File descriptor use-after-free.
-            .FAULT => |err| return current_thread.endSyscallErrnoBug(err),
-            .INVAL => |err| return current_thread.endSyscallErrnoBug(err),
-            .ACCES => return current_thread.endSyscallError(error.AccessDenied),
-            .PERM => return current_thread.endSyscallError(error.PermissionDenied),
-            .ROFS => return current_thread.endSyscallError(error.ReadOnlyFileSystem),
-            else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+            .BADF => |err| return syscall.errnoBug(err), // File descriptor use-after-free.
+            .FAULT => |err| return syscall.errnoBug(err),
+            .INVAL => |err| return syscall.errnoBug(err),
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+            else => |err| return syscall.unexpectedErrno(err),
         };
     }
 
@@ -6214,20 +7403,20 @@ fn fileSetTimestamps(
         break :p &times_buffer;
     };
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) switch (posix.errno(posix.system.futimens(file.handle, times))) {
-        .SUCCESS => return current_thread.endSyscall(),
+        .SUCCESS => return syscall.finish(),
         .INTR => {
-            try current_thread.checkCancel();
+            try syscall.checkCancel();
             continue;
         },
-        .BADF => |err| return current_thread.endSyscallErrnoBug(err), // always a race condition
-        .FAULT => |err| return current_thread.endSyscallErrnoBug(err),
-        .INVAL => |err| return current_thread.endSyscallErrnoBug(err),
-        .ACCES => return current_thread.endSyscallError(error.AccessDenied),
-        .PERM => return current_thread.endSyscallError(error.PermissionDenied),
-        .ROFS => return current_thread.endSyscallError(error.ReadOnlyFileSystem),
-        else => |err| return current_thread.endSyscallUnexpectedErrno(err),
+        .BADF => |err| return syscall.errnoBug(err), // always a race condition
+        .FAULT => |err| return syscall.errnoBug(err),
+        .INVAL => |err| return syscall.errnoBug(err),
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .PERM => return syscall.fail(error.PermissionDenied),
+        .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+        else => |err| return syscall.unexpectedErrno(err),
     };
 }
 
@@ -6237,34 +7426,33 @@ const windows_lock_range_len: windows.LARGE_INTEGER = 1;
 fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!void {
     if (native_os == .wasi) return error.FileLocksUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
         const exclusive = switch (lock) {
             .none => {
                 // To match the non-Windows behavior, unlock
                 var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-                const status = windows.ntdll.NtUnlockFile(
+                while (true) switch (windows.ntdll.NtUnlockFile(
                     file.handle,
                     &io_status_block,
                     &windows_lock_range_off,
                     &windows_lock_range_len,
                     0,
-                );
-                switch (status) {
-                    .SUCCESS => {},
-                    .RANGE_NOT_LOCKED => {},
+                )) {
+                    .SUCCESS => return,
+                    .CANCELLED => continue,
+                    .RANGE_NOT_LOCKED => return,
                     .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
-                    else => return windows.unexpectedStatus(status),
-                }
-                return;
+                    else => |status| return windows.unexpectedStatus(status),
+                };
             },
             .shared => false,
             .exclusive => true,
         };
-        try current_thread.checkCancel();
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        const status = windows.ntdll.NtLockFile(
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtLockFile(
             file.handle,
             null,
             null,
@@ -6275,14 +7463,17 @@ fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!v
             null,
             windows.FALSE,
             @intFromBool(exclusive),
-        );
-        switch (status) {
-            .SUCCESS => return,
-            .INSUFFICIENT_RESOURCES => return error.SystemResources,
-            .LOCK_NOT_GRANTED => |err| return windows.statusBug(err), // passed FailImmediately=false
-            .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
-            else => return windows.unexpectedStatus(status),
-        }
+        )) {
+            .SUCCESS => return syscall.finish(),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INSUFFICIENT_RESOURCES => return syscall.fail(error.SystemResources),
+            .LOCK_NOT_GRANTED => |err| return syscall.ntstatusBug(err), // passed FailImmediately=false
+            .ACCESS_VIOLATION => |err| return syscall.ntstatusBug(err), // bad io_status_block pointer
+            else => |status| return syscall.unexpectedNtstatus(status),
+        };
     }
 
     const operation: i32 = switch (lock) {
@@ -6290,16 +7481,16 @@ fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!v
         .shared => posix.LOCK.SH,
         .exclusive => posix.LOCK.EX,
     };
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.flock(file.handle, operation))) {
-            .SUCCESS => return current_thread.endSyscall(),
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -6316,33 +7507,33 @@ fn fileLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!v
 fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockError!bool {
     if (native_os == .wasi) return error.FileLocksUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
         const exclusive = switch (lock) {
             .none => {
                 // To match the non-Windows behavior, unlock
                 var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-                const status = windows.ntdll.NtUnlockFile(
+                while (true) switch (windows.ntdll.NtUnlockFile(
                     file.handle,
                     &io_status_block,
                     &windows_lock_range_off,
                     &windows_lock_range_len,
                     0,
-                );
-                switch (status) {
+                )) {
                     .SUCCESS => return true,
+                    .CANCELLED => continue,
                     .RANGE_NOT_LOCKED => return false,
                     .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
-                    else => return windows.unexpectedStatus(status),
-                }
+                    else => |status| return windows.unexpectedStatus(status),
+                };
             },
             .shared => false,
             .exclusive => true,
         };
-        try current_thread.checkCancel();
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        const status = windows.ntdll.NtLockFile(
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtLockFile(
             file.handle,
             null,
             null,
@@ -6353,14 +7544,23 @@ fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockErro
             null,
             windows.TRUE,
             @intFromBool(exclusive),
-        );
-        switch (status) {
-            .SUCCESS => return true,
-            .INSUFFICIENT_RESOURCES => return error.SystemResources,
-            .LOCK_NOT_GRANTED => return false,
-            .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
-            else => return windows.unexpectedStatus(status),
-        }
+        )) {
+            .SUCCESS => {
+                syscall.finish();
+                return true;
+            },
+            .LOCK_NOT_GRANTED => {
+                syscall.finish();
+                return false;
+            },
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INSUFFICIENT_RESOURCES => return syscall.fail(error.SystemResources),
+            .ACCESS_VIOLATION => |err| return syscall.ntstatusBug(err), // bad io_status_block pointer
+            else => |status| return syscall.unexpectedNtstatus(status),
+        };
     }
 
     const operation: i32 = switch (lock) {
@@ -6368,23 +7568,23 @@ fn fileTryLock(userdata: ?*anyopaque, file: File, lock: File.Lock) File.LockErro
         .shared => posix.LOCK.SH | posix.LOCK.NB,
         .exclusive => posix.LOCK.EX | posix.LOCK.NB,
     };
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.flock(file.handle, operation))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return true;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             .AGAIN => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return false;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err),
                     .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -6404,20 +7604,19 @@ fn fileUnlock(userdata: ?*anyopaque, file: File) void {
 
     if (is_windows) {
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        const status = windows.ntdll.NtUnlockFile(
+        while (true) switch (windows.ntdll.NtUnlockFile(
             file.handle,
             &io_status_block,
             &windows_lock_range_off,
             &windows_lock_range_len,
             0,
-        );
-        if (is_debug) switch (status) {
-            .SUCCESS => {},
-            .RANGE_NOT_LOCKED => unreachable, // Function asserts unlocked.
-            .ACCESS_VIOLATION => unreachable, // bad io_status_block pointer
-            else => unreachable, // Resource deallocation must succeed.
+        )) {
+            .SUCCESS => return,
+            .CANCELLED => continue,
+            .RANGE_NOT_LOCKED => if (is_debug) unreachable else return, // Function asserts unlocked.
+            .ACCESS_VIOLATION => if (is_debug) unreachable else return, // bad io_status_block pointer
+            else => if (is_debug) unreachable else return, // Resource deallocation must succeed.
         };
-        return;
     }
 
     while (true) {
@@ -6437,17 +7636,17 @@ fn fileUnlock(userdata: ?*anyopaque, file: File) void {
 fn fileDowngradeLock(userdata: ?*anyopaque, file: File) File.DowngradeLockError!void {
     if (native_os == .wasi) return;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
-        try current_thread.checkCancel();
         // On Windows it works like a semaphore + exclusivity flag. To
         // implement this function, we first obtain another lock in shared
         // mode. This changes the exclusivity flag, but increments the
         // semaphore to 2. So we follow up with an NtUnlockFile which
         // decrements the semaphore but does not modify the exclusivity flag.
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        switch (windows.ntdll.NtLockFile(
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.NtLockFile(
             file.handle,
             null,
             null,
@@ -6459,43 +7658,46 @@ fn fileDowngradeLock(userdata: ?*anyopaque, file: File) File.DowngradeLockError!
             windows.TRUE,
             windows.FALSE,
         )) {
-            .SUCCESS => {},
-            .INSUFFICIENT_RESOURCES => |err| return windows.statusBug(err),
-            .LOCK_NOT_GRANTED => |err| return windows.statusBug(err), // File was not locked in exclusive mode.
-            .ACCESS_VIOLATION => |err| return windows.statusBug(err), // bad io_status_block pointer
-            else => |status| return windows.unexpectedStatus(status),
-        }
-        const status = windows.ntdll.NtUnlockFile(
+            .SUCCESS => break syscall.finish(),
+            .CANCELLED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INSUFFICIENT_RESOURCES => |err| return syscall.ntstatusBug(err),
+            .LOCK_NOT_GRANTED => |err| return syscall.ntstatusBug(err), // File was not locked in exclusive mode.
+            .ACCESS_VIOLATION => |err| return syscall.ntstatusBug(err), // bad io_status_block pointer
+            else => |status| return syscall.unexpectedNtstatus(status),
+        };
+        while (true) switch (windows.ntdll.NtUnlockFile(
             file.handle,
             &io_status_block,
             &windows_lock_range_off,
             &windows_lock_range_len,
             0,
-        );
-        if (is_debug) switch (status) {
-            .SUCCESS => {},
-            .RANGE_NOT_LOCKED => unreachable, // File was not locked.
-            .ACCESS_VIOLATION => unreachable, // bad io_status_block pointer
-            else => unreachable, // Resource deallocation must succeed.
+        )) {
+            .SUCCESS => return,
+            .CANCELLED => continue,
+            .RANGE_NOT_LOCKED => if (is_debug) unreachable else return, // File was not locked.
+            .ACCESS_VIOLATION => if (is_debug) unreachable else return, // bad io_status_block pointer
+            else => if (is_debug) unreachable else return, // Resource deallocation must succeed.
         };
-        return;
     }
 
     const operation = posix.LOCK.SH | posix.LOCK.NB;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.flock(file.handle, operation))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .AGAIN => |err| return errnoBug(err), // File was not locked in exclusive mode.
                     .BADF => |err| return errnoBug(err),
@@ -6517,7 +7719,7 @@ fn dirOpenDirWasi(
 ) Dir.OpenError!Dir {
     if (builtin.link_libc) return dirOpenDirPosix(userdata, dir, sub_path, options);
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const wasi = std.os.wasi;
 
     var base: std.os.wasi.rights_t = .{
@@ -6547,19 +7749,19 @@ fn dirOpenDirWasi(
     const oflags: wasi.oflags_t = .{ .DIRECTORY = true };
     const fdflags: wasi.fdflags_t = .{};
     var fd: posix.fd_t = undefined;
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (wasi.path_open(dir.handle, lookup_flags, sub_path.ptr, sub_path.len, oflags, base, base, fdflags, &fd)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return .{ .handle = fd };
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .FAULT => |err| return errnoBug(err),
                     .INVAL => return error.BadPathName,
@@ -6574,7 +7776,6 @@ fn dirOpenDirWasi(
                     .NOMEM => return error.SystemResources,
                     .NOTDIR => return error.NotDir,
                     .PERM => return error.PermissionDenied,
-                    .BUSY => return error.DeviceBusy,
                     .NOTCAPABLE => return error.AccessDenied,
                     .ILSEQ => return error.BadPathName,
                     else => |err| return posix.unexpectedErrno(err),
@@ -6594,13 +7795,13 @@ fn dirHardLink(
 ) Dir.HardLinkError!void {
     if (is_windows) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (native_os == .wasi and !builtin.link_libc) {
         const flags: std.os.wasi.lookupflags_t = .{
             .SYMLINK_FOLLOW = options.follow_symlinks,
         };
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (std.os.wasi.path_link(
                 old_dir.handle,
@@ -6611,13 +7812,13 @@ fn dirHardLink(
                 new_sub_path.ptr,
                 new_sub_path.len,
             )) {
-                .SUCCESS => return current_thread.endSyscall(),
+                .SUCCESS => return syscall.finish(),
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .ACCES => return error.AccessDenied,
                         .DQUOT => return error.DiskQuota,
@@ -6633,7 +7834,7 @@ fn dirHardLink(
                         .NOTDIR => return error.NotDir,
                         .PERM => return error.PermissionDenied,
                         .ROFS => return error.ReadOnlyFileSystem,
-                        .XDEV => return error.NotSameFileSystem,
+                        .XDEV => return error.CrossDevice,
                         .INVAL => |err| return errnoBug(err),
                         .ILSEQ => return error.BadPathName,
                         else => |err| return posix.unexpectedErrno(err),
@@ -6649,47 +7850,8 @@ fn dirHardLink(
     const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
-
-    try current_thread.beginSyscall();
-    while (true) {
-        switch (posix.errno(posix.system.linkat(
-            old_dir.handle,
-            old_sub_path_posix,
-            new_dir.handle,
-            new_sub_path_posix,
-            flags,
-        ))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .INTR => {
-                try current_thread.checkCancel();
-                continue;
-            },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ACCES => return error.AccessDenied,
-                    .DQUOT => return error.DiskQuota,
-                    .EXIST => return error.PathAlreadyExists,
-                    .FAULT => |err| return errnoBug(err),
-                    .IO => return error.HardwareFailure,
-                    .LOOP => return error.SymLinkLoop,
-                    .MLINK => return error.LinkQuotaExceeded,
-                    .NAMETOOLONG => return error.NameTooLong,
-                    .NOENT => return error.FileNotFound,
-                    .NOMEM => return error.SystemResources,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .NOTDIR => return error.NotDir,
-                    .PERM => return error.PermissionDenied,
-                    .ROFS => return error.ReadOnlyFileSystem,
-                    .XDEV => return error.NotSameFileSystem,
-                    .INVAL => |err| return errnoBug(err),
-                    .ILSEQ => return error.BadPathName,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
-        }
-    }
+    const flags: u32 = if (options.follow_symlinks) posix.AT.SYMLINK_FOLLOW else 0;
+    return linkat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix, flags);
 }
 
 fn fileClose(userdata: ?*anyopaque, files: []const File) void {
@@ -6705,7 +7867,7 @@ const fileReadStreaming = switch (native_os) {
 
 fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8) File.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
     var i: usize = 0;
@@ -6721,20 +7883,20 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
     assert(dest[0].len > 0);
 
     if (native_os == .wasi and !builtin.link_libc) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             var nread: usize = undefined;
             switch (std.os.wasi.fd_read(file.handle, dest.ptr, dest.len, &nread)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return nread;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
@@ -6754,20 +7916,20 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
         }
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.readv(file.handle, dest.ptr, @intCast(dest.len));
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return @intCast(rc);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
@@ -6792,7 +7954,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
 
 fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u8) File.Reader.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     const DWORD = windows.DWORD;
     var index: usize = 0;
@@ -6801,28 +7963,41 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u
     const buffer = data[index];
     const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
 
+    const syscall: Syscall = try .start();
     while (true) {
-        try current_thread.checkCancel();
         var n: DWORD = undefined;
-        if (windows.kernel32.ReadFile(file.handle, buffer.ptr, want_read_count, &n, null) != 0)
+        if (windows.kernel32.ReadFile(file.handle, buffer.ptr, want_read_count, &n, null) != 0) {
+            syscall.finish();
             return n;
+        }
         switch (windows.GetLastError()) {
-            .IO_PENDING => |err| return windows.errorBug(err),
-            .OPERATION_ABORTED => continue,
-            .BROKEN_PIPE => return 0,
-            .HANDLE_EOF => return 0,
-            .NETNAME_DELETED => return error.ConnectionResetByPeer,
-            .LOCK_VIOLATION => return error.LockViolation,
-            .ACCESS_DENIED => return error.AccessDenied,
-            .INVALID_HANDLE => return error.NotOpenForReading,
-            else => |err| return windows.unexpectedError(err),
+            .IO_PENDING => |err| {
+                syscall.finish();
+                return windows.errorBug(err);
+            },
+            .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .BROKEN_PIPE, .HANDLE_EOF => {
+                syscall.finish();
+                return 0;
+            },
+            .NETNAME_DELETED => return syscall.fail(error.ConnectionResetByPeer),
+            .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedError(err);
+            },
         }
     }
 }
 
 fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (!have_preadv) @compileError("TODO implement fileReadPositionalPosix for cursed operating systems that don't support preadv (it's only Haiku)");
 
@@ -6840,20 +8015,20 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
     assert(dest[0].len > 0);
 
     if (native_os == .wasi and !builtin.link_libc) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             var nread: usize = undefined;
             switch (std.os.wasi.fd_pread(file.handle, dest.ptr, dest.len, offset, &nread)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return nread;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
@@ -6877,20 +8052,20 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
         }
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = preadv_sym(file.handle, dest.ptr, @intCast(dest.len), @bitCast(offset));
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return @bitCast(rc);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
@@ -6923,7 +8098,7 @@ const fileReadPositional = switch (native_os) {
 
 fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []u8, offset: u64) File.ReadPositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     const DWORD = windows.DWORD;
 
@@ -6945,45 +8120,58 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
         .hEvent = null,
     };
 
+    const syscall: Syscall = try .start();
     while (true) {
-        try current_thread.checkCancel();
         var n: DWORD = undefined;
-        if (windows.kernel32.ReadFile(file.handle, buffer.ptr, want_read_count, &n, &overlapped) != 0)
+        if (windows.kernel32.ReadFile(file.handle, buffer.ptr, want_read_count, &n, &overlapped) != 0) {
+            syscall.finish();
             return n;
+        }
         switch (windows.GetLastError()) {
-            .IO_PENDING => |err| return windows.errorBug(err),
-            .OPERATION_ABORTED => continue,
-            .BROKEN_PIPE => return 0,
-            .HANDLE_EOF => return 0,
-            .NETNAME_DELETED => return error.ConnectionResetByPeer,
-            .LOCK_VIOLATION => return error.LockViolation,
-            .ACCESS_DENIED => return error.AccessDenied,
-            .INVALID_HANDLE => return error.NotOpenForReading,
-            else => |err| return windows.unexpectedError(err),
+            .IO_PENDING => |err| {
+                syscall.finish();
+                return windows.errorBug(err);
+            },
+            .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .BROKEN_PIPE, .HANDLE_EOF => {
+                syscall.finish();
+                return 0;
+            },
+            .NETNAME_DELETED => return syscall.fail(error.ConnectionResetByPeer),
+            .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedError(err);
+            },
         }
     }
 }
 
 fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const fd = file.handle;
 
     if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
         var result: u64 = undefined;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(posix.system.llseek(fd, @bitCast(offset), &result, posix.SEEK.CUR))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => return error.Unseekable,
@@ -6998,25 +8186,43 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
     }
 
     if (native_os == .windows) {
-        try current_thread.checkCancel();
-        return windows.SetFilePointerEx_CURRENT(fd, offset);
+        const syscall: Syscall = try .start();
+        while (true) {
+            if (windows.kernel32.SetFilePointerEx(fd, offset, null, windows.FILE_CURRENT) != 0) {
+                return syscall.finish();
+            }
+            switch (windows.GetLastError()) {
+                .OPERATION_ABORTED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INVALID_FUNCTION => return syscall.fail(error.Unseekable),
+                .NEGATIVE_SEEK => return syscall.fail(error.Unseekable),
+                .INVALID_PARAMETER => unreachable,
+                .INVALID_HANDLE => unreachable,
+                else => |err| {
+                    syscall.finish();
+                    return windows.unexpectedError(err);
+                },
+            }
+        }
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
         var new_offset: std.os.wasi.filesize_t = undefined;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (std.os.wasi.fd_seek(fd, offset, .CUR, &new_offset)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => return error.Unseekable,
@@ -7033,19 +8239,19 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
 
     if (posix.SEEK == void) return error.Unseekable;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(lseek_sym(fd, offset, posix.SEEK.CUR))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .INVAL => return error.Unseekable,
@@ -7061,29 +8267,52 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
 
 fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const fd = file.handle;
 
     if (native_os == .windows) {
-        try current_thread.checkCancel();
-        return windows.SetFilePointerEx_BEGIN(fd, offset);
+        // "The starting point is zero or the beginning of the file. If [FILE_BEGIN]
+        // is specified, then the liDistanceToMove parameter is interpreted as an unsigned value."
+        // https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/nf-fileapi-setfilepointerex
+        const ipos: windows.LARGE_INTEGER = @bitCast(offset);
+
+        const syscall: Syscall = try .start();
+        while (true) {
+            if (windows.kernel32.SetFilePointerEx(fd, ipos, null, windows.FILE_BEGIN) != 0) {
+                return syscall.finish();
+            }
+            switch (windows.GetLastError()) {
+                .OPERATION_ABORTED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INVALID_FUNCTION => return syscall.fail(error.Unseekable),
+                .NEGATIVE_SEEK => return syscall.fail(error.Unseekable),
+                .INVALID_PARAMETER => unreachable,
+                .INVALID_HANDLE => unreachable,
+                else => |err| {
+                    syscall.finish();
+                    return windows.unexpectedError(err);
+                },
+            }
+        }
     }
 
     if (native_os == .wasi and !builtin.link_libc) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             var new_offset: std.os.wasi.filesize_t = undefined;
             switch (std.os.wasi.fd_seek(fd, @bitCast(offset), .SET, &new_offset)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => return error.Unseekable,
@@ -7100,25 +8329,25 @@ fn fileSeekTo(userdata: ?*anyopaque, file: File, offset: u64) File.SeekError!voi
 
     if (posix.SEEK == void) return error.Unseekable;
 
-    return posixSeekTo(current_thread, fd, offset);
+    return posixSeekTo(fd, offset);
 }
 
-fn posixSeekTo(current_thread: *Thread, fd: posix.fd_t, offset: u64) File.SeekError!void {
+fn posixSeekTo(fd: posix.fd_t, offset: u64) File.SeekError!void {
     if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             var result: u64 = undefined;
             switch (posix.errno(posix.system.llseek(fd, offset, &result, posix.SEEK.SET))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                         .INVAL => return error.Unseekable,
@@ -7132,19 +8361,19 @@ fn posixSeekTo(current_thread: *Thread, fd: posix.fd_t, offset: u64) File.SeekEr
         }
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(lseek_sym(fd, @bitCast(offset), posix.SEEK.SET))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .INVAL => return error.Unseekable,
@@ -7158,7 +8387,7 @@ fn posixSeekTo(current_thread: *Thread, fd: posix.fd_t, offset: u64) File.SeekEr
     }
 }
 
-fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) std.process.OpenExecutableError!File {
+fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) process.OpenExecutableError!File {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
         .wasi => return error.OperationUnsupported,
@@ -7170,7 +8399,7 @@ fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) std.proce
             const image_path_unicode_string = &windows.peb().ProcessParameters.ImagePathName;
             const image_path_name = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2 :0];
             const prefixed_path_w = try windows.wToPrefixedFileW(null, image_path_name);
-            return dirOpenFileWtf16(t, null, prefixed_path_w.span(), flags);
+            return dirOpenFileWtf16(null, prefixed_path_w.span(), flags);
         },
         .driverkit,
         .ios,
@@ -7199,7 +8428,7 @@ fn processExecutableOpen(userdata: ?*anyopaque, flags: File.OpenFlags) std.proce
     }
 }
 
-fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.ExecutablePathError!usize {
+fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) process.ExecutablePathError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
     switch (native_os) {
@@ -7234,22 +8463,21 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             else => |e| return e,
         },
         .freebsd, .dragonfly => {
-            const current_thread = Thread.getCurrent(t);
             var mib: [4]c_int = .{ posix.CTL.KERN, posix.KERN.PROC, posix.KERN.PROC_PATHNAME, -1 };
             var out_len: usize = out_buffer.len;
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             while (true) {
                 switch (posix.errno(posix.system.sysctl(&mib, mib.len, out_buffer.ptr, &out_len, null, 0))) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         return out_len - 1; // discard terminating NUL
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .FAULT => |err| return errnoBug(err),
                             .PERM => return error.PermissionDenied,
@@ -7262,22 +8490,21 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             }
         },
         .netbsd => {
-            const current_thread = Thread.getCurrent(t);
             var mib = [4]c_int{ posix.CTL.KERN, posix.KERN.PROC_ARGS, -1, posix.KERN.PROC_PATHNAME };
             var out_len: usize = out_buffer.len;
-            try current_thread.beginSyscall();
+            const syscall: Syscall = try .start();
             while (true) {
                 switch (posix.errno(posix.system.sysctl(&mib, mib.len, out_buffer.ptr, &out_len, null, 0))) {
                     .SUCCESS => {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         return out_len - 1; // discard terminating NUL
                     },
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         switch (e) {
                             .FAULT => |err| return errnoBug(err),
                             .PERM => return error.PermissionDenied,
@@ -7295,20 +8522,19 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             const argv0 = std.mem.span(t.argv0.value orelse return error.OperationUnsupported);
             if (std.mem.findScalar(u8, argv0, '/') != null) {
                 // argv[0] is a path (relative or absolute): use realpath(3) directly
-                const current_thread = Thread.getCurrent(t);
                 var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
-                try current_thread.beginSyscall();
+                const syscall: Syscall = try .start();
                 while (true) {
                     if (std.c.realpath(argv0, &resolved_buf)) |p| {
                         assert(p == &resolved_buf);
-                        break current_thread.endSyscall();
+                        break syscall.finish();
                     } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
                         .INTR => {
-                            try current_thread.checkCancel();
+                            try syscall.checkCancel();
                             continue;
                         },
                         else => |e| {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             switch (e) {
                                 .ACCES => return error.AccessDenied,
                                 .INVAL => |err| return errnoBug(err), // the pathname argument is a null pointer
@@ -7332,7 +8558,6 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                 // argv[0] is not empty (and not a path): search PATH
                 t.scanEnviron();
                 const PATH = t.environ.string.PATH orelse return error.FileNotFound;
-                const current_thread = Thread.getCurrent(t);
                 var it = std.mem.tokenizeScalar(u8, PATH, ':');
                 it: while (it.next()) |dir| {
                     var resolved_path_buf: [std.c.PATH_MAX]u8 = undefined;
@@ -7341,34 +8566,34 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
                     }, 0) catch continue;
 
                     var resolved_buf: [std.c.PATH_MAX]u8 = undefined;
-                    try current_thread.beginSyscall();
+                    const syscall: Syscall = try .start();
                     while (true) {
                         if (std.c.realpath(resolved_path, &resolved_buf)) |p| {
                             assert(p == &resolved_buf);
-                            break current_thread.endSyscall();
+                            break syscall.finish();
                         } else switch (@as(std.c.E, @enumFromInt(std.c._errno().*))) {
                             .INTR => {
-                                try current_thread.checkCancel();
+                                try syscall.checkCancel();
                                 continue;
                             },
                             .NAMETOOLONG => {
-                                current_thread.endSyscall();
+                                syscall.finish();
                                 return error.NameTooLong;
                             },
                             .NOMEM => {
-                                current_thread.endSyscall();
+                                syscall.finish();
                                 return error.SystemResources;
                             },
                             .IO => {
-                                current_thread.endSyscall();
+                                syscall.finish();
                                 return error.InputOutput;
                             },
                             .ACCES, .LOOP, .NOENT, .NOTDIR => {
-                                current_thread.endSyscall();
+                                syscall.finish();
                                 continue :it;
                             },
                             else => |err| {
-                                current_thread.endSyscall();
+                                syscall.finish();
                                 return posix.unexpectedErrno(err);
                             },
                         }
@@ -7383,8 +8608,6 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             return error.FileNotFound;
         },
         .windows => {
-            const current_thread = Thread.getCurrent(t);
-            try current_thread.checkCancel();
             const w = windows;
             const image_path_unicode_string = &w.peb().ProcessParameters.ImagePathName;
             const image_path_name = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2 :0];
@@ -7394,24 +8617,34 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) std.process.Ex
             // that the symlink points to, though, so we need to get the realpath.
             var path_name_w_buf = try w.wToPrefixedFileW(null, image_path_name);
 
-            const h_file = blk: {
-                const res = w.OpenFile(path_name_w_buf.span(), .{
-                    .dir = null,
-                    .access_mask = .{
-                        .GENERIC = .{ .READ = true },
-                        .STANDARD = .{ .SYNCHRONIZE = true },
-                    },
-                    .creation = .OPEN,
-                    .filter = .any,
-                }) catch |err| switch (err) {
-                    error.WouldBlock => unreachable,
-                    else => |e| return e,
-                };
-                break :blk res;
+            const h_file = handle: {
+                const syscall: Syscall = try .start();
+                while (true) {
+                    if (w.OpenFile(path_name_w_buf.span(), .{
+                        .dir = null,
+                        .access_mask = .{
+                            .GENERIC = .{ .READ = true },
+                            .STANDARD = .{ .SYNCHRONIZE = true },
+                        },
+                        .creation = .OPEN,
+                        .filter = .any,
+                    })) |handle| {
+                        syscall.finish();
+                        break :handle handle;
+                    } else |err| switch (err) {
+                        error.WouldBlock => unreachable,
+                        error.OperationCanceled => {
+                            try syscall.checkCancel();
+                            continue;
+                        },
+                        else => |e| return e,
+                    }
+                }
             };
             defer w.CloseHandle(h_file);
 
             // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
+            try Thread.checkCancel();
             const wide_slice = try w.GetFinalPathNameByHandle(h_file, .{}, &path_name_w_buf.data);
 
             const len = std.unicode.calcWtf8Len(wide_slice);
@@ -7434,19 +8667,19 @@ fn fileWritePositional(
     offset: u64,
 ) File.WritePositionalError!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
         if (header.len != 0) {
-            return writeFilePositionalWindows(current_thread, file.handle, header, offset);
+            return writeFilePositionalWindows(file.handle, header, offset);
         }
         for (data[0 .. data.len - 1]) |buf| {
             if (buf.len == 0) continue;
-            return writeFilePositionalWindows(current_thread, file.handle, buf, offset);
+            return writeFilePositionalWindows(file.handle, buf, offset);
         }
         const pattern = data[data.len - 1];
         if (pattern.len == 0 or splat == 0) return 0;
-        return writeFilePositionalWindows(current_thread, file.handle, pattern, offset);
+        return writeFilePositionalWindows(file.handle, pattern, offset);
     }
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
@@ -7484,19 +8717,19 @@ fn fileWritePositional(
 
     if (native_os == .wasi and !builtin.link_libc) {
         var n_written: usize = undefined;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (std.os.wasi.fd_pwrite(file.handle, &iovecs, iovlen, offset, &n_written)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return n_written;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
@@ -7520,20 +8753,20 @@ fn fileWritePositional(
         }
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = pwritev_sym(file.handle, &iovecs, @intCast(iovlen), @bitCast(offset));
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return @intCast(rc);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
@@ -7560,13 +8793,10 @@ fn fileWritePositional(
 }
 
 fn writeFilePositionalWindows(
-    current_thread: *Thread,
     handle: windows.HANDLE,
     bytes: []const u8,
     offset: u64,
 ) File.WritePositionalError!usize {
-    try current_thread.checkCancel();
-
     var bytes_written: windows.DWORD = undefined;
     var overlapped: windows.OVERLAPPED = .{
         .Internal = 0,
@@ -7580,21 +8810,31 @@ fn writeFilePositionalWindows(
         .hEvent = null,
     };
     const adjusted_len = std.math.lossyCast(u32, bytes.len);
-    if (windows.kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, &overlapped) == 0) {
+    const syscall: Syscall = try .start();
+    while (true) {
+        if (windows.kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, &overlapped) != 0) {
+            syscall.finish();
+            return bytes_written;
+        }
         switch (windows.GetLastError()) {
-            .INVALID_USER_BUFFER => return error.SystemResources,
-            .NOT_ENOUGH_MEMORY => return error.SystemResources,
-            .OPERATION_ABORTED => return error.Canceled,
-            .NOT_ENOUGH_QUOTA => return error.SystemResources,
-            .NO_DATA => return error.BrokenPipe,
-            .INVALID_HANDLE => return error.NotOpenForWriting,
-            .LOCK_VIOLATION => return error.LockViolation,
-            .ACCESS_DENIED => return error.AccessDenied,
-            .WORKING_SET_QUOTA => return error.SystemResources,
-            else => |err| return windows.unexpectedError(err),
+            .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INVALID_USER_BUFFER => return syscall.fail(error.SystemResources),
+            .NOT_ENOUGH_MEMORY => return syscall.fail(error.SystemResources),
+            .NOT_ENOUGH_QUOTA => return syscall.fail(error.SystemResources),
+            .NO_DATA => return syscall.fail(error.BrokenPipe),
+            .INVALID_HANDLE => return syscall.fail(error.NotOpenForWriting),
+            .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .WORKING_SET_QUOTA => return syscall.fail(error.SystemResources),
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedError(err);
+            },
         }
     }
-    return bytes_written;
 }
 
 fn fileWriteStreaming(
@@ -7605,19 +8845,19 @@ fn fileWriteStreaming(
     splat: usize,
 ) File.Writer.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
         if (header.len != 0) {
-            return writeFileStreamingWindows(current_thread, file.handle, header);
+            return writeFileStreamingWindows(file.handle, header);
         }
         for (data[0 .. data.len - 1]) |buf| {
             if (buf.len == 0) continue;
-            return writeFileStreamingWindows(current_thread, file.handle, buf);
+            return writeFileStreamingWindows(file.handle, buf);
         }
         const pattern = data[data.len - 1];
         if (pattern.len == 0 or splat == 0) return 0;
-        return writeFileStreamingWindows(current_thread, file.handle, pattern);
+        return writeFileStreamingWindows(file.handle, pattern);
     }
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
@@ -7655,19 +8895,19 @@ fn fileWriteStreaming(
 
     if (native_os == .wasi and !builtin.link_libc) {
         var n_written: usize = undefined;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (std.os.wasi.fd_write(file.handle, &iovecs, iovlen, &n_written)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return n_written;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
@@ -7688,20 +8928,20 @@ fn fileWriteStreaming(
         }
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.writev(file.handle, &iovecs, @intCast(iovlen));
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return @intCast(rc);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
@@ -7724,29 +8964,36 @@ fn fileWriteStreaming(
 }
 
 fn writeFileStreamingWindows(
-    current_thread: *Thread,
     handle: windows.HANDLE,
     bytes: []const u8,
 ) File.Writer.Error!usize {
-    try current_thread.checkCancel();
-
     var bytes_written: windows.DWORD = undefined;
     const adjusted_len = std.math.lossyCast(u32, bytes.len);
-    if (windows.kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, null) == 0) {
+    const syscall: Syscall = try .start();
+    while (true) {
+        if (windows.kernel32.WriteFile(handle, bytes.ptr, adjusted_len, &bytes_written, null) != 0) {
+            syscall.finish();
+            return bytes_written;
+        }
         switch (windows.GetLastError()) {
-            .INVALID_USER_BUFFER => return error.SystemResources,
-            .NOT_ENOUGH_MEMORY => return error.SystemResources,
-            .OPERATION_ABORTED => return error.Canceled,
-            .NOT_ENOUGH_QUOTA => return error.SystemResources,
-            .NO_DATA => return error.BrokenPipe,
-            .INVALID_HANDLE => return error.NotOpenForWriting,
-            .LOCK_VIOLATION => return error.LockViolation,
-            .ACCESS_DENIED => return error.AccessDenied,
-            .WORKING_SET_QUOTA => return error.SystemResources,
-            else => |err| return windows.unexpectedError(err),
+            .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .INVALID_USER_BUFFER => return syscall.fail(error.SystemResources),
+            .NOT_ENOUGH_MEMORY => return syscall.fail(error.SystemResources),
+            .NOT_ENOUGH_QUOTA => return syscall.fail(error.SystemResources),
+            .NO_DATA => return syscall.fail(error.BrokenPipe),
+            .INVALID_HANDLE => return syscall.fail(error.NotOpenForWriting),
+            .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .WORKING_SET_QUOTA => return syscall.fail(error.SystemResources),
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedError(err);
+            },
         }
     }
-    return bytes_written;
 }
 
 fn fileWriteFileStreaming(
@@ -7807,40 +9054,39 @@ fn fileWriteFileStreaming(
         const nbytes: usize = @min(file_limit, std.math.maxInt(usize));
         const flags = 0;
 
-        const current_thread = Thread.getCurrent(t);
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(std.c.sendfile(in_fd, out_fd, offset, nbytes, hdtr, &sbytes, flags))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .INVAL, .OPNOTSUPP, .NOTSOCK, .NOSYS => {
                     // Give calling code chance to observe before trying
                     // something else.
-                    current_thread.endSyscall();
+                    syscall.finish();
                     @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
                     return 0;
                 },
                 .INTR, .BUSY => {
                     if (sbytes == 0) {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     } else {
                         // Even if we are being canceled, there have been side
                         // effects, so it is better to report those side
                         // effects to the caller.
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break;
                     }
                 },
                 .AGAIN => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     if (sbytes == 0) return error.WouldBlock;
                     break;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     assert(error.Unexpected == switch (e) {
                         .NOTCONN => return error.BrokenPipe,
                         .IO => return error.InputOutput,
@@ -7893,40 +9139,39 @@ fn fileWriteFileStreaming(
         const max_count = std.math.maxInt(i32); // Avoid EINVAL.
         var len: std.c.off_t = @min(file_limit, max_count);
         const flags = 0;
-        const current_thread = Thread.getCurrent(t);
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(std.c.sendfile(in_fd, out_fd, offset, &len, hdtr, flags))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .OPNOTSUPP, .NOTSOCK, .NOSYS => {
                     // Give calling code chance to observe before trying
                     // something else.
-                    current_thread.endSyscall();
+                    syscall.finish();
                     @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
                     return 0;
                 },
                 .INTR => {
                     if (len == 0) {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     } else {
                         // Even if we are being canceled, there have been side
                         // effects, so it is better to report those side
                         // effects to the caller.
-                        current_thread.endSyscall();
+                        syscall.finish();
                         break;
                     }
                 },
                 .AGAIN => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     if (len == 0) return error.WouldBlock;
                     break;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     assert(error.Unexpected == switch (e) {
                         .NOTCONN => return error.BrokenPipe,
                         .IO => return error.InputOutput,
@@ -7973,28 +9218,27 @@ fn fileWriteFileStreaming(
             .streaming_simple, .positional_simple => break :sf,
             .failure => return error.ReadFailed,
         };
-        const current_thread = Thread.getCurrent(t);
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         const n: usize = while (true) {
             const rc = sendfile_sym(out_fd, in_fd, off_ptr, count);
             switch (posix.errno(rc)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break @intCast(rc);
                 },
                 .NOSYS, .INVAL => {
                     // Give calling code chance to observe before trying
                     // something else.
-                    current_thread.endSyscall();
+                    syscall.finish();
                     @atomicStore(UseSendfile, &t.use_sendfile, .disabled, .monotonic);
                     return 0;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     assert(error.Unexpected == switch (e) {
                         .NOTCONN => return error.BrokenPipe, // `out_fd` is an unconnected socket
                         .AGAIN => return error.WouldBlock,
@@ -8050,30 +9294,29 @@ fn fileWriteFileStreaming(
             .streaming => null,
             .failure => return error.ReadFailed,
         };
-        const current_thread = Thread.getCurrent(t);
         const n: usize = switch (native_os) {
             .linux => n: {
-                try current_thread.beginSyscall();
+                const syscall: Syscall = try .start();
                 while (true) {
                     const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, null, @intFromEnum(limit), 0);
                     switch (linux_copy_file_range_sys.errno(rc)) {
                         .SUCCESS => {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             break :n @intCast(rc);
                         },
                         .INTR => {
-                            try current_thread.checkCancel();
+                            try syscall.checkCancel();
                             continue;
                         },
                         .OPNOTSUPP, .INVAL, .NOSYS => {
                             // Give calling code chance to observe before trying
                             // something else.
-                            current_thread.endSyscall();
+                            syscall.finish();
                             @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
                             return 0;
                         },
                         else => |e| {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             assert(error.Unexpected == switch (e) {
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
@@ -8097,27 +9340,27 @@ fn fileWriteFileStreaming(
                 }
             },
             .freebsd => n: {
-                try current_thread.beginSyscall();
+                const syscall: Syscall = try .start();
                 while (true) {
                     const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, null, @intFromEnum(limit), 0);
                     switch (std.c.errno(rc)) {
                         .SUCCESS => {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             break :n @intCast(rc);
                         },
                         .INTR => {
-                            try current_thread.checkCancel();
+                            try syscall.checkCancel();
                             continue;
                         },
                         .OPNOTSUPP, .INVAL, .NOSYS => {
                             // Give calling code chance to observe before trying
                             // something else.
-                            current_thread.endSyscall();
+                            syscall.finish();
                             @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
                             return 0;
                         },
                         else => |e| {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             assert(error.Unexpected == switch (e) {
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
@@ -8226,30 +9469,29 @@ fn fileWriteFilePositional(
             .failure => return error.ReadFailed,
         };
         var off_out: i64 = @intCast(offset);
-        const current_thread = Thread.getCurrent(t);
         const n: usize = switch (native_os) {
             .linux => n: {
-                try current_thread.beginSyscall();
+                const syscall: Syscall = try .start();
                 while (true) {
                     const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, @intFromEnum(limit), 0);
                     switch (linux_copy_file_range_sys.errno(rc)) {
                         .SUCCESS => {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             break :n @intCast(rc);
                         },
                         .INTR => {
-                            try current_thread.checkCancel();
+                            try syscall.checkCancel();
                             continue;
                         },
                         .OPNOTSUPP, .INVAL, .NOSYS => {
                             // Give calling code chance to observe before trying
                             // something else.
-                            current_thread.endSyscall();
+                            syscall.finish();
                             @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
                             return 0;
                         },
                         else => |e| {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             assert(error.Unexpected == switch (e) {
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
@@ -8274,27 +9516,27 @@ fn fileWriteFilePositional(
                 }
             },
             .freebsd => n: {
-                try current_thread.beginSyscall();
+                const syscall: Syscall = try .start();
                 while (true) {
                     const rc = std.c.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, @intFromEnum(limit), 0);
                     switch (std.c.errno(rc)) {
                         .SUCCESS => {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             break :n @intCast(rc);
                         },
                         .INTR => {
-                            try current_thread.checkCancel();
+                            try syscall.checkCancel();
                             continue;
                         },
                         .OPNOTSUPP, .INVAL, .NOSYS => {
                             // Give calling code chance to observe before trying
                             // something else.
-                            current_thread.endSyscall();
+                            syscall.finish();
                             @atomicStore(UseCopyFileRange, &t.use_copy_file_range, .disabled, .monotonic);
                             return 0;
                         },
                         else => |e| {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             assert(error.Unexpected == switch (e) {
                                 .FBIG => return error.FileTooBig,
                                 .IO => return error.InputOutput,
@@ -8334,28 +9576,27 @@ fn fileWriteFilePositional(
             file_reader.interface.toss(n -| header.len);
             return n;
         }
-        const current_thread = Thread.getCurrent(t);
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             const rc = std.c.fcopyfile(in_fd, out_fd, null, .{ .DATA = true });
             switch (posix.errno(rc)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 .OPNOTSUPP => {
                     // Give calling code chance to observe before trying
                     // something else.
-                    current_thread.endSyscall();
+                    syscall.finish();
                     @atomicStore(UseFcopyfile, &t.use_fcopyfile, .disabled, .monotonic);
                     return 0;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     assert(error.Unexpected == switch (e) {
                         .NOMEM => return error.SystemResources,
                         .INVAL => |err| errnoBug(err),
@@ -8372,9 +9613,7 @@ fn fileWriteFilePositional(
     return error.Unimplemented;
 }
 
-fn nowPosix(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+fn nowPosix(clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
     const clock_id: posix.clockid_t = clockToPosix(clock);
     var tp: posix.timespec = undefined;
     switch (posix.errno(posix.system.clock_gettime(clock_id, &tp))) {
@@ -8384,15 +9623,17 @@ fn nowPosix(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp 
     }
 }
 
-const now = switch (native_os) {
-    .windows => nowWindows,
-    .wasi => nowWasi,
-    else => nowPosix,
-};
-
-fn nowWindows(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
+fn now(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
+    return switch (native_os) {
+        .windows => nowWindows(clock),
+        .wasi => nowWasi(clock),
+        else => nowPosix(clock),
+    };
+}
+
+fn nowWindows(clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
     switch (clock) {
         .real => {
             // RtlGetSystemTimePrecise() has a granularity of 100 nanoseconds
@@ -8425,25 +9666,22 @@ fn nowWindows(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestam
     }
 }
 
-fn nowWasi(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+fn nowWasi(clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
     var ns: std.os.wasi.timestamp_t = undefined;
     const err = std.os.wasi.clock_time_get(clockToWasi(clock), 1, &ns);
     if (err != .SUCCESS) return error.Unexpected;
     return .fromNanoseconds(ns);
 }
 
-const sleep = switch (native_os) {
-    .windows => sleepWindows,
-    .wasi => sleepWasi,
-    .linux => sleepLinux,
-    else => sleepPosix,
-};
-
-fn sleepLinux(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
+fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    if (use_parking_sleep) return parking_sleep.sleep(timeout);
+    if (native_os == .wasi) return sleepWasi(t, timeout);
+    if (@TypeOf(posix.system.clock_nanosleep) != void) return sleepPosix(timeout);
+    return sleepNanosleep(t, timeout);
+}
+
+fn sleepPosix(timeout: Io.Timeout) Io.SleepError!void {
     const clock_id: posix.clockid_t = clockToPosix(switch (timeout) {
         .none => .awake,
         .duration => |d| d.clock,
@@ -8455,48 +9693,27 @@ fn sleepLinux(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
         .deadline => |deadline| deadline.raw.nanoseconds,
     };
     var timespec: posix.timespec = timestampToPosix(deadline_nanoseconds);
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
-        switch (std.os.linux.errno(std.os.linux.clock_nanosleep(clock_id, .{ .ABSTIME = switch (timeout) {
+        switch (posix.errno(posix.system.clock_nanosleep(clock_id, .{ .ABSTIME = switch (timeout) {
             .none, .duration => false,
             .deadline => true,
         } }, &timespec, &timespec))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .INVAL => return error.UnsupportedClock,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .INVAL => return syscall.fail(error.UnsupportedClock),
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
 
-fn sleepWindows(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    const t_io = ioBasic(t);
-    try current_thread.checkCancel();
-    const ms = ms: {
-        const d = (try timeout.toDurationFromNow(t_io)) orelse
-            break :ms std.math.maxInt(windows.DWORD);
-        break :ms std.math.lossyCast(windows.DWORD, d.raw.toMilliseconds());
-    };
-    // TODO: alertable true with checkCancel in a loop plus deadline
-    _ = windows.kernel32.SleepEx(ms, windows.FALSE);
-}
-
-fn sleepWasi(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+fn sleepWasi(t: *Threaded, timeout: Io.Timeout) Io.SleepError!void {
     const t_io = ioBasic(t);
     const w = std.os.wasi;
 
@@ -8520,14 +9737,12 @@ fn sleepWasi(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
     };
     var event: w.event_t = undefined;
     var nevents: usize = undefined;
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     _ = w.poll_oneoff(&in, &event, 1, &nevents);
-    current_thread.endSyscall();
+    syscall.finish();
 }
 
-fn sleepPosix(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
-    const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+fn sleepNanosleep(t: *Threaded, timeout: Io.Timeout) Io.SleepError!void {
     const t_io = ioBasic(t);
     const sec_type = @typeInfo(posix.timespec).@"struct".fields[0].type;
     const nsec_type = @typeInfo(posix.timespec).@"struct".fields[1].type;
@@ -8539,48 +9754,85 @@ fn sleepPosix(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
         };
         break :t timestampToPosix(d.raw.toNanoseconds());
     };
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.nanosleep(&timespec, &timespec))) {
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             // This prong handles success as well as unexpected errors.
-            else => return current_thread.endSyscall(),
+            else => return syscall.finish(),
         }
     }
 }
 
 fn select(userdata: ?*anyopaque, futures: []const *Io.AnyFuture) Io.Cancelable!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
 
-    var event: Io.Event = .unset;
+    var num_completed: std.atomic.Value(u32) = .init(0);
 
-    for (futures, 0..) |future, i| {
-        const closure: *AsyncClosure = @ptrCast(@alignCast(future));
-        if (@atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, &event, .seq_cst) == AsyncClosure.done_event) {
-            for (futures[0..i]) |cleanup_future| {
-                const cleanup_closure: *AsyncClosure = @ptrCast(@alignCast(cleanup_future));
-                if (@atomicRmw(?*Io.Event, &cleanup_closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_event) {
-                    cleanup_closure.event.waitUncancelable(ioBasic(t)); // Ensure no reference to our stack-allocated event.
-                }
-            }
-            return i;
+    for (futures, 0..) |any_future, i| {
+        const future: *Future = @ptrCast(@alignCast(any_future));
+        future.awaiter = &num_completed;
+        const old_status = future.status.fetchOr(
+            .{ .tag = .pending_awaited, .thread = .null },
+            .release, // release `future.awaiter`
+        );
+        switch (old_status.tag) {
+            .pending => {},
+            .pending_awaited => unreachable, // `await` raced with `select`
+            .pending_canceled => unreachable, // `cancel` raced with `select`
+            .done => {
+                future.status.store(old_status, .monotonic);
+                _ = finishSelect(&num_completed, futures[0..i]);
+                return i;
+            },
         }
     }
 
-    try event.wait(ioBasic(t));
+    errdefer _ = finishSelect(&num_completed, futures);
 
-    var result: ?usize = null;
-    for (futures, 0..) |future, i| {
-        const closure: *AsyncClosure = @ptrCast(@alignCast(future));
-        if (@atomicRmw(?*Io.Event, &closure.select_condition, .Xchg, null, .seq_cst) == AsyncClosure.done_event) {
-            closure.event.waitUncancelable(ioBasic(t)); // Ensure no reference to our stack-allocated event.
-            if (result == null) result = i; // In case multiple are ready, return first.
+    while (true) {
+        const n = num_completed.load(.acquire);
+        if (n > 0) break;
+        assert(n < futures.len);
+        try Thread.futexWait(&num_completed.raw, n, null);
+    }
+    return finishSelect(&num_completed, futures).?;
+}
+fn finishSelect(
+    num_completed: *std.atomic.Value(u32),
+    futures: []const *Io.AnyFuture,
+) ?usize {
+    var completed_index: ?usize = null;
+    var expect_completed: u32 = 0;
+    for (futures, 0..) |any_future, i| {
+        const future: *Future = @ptrCast(@alignCast(any_future));
+        // This operation will convert `.pending_awaited` to `.pending`, or leave `.done` untouched.
+        switch (future.status.fetchAnd(
+            .{ .tag = @enumFromInt(0b10), .thread = .all_ones },
+            .monotonic,
+        ).tag) {
+            .pending_awaited => {},
+            .pending => unreachable,
+            .pending_canceled => unreachable,
+            .done => {
+                expect_completed += 1;
+                completed_index = i;
+            },
         }
     }
-    return result.?;
+    // If any future has just finished, wait for it to signal `num_completed` to avoid dangling
+    // references to stack memory.
+    while (true) {
+        const n = num_completed.load(.acquire);
+        if (n == expect_completed) break;
+        assert(n < expect_completed);
+        Thread.futexWaitUncancelable(&num_completed.raw, n, null);
+    }
+    return completed_index;
 }
 
 fn netListenIpPosix(
@@ -8590,47 +9842,42 @@ fn netListenIpPosix(
 ) IpAddress.ListenError!net.Server {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const family = posixAddressFamily(&address);
-    const socket_fd = try openSocketPosix(current_thread, family, .{
+    const socket_fd = try openSocketPosix(family, .{
         .mode = options.mode,
         .protocol = options.protocol,
     });
     errdefer posix.close(socket_fd);
 
     if (options.reuse_address) {
-        try setSocketOption(current_thread, socket_fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, 1);
+        try setSocketOption(socket_fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, 1);
         if (@hasDecl(posix.SO, "REUSEPORT"))
-            try setSocketOption(current_thread, socket_fd, posix.SOL.SOCKET, posix.SO.REUSEPORT, 1);
+            try setSocketOption(socket_fd, posix.SOL.SOCKET, posix.SO.REUSEPORT, 1);
     }
 
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(&address, &storage);
-    try posixBind(current_thread, socket_fd, &storage.any, addr_len);
+    try posixBind(socket_fd, &storage.any, addr_len);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.listen(socket_fd, options.kernel_backlog))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ADDRINUSE => return error.AddressInUse,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .ADDRINUSE => return syscall.fail(error.AddressInUse),
+            .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 
-    try posixGetSockName(current_thread, socket_fd, &storage.any, &addr_len);
+    try posixGetSockName(socket_fd, &storage.any, &addr_len);
     return .{
         .socket = .{
             .handle = socket_fd,
@@ -8646,9 +9893,8 @@ fn netListenIpWindows(
 ) IpAddress.ListenError!net.Server {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     const family = posixAddressFamily(&address);
-    const socket_handle = try openSocketWsa(t, current_thread, family, .{
+    const socket_handle = try openSocketWsa(t, family, .{
         .mode = options.mode,
         .protocol = options.protocol,
     });
@@ -8660,27 +9906,27 @@ fn netListenIpWindows(
     var storage: WsaAddress = undefined;
     var addr_len = addressToWsa(&address, &storage);
 
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.bind(socket_handle, &storage.any, addr_len);
         if (rc != ws2_32.SOCKET_ERROR) {
-            current_thread.endSyscall();
+            syscall.finish();
             break;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .NOTINITIALISED => {
+                syscall.finish();
+                try initializeWsa(t);
+                syscall = try .start();
                 continue;
             },
-            .NOTINITIALISED => {
-                try initializeWsa(t);
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .EADDRINUSE => return error.AddressInUse,
                     .EADDRNOTAVAIL => return error.AddressUnavailable,
                     .ENOTSOCK => |err| return wsaErrorBug(err),
@@ -8694,27 +9940,27 @@ fn netListenIpWindows(
         }
     }
 
-    try current_thread.beginSyscall();
+    syscall = try .start();
     while (true) {
         const rc = ws2_32.listen(socket_handle, options.kernel_backlog);
         if (rc != ws2_32.SOCKET_ERROR) {
-            current_thread.endSyscall();
+            syscall.finish();
             break;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .NOTINITIALISED => {
+                syscall.finish();
+                try initializeWsa(t);
+                syscall = try .start();
                 continue;
             },
-            .NOTINITIALISED => {
-                try initializeWsa(t);
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .ENETDOWN => return error.NetworkDown,
                     .EADDRINUSE => return error.AddressInUse,
                     .EISCONN => |err| return wsaErrorBug(err),
@@ -8729,7 +9975,7 @@ fn netListenIpWindows(
         }
     }
 
-    try wsaGetSockName(t, current_thread, socket_handle, &storage.any, &addr_len);
+    try wsaGetSockName(t, socket_handle, &storage.any, &addr_len);
 
     return .{
         .socket = .{
@@ -8757,8 +10003,8 @@ fn netListenUnixPosix(
 ) net.UnixAddress.ListenError!net.Socket.Handle {
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    const socket_fd = openSocketPosix(current_thread, posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
+    _ = t;
+    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
         error.ProtocolUnsupportedBySystem => return error.AddressFamilyUnsupported,
         error.ProtocolUnsupportedByAddressFamily => return error.AddressFamilyUnsupported,
         error.SocketModeUnsupported => return error.AddressFamilyUnsupported,
@@ -8769,27 +10015,22 @@ fn netListenUnixPosix(
 
     var storage: UnixAddress = undefined;
     const addr_len = addressUnixToPosix(address, &storage);
-    try posixBindUnix(current_thread, socket_fd, &storage.any, addr_len);
+    try posixBindUnix(socket_fd, &storage.any, addr_len);
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.listen(socket_fd, options.kernel_backlog))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                current_thread.endSyscall();
-                switch (e) {
-                    .ADDRINUSE => return error.AddressInUse,
-                    .BADF => |err| return errnoBug(err), // File descriptor used after closed.
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .ADDRINUSE => return syscall.fail(error.AddressInUse),
+            .BADF => |err| return syscall.errnoBug(err), // File descriptor used after closed.
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 
@@ -8803,9 +10044,8 @@ fn netListenUnixWindows(
 ) net.UnixAddress.ListenError!net.Socket.Handle {
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
 
-    const socket_handle = openSocketWsa(t, current_thread, posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
+    const socket_handle = openSocketWsa(t, posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
         error.ProtocolUnsupportedByAddressFamily => return error.AddressFamilyUnsupported,
         else => |e| return e,
     };
@@ -8814,24 +10054,24 @@ fn netListenUnixWindows(
     var storage: WsaAddress = undefined;
     const addr_len = addressUnixToWsa(address, &storage);
 
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.bind(socket_handle, &storage.any, addr_len);
         if (rc != ws2_32.SOCKET_ERROR) break;
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .NOTINITIALISED => {
+                syscall.finish();
+                try initializeWsa(t);
+                syscall = try .start();
                 continue;
             },
-            .NOTINITIALISED => {
-                try initializeWsa(t);
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .EADDRINUSE => return error.AddressInUse,
                     .EADDRNOTAVAIL => return error.AddressUnavailable,
                     .ENOTSOCK => |err| return wsaErrorBug(err),
@@ -8846,22 +10086,23 @@ fn netListenUnixWindows(
     }
 
     while (true) {
-        try current_thread.checkCancel();
+        try syscall.checkCancel();
         const rc = ws2_32.listen(socket_handle, options.kernel_backlog);
         if (rc != ws2_32.SOCKET_ERROR) {
-            current_thread.endSyscall();
+            syscall.finish();
             return socket_handle;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => continue,
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => continue,
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
+                syscall = try .start();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .ENETDOWN => return error.NetworkDown,
                     .EADDRINUSE => return error.AddressInUse,
                     .EISCONN => |err| return wsaErrorBug(err),
@@ -8889,24 +10130,23 @@ fn netListenUnixUnavailable(
 }
 
 fn posixBindUnix(
-    current_thread: *Thread,
     fd: posix.socket_t,
     addr: *const posix.sockaddr,
     addr_len: posix.socklen_t,
 ) !void {
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.bind(fd, addr, addr_len))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .ADDRINUSE => return error.AddressInUse,
@@ -8933,24 +10173,23 @@ fn posixBindUnix(
 }
 
 fn posixBind(
-    current_thread: *Thread,
     socket_fd: posix.socket_t,
     addr: *const posix.sockaddr,
     addr_len: posix.socklen_t,
 ) !void {
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.bind(socket_fd, addr, addr_len))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ADDRINUSE => return error.AddressInUse,
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -8968,24 +10207,23 @@ fn posixBind(
 }
 
 fn posixConnect(
-    current_thread: *Thread,
     socket_fd: posix.socket_t,
     addr: *const posix.sockaddr,
     addr_len: posix.socklen_t,
 ) !void {
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.connect(socket_fd, addr, addr_len))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ADDRNOTAVAIL => return error.AddressUnavailable,
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
@@ -9014,24 +10252,23 @@ fn posixConnect(
 }
 
 fn posixConnectUnix(
-    current_thread: *Thread,
     fd: posix.socket_t,
     addr: *const posix.sockaddr,
     addr_len: posix.socklen_t,
 ) !void {
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.connect(fd, addr, addr_len))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
                     .AGAIN => return error.WouldBlock,
@@ -9058,24 +10295,23 @@ fn posixConnectUnix(
 }
 
 fn posixGetSockName(
-    current_thread: *Thread,
     socket_fd: posix.fd_t,
     addr: *posix.sockaddr,
     addr_len: *posix.socklen_t,
 ) !void {
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.getsockname(socket_fd, addr, addr_len))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 break;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .FAULT => |err| return errnoBug(err),
@@ -9091,32 +10327,31 @@ fn posixGetSockName(
 
 fn wsaGetSockName(
     t: *Threaded,
-    current_thread: *Thread,
     handle: ws2_32.SOCKET,
     addr: *ws2_32.sockaddr,
     addr_len: *i32,
 ) !void {
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.getsockname(handle, addr, addr_len);
         if (rc != ws2_32.SOCKET_ERROR) {
-            current_thread.endSyscall();
+            syscall.finish();
             return;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
-                try current_thread.checkCancel();
+                syscall = try .start();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .ENETDOWN => return error.NetworkDown,
                     .EFAULT => |err| return wsaErrorBug(err),
                     .ENOTSOCK => |err| return wsaErrorBug(err),
@@ -9128,21 +10363,21 @@ fn wsaGetSockName(
     }
 }
 
-fn setSocketOption(current_thread: *Thread, fd: posix.fd_t, level: i32, opt_name: u32, option: u32) !void {
+fn setSocketOption(fd: posix.fd_t, level: i32, opt_name: u32, option: u32) !void {
     const o: []const u8 = @ptrCast(&option);
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.setsockopt(fd, level, opt_name, o.ptr, @intCast(o.len)))) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
                     .NOTSOCK => |err| return errnoBug(err),
@@ -9157,21 +10392,30 @@ fn setSocketOption(current_thread: *Thread, fd: posix.fd_t, level: i32, opt_name
 
 fn setSocketOptionWsa(t: *Threaded, socket: Io.net.Socket.Handle, level: i32, opt_name: u32, option: u32) !void {
     const o: []const u8 = @ptrCast(&option);
+    var syscall: Syscall = try .start();
     const rc = ws2_32.setsockopt(socket, level, @bitCast(opt_name), o.ptr, @intCast(o.len));
     while (true) {
-        if (rc != ws2_32.SOCKET_ERROR) return;
+        if (rc != ws2_32.SOCKET_ERROR) return syscall.finish();
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => continue,
-            .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
-            .NOTINITIALISED => {
-                try initializeWsa(t);
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
-            .ENETDOWN => return error.NetworkDown,
-            .EFAULT => |err| return wsaErrorBug(err),
-            .ENOTSOCK => |err| return wsaErrorBug(err),
-            .EINVAL => |err| return wsaErrorBug(err),
-            else => |err| return windows.unexpectedWSAError(err),
+            .NOTINITIALISED => {
+                syscall.finish();
+                try initializeWsa(t);
+                syscall = try .start();
+                continue;
+            },
+            .ENETDOWN => return syscall.fail(error.NetworkDown),
+            .EFAULT, .ENOTSOCK, .EINVAL => |err| {
+                syscall.finish();
+                return wsaErrorBug(err);
+            },
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedWSAError(err);
+            },
         }
     }
 }
@@ -9184,17 +10428,17 @@ fn netConnectIpPosix(
     if (!have_networking) return error.NetworkDown;
     if (options.timeout != .none) @panic("TODO implement netConnectIpPosix with timeout");
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const family = posixAddressFamily(address);
-    const socket_fd = try openSocketPosix(current_thread, family, .{
+    const socket_fd = try openSocketPosix(family, .{
         .mode = options.mode,
         .protocol = options.protocol,
     });
     errdefer posix.close(socket_fd);
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
-    try posixConnect(current_thread, socket_fd, &storage.any, addr_len);
-    try posixGetSockName(current_thread, socket_fd, &storage.any, &addr_len);
+    try posixConnect(socket_fd, &storage.any, addr_len);
+    try posixGetSockName(socket_fd, &storage.any, &addr_len);
     return .{ .socket = .{
         .handle = socket_fd,
         .address = addressFromPosix(&storage),
@@ -9209,9 +10453,8 @@ fn netConnectIpWindows(
     if (!have_networking) return error.NetworkDown;
     if (options.timeout != .none) @panic("TODO implement netConnectIpWindows with timeout");
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     const family = posixAddressFamily(address);
-    const socket_handle = try openSocketWsa(t, current_thread, family, .{
+    const socket_handle = try openSocketWsa(t, family, .{
         .mode = options.mode,
         .protocol = options.protocol,
     });
@@ -9220,27 +10463,27 @@ fn netConnectIpWindows(
     var storage: WsaAddress = undefined;
     var addr_len = addressToWsa(address, &storage);
 
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.connect(socket_handle, &storage.any, addr_len);
         if (rc != ws2_32.SOCKET_ERROR) {
-            current_thread.endSyscall();
+            syscall.finish();
             break;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
-                try current_thread.checkCancel();
+                syscall = try .start();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .EADDRNOTAVAIL => return error.AddressUnavailable,
                     .ECONNREFUSED => return error.ConnectionRefused,
                     .ECONNRESET => return error.ConnectionResetByPeer,
@@ -9261,7 +10504,7 @@ fn netConnectIpWindows(
         }
     }
 
-    try wsaGetSockName(t, current_thread, socket_handle, &storage.any, &addr_len);
+    try wsaGetSockName(t, socket_handle, &storage.any, &addr_len);
 
     return .{ .socket = .{
         .handle = socket_handle,
@@ -9286,15 +10529,15 @@ fn netConnectUnixPosix(
 ) net.UnixAddress.ConnectError!net.Socket.Handle {
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    const socket_fd = openSocketPosix(current_thread, posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
+    _ = t;
+    const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
         error.OptionUnsupported => return error.Unexpected,
         else => |e| return e,
     };
     errdefer posix.close(socket_fd);
     var storage: UnixAddress = undefined;
     const addr_len = addressUnixToPosix(address, &storage);
-    try posixConnectUnix(current_thread, socket_fd, &storage.any, addr_len);
+    try posixConnectUnix(socket_fd, &storage.any, addr_len);
     return socket_fd;
 }
 
@@ -9304,34 +10547,42 @@ fn netConnectUnixWindows(
 ) net.UnixAddress.ConnectError!net.Socket.Handle {
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
 
-    const socket_handle = try openSocketWsa(t, current_thread, posix.AF.UNIX, .{ .mode = .stream });
+    const socket_handle = try openSocketWsa(t, posix.AF.UNIX, .{ .mode = .stream });
     errdefer closeSocketWindows(socket_handle);
     var storage: WsaAddress = undefined;
     const addr_len = addressUnixToWsa(address, &storage);
 
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.connect(socket_handle, &storage.any, addr_len);
         if (rc != ws2_32.SOCKET_ERROR) break;
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => continue,
-            .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
-            .NOTINITIALISED => {
-                try initializeWsa(t);
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
-
-            .ECONNREFUSED => return error.FileNotFound,
-            .EFAULT => |err| return wsaErrorBug(err),
-            .EINVAL => |err| return wsaErrorBug(err),
-            .EISCONN => |err| return wsaErrorBug(err),
-            .ENOTSOCK => |err| return wsaErrorBug(err),
-            .EWOULDBLOCK => return error.WouldBlock,
-            .EACCES => return error.AccessDenied,
-            .ENOBUFS => return error.SystemResources,
-            .EAFNOSUPPORT => return error.AddressFamilyUnsupported,
-            else => |err| return windows.unexpectedWSAError(err),
+            .NOTINITIALISED => {
+                syscall.finish();
+                try initializeWsa(t);
+                syscall = try .start();
+                continue;
+            },
+            else => |e| {
+                syscall.finish();
+                switch (e) {
+                    .ECONNREFUSED => return error.FileNotFound,
+                    .EFAULT => |err| return wsaErrorBug(err),
+                    .EINVAL => |err| return wsaErrorBug(err),
+                    .EISCONN => |err| return wsaErrorBug(err),
+                    .ENOTSOCK => |err| return wsaErrorBug(err),
+                    .EWOULDBLOCK => return error.WouldBlock,
+                    .EACCES => return error.AccessDenied,
+                    .ENOBUFS => return error.SystemResources,
+                    .EAFNOSUPPORT => return error.AddressFamilyUnsupported,
+                    else => |err| return windows.unexpectedWSAError(err),
+                }
+            },
         }
     }
 
@@ -9354,14 +10605,14 @@ fn netBindIpPosix(
 ) IpAddress.BindError!net.Socket {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     const family = posixAddressFamily(address);
-    const socket_fd = try openSocketPosix(current_thread, family, options);
+    const socket_fd = try openSocketPosix(family, options);
     errdefer posix.close(socket_fd);
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
-    try posixBind(current_thread, socket_fd, &storage.any, addr_len);
-    try posixGetSockName(current_thread, socket_fd, &storage.any, &addr_len);
+    try posixBind(socket_fd, &storage.any, addr_len);
+    try posixGetSockName(socket_fd, &storage.any, &addr_len);
     return .{
         .handle = socket_fd,
         .address = addressFromPosix(&storage),
@@ -9375,9 +10626,8 @@ fn netBindIpWindows(
 ) IpAddress.BindError!net.Socket {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     const family = posixAddressFamily(address);
-    const socket_handle = try openSocketWsa(t, current_thread, family, .{
+    const socket_handle = try openSocketWsa(t, family, .{
         .mode = options.mode,
         .protocol = options.protocol,
     });
@@ -9386,27 +10636,27 @@ fn netBindIpWindows(
     var storage: WsaAddress = undefined;
     var addr_len = addressToWsa(address, &storage);
 
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.bind(socket_handle, &storage.any, addr_len);
         if (rc != ws2_32.SOCKET_ERROR) {
-            current_thread.endSyscall();
+            syscall.finish();
             break;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
-                try current_thread.checkCancel();
+                syscall = try .start();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .EADDRINUSE => return error.AddressInUse,
                     .EADDRNOTAVAIL => return error.AddressUnavailable,
                     .ENOTSOCK => |err| return wsaErrorBug(err),
@@ -9420,7 +10670,7 @@ fn netBindIpWindows(
         }
     }
 
-    try wsaGetSockName(t, current_thread, socket_handle, &storage.any, &addr_len);
+    try wsaGetSockName(t, socket_handle, &storage.any, &addr_len);
 
     return .{
         .handle = socket_handle,
@@ -9440,7 +10690,6 @@ fn netBindIpUnavailable(
 }
 
 fn openSocketPosix(
-    current_thread: *Thread,
     family: posix.sa_family_t,
     options: IpAddress.BindOptions,
 ) error{
@@ -9457,7 +10706,7 @@ fn openSocketPosix(
 }!posix.socket_t {
     const mode = posixSocketMode(options.mode);
     const protocol = posixProtocol(options.protocol);
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     const socket_fd = while (true) {
         const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
         const socket_rc = posix.system.socket(family, flags, protocol);
@@ -9466,25 +10715,25 @@ fn openSocketPosix(
                 const fd: posix.fd_t = @intCast(socket_rc);
                 errdefer posix.close(fd);
                 if (socket_flags_unsupported) while (true) {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC)))) {
                         .SUCCESS => break,
                         .INTR => continue,
                         else => |err| {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             return posix.unexpectedErrno(err);
                         },
                     }
                 };
-                current_thread.endSyscall();
+                syscall.finish();
                 break fd;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .AFNOSUPPORT => return error.AddressFamilyUnsupported,
                     .INVAL => return error.ProtocolUnsupportedBySystem,
@@ -9503,7 +10752,7 @@ fn openSocketPosix(
 
     if (options.ip6_only) {
         if (posix.IPV6 == void) return error.OptionUnsupported;
-        try setSocketOption(current_thread, socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 0);
+        try setSocketOption(socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 0);
     }
 
     return socket_fd;
@@ -9511,34 +10760,33 @@ fn openSocketPosix(
 
 fn openSocketWsa(
     t: *Threaded,
-    current_thread: *Thread,
     family: posix.sa_family_t,
     options: IpAddress.BindOptions,
 ) !ws2_32.SOCKET {
     const mode = posixSocketMode(options.mode);
     const protocol = posixProtocol(options.protocol);
     const flags: u32 = ws2_32.WSA_FLAG_OVERLAPPED | ws2_32.WSA_FLAG_NO_HANDLE_INHERIT;
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.WSASocketW(family, @bitCast(mode), @bitCast(protocol), null, 0, flags);
         if (rc != ws2_32.INVALID_SOCKET) {
-            current_thread.endSyscall();
+            syscall.finish();
             return rc;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
-                try current_thread.checkCancel();
+                syscall = try .start();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .EAFNOSUPPORT => return error.AddressFamilyUnsupported,
                     .EMFILE => return error.ProcessFdQuotaExceeded,
                     .ENOBUFS => return error.SystemResources,
@@ -9553,10 +10801,10 @@ fn openSocketWsa(
 fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle) net.Server.AcceptError!net.Stream {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
     var storage: PosixAddress = undefined;
     var addr_len: posix.socklen_t = @sizeOf(PosixAddress);
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     const fd = while (true) {
         const rc = if (have_accept4)
             posix.system.accept4(listen_fd, &storage.any, &addr_len, posix.SOCK.CLOEXEC)
@@ -9567,25 +10815,25 @@ fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle) net.Serve
                 const fd: posix.fd_t = @intCast(rc);
                 errdefer posix.close(fd);
                 if (!have_accept4) while (true) {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC)))) {
                         .SUCCESS => break,
                         .INTR => continue,
                         else => |err| {
-                            current_thread.endSyscall();
+                            syscall.finish();
                             return posix.unexpectedErrno(err);
                         },
                     }
                 };
-                current_thread.endSyscall();
+                syscall.finish();
                 break fd;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .AGAIN => |err| return errnoBug(err),
                     .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -9614,33 +10862,32 @@ fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle) net.Serve
 fn netAcceptWindows(userdata: ?*anyopaque, listen_handle: net.Socket.Handle) net.Server.AcceptError!net.Stream {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     var storage: WsaAddress = undefined;
     var addr_len: i32 = @sizeOf(WsaAddress);
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.accept(listen_handle, &storage.any, &addr_len);
         if (rc != ws2_32.INVALID_SOCKET) {
-            current_thread.endSyscall();
+            syscall.finish();
             return .{ .socket = .{
                 .handle = rc,
                 .address = addressFromWsa(&storage),
             } };
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
-                try current_thread.checkCancel();
+                syscall = try .start();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .ECONNRESET => return error.ConnectionAborted,
                     .EFAULT => |err| return wsaErrorBug(err),
                     .ENOTSOCK => |err| return wsaErrorBug(err),
@@ -9665,7 +10912,7 @@ fn netAcceptUnavailable(userdata: ?*anyopaque, listen_handle: net.Socket.Handle)
 fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var iovecs_buffer: [max_iovecs_len]posix.iovec = undefined;
     var i: usize = 0;
@@ -9680,20 +10927,20 @@ fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.
     assert(dest[0].len > 0);
 
     if (native_os == .wasi and !builtin.link_libc) {
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             var n: usize = undefined;
             switch (std.os.wasi.fd_read(fd, dest.ptr, dest.len, &n)) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return n;
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
@@ -9712,20 +10959,20 @@ fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.
         }
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.readv(fd, dest.ptr, @intCast(dest.len));
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return @intCast(rc);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
@@ -9748,7 +10995,6 @@ fn netReadPosix(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.
 fn netReadWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
 
     const bufs = b: {
         var iovec_buffer: [max_iovecs_len]ws2_32.WSABUF = undefined;
@@ -9775,48 +11021,41 @@ fn netReadWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, data: [][]u8
         break :b bufs;
     };
 
+    var syscall: Syscall = try .start();
     while (true) {
-        try current_thread.checkCancel();
-
         var flags: u32 = 0;
-        var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
         var n: u32 = undefined;
-        const rc = ws2_32.WSARecv(handle, bufs.ptr, @intCast(bufs.len), &n, &flags, &overlapped, null);
-        if (rc != ws2_32.SOCKET_ERROR) return n;
-        const wsa_error: ws2_32.WinsockError = switch (ws2_32.WSAGetLastError()) {
-            .IO_PENDING => e: {
-                var result_flags: u32 = undefined;
-                const overlapped_rc = ws2_32.WSAGetOverlappedResult(
-                    handle,
-                    &overlapped,
-                    &n,
-                    windows.TRUE,
-                    &result_flags,
-                );
-                if (overlapped_rc == windows.FALSE) {
-                    break :e ws2_32.WSAGetLastError();
-                } else {
-                    return n;
-                }
+        const rc = ws2_32.WSARecv(handle, bufs.ptr, @intCast(bufs.len), &n, &flags, null, null);
+        if (rc != ws2_32.SOCKET_ERROR) {
+            syscall.finish();
+            return n;
+        }
+        switch (ws2_32.WSAGetLastError()) {
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
             },
-            else => |err| err,
-        };
-        switch (wsa_error) {
-            .EINTR => continue,
-            .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
+                syscall = try .start();
                 continue;
             },
 
-            .ECONNRESET => return error.ConnectionResetByPeer,
+            .ECONNRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .ENETDOWN => return syscall.fail(error.NetworkDown),
+            .ENETRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .ENOTCONN => return syscall.fail(error.SocketUnconnected),
             .EFAULT => unreachable, // a pointer is not completely contained in user address space.
-            .EINVAL => |err| return wsaErrorBug(err),
-            .EMSGSIZE => |err| return wsaErrorBug(err),
-            .ENETDOWN => return error.NetworkDown,
-            .ENETRESET => return error.ConnectionResetByPeer,
-            .ENOTCONN => return error.SocketUnconnected,
-            else => |err| return windows.unexpectedWSAError(err),
+
+            else => |err| {
+                syscall.finish();
+                switch (err) {
+                    .EINVAL => return wsaErrorBug(err),
+                    .EMSGSIZE => return wsaErrorBug(err),
+                    else => return windows.unexpectedWSAError(err),
+                }
+            },
         }
     }
 }
@@ -9836,7 +11075,6 @@ fn netSendPosix(
 ) struct { ?net.Socket.SendError, usize } {
     if (!have_networking) return .{ error.NetworkDown, 0 };
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
 
     const posix_flags: u32 =
         @as(u32, if (@hasDecl(posix.MSG, "CONFIRM") and flags.confirm) posix.MSG.CONFIRM else 0) |
@@ -9849,10 +11087,10 @@ fn netSendPosix(
     var i: usize = 0;
     while (messages.len - i != 0) {
         if (have_sendmmsg) {
-            i += netSendMany(current_thread, handle, messages[i..], posix_flags) catch |err| return .{ err, i };
+            i += netSendMany(handle, messages[i..], posix_flags) catch |err| return .{ err, i };
             continue;
         }
-        netSendOne(t, current_thread, handle, &messages[i], posix_flags) catch |err| return .{ err, i };
+        netSendOne(t, handle, &messages[i], posix_flags) catch |err| return .{ err, i };
         i += 1;
     }
     return .{ null, i };
@@ -9888,7 +11126,6 @@ fn netSendUnavailable(
 
 fn netSendOne(
     t: *Threaded,
-    current_thread: *Thread,
     handle: net.Socket.Handle,
     message: *net.OutgoingMessage,
     flags: u32,
@@ -9905,29 +11142,29 @@ fn netSendOne(
         .controllen = @intCast(message.control.len),
         .flags = 0,
     };
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.sendmsg(handle, &msg, flags);
         if (is_windows) {
             if (rc != ws2_32.SOCKET_ERROR) {
-                current_thread.endSyscall();
+                syscall.finish();
                 message.data_len = @intCast(rc);
                 return;
             }
             switch (ws2_32.WSAGetLastError()) {
-                .EINTR => {
-                    try current_thread.checkCancel();
+                .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                    try syscall.checkCancel();
                     continue;
                 },
                 .NOTINITIALISED => {
+                    syscall.finish();
                     try initializeWsa(t);
-                    try current_thread.checkCancel();
+                    syscall = try .start();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
-                        .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                         .EACCES => return error.AccessDenied,
                         .EADDRNOTAVAIL => return error.AddressUnavailable,
                         .ECONNRESET => return error.ConnectionResetByPeer,
@@ -9951,16 +11188,16 @@ fn netSendOne(
         }
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 message.data_len = @intCast(rc);
                 return;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => return error.AccessDenied,
                     .ALREADY => return error.FastOpenAlreadyInProgress,
@@ -9989,7 +11226,6 @@ fn netSendOne(
 }
 
 fn netSendMany(
-    current_thread: *Thread,
     handle: net.Socket.Handle,
     messages: []net.OutgoingMessage,
     flags: u32,
@@ -10019,12 +11255,12 @@ fn netSendMany(
         };
     }
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.sendmmsg(handle, clamped_msgs.ptr, @intCast(clamped_msgs.len), flags);
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 const n: usize = @intCast(rc);
                 for (clamped_messages[0..n], clamped_msgs[0..n]) |*message, *msg| {
                     message.data_len = msg.len;
@@ -10032,11 +11268,11 @@ fn netSendMany(
                 return n;
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .AGAIN => |err| return errnoBug(err),
                     .ALREADY => return error.FastOpenAlreadyInProgress,
@@ -10074,7 +11310,6 @@ fn netReceivePosix(
 ) struct { ?net.Socket.ReceiveTimeoutError, usize } {
     if (!have_networking) return .{ error.NetworkDown, 0 };
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     const t_io = io(t);
 
     // recvmmsg is useless, here's why:
@@ -10120,9 +11355,12 @@ fn netReceivePosix(
             .flags = undefined,
         };
 
-        current_thread.beginSyscall() catch |err| return .{ err, message_i };
-        const recv_rc = posix.system.recvmsg(handle, &msg, posix_flags);
-        current_thread.endSyscall();
+        const recv_rc = rc: {
+            const syscall = Syscall.start() catch |err| return .{ err, message_i };
+            const rc = posix.system.recvmsg(handle, &msg, posix_flags);
+            syscall.finish();
+            break :rc rc;
+        };
         switch (posix.errno(recv_rc)) {
             .SUCCESS => {
                 const data = remaining_data_buffer[0..@intCast(recv_rc)];
@@ -10152,9 +11390,9 @@ fn netReceivePosix(
                     break :t @intCast(@min(max_poll_ms, duration.raw.toMilliseconds()));
                 } else max_poll_ms;
 
-                current_thread.beginSyscall() catch |err| return .{ err, message_i };
+                const syscall = Syscall.start() catch |err| return .{ err, message_i };
                 const poll_rc = posix.system.poll(&poll_fds, poll_fds.len, timeout_ms);
-                current_thread.endSyscall();
+                syscall.finish();
 
                 switch (posix.errno(poll_rc)) {
                     .SUCCESS => {
@@ -10240,7 +11478,7 @@ fn netWritePosix(
 ) net.Stream.Writer.Error!usize {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     var iovecs: [max_iovecs_len]posix.iovec_const = undefined;
     var msg: posix.msghdr_const = .{
@@ -10282,20 +11520,20 @@ fn netWritePosix(
     };
     const flags = posix.MSG.NOSIGNAL;
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         const rc = posix.system.sendmsg(fd, &msg, flags);
         switch (posix.errno(rc)) {
             .SUCCESS => {
-                current_thread.endSyscall();
+                syscall.finish();
                 return @intCast(rc);
             },
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .ACCES => |err| return errnoBug(err),
                     .AGAIN => |err| return errnoBug(err),
@@ -10332,7 +11570,6 @@ fn netWriteWindows(
     splat: usize,
 ) net.Stream.Writer.Error!usize {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
     comptime assert(native_os == .windows);
 
     var iovecs: [max_iovecs_len]ws2_32.WSABUF = undefined;
@@ -10365,49 +11602,44 @@ fn netWriteWindows(
         },
     };
 
+    var syscall: Syscall = try .start();
     while (true) {
-        try current_thread.checkCancel();
-
         var n: u32 = undefined;
-        var overlapped: windows.OVERLAPPED = std.mem.zeroes(windows.OVERLAPPED);
-        const rc = ws2_32.WSASend(handle, &iovecs, len, &n, 0, &overlapped, null);
-        if (rc != ws2_32.SOCKET_ERROR) return n;
-        const wsa_error: ws2_32.WinsockError = switch (ws2_32.WSAGetLastError()) {
-            .IO_PENDING => e: {
-                var result_flags: u32 = undefined;
-                const overlapped_rc = ws2_32.WSAGetOverlappedResult(
-                    handle,
-                    &overlapped,
-                    &n,
-                    windows.TRUE,
-                    &result_flags,
-                );
-                if (overlapped_rc == windows.FALSE) {
-                    break :e ws2_32.WSAGetLastError();
-                } else {
-                    return n;
-                }
+        const rc = ws2_32.WSASend(handle, &iovecs, len, &n, 0, null, null);
+        if (rc != ws2_32.SOCKET_ERROR) {
+            syscall.finish();
+            return n;
+        }
+        switch (ws2_32.WSAGetLastError()) {
+            .IO_PENDING => unreachable, // not overlapped
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
             },
-            else => |err| err,
-        };
-        switch (wsa_error) {
-            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => continue,
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
+                syscall = try .start();
                 continue;
             },
 
-            .ECONNABORTED => return error.ConnectionResetByPeer,
-            .ECONNRESET => return error.ConnectionResetByPeer,
-            .EINVAL => return error.SocketUnconnected,
-            .ENETDOWN => return error.NetworkDown,
-            .ENETRESET => return error.ConnectionResetByPeer,
-            .ENOBUFS => return error.SystemResources,
-            .ENOTCONN => return error.SocketUnconnected,
-            .ENOTSOCK => |err| return wsaErrorBug(err),
-            .EOPNOTSUPP => |err| return wsaErrorBug(err),
-            .ESHUTDOWN => |err| return wsaErrorBug(err),
-            else => |err| return windows.unexpectedWSAError(err),
+            .ECONNABORTED => return syscall.fail(error.ConnectionResetByPeer),
+            .ECONNRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .EINVAL => return syscall.fail(error.SocketUnconnected),
+            .ENETDOWN => return syscall.fail(error.NetworkDown),
+            .ENETRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .ENOBUFS => return syscall.fail(error.SystemResources),
+            .ENOTCONN => return syscall.fail(error.SocketUnconnected),
+
+            else => |err| {
+                syscall.finish();
+                switch (err) {
+                    .ENOTSOCK => return wsaErrorBug(err),
+                    .EOPNOTSUPP => return wsaErrorBug(err),
+                    .ESHUTDOWN => return wsaErrorBug(err),
+                    else => return windows.unexpectedWSAError(err),
+                }
+            },
         }
     }
 }
@@ -10476,7 +11708,7 @@ fn netCloseUnavailable(userdata: ?*anyopaque, handles: []const net.Socket.Handle
 fn netShutdownPosix(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     const posix_how: i32 = switch (how) {
         .recv => posix.SHUT.RD,
@@ -10484,19 +11716,16 @@ fn netShutdownPosix(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.S
         .both => posix.SHUT.RDWR,
     };
 
-    try current_thread.beginSyscall();
+    const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.shutdown(handle, posix_how))) {
-            .SUCCESS => {
-                current_thread.endSyscall();
-                return;
-            },
+            .SUCCESS => return syscall.finish(),
             .INTR => {
-                try current_thread.checkCancel();
+                try syscall.checkCancel();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
                     .BADF, .NOTSOCK, .INVAL => |err| return errnoBug(err),
                     .NOTCONN => return error.SocketUnconnected,
@@ -10511,7 +11740,6 @@ fn netShutdownPosix(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.S
 fn netShutdownWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void {
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
 
     const wsa_how: i32 = switch (how) {
         .recv => ws2_32.SD_RECEIVE,
@@ -10519,27 +11747,27 @@ fn netShutdownWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net
         .both => ws2_32.SD_BOTH,
     };
 
-    try current_thread.beginSyscall();
+    var syscall: Syscall = try .start();
     while (true) {
         const rc = ws2_32.shutdown(handle, wsa_how);
         if (rc != ws2_32.SOCKET_ERROR) {
-            current_thread.endSyscall();
+            syscall.finish();
             return;
         }
         switch (ws2_32.WSAGetLastError()) {
-            .EINTR => {
-                try current_thread.checkCancel();
+            .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => {
+                try syscall.checkCancel();
                 continue;
             },
             .NOTINITIALISED => {
+                syscall.finish();
                 try initializeWsa(t);
-                try current_thread.checkCancel();
+                syscall = try .start();
                 continue;
             },
             else => |e| {
-                current_thread.endSyscall();
+                syscall.finish();
                 switch (e) {
-                    .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
                     .ECONNABORTED => return error.ConnectionAborted,
                     .ECONNRESET => return error.ConnectionResetByPeer,
                     .ENETDOWN => return error.NetworkDown,
@@ -10562,10 +11790,10 @@ fn netInterfaceNameResolve(
 ) net.Interface.Name.ResolveError!net.Interface {
     if (!have_networking) return error.InterfaceNotFound;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (native_os == .linux) {
-        const sock_fd = openSocketPosix(current_thread, posix.AF.UNIX, .{ .mode = .dgram }) catch |err| switch (err) {
+        const sock_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .dgram }) catch |err| switch (err) {
             error.ProcessFdQuotaExceeded => return error.SystemResources,
             error.SystemFdQuotaExceeded => return error.SystemResources,
             error.AddressFamilyUnsupported => return error.Unexpected,
@@ -10582,19 +11810,19 @@ fn netInterfaceNameResolve(
             .ifru = undefined,
         };
 
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.errno(posix.system.ioctl(sock_fd, posix.SIOCGIFINDEX, @intFromPtr(&ifr)))) {
                 .SUCCESS => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     return .{ .index = @bitCast(ifr.ifru.ivalue) };
                 },
                 .INTR => {
-                    try current_thread.checkCancel();
+                    try syscall.checkCancel();
                     continue;
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .INVAL => |err| return errnoBug(err), // Bad parameters.
                         .NOTTY => |err| return errnoBug(err),
@@ -10611,12 +11839,12 @@ fn netInterfaceNameResolve(
     }
 
     if (native_os == .windows) {
-        try current_thread.checkCancel();
+        try Thread.checkCancel();
         @panic("TODO implement netInterfaceNameResolve for Windows");
     }
 
     if (builtin.link_libc) {
-        try current_thread.checkCancel();
+        try Thread.checkCancel();
         const index = std.c.if_nametoindex(&name.bytes);
         if (index == 0) return error.InterfaceNotFound;
         return .{ .index = @bitCast(index) };
@@ -10636,8 +11864,8 @@ fn netInterfaceNameResolveUnavailable(
 
 fn netInterfaceName(userdata: ?*anyopaque, interface: net.Interface) net.Interface.NameError!net.Interface.Name {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
-    try current_thread.checkCancel();
+    _ = t;
+    try Thread.checkCancel();
 
     if (native_os == .linux) {
         _ = interface;
@@ -10696,7 +11924,6 @@ fn netLookupFallible(
 ) (net.HostName.LookupError || Io.QueueClosedError)!void {
     if (!have_networking) return error.NetworkDown;
 
-    const current_thread: *Thread = .getCurrent(t);
     const t_io = io(t);
     const name = host_name.bytes;
     assert(name.len <= HostName.max_len);
@@ -10733,18 +11960,17 @@ fn netLookupFallible(
             .provider = null,
             .next = null,
         };
-        const cancel_handle: ?*windows.HANDLE = null;
         var res: *ws2_32.ADDRINFOEXW = undefined;
         const timeout: ?*ws2_32.timeval = null;
         while (true) {
-            try current_thread.checkCancel(); // TODO make requestCancel call GetAddrInfoExCancel
-            // TODO make this append to the queue eagerly rather than blocking until
-            // the whole thing finishes
-            const rc: ws2_32.WinsockError = @enumFromInt(ws2_32.GetAddrInfoExW(name_w, port_w, .DNS, null, &hints, &res, timeout, null, null, cancel_handle));
+            // TODO: hook this up to cancelation with `Thread.Status.cancelation.blocked_windows_dns`.
+            // See matching TODO in `Thread.cancelAwaitable`.
+            try Thread.checkCancel();
+            // TODO make this append to the queue eagerly rather than blocking until the whole thing finishes
+            const rc: ws2_32.WinsockError = @enumFromInt(ws2_32.GetAddrInfoExW(name_w, port_w, .DNS, null, &hints, &res, timeout, null, null, null));
             switch (rc) {
                 @as(ws2_32.WinsockError, @enumFromInt(0)) => break,
-                .EINTR => continue,
-                .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => return error.Canceled,
+                .EINTR, .ECANCELLED, .E_CANCELLED, .OPERATION_ABORTED => continue,
                 .NOTINITIALISED => {
                     try initializeWsa(t);
                     continue;
@@ -10766,8 +11992,7 @@ fn netLookupFallible(
         var canon_name: ?[*:0]const u16 = null;
         while (it) |info| : (it = info.next) {
             const addr = info.addr orelse continue;
-            const storage: WsaAddress = .{ .any = addr.* };
-            try resolved.putOne(t_io, .{ .address = addressFromWsa(&storage) });
+            try resolved.putOne(t_io, .{ .address = addressFromWsa(@alignCast(@fieldParentPtr("any", addr))) });
 
             if (info.canonname) |n| {
                 if (canon_name == null) {
@@ -10884,25 +12109,25 @@ fn netLookupFallible(
             .next = null,
         };
         var res: ?*posix.addrinfo = null;
-        try current_thread.beginSyscall();
+        const syscall: Syscall = try .start();
         while (true) {
             switch (posix.system.getaddrinfo(name_c.ptr, port_c.ptr, &hints, &res)) {
                 @as(posix.system.EAI, @enumFromInt(0)) => {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     break;
                 },
                 .SYSTEM => switch (posix.errno(-1)) {
                     .INTR => {
-                        try current_thread.checkCancel();
+                        try syscall.checkCancel();
                         continue;
                     },
                     else => |e| {
-                        current_thread.endSyscall();
+                        syscall.finish();
                         return posix.unexpectedErrno(e);
                     },
                 },
                 else => |e| {
-                    current_thread.endSyscall();
+                    syscall.finish();
                     switch (e) {
                         .ADDRFAMILY => return error.AddressFamilyUnsupported,
                         .AGAIN => return error.NameServerFailure,
@@ -10922,8 +12147,7 @@ fn netLookupFallible(
         var canon_name: ?[*:0]const u8 = null;
         while (it) |info| : (it = info.next) {
             const addr = info.addr orelse continue;
-            const storage: PosixAddress = .{ .any = addr.* };
-            try resolved.putOne(t_io, .{ .address = addressFromPosix(&storage) });
+            try resolved.putOne(t_io, .{ .address = addressFromPosix(@alignCast(@fieldParentPtr("any", addr))) });
 
             if (info.canonname) |n| {
                 if (canon_name == null) {
@@ -10945,14 +12169,14 @@ fn netLookupFallible(
 fn lockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!Io.LockedStderr {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     // Only global mutex since this is Threaded.
-    std.process.stderr_thread_mutex.lock();
+    process.stderr_thread_mutex.lock();
     return initLockedStderr(t, terminal_mode);
 }
 
 fn tryLockStderr(userdata: ?*anyopaque, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!?Io.LockedStderr {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     // Only global mutex since this is Threaded.
-    if (!std.process.stderr_thread_mutex.tryLock()) return null;
+    if (!process.stderr_thread_mutex.tryLock()) return null;
     return try initLockedStderr(t, terminal_mode);
 }
 
@@ -10977,78 +12201,51 @@ fn unlockStderr(userdata: ?*anyopaque) void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     t.stderr_writer.interface.flush() catch |err| switch (err) {
         error.WriteFailed => switch (t.stderr_writer.err.?) {
-            error.Canceled => recancel(t),
+            error.Canceled => recancelInner(),
             else => {},
         },
     };
     t.stderr_writer.interface.end = 0;
     t.stderr_writer.interface.buffer = &.{};
-    std.process.stderr_thread_mutex.unlock();
+    process.stderr_thread_mutex.unlock();
 }
 
-fn processSetCurrentDir(userdata: ?*anyopaque, dir: Dir) std.process.SetCurrentDirError!void {
+fn processSetCurrentDir(userdata: ?*anyopaque, dir: Dir) process.SetCurrentDirError!void {
     if (native_os == .wasi) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const current_thread = Thread.getCurrent(t);
+    _ = t;
 
     if (is_windows) {
-        try current_thread.checkCancel();
         var dir_path_buffer: [windows.PATH_MAX_WIDE]u16 = undefined;
         // TODO move GetFinalPathNameByHandle logic into std.Io.Threaded and add cancel checks
+        try Thread.checkCancel();
         const dir_path = try windows.GetFinalPathNameByHandle(dir.handle, .{}, &dir_path_buffer);
         const path_len_bytes = std.math.cast(u16, dir_path.len * 2) orelse return error.NameTooLong;
-        try current_thread.checkCancel();
         var nt_name: windows.UNICODE_STRING = .{
             .Length = path_len_bytes,
             .MaximumLength = path_len_bytes,
             .Buffer = @constCast(dir_path.ptr),
         };
-        switch (windows.ntdll.RtlSetCurrentDirectory_U(&nt_name)) {
-            .SUCCESS => return,
-            .OBJECT_NAME_INVALID => return error.BadPathName,
-            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-            .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-            .NO_MEDIA_IN_DEVICE => return error.NoDevice,
-            .INVALID_PARAMETER => |err| return windows.statusBug(err),
-            .ACCESS_DENIED => return error.AccessDenied,
-            .OBJECT_PATH_SYNTAX_BAD => |err| return windows.statusBug(err),
-            .NOT_A_DIRECTORY => return error.NotDir,
-            else => |status| return windows.unexpectedStatus(status),
-        }
-    }
-
-    if (dir.handle == posix.AT.FDCWD) return;
-
-    try current_thread.beginSyscall();
-    while (true) {
-        switch (posix.errno(posix.system.fchdir(dir.handle))) {
-            .SUCCESS => return current_thread.endSyscall(),
-            .INTR => {
-                try current_thread.checkCancel();
+        const syscall: Syscall = try .start();
+        while (true) switch (windows.ntdll.RtlSetCurrentDirectory_U(&nt_name)) {
+            .SUCCESS => return syscall.finish(),
+            .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
+            .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .NO_MEDIA_IN_DEVICE => return syscall.fail(error.NoDevice),
+            .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .OBJECT_PATH_SYNTAX_BAD => |err| return syscall.ntstatusBug(err),
+            .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
+            .CANCELLED => {
+                try syscall.checkCancel();
                 continue;
             },
-            .ACCES => {
-                current_thread.endSyscall();
-                return error.AccessDenied;
-            },
-            .BADF => |err| {
-                current_thread.endSyscall();
-                return errnoBug(err);
-            },
-            .NOTDIR => {
-                current_thread.endSyscall();
-                return error.NotDir;
-            },
-            .IO => {
-                current_thread.endSyscall();
-                return error.FileSystem;
-            },
-            else => |err| {
-                current_thread.endSyscall();
-                return posix.unexpectedErrno(err);
-            },
-        }
+            else => |status| return syscall.unexpectedNtstatus(status),
+        };
     }
+
+    return fchdir(dir.handle);
 }
 
 pub const PosixAddress = extern union {
@@ -11274,21 +12471,25 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
         .nlink = stx.nlink,
         .size = stx.size,
         .permissions = .fromMode(stx.mode),
-        .kind = switch (stx.mode & std.os.linux.S.IFMT) {
-            std.os.linux.S.IFDIR => .directory,
-            std.os.linux.S.IFCHR => .character_device,
-            std.os.linux.S.IFBLK => .block_device,
-            std.os.linux.S.IFREG => .file,
-            std.os.linux.S.IFIFO => .named_pipe,
-            std.os.linux.S.IFLNK => .sym_link,
-            std.os.linux.S.IFSOCK => .unix_domain_socket,
-            else => .unknown,
-        },
+        .kind = statxKind(stx.mode),
         .atime = if (!stx.mask.ATIME) null else .{
             .nanoseconds = @intCast(@as(i128, stx.atime.sec) * std.time.ns_per_s + stx.atime.nsec),
         },
         .mtime = .{ .nanoseconds = @intCast(@as(i128, stx.mtime.sec) * std.time.ns_per_s + stx.mtime.nsec) },
         .ctime = .{ .nanoseconds = @intCast(@as(i128, stx.ctime.sec) * std.time.ns_per_s + stx.ctime.nsec) },
+    };
+}
+
+fn statxKind(stx_mode: u16) File.Kind {
+    return switch (stx_mode & std.os.linux.S.IFMT) {
+        std.os.linux.S.IFDIR => .directory,
+        std.os.linux.S.IFCHR => .character_device,
+        std.os.linux.S.IFBLK => .block_device,
+        std.os.linux.S.IFREG => .file,
+        std.os.linux.S.IFIFO => .named_pipe,
+        std.os.linux.S.IFLNK => .sym_link,
+        std.os.linux.S.IFSOCK => .unix_domain_socket,
+        else => .unknown,
     };
 }
 
@@ -11417,7 +12618,7 @@ fn lookupDnsSearch(
         if (lookupDns(t, lookup_canon_name, &rc, resolved, options)) |result| {
             return result;
         } else |err| switch (err) {
-            error.UnknownHostName => continue,
+            error.UnknownHostName, error.NoAddressReturned => continue,
             else => |e| return e,
         }
     }
@@ -11447,7 +12648,8 @@ fn lookupDns(
 
     for (family_records) |fr| {
         if (options.family != fr.af) {
-            const entropy = std.crypto.random.array(u8, 2);
+            var entropy: [2]u8 = undefined;
+            random(t, &entropy);
             const len = writeResolutionQuery(&query_buffers[nq], 0, lookup_canon_name, 1, fr.rr, entropy);
             queries_buffer[nq] = query_buffers[nq][0..len];
             nq += 1;
@@ -11611,7 +12813,7 @@ fn lookupDns(
     }
 
     try resolved.putOne(t_io, .{ .canonical_name = canonical_name orelse .{ .bytes = lookup_canon_name } });
-    if (addresses_len == 0) return error.NameServerFailure;
+    if (addresses_len == 0) return error.NoAddressReturned;
 }
 
 fn lookupHosts(
@@ -11825,388 +13027,42 @@ fn initializeWsa(t: *Threaded) error{ NetworkDown, Canceled }!void {
 
 fn doNothingSignalHandler(_: posix.SIG) callconv(.c) void {}
 
-const pthreads_futex = struct {
-    const c = std.c;
-    const atomic = std.atomic;
+const WindowsEnvironStrings = struct {
+    PATH: ?[:0]const u16 = null,
+    PATHEXT: ?[:0]const u16 = null,
 
-    const Event = struct {
-        cond: c.pthread_cond_t,
-        mutex: c.pthread_mutex_t,
-        state: enum { empty, waiting, notified },
+    fn scan() WindowsEnvironStrings {
+        const ptr = windows.peb().ProcessParameters.Environment;
 
-        fn init(self: *Event) void {
-            // Use static init instead of pthread_cond/mutex_init() since this is generally faster.
-            self.cond = .{};
-            self.mutex = .{};
-            self.state = .empty;
-        }
+        var result: WindowsEnvironStrings = .{};
+        var i: usize = 0;
+        while (ptr[i] != 0) {
+            const key_start = i;
 
-        fn deinit(self: *Event) void {
-            // Some platforms reportedly give EINVAL for statically initialized pthread types.
-            const rc = c.pthread_cond_destroy(&self.cond);
-            assert(rc == .SUCCESS or rc == .INVAL);
+            // There are some special environment variables that start with =,
+            // so we need a special case to not treat = as a key/value separator
+            // if it's the first character.
+            // https://devblogs.microsoft.com/oldnewthing/20100506-00/?p=14133
+            if (ptr[key_start] == '=') i += 1;
 
-            const rm = c.pthread_mutex_destroy(&self.mutex);
-            assert(rm == .SUCCESS or rm == .INVAL);
+            while (ptr[i] != 0 and ptr[i] != '=') : (i += 1) {}
+            const key_w = ptr[key_start..i];
 
-            self.* = undefined;
-        }
+            if (ptr[i] == '=') i += 1;
 
-        fn wait(self: *Event, timeout: ?u64) error{Timeout}!void {
-            assert(c.pthread_mutex_lock(&self.mutex) == .SUCCESS);
-            defer assert(c.pthread_mutex_unlock(&self.mutex) == .SUCCESS);
+            const value_start = i;
+            while (ptr[i] != 0) : (i += 1) {}
+            const value_w = ptr[value_start..i :0];
 
-            // Early return if the event was already set.
-            if (self.state == .notified) {
-                return;
-            }
+            i += 1; // skip over null byte
 
-            // Compute the absolute timeout if one was specified.
-            // POSIX requires that REALTIME is used by default for the pthread timedwait functions.
-            // This can be changed with pthread_condattr_setclock, but it's an extension and may not be available everywhere.
-            var ts: c.timespec = undefined;
-            if (timeout) |timeout_ns| {
-                ts = std.posix.clock_gettime(c.CLOCK.REALTIME) catch return error.Timeout;
-                ts.sec +|= @as(@TypeOf(ts.sec), @intCast(timeout_ns / std.time.ns_per_s));
-                ts.nsec += @as(@TypeOf(ts.nsec), @intCast(timeout_ns % std.time.ns_per_s));
-
-                if (ts.nsec >= std.time.ns_per_s) {
-                    ts.sec +|= 1;
-                    ts.nsec -= std.time.ns_per_s;
-                }
-            }
-
-            // Start waiting on the event - there can be only one thread waiting.
-            assert(self.state == .empty);
-            self.state = .waiting;
-
-            while (true) {
-                // Block using either pthread_cond_wait or pthread_cond_timewait if there's an absolute timeout.
-                const rc = blk: {
-                    if (timeout == null) break :blk c.pthread_cond_wait(&self.cond, &self.mutex);
-                    break :blk c.pthread_cond_timedwait(&self.cond, &self.mutex, &ts);
-                };
-
-                // After waking up, check if the event was set.
-                if (self.state == .notified) {
-                    return;
-                }
-
-                assert(self.state == .waiting);
-                switch (rc) {
-                    .SUCCESS => {},
-                    .TIMEDOUT => {
-                        // If timed out, reset the event to avoid the set() thread doing an unnecessary signal().
-                        self.state = .empty;
-                        return error.Timeout;
-                    },
-                    .INVAL => recoverableOsBugDetected(), // cond, mutex, and potentially ts should all be valid
-                    .PERM => recoverableOsBugDetected(), // mutex is locked when cond_*wait() functions are called
-                    else => recoverableOsBugDetected(),
-                }
+            inline for (@typeInfo(WindowsEnvironStrings).@"struct".fields) |field| {
+                const field_name_w = comptime std.unicode.wtf8ToWtf16LeStringLiteral(field.name);
+                if (std.os.windows.eqlIgnoreCaseWtf16(key_w, field_name_w)) @field(result, field.name) = value_w;
             }
         }
 
-        fn set(self: *Event) void {
-            assert(c.pthread_mutex_lock(&self.mutex) == .SUCCESS);
-            defer assert(c.pthread_mutex_unlock(&self.mutex) == .SUCCESS);
-
-            // Make sure that multiple calls to set() were not done on the same Event.
-            const old_state = self.state;
-            assert(old_state != .notified);
-
-            // Mark the event as set and wake up the waiting thread if there was one.
-            // This must be done while the mutex as the wait() thread could deallocate
-            // the condition variable once it observes the new state, potentially causing a UAF if done unlocked.
-            self.state = .notified;
-            if (old_state == .waiting) {
-                assert(c.pthread_cond_signal(&self.cond) == .SUCCESS);
-            }
-        }
-    };
-
-    const Treap = std.Treap(usize, std.math.order);
-    const Waiter = struct {
-        node: Treap.Node,
-        prev: ?*Waiter,
-        next: ?*Waiter,
-        tail: ?*Waiter,
-        is_queued: bool,
-        event: Event,
-    };
-
-    // An unordered set of Waiters
-    const WaitList = struct {
-        top: ?*Waiter = null,
-        len: usize = 0,
-
-        fn push(self: *WaitList, waiter: *Waiter) void {
-            waiter.next = self.top;
-            self.top = waiter;
-            self.len += 1;
-        }
-
-        fn pop(self: *WaitList) ?*Waiter {
-            const waiter = self.top orelse return null;
-            self.top = waiter.next;
-            self.len -= 1;
-            return waiter;
-        }
-    };
-
-    const WaitQueue = struct {
-        fn insert(treap: *Treap, address: usize, waiter: *Waiter) void {
-            // prepare the waiter to be inserted.
-            waiter.next = null;
-            waiter.is_queued = true;
-
-            // Find the wait queue entry associated with the address.
-            // If there isn't a wait queue on the address, this waiter creates the queue.
-            var entry = treap.getEntryFor(address);
-            const entry_node = entry.node orelse {
-                waiter.prev = null;
-                waiter.tail = waiter;
-                entry.set(&waiter.node);
-                return;
-            };
-
-            // There's a wait queue on the address; get the queue head and tail.
-            const head: *Waiter = @fieldParentPtr("node", entry_node);
-            const tail = head.tail orelse unreachable;
-
-            // Push the waiter to the tail by replacing it and linking to the previous tail.
-            head.tail = waiter;
-            tail.next = waiter;
-            waiter.prev = tail;
-        }
-
-        fn remove(treap: *Treap, address: usize, max_waiters: usize) WaitList {
-            // Find the wait queue associated with this address and get the head/tail if any.
-            var entry = treap.getEntryFor(address);
-            var queue_head: ?*Waiter = if (entry.node) |node| @fieldParentPtr("node", node) else null;
-            const queue_tail = if (queue_head) |head| head.tail else null;
-
-            // Once we're done updating the head, fix it's tail pointer and update the treap's queue head as well.
-            defer entry.set(blk: {
-                const new_head = queue_head orelse break :blk null;
-                new_head.tail = queue_tail;
-                break :blk &new_head.node;
-            });
-
-            var removed = WaitList{};
-            while (removed.len < max_waiters) {
-                // dequeue and collect waiters from their wait queue.
-                const waiter = queue_head orelse break;
-                queue_head = waiter.next;
-                removed.push(waiter);
-
-                // When dequeueing, we must mark is_queued as false.
-                // This ensures that a waiter which calls tryRemove() returns false.
-                assert(waiter.is_queued);
-                waiter.is_queued = false;
-            }
-
-            return removed;
-        }
-
-        fn tryRemove(treap: *Treap, address: usize, waiter: *Waiter) bool {
-            if (!waiter.is_queued) {
-                return false;
-            }
-
-            queue_remove: {
-                // Find the wait queue associated with the address.
-                var entry = blk: {
-                    // A waiter without a previous link means it's the queue head that's in the treap so we can avoid lookup.
-                    if (waiter.prev == null) {
-                        assert(waiter.node.key == address);
-                        break :blk treap.getEntryForExisting(&waiter.node);
-                    }
-                    break :blk treap.getEntryFor(address);
-                };
-
-                // The queue head and tail must exist if we're removing a queued waiter.
-                const head: *Waiter = @fieldParentPtr("node", entry.node orelse unreachable);
-                const tail = head.tail orelse unreachable;
-
-                // A waiter with a previous link is never the head of the queue.
-                if (waiter.prev) |prev| {
-                    assert(waiter != head);
-                    prev.next = waiter.next;
-
-                    // A waiter with both a previous and next link is in the middle.
-                    // We only need to update the surrounding waiter's links to remove it.
-                    if (waiter.next) |next| {
-                        assert(waiter != tail);
-                        next.prev = waiter.prev;
-                        break :queue_remove;
-                    }
-
-                    // A waiter with a previous but no next link means it's the tail of the queue.
-                    // In that case, we need to update the head's tail reference.
-                    assert(waiter == tail);
-                    head.tail = waiter.prev;
-                    break :queue_remove;
-                }
-
-                // A waiter with no previous link means it's the queue head of queue.
-                // We must replace (or remove) the head waiter reference in the treap.
-                assert(waiter == head);
-                entry.set(blk: {
-                    const new_head = waiter.next orelse break :blk null;
-                    new_head.tail = head.tail;
-                    break :blk &new_head.node;
-                });
-            }
-
-            // Mark the waiter as successfully removed.
-            waiter.is_queued = false;
-            return true;
-        }
-    };
-
-    const Bucket = struct {
-        mutex: c.pthread_mutex_t align(atomic.cache_line) = .{},
-        pending: atomic.Value(usize) = atomic.Value(usize).init(0),
-        treap: Treap = .{},
-
-        // Global array of buckets that addresses map to.
-        // Bucket array size is pretty much arbitrary here, but it must be a power of two for fibonacci hashing.
-        var buckets = [_]Bucket{.{}} ** @bitSizeOf(usize);
-
-        // https://github.com/Amanieu/parking_lot/blob/1cf12744d097233316afa6c8b7d37389e4211756/core/src/parking_lot.rs#L343-L353
-        fn from(address: usize) *Bucket {
-            // The upper `@bitSizeOf(usize)` bits of the fibonacci golden ratio.
-            // Hashing this via (h * k) >> (64 - b) where k=golden-ration and b=bitsize-of-array
-            // evenly lays out h=hash values over the bit range even when the hash has poor entropy (identity-hash for pointers).
-            const max_multiplier_bits = @bitSizeOf(usize);
-            const fibonacci_multiplier = 0x9E3779B97F4A7C15 >> (64 - max_multiplier_bits);
-
-            const max_bucket_bits = @ctz(buckets.len);
-            comptime assert(std.math.isPowerOfTwo(buckets.len));
-
-            const index = (address *% fibonacci_multiplier) >> (max_multiplier_bits - max_bucket_bits);
-            return &buckets[index];
-        }
-    };
-
-    const Address = struct {
-        fn from(ptr: *const u32) usize {
-            // Get the alignment of the pointer.
-            const alignment = @alignOf(atomic.Value(u32));
-            comptime assert(std.math.isPowerOfTwo(alignment));
-
-            // Make sure the pointer is aligned,
-            // then cut off the zero bits from the alignment to get the unique address.
-            const addr = @intFromPtr(ptr);
-            assert(addr & (alignment - 1) == 0);
-            return addr >> @ctz(@as(usize, alignment));
-        }
-    };
-
-    fn wait(ptr: *const u32, expect: u32, timeout: ?u64) error{Timeout}!void {
-        const address = Address.from(ptr);
-        const bucket = Bucket.from(address);
-
-        // Announce that there's a waiter in the bucket before checking the ptr/expect condition.
-        // If the announcement is reordered after the ptr check, the waiter could deadlock:
-        //
-        // - T1: checks ptr == expect which is true
-        // - T2: updates ptr to != expect
-        // - T2: does Futex.wake(), sees no pending waiters, exits
-        // - T1: bumps pending waiters (was reordered after the ptr == expect check)
-        // - T1: goes to sleep and misses both the ptr change and T2's wake up
-        //
-        // acquire barrier to ensure the announcement happens before the ptr check below.
-        var pending = bucket.pending.fetchAdd(1, .acquire);
-        assert(pending < std.math.maxInt(usize));
-
-        // If the wait gets canceled, remove the pending count we previously added.
-        // This is done outside the mutex lock to keep the critical section short in case of contention.
-        var canceled = false;
-        defer if (canceled) {
-            pending = bucket.pending.fetchSub(1, .monotonic);
-            assert(pending > 0);
-        };
-
-        var waiter: Waiter = undefined;
-        {
-            assert(c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
-            defer assert(c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
-
-            canceled = @atomicLoad(u32, ptr, .monotonic) != expect;
-            if (canceled) {
-                return;
-            }
-
-            waiter.event.init();
-            WaitQueue.insert(&bucket.treap, address, &waiter);
-        }
-
-        defer {
-            assert(!waiter.is_queued);
-            waiter.event.deinit();
-        }
-
-        waiter.event.wait(timeout) catch {
-            // If we fail to cancel after a timeout, it means a wake() thread
-            // dequeued us and will wake us up. We must wait until the event is
-            // set as that's a signal that the wake() thread won't access the
-            // waiter memory anymore. If we return early without waiting, the
-            // waiter on the stack would be invalidated and the wake() thread
-            // risks a UAF.
-            defer if (!canceled) waiter.event.wait(null) catch unreachable;
-
-            assert(c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
-            defer assert(c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
-
-            canceled = WaitQueue.tryRemove(&bucket.treap, address, &waiter);
-            if (canceled) {
-                return error.Timeout;
-            }
-        };
-    }
-
-    fn wake(ptr: *const u32, max_waiters: u32) void {
-        const address = Address.from(ptr);
-        const bucket = Bucket.from(address);
-
-        // Quick check if there's even anything to wake up.
-        // The change to the ptr's value must happen before we check for pending waiters.
-        // If not, the wake() thread could miss a sleeping waiter and have it deadlock:
-        //
-        // - T2: p = has pending waiters (reordered before the ptr update)
-        // - T1: bump pending waiters
-        // - T1: if ptr == expected: sleep()
-        // - T2: update ptr != expected
-        // - T2: p is false from earlier so doesn't wake (T1 missed ptr update and T2 missed T1 sleeping)
-        //
-        // What we really want here is a Release load, but that doesn't exist under the C11 memory model.
-        // We could instead do `bucket.pending.fetchAdd(0, Release) == 0` which achieves effectively the same thing,
-        // LLVM lowers the fetchAdd(0, .release) into an mfence+load which avoids gaining ownership of the cache-line.
-        if (bucket.pending.fetchAdd(0, .release) == 0) {
-            return;
-        }
-
-        // Keep a list of all the waiters notified and wake then up outside the mutex critical section.
-        var notified = WaitList{};
-        defer if (notified.len > 0) {
-            const pending = bucket.pending.fetchSub(notified.len, .monotonic);
-            assert(pending >= notified.len);
-
-            while (notified.pop()) |waiter| {
-                assert(!waiter.is_queued);
-                waiter.event.set();
-            }
-        };
-
-        assert(c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
-        defer assert(c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
-
-        // Another pending check again to avoid the WaitQueue lookup if not necessary.
-        if (bucket.pending.load(.monotonic) > 0) {
-            notified = WaitQueue.remove(&bucket.treap, address, max_waiters);
-        }
+        return result;
     }
 };
 
@@ -12218,6 +13074,9 @@ fn scanEnviron(t: *Threaded) void {
     t.environ.initialized = true;
 
     if (is_windows) {
+        // This value expires with any call that modifies the environment,
+        // which is outside of this Io implementation's control, so references
+        // must be short-lived.
         const ptr = windows.peb().ProcessParameters.Environment;
 
         var i: usize = 0;
@@ -12285,27 +13144,9 @@ fn scanEnviron(t: *Threaded) void {
             }
             comptime assert(@sizeOf(Environ.String) == 0);
         }
-    } else if (builtin.link_libc) {
-        var ptr = std.c.environ;
-        while (ptr[0]) |line| : (ptr += 1) {
-            var line_i: usize = 0;
-            while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
-            const key = line[0..line_i];
-
-            var end_i: usize = line_i;
-            while (line[end_i] != 0) : (end_i += 1) {}
-            const value = line[line_i + 1 .. end_i :0];
-
-            if (std.mem.eql(u8, key, "NO_COLOR")) {
-                t.environ.exist.NO_COLOR = true;
-            } else if (std.mem.eql(u8, key, "CLICOLOR_FORCE")) {
-                t.environ.exist.CLICOLOR_FORCE = true;
-            } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
-                t.environ.string.PATH = value;
-            }
-        }
     } else {
-        for (t.environ.block) |line| {
+        for (t.environ.process_environ.block) |opt_line| {
+            const line = opt_line.?;
             var line_i: usize = 0;
             while (line[line_i] != 0 and line[line_i] != '=') : (line_i += 1) {}
             const key = line[0..line_i];
@@ -12318,13 +13159,2938 @@ fn scanEnviron(t: *Threaded) void {
                 t.environ.exist.NO_COLOR = true;
             } else if (std.mem.eql(u8, key, "CLICOLOR_FORCE")) {
                 t.environ.exist.CLICOLOR_FORCE = true;
-            } else if (@hasField(Environ.String, "PATH") and std.mem.eql(u8, key, "PATH")) {
-                t.environ.string.PATH = value;
+            } else if (std.mem.eql(u8, key, "ZIG_PROGRESS")) {
+                t.environ.zig_progress_handle = std.fmt.parseInt(u31, value, 10) catch error.UnrecognizedFormat;
+            } else inline for (@typeInfo(Environ.String).@"struct".fields) |field| {
+                if (std.mem.eql(u8, key, field.name)) @field(t.environ.string, field.name) = value;
             }
         }
     }
 }
 
+fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) process.ReplaceError {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (!process.can_replace) return error.OperationUnsupported;
+
+    t.scanEnviron(); // for PATH
+    const PATH = t.environ.string.PATH orelse default_PATH;
+
+    var arena_allocator = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+
+    const envp: [*:null]const ?[*:0]const u8 = m: {
+        const prog_fd: i32 = -1;
+        if (options.environ_map) |environ_map| {
+            break :m (try environ_map.createBlockPosix(arena, .{
+                .zig_progress_fd = prog_fd,
+            })).ptr;
+        }
+        break :m (try process.Environ.createBlockPosix(t.environ.process_environ, arena, .{
+            .zig_progress_fd = prog_fd,
+        })).ptr;
+    };
+
+    return posixExecv(options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, envp, PATH);
+}
+
+fn processReplacePath(userdata: ?*anyopaque, dir: Dir, options: process.ReplaceOptions) process.ReplaceError {
+    if (!process.can_replace) return error.OperationUnsupported;
+    _ = userdata;
+    _ = dir;
+    _ = options;
+    @panic("TODO processReplacePath");
+}
+
+fn processSpawnPath(userdata: ?*anyopaque, dir: Dir, options: process.SpawnOptions) process.SpawnError!process.Child {
+    if (!process.can_spawn) return error.OperationUnsupported;
+    _ = userdata;
+    _ = dir;
+    _ = options;
+    @panic("TODO processSpawnPath");
+}
+
+const processSpawn = switch (native_os) {
+    .wasi, .ios, .tvos, .visionos, .watchos => processSpawnUnsupported,
+    .windows => processSpawnWindows,
+    else => processSpawnPosix,
+};
+
+fn processSpawnUnsupported(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
+    _ = userdata;
+    _ = options;
+    return error.OperationUnsupported;
+}
+
+const Spawned = struct {
+    pid: posix.pid_t,
+    err_fd: posix.fd_t,
+    stdin: ?File,
+    stdout: ?File,
+    stderr: ?File,
+};
+
+fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Spawned {
+    // The child process does need to access (one end of) these pipes. However,
+    // we must initially set CLOEXEC to avoid a race condition. If another thread
+    // is racing to spawn a different child process, we don't want it to inherit
+    // these FDs in any scenario; that would mean that, for instance, calls to
+    // `poll` from the parent would not report the child's stdout as closing when
+    // expected, since the other child may retain a reference to the write end of
+    // the pipe. So, we create the pipes with CLOEXEC initially. After fork, we
+    // need to do something in the new child to make sure we preserve the reference
+    // we want. We could use `fcntl` to remove CLOEXEC from the FD, but as it
+    // turns out, we `dup2` everything anyway, so there's no need!
+    const pipe_flags: posix.O = .{ .CLOEXEC = true };
+
+    const stdin_pipe = if (options.stdin == .pipe) try pipe2(pipe_flags) else undefined;
+    errdefer if (options.stdin == .pipe) {
+        destroyPipe(stdin_pipe);
+    };
+
+    const stdout_pipe = if (options.stdout == .pipe) try pipe2(pipe_flags) else undefined;
+    errdefer if (options.stdout == .pipe) {
+        destroyPipe(stdout_pipe);
+    };
+
+    const stderr_pipe = if (options.stderr == .pipe) try pipe2(pipe_flags) else undefined;
+    errdefer if (options.stderr == .pipe) {
+        destroyPipe(stderr_pipe);
+    };
+
+    const any_ignore = (options.stdin == .ignore or options.stdout == .ignore or options.stderr == .ignore);
+    const dev_null_fd = if (any_ignore) try getDevNullFd(t) else undefined;
+
+    const prog_pipe: [2]posix.fd_t = p: {
+        if (options.progress_node.index == .none) {
+            break :p .{ -1, -1 };
+        } else {
+            // We use CLOEXEC for the same reason as in `pipe_flags`.
+            break :p try pipe2(.{ .NONBLOCK = true, .CLOEXEC = true });
+        }
+    };
+    errdefer destroyPipe(prog_pipe);
+
+    var arena_allocator = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    // The POSIX standard does not allow malloc() between fork() and execve(),
+    // and this allocator may be a libc allocator.
+    // I have personally observed the child process deadlocking when it tries
+    // to call malloc() due to a heap allocation between fork() and execve(),
+    // in musl v1.1.24.
+    // Additionally, we want to reduce the number of possible ways things
+    // can fail between fork() and execve().
+    // Therefore, we do all the allocation for the execve() before the fork().
+    // This means we must do the null-termination of argv and env vars here.
+    const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+
+    const prog_fileno = 3;
+    comptime assert(@max(posix.STDIN_FILENO, posix.STDOUT_FILENO, posix.STDERR_FILENO) + 1 == prog_fileno);
+
+    const envp: [*:null]const ?[*:0]const u8 = m: {
+        const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
+        if (options.environ_map) |environ_map| {
+            break :m (try environ_map.createBlockPosix(arena, .{
+                .zig_progress_fd = prog_fd,
+            })).ptr;
+        }
+        break :m (try process.Environ.createBlockPosix(t.environ.process_environ, arena, .{
+            .zig_progress_fd = prog_fd,
+        })).ptr;
+    };
+
+    // This pipe communicates to the parent errors in the child between `fork` and `execvpe`.
+    // It is closed by the child (via CLOEXEC) without writing if `execvpe` succeeds.
+    const err_pipe: [2]posix.fd_t = try pipe2(.{ .CLOEXEC = true });
+    errdefer destroyPipe(err_pipe);
+
+    t.scanEnviron(); // for PATH
+    const PATH = t.environ.string.PATH orelse default_PATH;
+
+    const pid_result: posix.pid_t = fork: {
+        const rc = posix.system.fork();
+        switch (posix.errno(rc)) {
+            .SUCCESS => break :fork @intCast(rc),
+            .AGAIN => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .NOSYS => return error.OperationUnsupported,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    };
+
+    if (pid_result == 0) {
+        defer comptime unreachable; // We are the child.
+        if (Thread.current) |current_thread| current_thread.cancel_protection = .blocked;
+        const ep1 = err_pipe[1];
+
+        setUpChildIo(options.stdin, stdin_pipe[0], posix.STDIN_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
+        setUpChildIo(options.stdout, stdout_pipe[1], posix.STDOUT_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
+        setUpChildIo(options.stderr, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
+
+        if (options.cwd_dir) |cwd| {
+            fchdir(cwd.handle) catch |err| forkBail(ep1, err);
+        } else if (options.cwd) |cwd| {
+            chdir(cwd) catch |err| forkBail(ep1, err);
+        }
+
+        // Must happen after fchdir above, the cwd file descriptor might be
+        // equal to prog_fileno and be clobbered by this dup2 call.
+        if (prog_pipe[1] != -1) dup2(prog_pipe[1], prog_fileno) catch |err| forkBail(ep1, err);
+
+        if (options.gid) |gid| {
+            switch (posix.errno(posix.system.setregid(gid, gid))) {
+                .SUCCESS => {},
+                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
+                .INVAL => forkBail(ep1, error.InvalidUserId),
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
+            }
+        }
+
+        if (options.uid) |uid| {
+            switch (posix.errno(posix.system.setreuid(uid, uid))) {
+                .SUCCESS => {},
+                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
+                .INVAL => forkBail(ep1, error.InvalidUserId),
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
+            }
+        }
+
+        if (options.pgid) |pid| {
+            switch (posix.errno(posix.system.setpgid(0, pid))) {
+                .SUCCESS => {},
+                .ACCES => forkBail(ep1, error.ProcessAlreadyExec),
+                .INVAL => forkBail(ep1, error.InvalidProcessGroupId),
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
+            }
+        }
+
+        if (options.start_suspended) {
+            switch (posix.errno(posix.system.kill(posix.system.getpid(), .STOP))) {
+                .SUCCESS => {},
+                .PERM => forkBail(ep1, error.PermissionDenied),
+                else => forkBail(ep1, error.Unexpected),
+            }
+        }
+
+        const err = posixExecv(options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, envp, PATH);
+        forkBail(ep1, err);
+    }
+
+    const pid: posix.pid_t = @intCast(pid_result); // We are the parent.
+    errdefer comptime unreachable; // The child is forked; we must not error from now on
+
+    posix.close(err_pipe[1]); // make sure only the child holds the write end open
+
+    if (options.stdin == .pipe) posix.close(stdin_pipe[0]);
+    if (options.stdout == .pipe) posix.close(stdout_pipe[1]);
+    if (options.stderr == .pipe) posix.close(stderr_pipe[1]);
+
+    if (prog_pipe[1] != -1) posix.close(prog_pipe[1]);
+
+    options.progress_node.setIpcFd(prog_pipe[0]);
+
+    return .{
+        .pid = pid,
+        .err_fd = err_pipe[0],
+        .stdin = switch (options.stdin) {
+            .pipe => .{ .handle = stdin_pipe[1] },
+            else => null,
+        },
+        .stdout = switch (options.stdout) {
+            .pipe => .{ .handle = stdout_pipe[0] },
+            else => null,
+        },
+        .stderr = switch (options.stderr) {
+            .pipe => .{ .handle = stderr_pipe[0] },
+            else => null,
+        },
+    };
+}
+
+fn getDevNullFd(t: *Threaded) !posix.fd_t {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+        if (t.null_file.fd != -1) return t.null_file.fd;
+    }
+    const mode: u32 = 0;
+    const syscall: Syscall = try .start();
+    while (true) {
+        const rc = open_sym("/dev/null", .{ .ACCMODE = .RDWR }, mode);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                syscall.finish();
+                const fresh_fd: posix.fd_t = @intCast(rc);
+                t.mutex.lock(); // Another thread might have won the race.
+                defer t.mutex.unlock();
+                if (t.null_file.fd != -1) {
+                    posix.close(fresh_fd);
+                    return t.null_file.fd;
+                } else {
+                    t.null_file.fd = fresh_fd;
+                    return fresh_fd;
+                }
+            },
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+            .NFILE => return syscall.fail(error.SystemFdQuotaExceeded),
+            .NODEV => return syscall.fail(error.NoDevice),
+            .NOENT => return syscall.fail(error.FileNotFound),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            else => |err| return syscall.unexpectedErrno(err),
+        }
+    }
+}
+
+fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const spawned = try spawnPosix(t, options);
+    defer posix.close(spawned.err_fd);
+
+    // Wait for the child to report any errors in or before `execvpe`.
+    if (readIntFd(spawned.err_fd)) |child_err_int| {
+        const child_err: process.SpawnError = @errorCast(@errorFromInt(child_err_int));
+        return child_err;
+    } else |read_err| switch (read_err) {
+        error.EndOfStream => {
+            // Write end closed by CLOEXEC at the time of the `execvpe` call,
+            // indicating success.
+        },
+        else => {
+            // Problem reading the error from the error reporting pipe. We
+            // don't know if the child is alive or dead. Better to assume it is
+            // alive so the resource does not risk being leaked.
+        },
+    }
+
+    return .{
+        .id = spawned.pid,
+        .thread_handle = {},
+        .stdin = spawned.stdin,
+        .stdout = spawned.stdout,
+        .stderr = spawned.stderr,
+        .request_resource_usage_statistics = options.request_resource_usage_statistics,
+    };
+}
+
+fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitError!process.Child.Term {
+    if (native_os == .wasi) unreachable;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    switch (native_os) {
+        .windows => return childWaitWindows(child),
+        else => return childWaitPosix(child),
+    }
+}
+
+fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
+    if (native_os == .wasi) unreachable;
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    if (is_windows) {
+        childKillWindows(t, child, 1) catch childCleanupWindows(child);
+    } else {
+        childKillPosix(child) catch {};
+        childCleanupPosix(child);
+    }
+}
+
+fn childKillWindows(t: *Threaded, child: *process.Child, exit_code: windows.UINT) !void {
+    _ = t; // TODO cancelation
+    const handle = child.id.?;
+    if (windows.kernel32.TerminateProcess(handle, exit_code) == 0) {
+        switch (windows.GetLastError()) {
+            .ACCESS_DENIED => {
+                // Usually when TerminateProcess triggers a ACCESS_DENIED error, it
+                // indicates that the process has already exited, but there may be
+                // some rare edge cases where our process handle no longer has the
+                // PROCESS_TERMINATE access right, so let's do another check to make
+                // sure the process is really no longer running:
+                windows.WaitForSingleObjectEx(handle, 0, false) catch return error.AccessDenied;
+                return error.AlreadyTerminated;
+            },
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    _ = windows.kernel32.WaitForSingleObjectEx(handle, windows.INFINITE, windows.FALSE);
+    childCleanupWindows(child);
+}
+
+fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child.Term {
+    const handle = child.id.?;
+
+    const syscall: Syscall = try .start();
+    while (true) switch (windows.kernel32.WaitForSingleObjectEx(handle, windows.INFINITE, windows.FALSE)) {
+        windows.WAIT_OBJECT_0 => break syscall.finish(),
+        windows.WAIT_ABANDONED, windows.WAIT_TIMEOUT => {
+            try syscall.checkCancel();
+            continue;
+        },
+        windows.WAIT_FAILED => {
+            syscall.finish();
+            switch (windows.GetLastError()) {
+                else => |err| return windows.unexpectedError(err),
+            }
+        },
+        else => return syscall.fail(error.Unexpected),
+    };
+
+    const term: process.Child.Term = x: {
+        var exit_code: windows.DWORD = undefined;
+        if (windows.kernel32.GetExitCodeProcess(handle, &exit_code) == 0) {
+            break :x .{ .unknown = 0 };
+        } else {
+            break :x .{ .exited = @as(u8, @truncate(exit_code)) };
+        }
+    };
+
+    childCleanupWindows(child);
+    return term;
+}
+
+fn childCleanupWindows(child: *process.Child) void {
+    const handle = child.id orelse return;
+
+    if (child.request_resource_usage_statistics)
+        child.resource_usage_statistics.rusage = windows.GetProcessMemoryInfo(handle) catch null;
+
+    windows.CloseHandle(handle);
+    child.id = null;
+
+    windows.CloseHandle(child.thread_handle);
+    child.thread_handle = undefined;
+
+    if (child.stdin) |*stdin| {
+        windows.CloseHandle(stdin.handle);
+        child.stdin = null;
+    }
+    if (child.stdout) |*stdout| {
+        windows.CloseHandle(stdout.handle);
+        child.stdout = null;
+    }
+    if (child.stderr) |*stderr| {
+        windows.CloseHandle(stderr.handle);
+        child.stderr = null;
+    }
+}
+
+fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.Term {
+    defer childCleanupPosix(child);
+
+    const pid = child.id.?;
+
+    var ru: posix.rusage = undefined;
+    const ru_ptr = if (child.request_resource_usage_statistics) &ru else null;
+
+    if (have_wait4) {
+        var status: if (builtin.link_libc) c_int else u32 = undefined;
+        const syscall: Syscall = try .start();
+        while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, ru_ptr))) {
+            .SUCCESS => {
+                syscall.finish();
+                if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
+                return statusToTerm(@bitCast(status));
+            },
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .CHILD => |err| return syscall.errnoBug(err), // Double-free.
+            else => |err| return syscall.unexpectedErrno(err),
+        };
+    }
+
+    if (have_waitid) {
+        const linux = std.os.linux; // Bypass libc which has the wrong signature.
+        var info: linux.siginfo_t = undefined;
+        const syscall: Syscall = try .start();
+        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, ru_ptr))) {
+            .SUCCESS => {
+                syscall.finish();
+                if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
+                const status: u32 = @bitCast(info.fields.common.second.sigchld.status);
+                const code: linux.CLD = @enumFromInt(info.code);
+                return switch (code) {
+                    .EXITED => .{ .exited = @truncate(status) },
+                    .KILLED, .DUMPED => .{ .signal = @enumFromInt(status) },
+                    .TRAPPED, .STOPPED => .{ .stopped = status },
+                    _, .CONTINUED => .{ .unknown = status },
+                };
+            },
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .CHILD => |err| return syscall.errnoBug(err), // Double-free.
+            else => |err| return syscall.unexpectedErrno(err),
+        };
+    }
+
+    var status: if (builtin.link_libc) c_int else u32 = undefined;
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.waitpid(pid, &status, 0))) {
+        .SUCCESS => {
+            syscall.finish();
+            return statusToTerm(@bitCast(status));
+        },
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .CHILD => |err| return syscall.errnoBug(err), // Double-free.
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+fn statusToTerm(status: u32) process.Child.Term {
+    return if (posix.W.IFEXITED(status))
+        .{ .exited = posix.W.EXITSTATUS(status) }
+    else if (posix.W.IFSIGNALED(status))
+        .{ .signal = posix.W.TERMSIG(status) }
+    else if (posix.W.IFSTOPPED(status))
+        .{ .stopped = posix.W.STOPSIG(status) }
+    else
+        .{ .unknown = status };
+}
+
+fn childKillPosix(child: *process.Child) !void {
+    // Entire function body is intentionally uncancelable.
+
+    const pid = child.id.?;
+
+    while (true) switch (posix.errno(posix.system.kill(pid, .TERM))) {
+        .SUCCESS => break,
+        .INTR => continue,
+        .PERM => return error.PermissionDenied,
+        .INVAL => |err| return errnoBug(err),
+        .SRCH => |err| return errnoBug(err),
+        else => |err| return posix.unexpectedErrno(err),
+    };
+
+    if (have_wait4) {
+        var status: if (builtin.link_libc) c_int else u32 = undefined;
+        while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, null))) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .CHILD => |err| return errnoBug(err), // Double-free.
+            else => |err| return posix.unexpectedErrno(err),
+        };
+    }
+
+    if (have_waitid) {
+        const linux = std.os.linux; // Bypass libc which has the wrong signature.
+        var info: linux.siginfo_t = undefined;
+        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, null))) {
+            .SUCCESS => return,
+            .INTR => continue,
+            .CHILD => |err| return errnoBug(err), // Double-free.
+            else => |err| return posix.unexpectedErrno(err),
+        };
+    }
+
+    var status: if (builtin.link_libc) c_int else u32 = undefined;
+    while (true) switch (posix.errno(posix.system.waitpid(pid, &status, 0))) {
+        .SUCCESS => return,
+        .INTR => continue,
+        .CHILD => |err| return errnoBug(err), // Double-free.
+        else => |err| return posix.unexpectedErrno(err),
+    };
+}
+
+fn childCleanupPosix(child: *process.Child) void {
+    if (child.stdin) |*stdin| {
+        posix.close(stdin.handle);
+        child.stdin = null;
+    }
+    if (child.stdout) |*stdout| {
+        posix.close(stdout.handle);
+        child.stdout = null;
+    }
+    if (child.stderr) |*stderr| {
+        posix.close(stderr.handle);
+        child.stderr = null;
+    }
+    child.id = null;
+}
+
+/// Errors that can occur between fork() and execv()
+const ForkBailError = process.SpawnError || process.ReplaceError;
+
+/// Child of fork calls this to report an error to the fork parent. Then the
+/// child exits.
+fn forkBail(fd: posix.fd_t, err: ForkBailError) noreturn {
+    writeIntFd(fd, @as(ErrInt, @intFromError(err))) catch {};
+    // If we're linking libc, some naughty applications may have registered atexit handlers
+    // which we really do not want to run in the fork child. I caught LLVM doing this and
+    // it caused a deadlock instead of doing an exit syscall. In the words of Avril Lavigne,
+    // "Why'd you have to go and make things so complicated?"
+    if (builtin.link_libc) {
+        // The `_exit` function does nothing but make the exit syscall, unlike `exit`.
+        std.c._exit(1);
+    } else if (native_os == .linux and !builtin.single_threaded) {
+        std.os.linux.exit_group(1);
+    } else {
+        posix.system.exit(1);
+    }
+}
+
+fn writeIntFd(fd: posix.fd_t, value: ErrInt) !void {
+    var buffer: [8]u8 = undefined;
+    std.mem.writeInt(u64, &buffer, value, .little);
+    // Skip the cancel mechanism.
+    var i: usize = 0;
+    while (true) {
+        const rc = posix.system.write(fd, buffer[i..].ptr, buffer.len - i);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                const n: usize = @intCast(rc);
+                i += n;
+                if (buffer.len - i == 0) return;
+            },
+            .INTR => continue,
+            else => return error.SystemResources,
+        }
+    }
+}
+
+fn readIntFd(fd: posix.fd_t) !ErrInt {
+    var buffer: [8]u8 = undefined;
+    var i: usize = 0;
+    while (true) {
+        const rc = posix.system.read(fd, buffer[i..].ptr, buffer.len - i);
+        switch (posix.errno(rc)) {
+            .SUCCESS => {
+                const n: usize = @intCast(rc);
+                if (n == 0) break;
+                i += n;
+                continue;
+            },
+            .INTR => continue,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+    if (buffer.len - i != 0) return error.EndOfStream;
+    return @intCast(std.mem.readInt(u64, &buffer, .little));
+}
+
+const ErrInt = std.meta.Int(.unsigned, @sizeOf(anyerror) * 8);
+
+fn destroyPipe(pipe: [2]posix.fd_t) void {
+    if (pipe[0] != -1) posix.close(pipe[0]);
+    if (pipe[0] != pipe[1]) posix.close(pipe[1]);
+}
+
+fn setUpChildIo(stdio: process.SpawnOptions.StdIo, pipe_fd: i32, std_fileno: i32, dev_null_fd: i32) !void {
+    switch (stdio) {
+        .pipe => try dup2(pipe_fd, std_fileno),
+        .close => posix.close(std_fileno),
+        .inherit => {},
+        .ignore => try dup2(dev_null_fd, std_fileno),
+        .file => @panic("TODO implement setUpChildIo when file is used"),
+    }
+}
+
+fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    var saAttr: windows.SECURITY_ATTRIBUTES = .{
+        .nLength = @sizeOf(windows.SECURITY_ATTRIBUTES),
+        .bInheritHandle = windows.TRUE,
+        .lpSecurityDescriptor = null,
+    };
+
+    const any_ignore =
+        options.stdin == .ignore or
+        options.stdout == .ignore or
+        options.stderr == .ignore;
+
+    const nul_handle = if (any_ignore) try getNulHandle(t) else undefined;
+
+    var g_hChildStd_IN_Rd: ?windows.HANDLE = null;
+    var g_hChildStd_IN_Wr: ?windows.HANDLE = null;
+    switch (options.stdin) {
+        .pipe => {
+            try windowsMakePipeIn(&g_hChildStd_IN_Rd, &g_hChildStd_IN_Wr, &saAttr);
+        },
+        .ignore => {
+            g_hChildStd_IN_Rd = nul_handle;
+        },
+        .inherit => {
+            g_hChildStd_IN_Rd = windows.GetStdHandle(windows.STD_INPUT_HANDLE) catch null;
+        },
+        .close => {
+            g_hChildStd_IN_Rd = null;
+        },
+        .file => @panic("TODO implement passing file stdio in processSpawnWindows"),
+    }
+    errdefer if (options.stdin == .pipe) {
+        windowsDestroyPipe(g_hChildStd_IN_Rd, g_hChildStd_IN_Wr);
+    };
+
+    var g_hChildStd_OUT_Rd: ?windows.HANDLE = null;
+    var g_hChildStd_OUT_Wr: ?windows.HANDLE = null;
+    switch (options.stdout) {
+        .pipe => {
+            try windowsMakeAsyncPipe(&g_hChildStd_OUT_Rd, &g_hChildStd_OUT_Wr, &saAttr);
+        },
+        .ignore => {
+            g_hChildStd_OUT_Wr = nul_handle;
+        },
+        .inherit => {
+            g_hChildStd_OUT_Wr = windows.GetStdHandle(windows.STD_OUTPUT_HANDLE) catch null;
+        },
+        .close => {
+            g_hChildStd_OUT_Wr = null;
+        },
+        .file => @panic("TODO implement passing file stdio in processSpawnWindows"),
+    }
+    errdefer if (options.stdout == .pipe) {
+        windowsDestroyPipe(g_hChildStd_OUT_Rd, g_hChildStd_OUT_Wr);
+    };
+
+    var g_hChildStd_ERR_Rd: ?windows.HANDLE = null;
+    var g_hChildStd_ERR_Wr: ?windows.HANDLE = null;
+    switch (options.stderr) {
+        .pipe => {
+            try windowsMakeAsyncPipe(&g_hChildStd_ERR_Rd, &g_hChildStd_ERR_Wr, &saAttr);
+        },
+        .ignore => {
+            g_hChildStd_ERR_Wr = nul_handle;
+        },
+        .inherit => {
+            g_hChildStd_ERR_Wr = windows.GetStdHandle(windows.STD_ERROR_HANDLE) catch null;
+        },
+        .close => {
+            g_hChildStd_ERR_Wr = null;
+        },
+        .file => @panic("TODO implement passing file stdio in processSpawnWindows"),
+    }
+    errdefer if (options.stderr == .pipe) {
+        windowsDestroyPipe(g_hChildStd_ERR_Rd, g_hChildStd_ERR_Wr);
+    };
+
+    var siStartInfo: windows.STARTUPINFOW = .{
+        .cb = @sizeOf(windows.STARTUPINFOW),
+        .hStdError = g_hChildStd_ERR_Wr,
+        .hStdOutput = g_hChildStd_OUT_Wr,
+        .hStdInput = g_hChildStd_IN_Rd,
+        .dwFlags = windows.STARTF_USESTDHANDLES,
+
+        .lpReserved = null,
+        .lpDesktop = null,
+        .lpTitle = null,
+        .dwX = 0,
+        .dwY = 0,
+        .dwXSize = 0,
+        .dwYSize = 0,
+        .dwXCountChars = 0,
+        .dwYCountChars = 0,
+        .dwFillAttribute = 0,
+        .wShowWindow = 0,
+        .cbReserved2 = 0,
+        .lpReserved2 = null,
+    };
+    var piProcInfo: windows.PROCESS_INFORMATION = undefined;
+
+    var arena_allocator = std.heap.ArenaAllocator.init(t.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    const cwd_w = if (options.cwd) |cwd| try std.unicode.wtf8ToWtf16LeAllocZ(arena, cwd) else null;
+    const cwd_w_ptr = if (cwd_w) |cwd| cwd.ptr else null;
+
+    const maybe_envp_buf = if (options.environ_map) |environ_map| try environ_map.createBlockWindows(arena) else null;
+    const envp_ptr = if (maybe_envp_buf) |envp_buf| envp_buf.ptr else null;
+
+    const app_name_wtf8 = options.argv[0];
+    const app_name_is_absolute = Dir.path.isAbsolute(app_name_wtf8);
+
+    // The cwd provided by options is in effect when choosing the executable
+    // path to match POSIX semantics.
+    var cwd_path_w_needs_free = false;
+    const cwd_path_w = x: {
+        // If the app name is absolute, then we need to use its dirname as the cwd
+        if (app_name_is_absolute) {
+            cwd_path_w_needs_free = true;
+            const dir = Dir.path.dirname(app_name_wtf8).?;
+            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, dir);
+        } else if (options.cwd) |cwd| {
+            cwd_path_w_needs_free = true;
+            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, cwd);
+        } else {
+            break :x &[_:0]u16{}; // empty for cwd
+        }
+    };
+
+    // If the app name has more than just a filename, then we need to separate
+    // that into the basename and dirname and use the dirname as an addition to
+    // the cwd path. This is because NtQueryDirectoryFile cannot accept
+    // FileName params with path separators.
+    const app_basename_wtf8 = Dir.path.basename(app_name_wtf8);
+    // If the app name is absolute, then the cwd will already have the app's dirname in it,
+    // so only populate app_dirname if app name is a relative path with > 0 path separators.
+    const maybe_app_dirname_wtf8 = if (!app_name_is_absolute) Dir.path.dirname(app_name_wtf8) else null;
+    const app_dirname_w: ?[:0]u16 = x: {
+        if (maybe_app_dirname_wtf8) |app_dirname_wtf8| {
+            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, app_dirname_wtf8);
+        }
+        break :x null;
+    };
+    const app_name_w = try std.unicode.wtf8ToWtf16LeAllocZ(arena, app_basename_wtf8);
+
+    const flags: windows.CreateProcessFlags = .{
+        .create_suspended = options.start_suspended,
+        .create_unicode_environment = true,
+        .create_no_window = options.create_no_window,
+    };
+
+    run: {
+        // We have to scan each time because the PEB environment pointer is not stable.
+        const env_strings: WindowsEnvironStrings = .scan();
+        const PATH = env_strings.PATH orelse &[_:0]u16{};
+        const PATHEXT = env_strings.PATHEXT orelse &[_:0]u16{};
+
+        // In case the command ends up being a .bat/.cmd script, we need to escape things using the cmd.exe rules
+        // and invoke cmd.exe ourselves in order to mitigate arbitrary command execution from maliciously
+        // constructed arguments.
+        //
+        // We'll need to wait until we're actually trying to run the command to know for sure
+        // if the resolved command has the `.bat` or `.cmd` extension, so we defer actually
+        // serializing the command line until we determine how it should be serialized.
+        var cmd_line_cache = WindowsCommandLineCache.init(arena, options.argv);
+
+        var app_buf: std.ArrayList(u16) = .empty;
+        try app_buf.appendSlice(arena, app_name_w);
+
+        var dir_buf: std.ArrayList(u16) = .empty;
+
+        if (cwd_path_w.len > 0) {
+            try dir_buf.appendSlice(arena, cwd_path_w);
+        }
+        if (app_dirname_w) |app_dir| {
+            if (dir_buf.items.len > 0) try dir_buf.append(arena, Dir.path.sep);
+            try dir_buf.appendSlice(arena, app_dir);
+        }
+
+        windowsCreateProcessPathExt(
+            arena,
+            &dir_buf,
+            &app_buf,
+            PATHEXT,
+            &cmd_line_cache,
+            envp_ptr,
+            cwd_w_ptr,
+            flags,
+            &siStartInfo,
+            &piProcInfo,
+        ) catch |no_path_err| {
+            const original_err = switch (no_path_err) {
+                // argv[0] contains unsupported characters that will never resolve to a valid exe.
+                error.InvalidArg0 => return error.FileNotFound,
+                error.FileNotFound, error.InvalidExe, error.AccessDenied => |e| e,
+                error.UnrecoverableInvalidExe => return error.InvalidExe,
+                else => |e| return e,
+            };
+
+            // If the app name had path separators, that disallows PATH searching,
+            // and there's no need to search the PATH if the app name is absolute.
+            // We still search the path if the cwd is absolute because of the
+            // "cwd provided by options is in effect when choosing the executable path
+            // to match posix semantics" behavior--we don't want to skip searching
+            // the PATH just because we were trying to set the cwd of the child process.
+            if (app_dirname_w != null or app_name_is_absolute) {
+                return original_err;
+            }
+
+            var it = std.mem.tokenizeScalar(u16, PATH, ';');
+            while (it.next()) |search_path| {
+                dir_buf.clearRetainingCapacity();
+                try dir_buf.appendSlice(arena, search_path);
+
+                if (windowsCreateProcessPathExt(
+                    arena,
+                    &dir_buf,
+                    &app_buf,
+                    PATHEXT,
+                    &cmd_line_cache,
+                    envp_ptr,
+                    cwd_w_ptr,
+                    flags,
+                    &siStartInfo,
+                    &piProcInfo,
+                )) {
+                    break :run;
+                } else |err| switch (err) {
+                    // argv[0] contains unsupported characters that will never resolve to a valid exe.
+                    error.InvalidArg0 => return error.FileNotFound,
+                    error.FileNotFound, error.AccessDenied, error.InvalidExe => continue,
+                    error.UnrecoverableInvalidExe => return error.InvalidExe,
+                    else => |e| return e,
+                }
+            } else {
+                return original_err;
+            }
+        };
+    }
+
+    if (options.stdin == .pipe) windows.CloseHandle(g_hChildStd_IN_Rd.?);
+    if (options.stderr == .pipe) windows.CloseHandle(g_hChildStd_ERR_Wr.?);
+    if (options.stdout == .pipe) windows.CloseHandle(g_hChildStd_OUT_Wr.?);
+
+    return .{
+        .id = piProcInfo.hProcess,
+        .thread_handle = piProcInfo.hThread,
+        .stdin = if (g_hChildStd_IN_Wr) |h| .{ .handle = h } else null,
+        .stdout = if (g_hChildStd_OUT_Rd) |h| .{ .handle = h } else null,
+        .stderr = if (g_hChildStd_ERR_Rd) |h| .{ .handle = h } else null,
+        .request_resource_usage_statistics = options.request_resource_usage_statistics,
+    };
+}
+
+fn getCngHandle(t: *Threaded) Io.RandomSecureError!windows.HANDLE {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+        if (t.random_file.handle) |handle| return handle;
+    }
+
+    const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'C', 'N', 'G' };
+
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = device_path.len * 2,
+        .MaximumLength = 0,
+        .Buffer = @constCast(&device_path),
+    };
+    var fresh_handle: windows.HANDLE = undefined;
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtOpenFile(
+        &fresh_handle,
+        .{
+            .STANDARD = .{ .SYNCHRONIZE = true },
+            .SPECIFIC = .{ .FILE = .{ .READ_DATA = true } },
+        },
+        &.{
+            .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+            .RootDirectory = null,
+            .ObjectName = &nt_name,
+            .Attributes = .{},
+            .SecurityDescriptor = null,
+            .SecurityQualityOfService = null,
+        },
+        &io_status_block,
+        .VALID_FLAGS,
+        .{ .IO = .SYNCHRONOUS_NONALERT },
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            t.mutex.lock(); // Another thread might have won the race.
+            defer t.mutex.unlock();
+            if (t.random_file.handle) |prev_handle| {
+                _ = windows.ntdll.NtClose(fresh_handle);
+                return prev_handle;
+            } else {
+                t.random_file.handle = fresh_handle;
+                return fresh_handle;
+            }
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.EntropyUnavailable), // Observed on wine 10.0
+        else => return syscall.fail(error.EntropyUnavailable),
+    };
+}
+
+fn getNulHandle(t: *Threaded) !windows.HANDLE {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+        if (t.null_file.handle) |handle| return handle;
+    }
+
+    const device_path = [_]u16{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'N', 'u', 'l', 'l' };
+    var nt_name: windows.UNICODE_STRING = .{
+        .Length = device_path.len * 2,
+        .MaximumLength = 0,
+        .Buffer = @constCast(&device_path),
+    };
+    const attr: windows.OBJECT_ATTRIBUTES = .{
+        .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
+        .RootDirectory = null,
+        .Attributes = .{
+            .INHERIT = true,
+        },
+        .ObjectName = &nt_name,
+        .SecurityDescriptor = null,
+        .SecurityQualityOfService = null,
+    };
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    var fresh_handle: windows.HANDLE = undefined;
+    var syscall: Syscall = try .start();
+    while (true) switch (windows.ntdll.NtCreateFile(
+        &fresh_handle,
+        .{
+            .STANDARD = .{ .SYNCHRONIZE = true },
+            .GENERIC = .{ .WRITE = true, .READ = true },
+        },
+        &attr,
+        &io_status_block,
+        null,
+        .{ .NORMAL = true },
+        .VALID_FLAGS,
+        .OPEN,
+        .{
+            .DIRECTORY_FILE = false,
+            .NON_DIRECTORY_FILE = true,
+            .IO = .SYNCHRONOUS_NONALERT,
+            .OPEN_REPARSE_POINT = false,
+        },
+        null,
+        0,
+    )) {
+        .SUCCESS => {
+            syscall.finish();
+            t.mutex.lock(); // Another thread might have won the race.
+            defer t.mutex.unlock();
+            if (t.null_file.handle) |prev_handle| {
+                windows.CloseHandle(fresh_handle);
+                return prev_handle;
+            } else {
+                t.null_file.handle = fresh_handle;
+                return fresh_handle;
+            }
+        },
+        .DELETE_PENDING => {
+            // This error means that there *was* a file in this location on
+            // the file system, but it was deleted. However, the OS is not
+            // finished with the deletion operation, and so this CreateFile
+            // call has failed. There is not really a sane way to handle
+            // this other than retrying the creation after the OS finishes
+            // the deletion.
+            syscall.finish();
+            try parking_sleep.sleep(.{ .duration = .{
+                .raw = .fromMilliseconds(1),
+                .clock = .awake,
+            } });
+            syscall = try .start();
+            continue;
+        },
+        .CANCELLED => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .INVALID_PARAMETER => |status| return syscall.ntstatusBug(status),
+        .OBJECT_PATH_SYNTAX_BAD => |status| return syscall.ntstatusBug(status),
+        .INVALID_HANDLE => |status| return syscall.ntstatusBug(status),
+        .OBJECT_NAME_INVALID => return syscall.fail(error.BadPathName),
+        .OBJECT_NAME_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .OBJECT_PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+        .NO_MEDIA_IN_DEVICE => return syscall.fail(error.NoDevice),
+        .SHARING_VIOLATION => return syscall.fail(error.AccessDenied),
+        .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+        .PIPE_NOT_AVAILABLE => return syscall.fail(error.NoDevice),
+        .FILE_IS_A_DIRECTORY => return syscall.fail(error.IsDir),
+        .NOT_A_DIRECTORY => return syscall.fail(error.NotDir),
+        .USER_MAPPED_FILE => return syscall.fail(error.AccessDenied),
+        else => |status| return syscall.unexpectedNtstatus(status),
+    };
+}
+
+/// Expects `app_buf` to contain exactly the app name, and `dir_buf` to contain exactly the dir path.
+/// After return, `app_buf` will always contain exactly the app name and `dir_buf` will always contain exactly the dir path.
+/// Note: `app_buf` should not contain any leading path separators.
+/// Note: If the dir is the cwd, dir_buf should be empty (len = 0).
+fn windowsCreateProcessPathExt(
+    arena: Allocator,
+    dir_buf: *std.ArrayList(u16),
+    app_buf: *std.ArrayList(u16),
+    pathext: [:0]const u16,
+    cmd_line_cache: *WindowsCommandLineCache,
+    envp_ptr: ?[*:0]const u16,
+    cwd_ptr: ?[*:0]u16,
+    flags: windows.CreateProcessFlags,
+    lpStartupInfo: *windows.STARTUPINFOW,
+    lpProcessInformation: *windows.PROCESS_INFORMATION,
+) !void {
+    const app_name_len = app_buf.items.len;
+    const dir_path_len = dir_buf.items.len;
+
+    if (app_name_len == 0) return error.FileNotFound;
+
+    defer app_buf.shrinkRetainingCapacity(app_name_len);
+    defer dir_buf.shrinkRetainingCapacity(dir_path_len);
+
+    // The name of the game here is to avoid CreateProcessW calls at all costs,
+    // and only ever try calling it when we have a real candidate for execution.
+    // Secondarily, we want to minimize the number of syscalls used when checking
+    // for each PATHEXT-appended version of the app name.
+    //
+    // An overview of the technique used:
+    // - Open the search directory for iteration (either cwd or a path from PATH)
+    // - Use NtQueryDirectoryFile with a wildcard filename of `<app name>*` to
+    //   check if anything that could possibly match either the unappended version
+    //   of the app name or any of the versions with a PATHEXT value appended exists.
+    // - If the wildcard NtQueryDirectoryFile call found nothing, we can exit early
+    //   without needing to use PATHEXT at all.
+    //
+    // This allows us to use a <open dir, NtQueryDirectoryFile, close dir> sequence
+    // for any directory that doesn't contain any possible matches, instead of having
+    // to use a separate look up for each individual filename combination (unappended +
+    // each PATHEXT appended). For directories where the wildcard *does* match something,
+    // we iterate the matches and take note of any that are either the unappended version,
+    // or a version with a supported PATHEXT appended. We then try calling CreateProcessW
+    // with the found versions in the appropriate order.
+    var dir = dir: {
+        // needs to be null-terminated
+        try dir_buf.append(arena, 0);
+        defer dir_buf.shrinkRetainingCapacity(dir_path_len);
+        const dir_path_z = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
+        const prefixed_path = try windows.wToPrefixedFileW(null, dir_path_z);
+        break :dir dirOpenDirWindows(.cwd(), prefixed_path.span(), .{
+            .iterate = true,
+        }) catch |err| switch (err) {
+            // These errors must not be ignored because they should not be able
+            // to affect which file is chosen to execute. Also `error.Canceled`
+            // must never be swallowed.
+            error.Canceled,
+            error.SystemResources,
+            error.Unexpected,
+            error.ProcessFdQuotaExceeded,
+            error.SystemFdQuotaExceeded,
+            => |e| return e,
+
+            error.AccessDenied,
+            error.PermissionDenied,
+            error.SymLinkLoop,
+            error.FileNotFound,
+            error.NotDir,
+            error.NoDevice,
+            error.NetworkNotFound,
+            error.NameTooLong,
+            error.BadPathName,
+            => return error.FileNotFound,
+        };
+    };
+    defer windows.CloseHandle(dir.handle);
+
+    // Add wildcard and null-terminator
+    try app_buf.append(arena, '*');
+    try app_buf.append(arena, 0);
+    const app_name_wildcard = app_buf.items[0 .. app_buf.items.len - 1 :0];
+
+    // This 2048 is arbitrary, we just want it to be large enough to get multiple FILE_DIRECTORY_INFORMATION entries
+    // returned per NtQueryDirectoryFile call.
+    var file_information_buf: [2048]u8 align(@alignOf(windows.FILE_DIRECTORY_INFORMATION)) = undefined;
+    const file_info_maximum_single_entry_size = @sizeOf(windows.FILE_DIRECTORY_INFORMATION) + (windows.NAME_MAX * 2);
+    if (file_information_buf.len < file_info_maximum_single_entry_size) {
+        @compileError("file_information_buf must be large enough to contain at least one maximum size FILE_DIRECTORY_INFORMATION entry");
+    }
+    var io_status: windows.IO_STATUS_BLOCK = undefined;
+
+    const num_supported_pathext = @typeInfo(process.WindowsExtension).@"enum".fields.len;
+    var pathext_seen = [_]bool{false} ** num_supported_pathext;
+    var any_pathext_seen = false;
+    var unappended_exists = false;
+
+    // Fully iterate the wildcard matches via NtQueryDirectoryFile and take note of all versions
+    // of the app_name we should try to spawn.
+    // Note: This is necessary because the order of the files returned is filesystem-dependent:
+    //       On NTFS, `blah.exe*` will always return `blah.exe` first if it exists.
+    //       On FAT32, it's possible for something like `blah.exe.obj` to be returned first.
+    while (true) {
+        const app_name_len_bytes = std.math.cast(u16, app_name_wildcard.len * 2) orelse return error.NameTooLong;
+        var app_name_unicode_string = windows.UNICODE_STRING{
+            .Length = app_name_len_bytes,
+            .MaximumLength = app_name_len_bytes,
+            .Buffer = @constCast(app_name_wildcard.ptr),
+        };
+        const rc = windows.ntdll.NtQueryDirectoryFile(
+            dir.handle,
+            null,
+            null,
+            null,
+            &io_status,
+            &file_information_buf,
+            file_information_buf.len,
+            .Directory,
+            windows.FALSE, // single result
+            &app_name_unicode_string,
+            windows.FALSE, // restart iteration
+        );
+
+        // If we get nothing with the wildcard, then we can just bail out
+        // as we know appending PATHEXT will not yield anything.
+        switch (rc) {
+            .SUCCESS => {},
+            .NO_SUCH_FILE => return error.FileNotFound,
+            .NO_MORE_FILES => break,
+            .ACCESS_DENIED => return error.AccessDenied,
+            else => return windows.unexpectedStatus(rc),
+        }
+
+        // According to the docs, this can only happen if there is not enough room in the
+        // buffer to write at least one complete FILE_DIRECTORY_INFORMATION entry.
+        // Therefore, this condition should not be possible to hit with the buffer size we use.
+        std.debug.assert(io_status.Information != 0);
+
+        var it = windows.FileInformationIterator(windows.FILE_DIRECTORY_INFORMATION){ .buf = &file_information_buf };
+        while (it.next()) |info| {
+            // Skip directories
+            if (info.FileAttributes.DIRECTORY) continue;
+            const filename = @as([*]u16, @ptrCast(&info.FileName))[0 .. info.FileNameLength / 2];
+            // Because all results start with the app_name since we're using the wildcard `app_name*`,
+            // if the length is equal to app_name then this is an exact match
+            if (filename.len == app_name_len) {
+                // Note: We can't break early here because it's possible that the unappended version
+                //       fails to spawn, in which case we still want to try the PATHEXT appended versions.
+                unappended_exists = true;
+            } else if (windowsCreateProcessSupportsExtension(filename[app_name_len..])) |pathext_ext| {
+                pathext_seen[@intFromEnum(pathext_ext)] = true;
+                any_pathext_seen = true;
+            }
+        }
+    }
+
+    const unappended_err = unappended: {
+        if (unappended_exists) {
+            if (dir_path_len != 0) switch (dir_buf.items[dir_buf.items.len - 1]) {
+                '/', '\\' => {},
+                else => try dir_buf.append(arena, Dir.path.sep),
+            };
+            try dir_buf.appendSlice(arena, app_buf.items[0..app_name_len]);
+            try dir_buf.append(arena, 0);
+            const full_app_name = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
+
+            const is_bat_or_cmd = bat_or_cmd: {
+                const app_name = app_buf.items[0..app_name_len];
+                const ext_start = std.mem.lastIndexOfScalar(u16, app_name, '.') orelse break :bat_or_cmd false;
+                const ext = app_name[ext_start..];
+                const ext_enum = windowsCreateProcessSupportsExtension(ext) orelse break :bat_or_cmd false;
+                switch (ext_enum) {
+                    .cmd, .bat => break :bat_or_cmd true,
+                    else => break :bat_or_cmd false,
+                }
+            };
+            const cmd_line_w = if (is_bat_or_cmd)
+                try cmd_line_cache.scriptCommandLine(full_app_name)
+            else
+                try cmd_line_cache.commandLine();
+            const app_name_w = if (is_bat_or_cmd)
+                try cmd_line_cache.cmdExePath()
+            else
+                full_app_name;
+
+            if (windowsCreateProcess(
+                app_name_w.ptr,
+                cmd_line_w.ptr,
+                envp_ptr,
+                cwd_ptr,
+                flags,
+                lpStartupInfo,
+                lpProcessInformation,
+            )) |_| {
+                return;
+            } else |err| switch (err) {
+                error.FileNotFound,
+                error.AccessDenied,
+                => break :unappended err,
+                error.InvalidExe => {
+                    // On InvalidExe, if the extension of the app name is .exe then
+                    // it's treated as an unrecoverable error. Otherwise, it'll be
+                    // skipped as normal.
+                    const app_name = app_buf.items[0..app_name_len];
+                    const ext_start = std.mem.lastIndexOfScalar(u16, app_name, '.') orelse break :unappended err;
+                    const ext = app_name[ext_start..];
+                    if (windows.eqlIgnoreCaseWtf16(ext, std.unicode.utf8ToUtf16LeStringLiteral(".EXE"))) {
+                        return error.UnrecoverableInvalidExe;
+                    }
+                    break :unappended err;
+                },
+                else => return err,
+            }
+        }
+        break :unappended error.FileNotFound;
+    };
+
+    if (!any_pathext_seen) return unappended_err;
+
+    // Now try any PATHEXT appended versions that we've seen
+    var ext_it = std.mem.tokenizeScalar(u16, pathext, ';');
+    while (ext_it.next()) |ext| {
+        const ext_enum = windowsCreateProcessSupportsExtension(ext) orelse continue;
+        if (!pathext_seen[@intFromEnum(ext_enum)]) continue;
+
+        dir_buf.shrinkRetainingCapacity(dir_path_len);
+        if (dir_path_len != 0) switch (dir_buf.items[dir_buf.items.len - 1]) {
+            '/', '\\' => {},
+            else => try dir_buf.append(arena, Dir.path.sep),
+        };
+        try dir_buf.appendSlice(arena, app_buf.items[0..app_name_len]);
+        try dir_buf.appendSlice(arena, ext);
+        try dir_buf.append(arena, 0);
+        const full_app_name = dir_buf.items[0 .. dir_buf.items.len - 1 :0];
+
+        const is_bat_or_cmd = switch (ext_enum) {
+            .cmd, .bat => true,
+            else => false,
+        };
+        const cmd_line_w = if (is_bat_or_cmd)
+            try cmd_line_cache.scriptCommandLine(full_app_name)
+        else
+            try cmd_line_cache.commandLine();
+        const app_name_w = if (is_bat_or_cmd)
+            try cmd_line_cache.cmdExePath()
+        else
+            full_app_name;
+
+        if (windowsCreateProcess(app_name_w.ptr, cmd_line_w.ptr, envp_ptr, cwd_ptr, flags, lpStartupInfo, lpProcessInformation)) |_| {
+            return;
+        } else |err| switch (err) {
+            error.FileNotFound => continue,
+            error.AccessDenied => continue,
+            error.InvalidExe => {
+                // On InvalidExe, if the extension of the app name is .exe then
+                // it's treated as an unrecoverable error. Otherwise, it'll be
+                // skipped as normal.
+                if (windows.eqlIgnoreCaseWtf16(ext, std.unicode.utf8ToUtf16LeStringLiteral(".EXE"))) {
+                    return error.UnrecoverableInvalidExe;
+                }
+                continue;
+            },
+            else => return err,
+        }
+    }
+
+    return unappended_err;
+}
+
+fn windowsCreateProcess(
+    app_name: [*:0]u16,
+    cmd_line: [*:0]u16,
+    env_ptr: ?[*:0]const u16,
+    cwd_ptr: ?[*:0]u16,
+    flags: windows.CreateProcessFlags,
+    lpStartupInfo: *windows.STARTUPINFOW,
+    lpProcessInformation: *windows.PROCESS_INFORMATION,
+) !void {
+    const syscall: Syscall = try .start();
+    while (true) {
+        if (windows.kernel32.CreateProcessW(
+            app_name,
+            cmd_line,
+            null,
+            null,
+            windows.TRUE,
+            flags,
+            env_ptr,
+            cwd_ptr,
+            lpStartupInfo,
+            lpProcessInformation,
+        ) != 0) {
+            return syscall.finish();
+        } else switch (windows.GetLastError()) {
+            .INVALID_PARAMETER => unreachable,
+            .OPERATION_ABORTED => {
+                try syscall.checkCancel();
+                continue;
+            },
+            .FILE_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .PATH_NOT_FOUND => return syscall.fail(error.FileNotFound),
+            .DIRECTORY => return syscall.fail(error.FileNotFound),
+            .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
+            .INVALID_NAME => return syscall.fail(error.InvalidName),
+            .FILENAME_EXCED_RANGE => return syscall.fail(error.NameTooLong),
+            .SHARING_VIOLATION => return syscall.fail(error.FileBusy),
+            .COMMITMENT_LIMIT => return syscall.fail(error.SystemResources),
+
+            // These are all the system errors that are mapped to ENOEXEC by
+            // the undocumented _dosmaperr (old CRT) or __acrt_errno_map_os_error
+            // (newer CRT) functions. Their code can be found in crt/src/dosmap.c (old SDK)
+            // or urt/misc/errno.cpp (newer SDK) in the Windows SDK.
+            .BAD_FORMAT,
+            .INVALID_STARTING_CODESEG, // MIN_EXEC_ERROR in errno.cpp
+            .INVALID_STACKSEG,
+            .INVALID_MODULETYPE,
+            .INVALID_EXE_SIGNATURE,
+            .EXE_MARKED_INVALID,
+            .BAD_EXE_FORMAT,
+            .ITERATED_DATA_EXCEEDS_64k,
+            .INVALID_MINALLOCSIZE,
+            .DYNLINK_FROM_INVALID_RING,
+            .IOPL_NOT_ENABLED,
+            .INVALID_SEGDPL,
+            .AUTODATASEG_EXCEEDS_64k,
+            .RING2SEG_MUST_BE_MOVABLE,
+            .RELOC_CHAIN_XEEDS_SEGLIM,
+            .INFLOOP_IN_RELOC_CHAIN, // MAX_EXEC_ERROR in errno.cpp
+            // This one is not mapped to ENOEXEC but it is possible, for example
+            // when calling CreateProcessW on a plain text file with a .exe extension
+            .EXE_MACHINE_TYPE_MISMATCH,
+            => return syscall.fail(error.InvalidExe),
+
+            else => |err| {
+                syscall.finish();
+                return windows.unexpectedError(err);
+            },
+        }
+    }
+}
+
+/// Case-insensitive WTF-16 lookup
+fn windowsCreateProcessSupportsExtension(ext: []const u16) ?process.WindowsExtension {
+    comptime {
+        // Ensures keeping this function in sync with the enum.
+        const fields = @typeInfo(process.WindowsExtension).@"enum".fields;
+        assert(fields.len == 4);
+        assert(@intFromEnum(process.WindowsExtension.bat) == 0);
+        assert(@intFromEnum(process.WindowsExtension.cmd) == 1);
+        assert(@intFromEnum(process.WindowsExtension.com) == 2);
+        assert(@intFromEnum(process.WindowsExtension.exe) == 3);
+    }
+
+    if (ext.len != 4) return null;
+    const State = enum {
+        start,
+        dot,
+        b,
+        ba,
+        c,
+        cm,
+        co,
+        e,
+        ex,
+    };
+    var state: State = .start;
+    for (ext) |c| switch (state) {
+        .start => switch (c) {
+            '.' => state = .dot,
+            else => return null,
+        },
+        .dot => switch (c) {
+            'b', 'B' => state = .b,
+            'c', 'C' => state = .c,
+            'e', 'E' => state = .e,
+            else => return null,
+        },
+        .b => switch (c) {
+            'a', 'A' => state = .ba,
+            else => return null,
+        },
+        .c => switch (c) {
+            'm', 'M' => state = .cm,
+            'o', 'O' => state = .co,
+            else => return null,
+        },
+        .e => switch (c) {
+            'x', 'X' => state = .ex,
+            else => return null,
+        },
+        .ba => switch (c) {
+            't', 'T' => return .bat,
+            else => return null,
+        },
+        .cm => switch (c) {
+            'd', 'D' => return .cmd,
+            else => return null,
+        },
+        .co => switch (c) {
+            'm', 'M' => return .com,
+            else => return null,
+        },
+        .ex => switch (c) {
+            'e', 'E' => return .exe,
+            else => return null,
+        },
+    };
+    return null;
+}
+
+test windowsCreateProcessSupportsExtension {
+    try std.testing.expectEqual(process.WindowsExtension.exe, windowsCreateProcessSupportsExtension(&[_]u16{ '.', 'e', 'X', 'e' }).?);
+    try std.testing.expect(windowsCreateProcessSupportsExtension(&[_]u16{ '.', 'e', 'X', 'e', 'c' }) == null);
+}
+
+/// Serializes argv into a WTF-16 encoded command-line string for use with CreateProcessW.
+///
+/// Serialization is done on-demand and the result is cached in order to allow for:
+/// - Only serializing the particular type of command line needed (`.bat`/`.cmd`
+///   command line serialization is different from `.exe`/etc)
+/// - Reusing the serialized command lines if necessary (i.e. if the execution
+///   of a command fails and the PATH is going to be continued to be searched
+///   for more candidates)
+const WindowsCommandLineCache = struct {
+    cmd_line: ?[:0]u16 = null,
+    script_cmd_line: ?[:0]u16 = null,
+    cmd_exe_path: ?[:0]u16 = null,
+    argv: []const []const u8,
+    allocator: Allocator,
+
+    fn init(allocator: Allocator, argv: []const []const u8) WindowsCommandLineCache {
+        return .{
+            .allocator = allocator,
+            .argv = argv,
+        };
+    }
+
+    fn deinit(self: *WindowsCommandLineCache) void {
+        if (self.cmd_line) |cmd_line| self.allocator.free(cmd_line);
+        if (self.script_cmd_line) |script_cmd_line| self.allocator.free(script_cmd_line);
+        if (self.cmd_exe_path) |cmd_exe_path| self.allocator.free(cmd_exe_path);
+    }
+
+    fn commandLine(self: *WindowsCommandLineCache) ![:0]u16 {
+        if (self.cmd_line == null) {
+            self.cmd_line = try argvToCommandLineWindows(self.allocator, self.argv);
+        }
+        return self.cmd_line.?;
+    }
+
+    /// Not cached, since the path to the batch script will change during PATH searching.
+    /// `script_path` should be as qualified as possible, e.g. if the PATH is being searched,
+    /// then script_path should include both the search path and the script filename
+    /// (this allows avoiding cmd.exe having to search the PATH again).
+    fn scriptCommandLine(self: *WindowsCommandLineCache, script_path: []const u16) ![:0]u16 {
+        if (self.script_cmd_line) |v| self.allocator.free(v);
+        self.script_cmd_line = try argvToScriptCommandLineWindows(
+            self.allocator,
+            script_path,
+            self.argv[1..],
+        );
+        return self.script_cmd_line.?;
+    }
+
+    fn cmdExePath(self: *WindowsCommandLineCache) ![:0]u16 {
+        if (self.cmd_exe_path == null) {
+            self.cmd_exe_path = try windowsCmdExePath(self.allocator);
+        }
+        return self.cmd_exe_path.?;
+    }
+};
+
+/// Returns the absolute path of `cmd.exe` within the Windows system directory.
+/// The caller owns the returned slice.
+fn windowsCmdExePath(allocator: Allocator) error{ OutOfMemory, Unexpected }![:0]u16 {
+    var buf = try std.ArrayList(u16).initCapacity(allocator, 128);
+    errdefer buf.deinit(allocator);
+    while (true) {
+        const unused_slice = buf.unusedCapacitySlice();
+        // TODO: Get the system directory from PEB.ReadOnlyStaticServerData
+        const len = windows.kernel32.GetSystemDirectoryW(@ptrCast(unused_slice), @intCast(unused_slice.len));
+        if (len == 0) {
+            switch (windows.GetLastError()) {
+                else => |err| return windows.unexpectedError(err),
+            }
+        }
+        if (len > unused_slice.len) {
+            try buf.ensureUnusedCapacity(allocator, len);
+        } else {
+            buf.items.len = len;
+            break;
+        }
+    }
+    switch (buf.items[buf.items.len - 1]) {
+        '/', '\\' => {},
+        else => try buf.append(allocator, Dir.path.sep),
+    }
+    try buf.appendSlice(allocator, std.unicode.utf8ToUtf16LeStringLiteral("cmd.exe"));
+    return try buf.toOwnedSliceSentinel(allocator, 0);
+}
+
+const ArgvToScriptCommandLineError = error{
+    OutOfMemory,
+    InvalidWtf8,
+    /// NUL (U+0000), LF (U+000A), CR (U+000D) are not allowed
+    /// within arguments when executing a `.bat`/`.cmd` script.
+    /// - NUL/LF signifiies end of arguments, so anything afterwards
+    ///   would be lost after execution.
+    /// - CR is stripped by `cmd.exe`, so any CR codepoints
+    ///   would be lost after execution.
+    InvalidBatchScriptArg,
+};
+
+/// Serializes `argv` to a Windows command-line string that uses `cmd.exe /c` and `cmd.exe`-specific
+/// escaping rules. The caller owns the returned slice.
+///
+/// Escapes `argv` using the suggested mitigation against arbitrary command execution from:
+/// https://flatt.tech/research/posts/batbadbut-you-cant-securely-execute-commands-on-windows/
+///
+/// The return of this function will look like
+/// `cmd.exe /d /e:ON /v:OFF /c "<escaped command line>"`
+/// and should be used as the `lpCommandLine` of `CreateProcessW`, while the
+/// return of `windowsCmdExePath` should be used as `lpApplicationName`.
+///
+/// Should only be used when spawning `.bat`/`.cmd` scripts, see `argvToCommandLineWindows` otherwise.
+/// The `.bat`/`.cmd` file must be known to both have the `.bat`/`.cmd` extension and exist on the filesystem.
+fn argvToScriptCommandLineWindows(
+    allocator: Allocator,
+    /// Path to the `.bat`/`.cmd` script. If this path is relative, it is assumed to be relative to the CWD.
+    /// The script must have been verified to exist at this path before calling this function.
+    script_path: []const u16,
+    /// Arguments, not including the script name itself. Expected to be encoded as WTF-8.
+    script_args: []const []const u8,
+) ArgvToScriptCommandLineError![:0]u16 {
+    var buf = try std.array_list.Managed(u8).initCapacity(allocator, 64);
+    defer buf.deinit();
+
+    // `/d` disables execution of AutoRun commands.
+    // `/e:ON` and `/v:OFF` are needed for BatBadBut mitigation:
+    // > If delayed expansion is enabled via the registry value DelayedExpansion,
+    // > it must be disabled by explicitly calling cmd.exe with the /V:OFF option.
+    // > Escaping for % requires the command extension to be enabled.
+    // > If it’s disabled via the registry value EnableExtensions, it must be enabled with the /E:ON option.
+    // https://flatt.tech/research/posts/batbadbut-you-cant-securely-execute-commands-on-windows/
+    buf.appendSliceAssumeCapacity("cmd.exe /d /e:ON /v:OFF /c \"");
+
+    // Always quote the path to the script arg
+    buf.appendAssumeCapacity('"');
+    // We always want the path to the batch script to include a path separator in order to
+    // avoid cmd.exe searching the PATH for the script. This is not part of the arbitrary
+    // command execution mitigation, we just know exactly what script we want to execute
+    // at this point, and potentially making cmd.exe re-find it is unnecessary.
+    //
+    // If the script path does not have a path separator, then we know its relative to CWD and
+    // we can just put `.\` in the front.
+    if (std.mem.findAny(u16, script_path, &[_]u16{
+        std.mem.nativeToLittle(u16, '\\'), std.mem.nativeToLittle(u16, '/'),
+    }) == null) {
+        try buf.appendSlice(".\\");
+    }
+    // Note that we don't do any escaping/mitigations for this argument, since the relevant
+    // characters (", %, etc) are illegal in file paths and this function should only be called
+    // with script paths that have been verified to exist.
+    try std.unicode.wtf16LeToWtf8ArrayList(&buf, script_path);
+    buf.appendAssumeCapacity('"');
+
+    for (script_args) |arg| {
+        // Literal carriage returns get stripped when run through cmd.exe
+        // and NUL/newlines act as 'end of command.' Because of this, it's basically
+        // always a mistake to include these characters in argv, so it's
+        // an error condition in order to ensure that the return of this
+        // function can always roundtrip through cmd.exe.
+        if (std.mem.findAny(u8, arg, "\x00\r\n") != null) {
+            return error.InvalidBatchScriptArg;
+        }
+
+        // Separate args with a space.
+        try buf.append(' ');
+
+        // Need to quote if the argument is empty (otherwise the arg would just be lost)
+        // or if the last character is a `\`, since then something like "%~2" in a .bat
+        // script would cause the closing " to be escaped which we don't want.
+        var needs_quotes = arg.len == 0 or arg[arg.len - 1] == '\\';
+        if (!needs_quotes) {
+            for (arg) |c| {
+                switch (c) {
+                    // Known good characters that don't need to be quoted
+                    'A'...'Z', 'a'...'z', '0'...'9', '#', '$', '*', '+', '-', '.', '/', ':', '?', '@', '\\', '_' => {},
+                    // When in doubt, quote
+                    else => {
+                        needs_quotes = true;
+                        break;
+                    },
+                }
+            }
+        }
+        if (needs_quotes) {
+            try buf.append('"');
+        }
+        var backslashes: usize = 0;
+        for (arg) |c| {
+            switch (c) {
+                '\\' => {
+                    backslashes += 1;
+                },
+                '"' => {
+                    try buf.appendNTimes('\\', backslashes);
+                    try buf.append('"');
+                    backslashes = 0;
+                },
+                // Replace `%` with `%%cd:~,%`.
+                //
+                // cmd.exe allows extracting a substring from an environment
+                // variable with the syntax: `%foo:~<start_index>,<end_index>%`.
+                // Therefore, `%cd:~,%` will always expand to an empty string
+                // since both the start and end index are blank, and it is assumed
+                // that `%cd%` is always available since it is a built-in variable
+                // that corresponds to the current directory.
+                //
+                // This means that replacing `%foo%` with `%%cd:~,%foo%%cd:~,%`
+                // will stop `%foo%` from being expanded and *after* expansion
+                // we'll still be left with `%foo%` (the literal string).
+                '%' => {
+                    // the trailing `%` is appended outside the switch
+                    try buf.appendSlice("%%cd:~,");
+                    backslashes = 0;
+                },
+                else => {
+                    backslashes = 0;
+                },
+            }
+            try buf.append(c);
+        }
+        if (needs_quotes) {
+            try buf.appendNTimes('\\', backslashes);
+            try buf.append('"');
+        }
+    }
+
+    try buf.append('"');
+
+    return try std.unicode.wtf8ToWtf16LeAllocZ(allocator, buf.items);
+}
+
+const ArgvToCommandLineError = error{ OutOfMemory, InvalidWtf8, InvalidArg0 };
+
+/// Serializes `argv` to a Windows command-line string suitable for passing to a child process and
+/// parsing by the `CommandLineToArgvW` algorithm. The caller owns the returned slice.
+///
+/// To avoid arbitrary command execution, this function should not be used when spawning `.bat`/`.cmd` scripts.
+/// https://flatt.tech/research/posts/batbadbut-you-cant-securely-execute-commands-on-windows/
+///
+/// When executing `.bat`/`.cmd` scripts, use `argvToScriptCommandLineWindows` instead.
+fn argvToCommandLineWindows(
+    allocator: Allocator,
+    argv: []const []const u8,
+) ArgvToCommandLineError![:0]u16 {
+    var buf = std.array_list.Managed(u8).init(allocator);
+    defer buf.deinit();
+
+    if (argv.len != 0) {
+        const arg0 = argv[0];
+
+        // The first argument must be quoted if it contains spaces or ASCII control characters
+        // (excluding DEL). It also follows special quoting rules where backslashes have no special
+        // interpretation, which makes it impossible to pass certain first arguments containing
+        // double quotes to a child process without characters from the first argument leaking into
+        // subsequent ones (which could have security implications).
+        //
+        // Empty arguments technically don't need quotes, but we quote them anyway for maximum
+        // compatibility with different implementations of the 'CommandLineToArgvW' algorithm.
+        //
+        // Double quotes are illegal in paths on Windows, so for the sake of simplicity we reject
+        // all first arguments containing double quotes, even ones that we could theoretically
+        // serialize in unquoted form.
+        var needs_quotes = arg0.len == 0;
+        for (arg0) |c| {
+            if (c <= ' ') {
+                needs_quotes = true;
+            } else if (c == '"') {
+                return error.InvalidArg0;
+            }
+        }
+        if (needs_quotes) {
+            try buf.append('"');
+            try buf.appendSlice(arg0);
+            try buf.append('"');
+        } else {
+            try buf.appendSlice(arg0);
+        }
+
+        for (argv[1..]) |arg| {
+            try buf.append(' ');
+
+            // Subsequent arguments must be quoted if they contain spaces, tabs or double quotes,
+            // or if they are empty. For simplicity and for maximum compatibility with different
+            // implementations of the 'CommandLineToArgvW' algorithm, we also quote all ASCII
+            // control characters (again, excluding DEL).
+            needs_quotes = for (arg) |c| {
+                if (c <= ' ' or c == '"') {
+                    break true;
+                }
+            } else arg.len == 0;
+            if (!needs_quotes) {
+                try buf.appendSlice(arg);
+                continue;
+            }
+
+            try buf.append('"');
+            var backslash_count: usize = 0;
+            for (arg) |byte| {
+                switch (byte) {
+                    '\\' => {
+                        backslash_count += 1;
+                    },
+                    '"' => {
+                        try buf.appendNTimes('\\', backslash_count * 2 + 1);
+                        try buf.append('"');
+                        backslash_count = 0;
+                    },
+                    else => {
+                        try buf.appendNTimes('\\', backslash_count);
+                        try buf.append(byte);
+                        backslash_count = 0;
+                    },
+                }
+            }
+            try buf.appendNTimes('\\', backslash_count * 2);
+            try buf.append('"');
+        }
+    }
+
+    return try std.unicode.wtf8ToWtf16LeAllocZ(allocator, buf.items);
+}
+
+test argvToCommandLineWindows {
+    const t = testArgvToCommandLineWindows;
+
+    try t(&.{
+        \\C:\Program Files\zig\zig.exe
+        ,
+        \\run
+        ,
+        \\.\src\main.zig
+        ,
+        \\-target
+        ,
+        \\x86_64-windows-gnu
+        ,
+        \\-O
+        ,
+        \\ReleaseSafe
+        ,
+        \\--
+        ,
+        \\--emoji=🗿
+        ,
+        \\--eval=new Regex("Dwayne \"The Rock\" Johnson")
+        ,
+    },
+        \\"C:\Program Files\zig\zig.exe" run .\src\main.zig -target x86_64-windows-gnu -O ReleaseSafe -- --emoji=🗿 "--eval=new Regex(\"Dwayne \\\"The Rock\\\" Johnson\")"
+    );
+
+    try t(&.{}, "");
+    try t(&.{""}, "\"\"");
+    try t(&.{" "}, "\" \"");
+    try t(&.{"\t"}, "\"\t\"");
+    try t(&.{"\x07"}, "\"\x07\"");
+    try t(&.{"🦎"}, "🦎");
+
+    try t(
+        &.{ "zig", "aa aa", "bb\tbb", "cc\ncc", "dd\r\ndd", "ee\x7Fee" },
+        "zig \"aa aa\" \"bb\tbb\" \"cc\ncc\" \"dd\r\ndd\" ee\x7Fee",
+    );
+
+    try t(
+        &.{ "\\\\foo bar\\foo bar\\", "\\\\zig zag\\zig zag\\" },
+        "\"\\\\foo bar\\foo bar\\\" \"\\\\zig zag\\zig zag\\\\\"",
+    );
+
+    try std.testing.expectError(
+        error.InvalidArg0,
+        argvToCommandLineWindows(std.testing.allocator, &.{"\"quotes\"quotes\""}),
+    );
+    try std.testing.expectError(
+        error.InvalidArg0,
+        argvToCommandLineWindows(std.testing.allocator, &.{"quotes\"quotes"}),
+    );
+    try std.testing.expectError(
+        error.InvalidArg0,
+        argvToCommandLineWindows(std.testing.allocator, &.{"q u o t e s \" q u o t e s"}),
+    );
+}
+
+fn testArgvToCommandLineWindows(argv: []const []const u8, expected_cmd_line: []const u8) !void {
+    const cmd_line_w = try argvToCommandLineWindows(std.testing.allocator, argv);
+    defer std.testing.allocator.free(cmd_line_w);
+
+    const cmd_line = try std.unicode.wtf16LeToWtf8Alloc(std.testing.allocator, cmd_line_w);
+    defer std.testing.allocator.free(cmd_line);
+
+    try std.testing.expectEqualStrings(expected_cmd_line, cmd_line);
+}
+
+fn posixExecv(
+    arg0_expand: process.ArgExpansion,
+    file: [*:0]const u8,
+    child_argv: [*:null]?[*:0]const u8,
+    envp: [*:null]const ?[*:0]const u8,
+    PATH: []const u8,
+) process.ReplaceError {
+    const file_slice = std.mem.sliceTo(file, 0);
+    if (std.mem.findScalar(u8, file_slice, '/') != null) return posixExecvPath(file, child_argv, envp);
+
+    // Use of PATH_MAX here is valid as the path_buf will be passed
+    // directly to the operating system in posixExecvPath.
+    var path_buf: [posix.PATH_MAX]u8 = undefined;
+    var it = std.mem.tokenizeScalar(u8, PATH, ':');
+    var seen_eacces = false;
+    var err: process.ReplaceError = error.FileNotFound;
+
+    // In case of expanding arg0 we must put it back if we return with an error.
+    const prev_arg0 = child_argv[0];
+    defer switch (arg0_expand) {
+        .expand => child_argv[0] = prev_arg0,
+        .no_expand => {},
+    };
+
+    while (it.next()) |search_path| {
+        const path_len = search_path.len + file_slice.len + 1;
+        if (path_buf.len < path_len + 1) return error.NameTooLong;
+        @memcpy(path_buf[0..search_path.len], search_path);
+        path_buf[search_path.len] = '/';
+        @memcpy(path_buf[search_path.len + 1 ..][0..file_slice.len], file_slice);
+        path_buf[path_len] = 0;
+        const full_path = path_buf[0..path_len :0].ptr;
+        switch (arg0_expand) {
+            .expand => child_argv[0] = full_path,
+            .no_expand => {},
+        }
+        err = posixExecvPath(full_path, child_argv, envp);
+        switch (err) {
+            error.AccessDenied => seen_eacces = true,
+            error.FileNotFound, error.NotDir => {},
+            else => |e| return e,
+        }
+    }
+    if (seen_eacces) return error.AccessDenied;
+    return err;
+}
+
+/// This function ignores PATH environment variable.
+pub fn posixExecvPath(
+    path: [*:0]const u8,
+    child_argv: [*:null]const ?[*:0]const u8,
+    envp: [*:null]const ?[*:0]const u8,
+) process.ReplaceError {
+    try Thread.checkCancel();
+    switch (posix.errno(posix.system.execve(path, child_argv, envp))) {
+        .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
+        .@"2BIG" => return error.SystemResources,
+        .MFILE => return error.ProcessFdQuotaExceeded,
+        .NAMETOOLONG => return error.NameTooLong,
+        .NFILE => return error.SystemFdQuotaExceeded,
+        .NOMEM => return error.SystemResources,
+        .ACCES => return error.AccessDenied,
+        .PERM => return error.PermissionDenied,
+        .INVAL => return error.InvalidExe,
+        .NOEXEC => return error.InvalidExe,
+        .IO => return error.FileSystem,
+        .LOOP => return error.FileSystem,
+        .ISDIR => return error.IsDir,
+        .NOENT => return error.FileNotFound,
+        .NOTDIR => return error.NotDir,
+        .TXTBSY => return error.FileBusy,
+        else => |err| switch (native_os) {
+            .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (err) {
+                .BADEXEC => return error.InvalidExe,
+                .BADARCH => return error.InvalidExe,
+                else => return posix.unexpectedErrno(err),
+            },
+            .linux => switch (err) {
+                .LIBBAD => return error.InvalidExe,
+                else => return posix.unexpectedErrno(err),
+            },
+            else => return posix.unexpectedErrno(err),
+        },
+    }
+}
+
+fn windowsMakePipeIn(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *const windows.SECURITY_ATTRIBUTES) !void {
+    var rd_h: windows.HANDLE = undefined;
+    var wr_h: windows.HANDLE = undefined;
+    try windows.CreatePipe(&rd_h, &wr_h, sattr);
+    errdefer windowsDestroyPipe(rd_h, wr_h);
+    try windows.SetHandleInformation(wr_h, windows.HANDLE_FLAG_INHERIT, 0);
+    rd.* = rd_h;
+    wr.* = wr_h;
+}
+
+fn windowsDestroyPipe(rd: ?windows.HANDLE, wr: ?windows.HANDLE) void {
+    if (rd) |h| posix.close(h);
+    if (wr) |h| posix.close(h);
+}
+
+fn windowsMakeAsyncPipe(rd: *?windows.HANDLE, wr: *?windows.HANDLE, sattr: *const windows.SECURITY_ATTRIBUTES) !void {
+    var tmp_bufw: [128]u16 = undefined;
+
+    // Anonymous pipes are built upon Named pipes.
+    // https://docs.microsoft.com/en-us/windows/win32/api/namedpipeapi/nf-namedpipeapi-createpipe
+    // Asynchronous (overlapped) read and write operations are not supported by anonymous pipes.
+    // https://docs.microsoft.com/en-us/windows/win32/ipc/anonymous-pipe-operations
+    const pipe_path = blk: {
+        var tmp_buf: [128]u8 = undefined;
+        // Forge a random path for the pipe.
+        const pipe_path = std.fmt.bufPrintSentinel(
+            &tmp_buf,
+            "\\\\.\\pipe\\zig-childprocess-{d}-{d}",
+            .{ windows.GetCurrentProcessId(), pipe_name_counter.fetchAdd(1, .monotonic) },
+            0,
+        ) catch unreachable;
+        const len = std.unicode.wtf8ToWtf16Le(&tmp_bufw, pipe_path) catch unreachable;
+        tmp_bufw[len] = 0;
+        break :blk tmp_bufw[0..len :0];
+    };
+
+    // Create the read handle that can be used with overlapped IO ops.
+    const read_handle = windows.kernel32.CreateNamedPipeW(
+        pipe_path.ptr,
+        windows.PIPE_ACCESS_INBOUND | windows.FILE_FLAG_OVERLAPPED,
+        windows.PIPE_TYPE_BYTE,
+        1,
+        4096,
+        4096,
+        0,
+        sattr,
+    );
+    if (read_handle == windows.INVALID_HANDLE_VALUE) {
+        switch (windows.GetLastError()) {
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    errdefer posix.close(read_handle);
+
+    var sattr_copy = sattr.*;
+    const write_handle = windows.kernel32.CreateFileW(
+        pipe_path.ptr,
+        .{ .GENERIC = .{ .WRITE = true } },
+        0,
+        &sattr_copy,
+        windows.OPEN_EXISTING,
+        @bitCast(windows.FILE.ATTRIBUTE{ .NORMAL = true }),
+        null,
+    );
+    if (write_handle == windows.INVALID_HANDLE_VALUE) {
+        switch (windows.GetLastError()) {
+            else => |err| return windows.unexpectedError(err),
+        }
+    }
+    errdefer posix.close(write_handle);
+
+    try windows.SetHandleInformation(read_handle, windows.HANDLE_FLAG_INHERIT, 0);
+
+    rd.* = read_handle;
+    wr.* = write_handle;
+}
+
+var pipe_name_counter = std.atomic.Value(u32).init(1);
+
+fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    t.scanEnviron();
+
+    const int = try t.environ.zig_progress_handle;
+
+    return .{ .handle = switch (@typeInfo(Io.File.Handle)) {
+        .int => int,
+        .pointer => @ptrFromInt(int),
+        else => return error.UnsupportedOperation,
+    } };
+}
+
+pub fn environString(t: *Threaded, comptime name: []const u8) ?[:0]const u8 {
+    t.scanEnviron();
+    return @field(t.environ.string, name);
+}
+
+fn random(userdata: ?*anyopaque, buffer: []u8) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const thread = Thread.current orelse return randomMainThread(t, buffer);
+    if (!thread.csprng.isInitialized()) {
+        @branchHint(.unlikely);
+        var seed: [Csprng.seed_len]u8 = undefined;
+        randomMainThread(t, &seed);
+        thread.csprng.rng = .init(seed);
+    }
+    thread.csprng.rng.fill(buffer);
+}
+
+fn randomMainThread(t: *Threaded, buffer: []u8) void {
+    t.mutex.lock();
+    defer t.mutex.unlock();
+
+    if (!t.csprng.isInitialized()) {
+        @branchHint(.unlikely);
+        var seed: [Csprng.seed_len]u8 = undefined;
+        {
+            t.mutex.unlock();
+            defer t.mutex.lock();
+
+            const prev = swapCancelProtection(t, .blocked);
+            defer _ = swapCancelProtection(t, prev);
+
+            randomSecure(t, &seed) catch |err| switch (err) {
+                error.Canceled => unreachable,
+                error.EntropyUnavailable => {
+                    @memset(&seed, 0);
+                    const aslr_addr = @intFromPtr(t);
+                    std.mem.writeInt(usize, seed[seed.len - @sizeOf(usize) ..][0..@sizeOf(usize)], aslr_addr, .native);
+                    switch (native_os) {
+                        .windows => fallbackSeedWindows(&seed),
+                        .wasi => if (builtin.link_libc) fallbackSeedPosix(&seed) else fallbackSeedWasi(&seed),
+                        else => fallbackSeedPosix(&seed),
+                    }
+                },
+            };
+        }
+        t.csprng.rng = .init(seed);
+    }
+
+    t.csprng.rng.fill(buffer);
+}
+
+fn fallbackSeedPosix(seed: *[Csprng.seed_len]u8) void {
+    std.mem.writeInt(posix.pid_t, seed[0..@sizeOf(posix.pid_t)], posix.system.getpid(), .native);
+    const i_1 = @sizeOf(posix.pid_t);
+
+    var ts: posix.timespec = undefined;
+    const Sec = @TypeOf(ts.sec);
+    const Nsec = @TypeOf(ts.nsec);
+    const i_2 = i_1 + @sizeOf(Sec);
+    switch (posix.errno(posix.system.clock_gettime(.REALTIME, &ts))) {
+        .SUCCESS => {
+            std.mem.writeInt(Sec, seed[i_1..][0..@sizeOf(Sec)], ts.sec, .native);
+            std.mem.writeInt(Nsec, seed[i_2..][0..@sizeOf(Nsec)], ts.nsec, .native);
+        },
+        else => {},
+    }
+}
+
+fn fallbackSeedWindows(seed: *[Csprng.seed_len]u8) void {
+    var pc: windows.LARGE_INTEGER = undefined;
+    _ = windows.ntdll.RtlQueryPerformanceCounter(&pc);
+    std.mem.writeInt(windows.LARGE_INTEGER, seed[0..@sizeOf(windows.LARGE_INTEGER)], pc, .native);
+}
+
+fn fallbackSeedWasi(seed: *[Csprng.seed_len]u8) void {
+    var ts: std.os.wasi.timestamp_t = undefined;
+    if (std.os.wasi.clock_time_get(.REALTIME, 1, &ts) == .SUCCESS) {
+        std.mem.writeInt(std.os.wasi.timestamp_t, seed[0..@sizeOf(std.os.wasi.timestamp_t)], ts, .native);
+    }
+}
+
+fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+
+    if (is_windows) {
+        if (buffer.len == 0) return;
+        // ProcessPrng from bcryptprimitives.dll has the following properties:
+        // * introduces a dependency on bcryptprimitives.dll, which apparently
+        //   runs a test suite every time it is loaded
+        // * heap allocates a 48-byte buffer, handling failure by returning NO_MEMORY in a BOOL
+        //   despite the function being documented to always return TRUE
+        // * reads from "\\Device\\CNG" which then seeds a per-CPU AES CSPRNG
+        // Therefore, that function is avoided in favor of using the device directly.
+        const cng_device = try getCngHandle(t);
+        var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const remaining_len = std.math.lossyCast(u32, buffer.len - i);
+            switch (windows.ntdll.NtDeviceIoControlFile(
+                cng_device,
+                null,
+                null,
+                null,
+                &io_status_block,
+                windows.IOCTL.KSEC.GEN_RANDOM,
+                null,
+                0,
+                buffer[i..].ptr,
+                remaining_len,
+            )) {
+                .SUCCESS => {
+                    i += remaining_len;
+                    if (buffer.len - i == 0) {
+                        return syscall.finish();
+                    } else {
+                        try syscall.checkCancel();
+                        continue;
+                    }
+                },
+                .CANCELLED => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+    }
+
+    if (builtin.link_libc and @TypeOf(posix.system.arc4random_buf) != void) {
+        if (buffer.len == 0) return;
+        posix.system.arc4random_buf(buffer.ptr, buffer.len);
+        return;
+    }
+
+    if (native_os == .wasi) {
+        if (buffer.len == 0) return;
+        const syscall: Syscall = try .start();
+        while (true) switch (std.os.wasi.random_get(buffer.ptr, buffer.len)) {
+            .SUCCESS => return syscall.finish(),
+            .INTR => {
+                try syscall.checkCancel();
+                continue;
+            },
+            else => return syscall.fail(error.EntropyUnavailable),
+        };
+    }
+
+    if (@TypeOf(posix.system.getrandom) != void) {
+        const getrandom = if (use_libc_getrandom) std.c.getrandom else std.os.linux.getrandom;
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (buffer.len - i != 0) {
+            const buf = buffer[i..];
+            const rc = getrandom(buf.ptr, buf.len, 0);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    const n: usize = @intCast(rc);
+                    i += n;
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+        return;
+    }
+
+    if (native_os == .emscripten) {
+        if (buffer.len == 0) return;
+        const err = posix.errno(std.c.getentropy(buffer.ptr, buffer.len));
+        switch (err) {
+            .SUCCESS => return,
+            else => return error.EntropyUnavailable,
+        }
+    }
+
+    if (native_os == .linux) {
+        comptime assert(use_dev_urandom);
+        const urandom_fd = try getRandomFd(t);
+
+        var i: usize = 0;
+        while (buffer.len - i != 0) {
+            const syscall: Syscall = try .start();
+            const rc = posix.system.read(urandom_fd, buffer[i..].ptr, buffer.len - i);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    const n: usize = @intCast(rc);
+                    if (n == 0) return error.EntropyUnavailable;
+                    i += n;
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+    }
+
+    return error.EntropyUnavailable;
+}
+
+fn getRandomFd(t: *Threaded) Io.RandomSecureError!posix.fd_t {
+    {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+
+        if (t.random_file.fd == -2) return error.EntropyUnavailable;
+        if (t.random_file.fd != -1) return t.random_file.fd;
+    }
+
+    const mode: posix.mode_t = 0;
+
+    const fd: posix.fd_t = fd: {
+        const syscall: Syscall = try .start();
+        while (true) {
+            const rc = openat_sym(posix.AT.FDCWD, "/dev/urandom", .{
+                .ACCMODE = .RDONLY,
+                .CLOEXEC = true,
+            }, mode);
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    syscall.finish();
+                    break :fd @intCast(rc);
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                else => return syscall.fail(error.EntropyUnavailable),
+            }
+        }
+    };
+    errdefer posix.close(fd);
+
+    switch (native_os) {
+        .linux => {
+            const sys = if (statx_use_c) std.c else std.os.linux;
+            const syscall: Syscall = try .start();
+            while (true) {
+                var statx = std.mem.zeroes(std.os.linux.Statx);
+                switch (sys.errno(sys.statx(fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        if (!statx.mask.TYPE) return error.EntropyUnavailable;
+                        t.mutex.lock(); // Another thread might have won the race.
+                        defer t.mutex.unlock();
+                        if (t.random_file.fd >= 0) {
+                            posix.close(fd);
+                            return t.random_file.fd;
+                        } else if (!posix.S.ISCHR(statx.mode)) {
+                            t.random_file.fd = -2;
+                            return error.EntropyUnavailable;
+                        } else {
+                            t.random_file.fd = fd;
+                            return fd;
+                        }
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => return syscall.fail(error.EntropyUnavailable),
+                }
+            }
+        },
+        else => {
+            const syscall: Syscall = try .start();
+            while (true) {
+                var stat = std.mem.zeroes(posix.Stat);
+                switch (posix.errno(fstat_sym(fd, &stat))) {
+                    .SUCCESS => {
+                        syscall.finish();
+                        t.mutex.lock(); // Another thread might have won the race.
+                        defer t.mutex.unlock();
+                        if (t.random_file.fd >= 0) {
+                            posix.close(fd);
+                            return t.random_file.fd;
+                        } else if (!posix.S.ISCHR(stat.mode)) {
+                            t.random_file.fd = -2;
+                            return error.EntropyUnavailable;
+                        } else {
+                            t.random_file.fd = fd;
+                            return fd;
+                        }
+                    },
+                    .INTR => {
+                        try syscall.checkCancel();
+                        continue;
+                    },
+                    else => return syscall.fail(error.EntropyUnavailable),
+                }
+            }
+        },
+    }
+}
+
 test {
     _ = @import("Threaded/test.zig");
+}
+
+const use_parking_futex = switch (builtin.target.os.tag) {
+    .windows => true, // RtlWaitOnAddress is a userland implementation anyway
+    .netbsd => true, // NetBSD has `futex(2)`, but it's historically been quite buggy. TODO: evaluate whether it's okay to use now.
+    .illumos => true, // Illumos has no futex mechanism
+    else => false,
+};
+const use_parking_sleep = switch (builtin.target.os.tag) {
+    // On Windows, we can implement sleep either with `NtDelayExecution` (which is how `SleepEx` in
+    // kernel32 works) or `NtWaitForAlertByThreadId` (thread parking). We're already using the
+    // latter for futex, so we may as well use it for sleeping too, to maximise code reuse. I'm
+    // also more confident that it will always correctly handle the cancelation race (so "unpark"
+    // before "park" causes "park" to return immediately): it *seems* like alertable sleeps paired
+    // with `NtAlertThread` do actually do this too, but there could be some caveat (e.g. it might
+    // fail under some specific condition), whereas `NtWaitForAlertByThreadId` must reliably trigger
+    // this behavior because `RtlWaitOnAddress` relies on it.
+    .windows => true,
+
+    // These targets have `_lwp_park`, which is superior to POSIX nanosleep because it has a better
+    // cancelation mechanism.
+    .netbsd,
+    .illumos,
+    => true,
+
+    else => false,
+};
+
+const parking_futex = struct {
+    comptime {
+        assert(use_parking_futex);
+    }
+
+    const Bucket = struct {
+        /// Used as a fast check for `wake` to avoid having to acquire `mutex` to discover there are no
+        /// waiters. It is important for `wait` to increment this *before* checking the futex value to
+        /// avoid a race.
+        num_waiters: std.atomic.Value(u32),
+        /// Protects `waiters`.
+        mutex: std.Thread.Mutex,
+        waiters: std.DoublyLinkedList,
+
+        /// Prevent false sharing between buckets.
+        _: void align(std.atomic.cache_line) = {},
+
+        const init: Bucket = .{ .num_waiters = .init(0), .mutex = .{}, .waiters = .{} };
+    };
+
+    const Waiter = struct {
+        node: std.DoublyLinkedList.Node,
+        address: usize,
+        tid: std.Thread.Id,
+        /// `thread_status.cancelation` is `.parked` while the thread is waiting. The single thread
+        /// which atomically updates it (to `.none` or `.canceling`) is responsible for:
+        ///
+        /// * Removing the `Waiter` from `Bucket.waiters`
+        /// * Decrementing `Bucket.num_waiters`
+        /// * Unparking the thread (*after* the above, so that the `Waiter` does not go out of scope
+        ///   while it is still in the `Bucket`).
+        thread_status: *std.atomic.Value(Thread.Status),
+    };
+
+    fn bucketForAddress(address: usize) *Bucket {
+        const global = struct {
+            /// Length must be a power of two. The longer this array, the less likely contention is
+            /// between different futexes. This length seems like it'll provide a reasonable balance
+            /// between contention and memory usage: assuming a 128-byte `Bucket` (due to cache line
+            /// alignment), this uses 32 KiB of memory.
+            var buckets: [256]Bucket = @splat(.init);
+        };
+
+        // Here we use Fibonacci hashing: the golden ratio can be used to evenly redistribute input
+        // values across a range, giving a poor, but extremely quick to compute, hash.
+
+        // This literal is the rounded value of '2^64 / phi' (where 'phi' is the golden ratio). The
+        // shift then converts it to '2^b / phi', where 'b' is the pointer bit width.
+        const fibonacci_multiplier = 0x9E3779B97F4A7C15 >> (64 - @bitSizeOf(usize));
+        const hashed = address *% fibonacci_multiplier;
+
+        comptime assert(std.math.isPowerOfTwo(global.buckets.len));
+        // The high bits of `hashed` have better entropy than the low bits.
+        const index = hashed >> (@bitSizeOf(usize) - @ctz(global.buckets.len));
+
+        return &global.buckets[index];
+    }
+
+    fn wait(ptr: *const u32, expect: u32, uncancelable: bool, timeout: Io.Timeout) Io.Cancelable!void {
+        const bucket = bucketForAddress(@intFromPtr(ptr));
+
+        // Put the threadlocal access outside of the critical section.
+        const opt_thread = Thread.current;
+        const self_tid = if (opt_thread) |thread| thread.id else std.Thread.getCurrentId();
+
+        var waiter: Waiter = .{
+            .node = undefined, // populated by list append
+            .address = @intFromPtr(ptr),
+            .tid = self_tid,
+            .thread_status = undefined, // populated in critical section
+        };
+
+        var status_buf: std.atomic.Value(Thread.Status) = undefined;
+
+        {
+            bucket.mutex.lock();
+            defer bucket.mutex.unlock();
+
+            _ = bucket.num_waiters.fetchAdd(1, .acquire);
+
+            if (@atomicLoad(u32, ptr, .monotonic) != expect) {
+                assert(bucket.num_waiters.fetchSub(1, .monotonic) > 0);
+                return;
+            }
+
+            // This is in the critical section to avoid marking the thread as parked until we're
+            // certain that we're actually going to park.
+            waiter.thread_status = status: {
+                cancelable: {
+                    if (uncancelable) break :cancelable;
+                    const thread = opt_thread orelse break :cancelable;
+                    switch (thread.cancel_protection) {
+                        .blocked => break :cancelable,
+                        .unblocked => {},
+                    }
+                    thread.futex_waiter = &waiter;
+                    const old_status = thread.status.fetchOr(
+                        .{ .cancelation = @enumFromInt(0b001), .awaitable = .null },
+                        .release, // release `thread.futex_waiter`
+                    );
+                    switch (old_status.cancelation) {
+                        .none => {}, // status is now `.parked`
+                        .canceling => {
+                            // status is now `.canceled`
+                            assert(bucket.num_waiters.fetchSub(1, .monotonic) > 0);
+                            return error.Canceled;
+                        },
+                        .canceled => break :cancelable, // status is still `.canceled`
+                        .parked => unreachable,
+                        .blocked => unreachable,
+                        .blocked_windows_dns => unreachable,
+                        .blocked_canceling => unreachable,
+                    }
+                    // We could now be unparked for a cancelation at any time!
+                    break :status &thread.status;
+                }
+                // This is an uncancelable wait, so just use `status_buf`. Note that the value of
+                // `status_buf.awaitable` is irrelevant because this is only visible to futex code,
+                // while only cancelation cares about `awaitable`.
+                status_buf.raw = .{ .cancelation = .parked, .awaitable = .null };
+                break :status &status_buf;
+            };
+
+            bucket.waiters.append(&waiter.node);
+        }
+
+        if (park(timeout, ptr)) {
+            // We were unparked by either `wake` or cancelation, so our current status is either
+            // `.none` or `.canceling`. In either case, they've already removed `waiter` from
+            // `bucket`, so we have nothing more to do!
+        } else |err| switch (err) {
+            error.Timeout => {
+                // We're not out of the woods yet: an unpark could race with the timeout.
+                const old_status = waiter.thread_status.fetchAnd(
+                    .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                    .monotonic,
+                );
+                switch (old_status.cancelation) {
+                    .parked => {
+                        // No race. It is our responsibility to remove `waiter` from `bucket`.
+                        // New status is `.none`.
+                        bucket.mutex.lock();
+                        defer bucket.mutex.unlock();
+                        bucket.waiters.remove(&waiter.node);
+                        assert(bucket.num_waiters.fetchSub(1, .monotonic) > 0);
+                    },
+                    .none, .canceling => {
+                        // Race condition: the timeout was reached, then `wake` or a canceler tried
+                        // to unpark us. Whoever did that will remove us from `bucket`. Wait for
+                        // that (and drop the unpark request in doing so).
+                        // New status is `.none` or `.canceling` respectively.
+                        park(.none, ptr) catch |e| switch (e) {
+                            error.Timeout => unreachable,
+                        };
+                    },
+                    .canceled => unreachable,
+                    .blocked => unreachable,
+                    .blocked_windows_dns => unreachable,
+                    .blocked_canceling => unreachable,
+                }
+            },
+        }
+    }
+
+    fn wake(ptr: *const u32, max_waiters: u32) void {
+        if (max_waiters == 0) return;
+
+        const bucket = bucketForAddress(@intFromPtr(ptr));
+
+        // To ensure the store to `ptr` is ordered before this check, we effectively want a `.release`
+        // load, but that doesn't exist in the C11 memory model, so emulate it with a non-mutating rmw.
+        if (bucket.num_waiters.fetchAdd(0, .release) == 0) {
+            @branchHint(.likely);
+            return; // no waiters
+        }
+
+        // Waiters removed from the linked list under the mutex so we can unpark their threads outside
+        // of the critical section. This forms a singly-linked list of waiters using `Waiter.node.next`.
+        var waking_head: ?*std.DoublyLinkedList.Node = null;
+        {
+            bucket.mutex.lock();
+            defer bucket.mutex.unlock();
+
+            var num_removed: u32 = 0;
+            var it = bucket.waiters.first;
+            while (num_removed < max_waiters) {
+                const waiter: *Waiter = @fieldParentPtr("node", it orelse break);
+                it = waiter.node.next;
+                if (waiter.address != @intFromPtr(ptr)) continue;
+                const old_status = waiter.thread_status.fetchAnd(
+                    .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                    .monotonic,
+                );
+                switch (old_status.cancelation) {
+                    .parked => {}, // state updated to `.none`
+                    .none => unreachable, // if another `wake` call is unparking this thread, it should have removed it from the list
+                    .canceling => continue, // race with a canceler who hasn't called `removeCanceledWaiter` yet
+                    .canceled => unreachable,
+                    .blocked => unreachable,
+                    .blocked_windows_dns => unreachable,
+                    .blocked_canceling => unreachable,
+                }
+                // We're waking this waiter. Remove them from the bucket and add them to our local list.
+                bucket.waiters.remove(&waiter.node);
+                waiter.node.next = waking_head;
+                waking_head = &waiter.node;
+                num_removed += 1;
+                // Signal to `waiter` that they're about to be unparked, in case we're racing with their
+                // timeout. See corresponding logic in `wake`.
+                waiter.address = 0;
+            }
+
+            _ = bucket.num_waiters.fetchSub(num_removed, .monotonic);
+        }
+
+        var unpark_buf: [128]UnparkTid = undefined;
+        var unpark_len: usize = 0;
+
+        // Finally, unpark the threads.
+        while (waking_head) |node| {
+            waking_head = node.next;
+            const waiter: *Waiter = @fieldParentPtr("node", node);
+            unpark_buf[unpark_len] = waiter.tid;
+            unpark_len += 1;
+            if (unpark_len == unpark_buf.len) {
+                unpark(&unpark_buf, ptr);
+                unpark_len = 0;
+            }
+        }
+        if (unpark_len > 0) {
+            unpark(unpark_buf[0..unpark_len], ptr);
+        }
+    }
+
+    fn removeCanceledWaiter(waiter: *Waiter) void {
+        const bucket = bucketForAddress(waiter.address);
+        bucket.mutex.lock();
+        defer bucket.mutex.unlock();
+        bucket.waiters.remove(&waiter.node);
+        assert(bucket.num_waiters.fetchSub(1, .monotonic) > 0);
+    }
+};
+const parking_sleep = struct {
+    comptime {
+        assert(use_parking_sleep);
+    }
+    fn sleep(timeout: Io.Timeout) Io.Cancelable!void {
+        const opt_thread = Thread.current;
+        cancelable: {
+            const thread = opt_thread orelse break :cancelable;
+            switch (thread.cancel_protection) {
+                .blocked => break :cancelable,
+                .unblocked => {},
+            }
+            thread.futex_waiter = null;
+            {
+                const old_status = thread.status.fetchOr(
+                    .{ .cancelation = @enumFromInt(0b001), .awaitable = .null },
+                    .release, // release `thread.futex_waiter`
+                );
+                switch (old_status.cancelation) {
+                    .none => {}, // status is now `.parked`
+                    .canceling => return error.Canceled, // status is now `.canceled`
+                    .canceled => break :cancelable, // status is still `.canceled`
+                    .parked => unreachable,
+                    .blocked => unreachable,
+                    .blocked_windows_dns => unreachable,
+                    .blocked_canceling => unreachable,
+                }
+            }
+            if (park(timeout, null)) {
+                // The only reason this could possibly happen is cancelation.
+                const old_status = thread.status.load(.monotonic);
+                assert(old_status.cancelation == .canceling);
+                thread.status.store(
+                    .{ .cancelation = .canceled, .awaitable = old_status.awaitable },
+                    .monotonic,
+                );
+                return error.Canceled;
+            } else |err| switch (err) {
+                error.Timeout => {
+                    // We're not out of the woods yet: an unpark could race with the timeout.
+                    const old_status = thread.status.fetchAnd(
+                        .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                        .monotonic,
+                    );
+                    switch (old_status.cancelation) {
+                        .parked => return, // No race; new status is `.none`
+                        .canceling => {
+                            // Race condition: the timeout was reached, then someone tried to unpark
+                            // us for a cancelation. Whoever did that will have called `unpark`, so
+                            // drop that unpark request by waiting for it.
+                            // Status is still `.canceling`.
+                            park(.none, null) catch |e| switch (e) {
+                                error.Timeout => unreachable,
+                            };
+                            return;
+                        },
+                        .none => unreachable,
+                        .canceled => unreachable,
+                        .blocked => unreachable,
+                        .blocked_windows_dns => unreachable,
+                        .blocked_canceling => unreachable,
+                    }
+                },
+            }
+        }
+        // Uncancelable sleep; we expect not to be manually unparked.
+        if (park(timeout, null)) {
+            unreachable; // unexpected unpark
+        } else |err| switch (err) {
+            error.Timeout => return,
+        }
+    }
+};
+
+/// `addr_hint` has no semantic effect, but may allow the OS to optimize this operation.
+fn park(timeout: Io.Timeout, addr_hint: ?*const anyopaque) error{Timeout}!void {
+    comptime assert(use_parking_futex or use_parking_sleep);
+    switch (builtin.target.os.tag) {
+        .windows => {
+            var timeout_buf: windows.LARGE_INTEGER = undefined;
+            const raw_timeout: ?*windows.LARGE_INTEGER = timeout: switch (timeout) {
+                .none => null,
+                .deadline => |timestamp| continue :timeout .{ .duration = .{
+                    .clock = timestamp.clock,
+                    .raw = (nowWindows(timestamp.clock) catch unreachable).durationTo(timestamp.raw),
+                } },
+                .duration => |duration| {
+                    _ = duration.clock; // Windows only supports monotonic
+                    timeout_buf = @intCast(@divTrunc(-duration.raw.nanoseconds, 100));
+                    break :timeout &timeout_buf;
+                },
+            };
+            // `RtlWaitOnAddress` passes the futex address in as the first argument to this call,
+            // but it's unclear what that actually does, especially since `NtAlertThreadByThreadId`
+            // does *not* accept the address so the kernel can't really be using it as a hint. An
+            // old Microsoft blog post discusses a more traditional futex-like mechanism in the
+            // kernel which definitely isn't how `RtlWaitOnAddress` works today:
+            //
+            // https://devblogs.microsoft.com/oldnewthing/20160826-00/?p=94185
+            //
+            // ...so it's possible this argument is simply a remnant which no longer does anything
+            // (perhaps the implementation changed during development but someone forgot to remove
+            // this parameter). However, to err on the side of caution, let's match the behavior of
+            // `RtlWaitOnAddress` and pass the pointer, in case the kernel ever does something
+            // stupid such as trying to dereference it.
+            switch (windows.ntdll.NtWaitForAlertByThreadId(addr_hint, raw_timeout)) {
+                .ALERTED => return,
+                .TIMEOUT => return error.Timeout,
+                else => unreachable,
+            }
+        },
+        .netbsd => {
+            var ts_buf: posix.timespec = undefined;
+            const ts: ?*posix.timespec, const abstime: bool, const clock_real: bool = switch (timeout) {
+                .none => .{ null, false, false },
+                .deadline => |timestamp| timeout: {
+                    ts_buf = timestampToPosix(timestamp.raw.nanoseconds);
+                    break :timeout .{ &ts_buf, true, timestamp.clock == .real };
+                },
+                .duration => |duration| timeout: {
+                    ts_buf = timestampToPosix(duration.raw.nanoseconds);
+                    break :timeout .{ &ts_buf, false, duration.clock == .real };
+                },
+            };
+            switch (posix.errno(std.c._lwp_park(
+                if (clock_real) .REALTIME else .MONOTONIC,
+                .{ .ABSTIME = abstime },
+                ts,
+                0,
+                addr_hint,
+                null,
+            ))) {
+                .SUCCESS, .ALREADY, .INTR => return,
+                .TIMEDOUT => return error.Timeout,
+                .INVAL => unreachable,
+                .SRCH => unreachable,
+                else => unreachable,
+            }
+        },
+        .illumos => @panic("TODO: illumos lwp_park"),
+        else => comptime unreachable,
+    }
+}
+
+const UnparkTid = switch (builtin.target.os.tag) {
+    // `NtAlertMultipleThreadByThreadId` is weird and wants 64-bit thread handles?
+    .windows => usize,
+    else => std.Thread.Id,
+};
+/// `addr_hint` has no semantic effect, but may allow the OS to optimize this operation.
+fn unpark(tids: []const UnparkTid, addr_hint: ?*const anyopaque) void {
+    comptime assert(use_parking_futex or use_parking_sleep);
+    switch (builtin.target.os.tag) {
+        .windows => {
+            // TODO: this condition is currently disabled because mingw-w64 does not contain this
+            // symbol. Once it's added, enable this check to use the new bulk API where possible.
+            if (false and (builtin.os.version_range.windows.isAtLeast(.win11_dt) orelse false)) {
+                _ = windows.ntdll.NtAlertMultipleThreadByThreadId(tids.ptr, @intCast(tids.len), null, null);
+            } else {
+                for (tids) |tid| {
+                    _ = windows.ntdll.NtAlertThreadByThreadId(@intCast(tid));
+                }
+            }
+        },
+        .netbsd => {
+            switch (posix.errno(std.c._lwp_unpark_all(@ptrCast(tids.ptr), tids.len, addr_hint))) {
+                .SUCCESS => return,
+                // For errors, fall through to a loop over `tids`, though this is only expected to
+                // be possible for ENOMEM (and even that is questionable).
+                .SRCH => recoverableOsBugDetected(),
+                .FAULT => recoverableOsBugDetected(),
+                .INVAL => recoverableOsBugDetected(),
+                .NOMEM => {},
+                else => recoverableOsBugDetected(),
+            }
+            for (tids) |tid| {
+                switch (posix.errno(std.c._lwp_unpark(@bitCast(tid), addr_hint))) {
+                    .SUCCESS => {},
+                    .SRCH => recoverableOsBugDetected(),
+                    else => recoverableOsBugDetected(),
+                }
+            }
+        },
+        .illumos => @panic("TODO: illumos lwp_unpark"),
+        else => comptime unreachable,
+    }
+}
+
+pub const PipeError = error{
+    SystemFdQuotaExceeded,
+    ProcessFdQuotaExceeded,
+} || Io.UnexpectedError;
+
+pub fn pipe2(flags: posix.O) PipeError![2]posix.fd_t {
+    var fds: [2]posix.fd_t = undefined;
+
+    if (@TypeOf(posix.system.pipe2) != void) {
+        switch (posix.errno(posix.system.pipe2(&fds, flags))) {
+            .SUCCESS => return fds,
+            .INVAL => |err| return errnoBug(err), // Invalid flags
+            .NFILE => return error.SystemFdQuotaExceeded,
+            .MFILE => return error.ProcessFdQuotaExceeded,
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    }
+
+    switch (posix.errno(posix.system.pipe(&fds))) {
+        .SUCCESS => {},
+        .NFILE => return error.SystemFdQuotaExceeded,
+        .MFILE => return error.ProcessFdQuotaExceeded,
+        else => |err| return posix.unexpectedErrno(err),
+    }
+    errdefer {
+        posix.close(fds[0]);
+        posix.close(fds[1]);
+    }
+
+    // https://github.com/ziglang/zig/issues/18882
+    if (@as(u32, @bitCast(flags)) == 0) return fds;
+
+    // CLOEXEC is special, it's a file descriptor flag and must be set using
+    // F.SETFD.
+    if (flags.CLOEXEC) for (fds) |fd| {
+        switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFD, @as(u32, posix.FD_CLOEXEC)))) {
+            .SUCCESS => {},
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    };
+
+    const new_flags: u32 = f: {
+        var new_flags = flags;
+        new_flags.CLOEXEC = false;
+        break :f @bitCast(new_flags);
+    };
+
+    // Set every other flag affecting the file status using F.SETFL.
+    if (new_flags != 0) for (fds) |fd| {
+        switch (posix.errno(posix.system.fcntl(fd, posix.F.SETFL, new_flags))) {
+            .SUCCESS => {},
+            .INVAL => |err| return errnoBug(err),
+            else => |err| return posix.unexpectedErrno(err),
+        }
+    };
+
+    return fds;
+}
+
+pub const DupError = error{
+    ProcessFdQuotaExceeded,
+    SystemResources,
+} || Io.UnexpectedError || Io.Cancelable;
+
+pub fn dup2(old_fd: posix.fd_t, new_fd: posix.fd_t) DupError!void {
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.dup2(old_fd, new_fd))) {
+        .SUCCESS => return syscall.finish(),
+        .BUSY, .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .INVAL => |err| return syscall.errnoBug(err), // invalid parameters
+        .BADF => |err| return syscall.errnoBug(err), // use after free
+        .MFILE => return syscall.fail(error.ProcessFdQuotaExceeded),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+pub const FchdirError = error{
+    AccessDenied,
+    NotDir,
+    FileSystem,
+} || Io.Cancelable || Io.UnexpectedError;
+
+pub fn fchdir(fd: posix.fd_t) FchdirError!void {
+    if (fd == posix.AT.FDCWD) return;
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.fchdir(fd))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .IO => return syscall.fail(error.FileSystem),
+        .BADF => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
+}
+
+pub const ChdirError = error{
+    AccessDenied,
+    FileSystem,
+    SymLinkLoop,
+    NameTooLong,
+    FileNotFound,
+    SystemResources,
+    NotDir,
+    BadPathName,
+} || Io.Cancelable || Io.UnexpectedError;
+
+pub fn chdir(dir_path: []const u8) ChdirError!void {
+    var path_buffer: [posix.PATH_MAX]u8 = undefined;
+    const dir_path_posix = try pathToPosix(dir_path, &path_buffer);
+    const syscall: Syscall = try .start();
+    while (true) switch (posix.errno(posix.system.chdir(dir_path_posix))) {
+        .SUCCESS => return syscall.finish(),
+        .INTR => {
+            try syscall.checkCancel();
+            continue;
+        },
+        .ACCES => return syscall.fail(error.AccessDenied),
+        .IO => return syscall.fail(error.FileSystem),
+        .LOOP => return syscall.fail(error.SymLinkLoop),
+        .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+        .NOENT => return syscall.fail(error.FileNotFound),
+        .NOMEM => return syscall.fail(error.SystemResources),
+        .NOTDIR => return syscall.fail(error.NotDir),
+        .ILSEQ => return syscall.fail(error.BadPathName),
+        .FAULT => |err| return syscall.errnoBug(err),
+        else => |err| return syscall.unexpectedErrno(err),
+    };
 }

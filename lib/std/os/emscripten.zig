@@ -224,14 +224,14 @@ pub const W = struct {
     pub fn EXITSTATUS(s: u32) u8 {
         return @as(u8, @intCast((s & 0xff00) >> 8));
     }
-    pub fn TERMSIG(s: u32) u32 {
-        return s & 0x7f;
+    pub fn TERMSIG(s: u32) SIG {
+        return @enumFromInt(s & 0x7f);
     }
     pub fn STOPSIG(s: u32) u32 {
         return EXITSTATUS(s);
     }
     pub fn IFEXITED(s: u32) bool {
-        return TERMSIG(s) == 0;
+        return (s & 0x7f) == 0;
     }
     pub fn IFSTOPPED(s: u32) bool {
         return @as(u16, @truncate(((s & 0xffff) *% 0x10001) >> 8)) > 0x7f00;
@@ -329,6 +329,15 @@ pub const POLL = struct {
     pub const NVAL = 0x020;
     pub const RDNORM = 0x040;
     pub const RDBAND = 0x080;
+};
+
+pub const PROT = struct {
+    pub const NONE = 0x0;
+    pub const READ = 0x1;
+    pub const WRITE = 0x2;
+    pub const EXEC = 0x4;
+    pub const GROWSDOWN = 0x01000000;
+    pub const GROWSUP = 0x02000000;
 };
 
 pub const rlim_t = u64;
@@ -845,7 +854,7 @@ pub extern "c" fn emscripten_wget(url: [*:0]const u8, file: [*:0]const u8) c_int
 pub extern "c" fn emscripten_wget_data(url: [*:0]const u8, pbuffer: *(?*anyopaque), pnum: *c_int, perror: *c_int) void;
 pub extern "c" fn emscripten_run_script(script: [*:0]const u8) void;
 pub extern "c" fn emscripten_run_script_int(script: [*:0]const u8) c_int;
-pub extern "c" fn emscripten_run_script_string(script: [*:0]const u8) [*:0]u8;
+pub extern "c" fn emscripten_run_script_string(script: [*:0]const u8) ?[*:0]u8;
 pub extern "c" fn emscripten_async_run_script(script: [*:0]const u8, millis: c_int) void;
 pub extern "c" fn emscripten_async_load_script(script: [*:0]const u8, onload: em_callback_func, onerror: em_callback_func) void;
 pub extern "c" fn emscripten_set_main_loop(func: em_callback_func, fps: c_int, simulate_infinite_loop: c_int) void;

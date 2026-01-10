@@ -40,7 +40,7 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// pub fn deinit(si: *SelfInfo, gpa: Allocator) void;
 ///
 /// /// Returns the symbol and source location of the instruction at `address`.
-/// pub fn getSymbol(si: *SelfInfo, gpa: Allocator, address: usize) SelfInfoError!Symbol;
+/// pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) SelfInfoError!Symbol;
 /// /// Returns a name for the "module" (e.g. shared library or executable image) containing `address`.
 /// pub fn getModuleName(si: *SelfInfo, gpa: Allocator, address: usize) SelfInfoError![]const u8;
 ///
@@ -531,6 +531,10 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
         },
         else => {},
     }
+
+    // Don't try to cancel during a panic. No need to re-enable cancelation,
+    // because the panic handler doesn't return.
+    _ = std.Options.debug_io.swapCancelProtection(.blocked);
 
     if (enable_segfault_handler) {
         // If a segfault happens while panicking, we want it to actually segfault, not trigger
@@ -1533,6 +1537,10 @@ fn handleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContextPtr) noret
 }
 
 pub fn defaultHandleSegfault(addr: ?usize, name: []const u8, opt_ctx: ?CpuContextPtr) noreturn {
+    // Don't try to cancel during a segfault. No need to re-enable cancelation,
+    // because the segfault handler doesn't return.
+    _ = std.Options.debug_io.swapCancelProtection(.blocked);
+
     // There is very similar logic to the following in `defaultPanic`.
     switch (panic_stage) {
         0 => {

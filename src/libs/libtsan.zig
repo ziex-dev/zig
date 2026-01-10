@@ -288,6 +288,8 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
+        .function_sections = true,
+        .data_sections = true,
         .c_source_files = c_source_files.items,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
@@ -301,6 +303,7 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .linker_allow_shlib_undefined = linker_allow_shlib_undefined,
         .install_name = install_name,
         .headerpad_size = headerpad_size,
+        .environ_map = comp.environ_map,
     }) catch |err| {
         switch (err) {
             else => comp.lockAndSetMiscFailure(misc_task, "unable to build {t}: create compilation failed: {t}", .{ misc_task, err }),

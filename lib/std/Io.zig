@@ -1,3 +1,18 @@
+//! A cross-platform interface that abstracts all I/O operations and
+//! concurrency. It includes:
+//! * file system
+//! * networking
+//! * processes
+//! * time and sleeping
+//! * randomness
+//! * async, await, concurrent, and cancel
+//! * concurrent queues
+//! * wait groups and select
+//! * mutexes, futexes, events, and conditions
+//! This interface allows programmers to write optimal, reusable code while
+//! participating in these operations.
+const Io = @This();
+
 const builtin = @import("builtin");
 const is_windows = builtin.os.tag == .windows;
 
@@ -8,79 +23,6 @@ const math = std.math;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
-
-pub const Limit = enum(usize) {
-    nothing = 0,
-    unlimited = std.math.maxInt(usize),
-    _,
-
-    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
-    pub fn limited(n: usize) Limit {
-        return @enumFromInt(n);
-    }
-
-    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
-    /// `.unlimited`.
-    pub fn limited64(n: u64) Limit {
-        return @enumFromInt(@min(n, std.math.maxInt(usize)));
-    }
-
-    pub fn countVec(data: []const []const u8) Limit {
-        var total: usize = 0;
-        for (data) |d| total += d.len;
-        return .limited(total);
-    }
-
-    pub fn min(a: Limit, b: Limit) Limit {
-        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
-    }
-
-    pub fn minInt(l: Limit, n: usize) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn minInt64(l: Limit, n: u64) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn slice(l: Limit, s: []u8) []u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn toInt(l: Limit) ?usize {
-        return switch (l) {
-            else => @intFromEnum(l),
-            .unlimited => null,
-        };
-    }
-
-    /// Reduces a slice to account for the limit, leaving room for one extra
-    /// byte above the limit, allowing for the use case of differentiating
-    /// between end-of-stream and reaching the limit.
-    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
-        assert(non_empty_buffer.len >= 1);
-        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
-    }
-
-    pub fn nonzero(l: Limit) bool {
-        return @intFromEnum(l) > 0;
-    }
-
-    /// Return a new limit reduced by `amount` or return `null` indicating
-    /// limit would be exceeded.
-    pub fn subtract(l: Limit, amount: usize) ?Limit {
-        if (l == .unlimited) return .unlimited;
-        if (amount > @intFromEnum(l)) return null;
-        return @enumFromInt(@intFromEnum(l) - amount);
-    }
-};
-
-pub const Reader = @import("Io/Reader.zig");
-pub const Writer = @import("Io/Writer.zig");
 
 pub fn poll(
     gpa: Allocator,
@@ -529,33 +471,30 @@ pub fn PollFiles(comptime StreamEnum: type) type {
     return @Struct(.auto, null, std.meta.fieldNames(StreamEnum), &@splat(Io.File), &@splat(.{}));
 }
 
-test {
-    _ = net;
-    _ = Reader;
-    _ = Writer;
-    _ = Evented;
-    _ = Threaded;
-    _ = @import("Io/test.zig");
-}
+userdata: ?*anyopaque,
+vtable: *const VTable,
 
-const Io = @This();
-
+pub const Threaded = @import("Io/Threaded.zig");
 pub const Evented = switch (builtin.os.tag) {
     .linux => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/IoUring.zig"),
+        .x86_64, .aarch64 => IoUring,
         else => void, // context-switching code not implemented yet
     },
     .dragonfly, .freebsd, .netbsd, .openbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/Kqueue.zig"),
+        .x86_64, .aarch64 => Kqueue,
         else => void, // context-switching code not implemented yet
     },
     else => void,
 };
-pub const Threaded = @import("Io/Threaded.zig");
-pub const net = @import("Io/net.zig");
+pub const Kqueue = @import("Io/Kqueue.zig");
+pub const IoUring = @import("Io/IoUring.zig");
 
-userdata: ?*anyopaque,
-vtable: *const VTable,
+pub const Reader = @import("Io/Reader.zig");
+pub const Writer = @import("Io/Writer.zig");
+pub const net = @import("Io/net.zig");
+pub const Dir = @import("Io/Dir.zig");
+pub const File = @import("Io/File.zig");
+pub const Terminal = @import("Io/Terminal.zig");
 
 pub const VTable = struct {
     /// If it returns `null` it means `result` has been already populated and
@@ -631,7 +570,7 @@ pub const VTable = struct {
         /// Copied and then passed to `start`.
         context: []const u8,
         context_alignment: std.mem.Alignment,
-        start: *const fn (*Group, context: *const anyopaque) Cancelable!void,
+        start: *const fn (context: *const anyopaque) Cancelable!void,
     ) void,
     /// Thread-safe.
     groupConcurrent: *const fn (
@@ -642,7 +581,7 @@ pub const VTable = struct {
         /// Copied and then passed to `start`.
         context: []const u8,
         context_alignment: std.mem.Alignment,
-        start: *const fn (*Group, context: *const anyopaque) Cancelable!void,
+        start: *const fn (context: *const anyopaque) Cancelable!void,
     ) ConcurrentError!void,
     groupAwait: *const fn (?*anyopaque, *Group, token: *anyopaque) Cancelable!void,
     groupCancel: *const fn (?*anyopaque, *Group, token: *anyopaque) void,
@@ -667,6 +606,7 @@ pub const VTable = struct {
     dirStatFile: *const fn (?*anyopaque, Dir, []const u8, Dir.StatFileOptions) Dir.StatFileError!File.Stat,
     dirAccess: *const fn (?*anyopaque, Dir, []const u8, Dir.AccessOptions) Dir.AccessError!void,
     dirCreateFile: *const fn (?*anyopaque, Dir, []const u8, File.CreateFlags) File.OpenError!File,
+    dirCreateFileAtomic: *const fn (?*anyopaque, Dir, []const u8, Dir.CreateFileAtomicOptions) Dir.CreateFileAtomicError!File.Atomic,
     dirOpenFile: *const fn (?*anyopaque, Dir, []const u8, File.OpenFlags) File.OpenError!File,
     dirClose: *const fn (?*anyopaque, []const Dir) void,
     dirRead: *const fn (?*anyopaque, *Dir.Reader, []Dir.Entry) Dir.Reader.Error!usize,
@@ -675,6 +615,7 @@ pub const VTable = struct {
     dirDeleteFile: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteFileError!void,
     dirDeleteDir: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteDirError!void,
     dirRename: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenameError!void,
+    dirRenamePreserve: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenamePreserveError!void,
     dirSymLink: *const fn (?*anyopaque, Dir, target_path: []const u8, sym_link_path: []const u8, Dir.SymLinkFlags) Dir.SymLinkError!void,
     dirReadLink: *const fn (?*anyopaque, Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize,
     dirSetOwner: *const fn (?*anyopaque, Dir, ?File.Uid, ?File.Gid) Dir.SetOwnerError!void,
@@ -710,6 +651,7 @@ pub const VTable = struct {
     fileUnlock: *const fn (?*anyopaque, File) void,
     fileDowngradeLock: *const fn (?*anyopaque, File) File.DowngradeLockError!void,
     fileRealPath: *const fn (?*anyopaque, File, out_buffer: []u8) File.RealPathError!usize,
+    fileHardLink: *const fn (?*anyopaque, File, Dir, []const u8, File.HardLinkOptions) File.HardLinkError!void,
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
@@ -717,9 +659,20 @@ pub const VTable = struct {
     tryLockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!?LockedStderr,
     unlockStderr: *const fn (?*anyopaque) void,
     processSetCurrentDir: *const fn (?*anyopaque, Dir) std.process.SetCurrentDirError!void,
+    processReplace: *const fn (?*anyopaque, std.process.ReplaceOptions) std.process.ReplaceError,
+    processReplacePath: *const fn (?*anyopaque, Dir, std.process.ReplaceOptions) std.process.ReplaceError,
+    processSpawn: *const fn (?*anyopaque, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
+    processSpawnPath: *const fn (?*anyopaque, Dir, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
+    childWait: *const fn (?*anyopaque, *std.process.Child) std.process.Child.WaitError!std.process.Child.Term,
+    childKill: *const fn (?*anyopaque, *std.process.Child) void,
+
+    progressParentFile: *const fn (?*anyopaque) std.Progress.ParentFileError!File,
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
+
+    random: *const fn (?*anyopaque, buffer: []u8) void,
+    randomSecure: *const fn (?*anyopaque, buffer: []u8) RandomSecureError!void,
 
     netListenIp: *const fn (?*anyopaque, address: net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Server,
     netAccept: *const fn (?*anyopaque, server: net.Socket.Handle) net.Server.AcceptError!net.Stream,
@@ -740,6 +693,76 @@ pub const VTable = struct {
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
 };
 
+pub const Limit = enum(usize) {
+    nothing = 0,
+    unlimited = std.math.maxInt(usize),
+    _,
+
+    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
+    pub fn limited(n: usize) Limit {
+        return @enumFromInt(n);
+    }
+
+    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
+    /// `.unlimited`.
+    pub fn limited64(n: u64) Limit {
+        return @enumFromInt(@min(n, std.math.maxInt(usize)));
+    }
+
+    pub fn countVec(data: []const []const u8) Limit {
+        var total: usize = 0;
+        for (data) |d| total += d.len;
+        return .limited(total);
+    }
+
+    pub fn min(a: Limit, b: Limit) Limit {
+        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
+    }
+
+    pub fn minInt(l: Limit, n: usize) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn minInt64(l: Limit, n: u64) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn slice(l: Limit, s: []u8) []u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn toInt(l: Limit) ?usize {
+        return switch (l) {
+            else => @intFromEnum(l),
+            .unlimited => null,
+        };
+    }
+
+    /// Reduces a slice to account for the limit, leaving room for one extra
+    /// byte above the limit, allowing for the use case of differentiating
+    /// between end-of-stream and reaching the limit.
+    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
+        assert(non_empty_buffer.len >= 1);
+        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
+    }
+
+    pub fn nonzero(l: Limit) bool {
+        return @intFromEnum(l) > 0;
+    }
+
+    /// Return a new limit reduced by `amount` or return `null` indicating
+    /// limit would be exceeded.
+    pub fn subtract(l: Limit, amount: usize) ?Limit {
+        if (l == .unlimited) return .unlimited;
+        if (amount > @intFromEnum(l)) return null;
+        return @enumFromInt(@intFromEnum(l) - amount);
+    }
+};
+
 pub const Cancelable = error{
     /// Caller has requested the async operation to stop.
     Canceled,
@@ -756,10 +779,6 @@ pub const UnexpectedError = error{
     /// the respective function.
     Unexpected,
 };
-
-pub const Dir = @import("Io/Dir.zig");
-pub const File = @import("Io/File.zig");
-pub const Terminal = @import("Io/Terminal.zig");
 
 pub const Clock = enum {
     /// A settable system-wide clock that measures real (i.e. wall-clock)
@@ -1050,40 +1069,40 @@ pub fn Future(Result: type) type {
     };
 }
 
+/// An unordered set of tasks which can only be awaited or canceled as a whole.
+/// Tasks are spawned in the group with `Group.async` and `Group.concurrent`.
+///
+/// The resources associated with each task are *guaranteed* to be released when
+/// the individual task returns, as opposed to when the whole group completes or
+/// is awaited. For this reason, it is not a resource leak to have a long-lived
+/// group which concurrent tasks are repeatedly added to. However, asynchronous
+/// tasks are not guaranteed to run until `Group.await` or `Group.cancel` is
+/// called, so adding async tasks to a group without ever awaiting it may leak
+/// resources.
 pub const Group = struct {
-    state: usize,
-    context: ?*anyopaque,
     /// This value indicates whether or not a group has pending tasks. `null`
     /// means there are no pending tasks, and no resources associated with the
     /// group, so `await` and `cancel` return immediately without calling the
     /// implementation. This means that `token` must be accessed atomically to
     /// avoid racing with the check in `await` and `cancel`.
     token: std.atomic.Value(?*anyopaque),
+    /// This value is available for the implementation to use as it wishes.
+    state: usize,
 
-    pub const init: Group = .{ .state = 0, .context = null, .token = .init(null) };
+    pub const init: Group = .{ .token = .init(null), .state = 0 };
 
-    /// Calls `function` with `args` asynchronously. The resource spawned is
-    /// owned by the group.
+    /// Equivalent to `Io.async`, except the task is spawned in this `Group`
+    /// instead of becoming associated with a `Future`.
     ///
-    /// `function` *may* be called immediately, before `async` returns.
+    /// The return type of `function` must be coercible to `Cancelable!void`.
     ///
-    /// When this function returns, it is guaranteed that `function` has
-    /// already been called and completed, or it has successfully been assigned
-    /// a unit of concurrency.
-    ///
-    /// After this is called, `await` or `cancel` must be called before the
-    /// group is deinitialized.
-    ///
-    /// Threadsafe.
-    ///
-    /// See also:
-    /// * `concurrent`
-    /// * `Io.async`
+    /// Once this function is called, there are resources associated with the
+    /// group. To release those resources, `Group.await` or `Group.cancel` must
+    /// eventually be called.
     pub fn async(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
-            fn start(group: *Group, context: *const anyopaque) Cancelable!void {
-                _ = group;
+            fn start(context: *const anyopaque) Cancelable!void {
                 const args_casted: *const Args = @ptrCast(@alignCast(context));
                 return @call(.auto, function, args_casted.*);
             }
@@ -1091,27 +1110,18 @@ pub const Group = struct {
         io.vtable.groupAsync(io.userdata, g, @ptrCast(&args), .of(Args), TypeErased.start);
     }
 
-    /// Calls `function` with `args`, such that the function is not guaranteed
-    /// to have returned until `await` is called, allowing the caller to
-    /// progress while waiting for any `Io` operations.
+    /// Equivalent to `Io.concurrent`, except the task is spawned in this
+    /// `Group` instead of becoming associated with a `Future`.
     ///
-    /// The resource spawned is owned by the group; after this is called,
-    /// `await` or `cancel` must be called before the group is deinitialized.
+    /// The return type of `function` must be coercible to `Cancelable!void`.
     ///
-    /// This has stronger guarantee than `async`, placing restrictions on what kind
-    /// of `Io` implementations are supported. By calling `async` instead, one
-    /// allows, for example, stackful single-threaded blocking I/O.
-    ///
-    /// Threadsafe.
-    ///
-    /// See also:
-    /// * `async`
-    /// * `Io.concurrent`
+    /// Once this function is called, there are resources associated with the
+    /// group. To release those resources, `Group.await` or `Group.cancel` must
+    /// eventually be called.
     pub fn concurrent(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) ConcurrentError!void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
-            fn start(group: *Group, context: *const anyopaque) Cancelable!void {
-                _ = group;
+            fn start(context: *const anyopaque) Cancelable!void {
                 const args_casted: *const Args = @ptrCast(@alignCast(context));
                 return @call(.auto, function, args_casted.*);
             }
@@ -1120,7 +1130,9 @@ pub const Group = struct {
     }
 
     /// Blocks until all tasks of the group finish. During this time,
-    /// cancelation requests propagate to all members of the group.
+    /// cancelation requests propagate to all members of the group, and
+    /// will also cause `error.Canceled` to be returned when the group
+    /// does ultimately finish.
     ///
     /// Idempotent. Not threadsafe.
     ///
@@ -1130,17 +1142,6 @@ pub const Group = struct {
     pub fn await(g: *Group, io: Io) Cancelable!void {
         const token = g.token.load(.acquire) orelse return;
         try io.vtable.groupAwait(io.userdata, g, token);
-        assert(g.token.raw == null);
-    }
-
-    /// Equivalent to `await` but temporarily blocks cancelation while waiting.
-    pub fn awaitUncancelable(g: *Group, io: Io) void {
-        const token = g.token.load(.acquire) orelse return;
-        const prev = swapCancelProtection(io, .blocked);
-        defer _ = swapCancelProtection(io, prev);
-        io.vtable.groupAwait(io.userdata, g, token) catch |err| switch (err) {
-            error.Canceled => unreachable,
-        };
         assert(g.token.raw == null);
     }
 
@@ -1263,19 +1264,20 @@ pub fn Select(comptime U: type) type {
             function: anytype,
             args: std.meta.ArgsTuple(@TypeOf(function)),
         ) void {
-            const Args = @TypeOf(args);
-            const TypeErased = struct {
-                fn start(group: *Group, context: *const anyopaque) Cancelable!void {
-                    const args_casted: *const Args = @ptrCast(@alignCast(context));
-                    const unerased_select: *S = @fieldParentPtr("group", group);
-                    const elem = @unionInit(U, @tagName(field), @call(.auto, function, args_casted.*));
-                    unerased_select.queue.putOneUncancelable(unerased_select.io, elem) catch |err| switch (err) {
+            const Context = struct {
+                select: *S,
+                args: @TypeOf(args),
+                fn start(type_erased_context: *const anyopaque) Cancelable!void {
+                    const context: *const @This() = @ptrCast(@alignCast(type_erased_context));
+                    const elem = @unionInit(U, @tagName(field), @call(.auto, function, context.args));
+                    context.select.queue.putOneUncancelable(context.select.io, elem) catch |err| switch (err) {
                         error.Closed => unreachable,
                     };
                 }
             };
+            const context: Context = .{ .select = s, .args = args };
             _ = @atomicRmw(usize, &s.outstanding, .Add, 1, .monotonic);
-            s.io.vtable.groupAsync(s.io.userdata, &s.group, @ptrCast(&args), .of(Args), TypeErased.start);
+            s.io.vtable.groupAsync(s.io.userdata, &s.group, @ptrCast(&context), .of(Context), Context.start);
         }
 
         /// Blocks until another task of the select finishes.
@@ -1359,7 +1361,7 @@ pub const Mutex = extern struct {
 
     pub const init: Mutex = .{ .state = .init(.unlocked) };
 
-    const State = enum(u32) {
+    pub const State = enum(u32) {
         unlocked,
         locked_once,
         contended,
@@ -2248,4 +2250,48 @@ pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancel
 
 pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
+}
+
+/// Obtains entropy from a cryptographically secure pseudo-random number
+/// generator.
+///
+/// The implementation *may* store RNG state in process memory and use it to
+/// fill `buffer`.
+///
+/// The randomness is seeded by `randomSecure`, or a less secure mechanism upon
+/// failure.
+///
+/// Threadsafe.
+///
+/// See also `randomSecure`.
+pub fn random(io: Io, buffer: []u8) void {
+    return io.vtable.random(io.userdata, buffer);
+}
+
+pub const RandomSecureError = error{EntropyUnavailable} || Cancelable;
+
+/// Obtains cryptographically secure entropy from outside the process.
+///
+/// Always makes a syscall, or otherwise avoids dependency on process memory,
+/// in order to obtain fresh randomness. Does not rely on stored RNG state.
+///
+/// Does not have any fallback mechanisms; returns `error.EntropyUnavailable`
+/// if any problems occur.
+///
+/// Threadsafe.
+///
+/// See also `random`.
+pub fn randomSecure(io: Io, buffer: []u8) RandomSecureError!void {
+    return io.vtable.randomSecure(io.userdata, buffer);
+}
+
+test {
+    _ = net;
+    _ = File;
+    _ = Dir;
+    _ = Reader;
+    _ = Writer;
+    _ = Evented;
+    _ = Threaded;
+    _ = @import("Io/test.zig");
 }

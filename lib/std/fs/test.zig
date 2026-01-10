@@ -79,7 +79,7 @@ const PathType = enum {
                     // using '127.0.0.1' as the server name and '<drive letter>$' as the share name.
                     var fd_path_buf: [Dir.max_path_bytes]u8 = undefined;
                     const dir_path = fd_path_buf[0..try dir.realPath(io, &fd_path_buf)];
-                    const windows_path_type = windows.getWin32PathType(u8, dir_path);
+                    const windows_path_type = Dir.path.getWin32PathType(u8, dir_path);
                     switch (windows_path_type) {
                         .unc_absolute => return Dir.path.joinZ(allocator, &.{ dir_path, relative_path }),
                         .drive_absolute => {
@@ -1022,8 +1022,7 @@ test "Dir.rename directory onto non-empty dir" {
             file.close(io);
             target_dir.close(io);
 
-            // Rename should fail with PathAlreadyExists if target_dir is non-empty
-            try expectError(error.PathAlreadyExists, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
+            try expectError(error.DirNotEmpty, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
 
             // Ensure the directory was not renamed
             var dir = try ctx.dir.openDir(io, test_dir_path, .{});
@@ -1131,6 +1130,7 @@ test "renameAbsolute" {
 
 test "openExecutable" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -1140,6 +1140,7 @@ test "openExecutable" {
 
 test "executablePath" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
     var buf: [Dir.max_path_bytes]u8 = undefined;
@@ -1651,12 +1652,26 @@ test "AtomicFile" {
                 \\ this is a test file
             ;
 
+            // link() succeeds with no file already present
             {
-                var buffer: [100]u8 = undefined;
-                var af = try ctx.dir.atomicFile(io, test_out_file, .{ .write_buffer = &buffer });
-                defer af.deinit();
-                try af.file_writer.interface.writeAll(test_content);
-                try af.finish();
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.link(io);
+            }
+            // link() returns error.PathAlreadyExists if file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try expectError(error.PathAlreadyExists, af.link(io));
+            }
+            // replace() succeeds if file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = true });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.replace(io);
             }
             const content = try ctx.dir.readFileAlloc(io, test_out_file, allocator, .limited(9999));
             try expectEqualStrings(test_content, content);
@@ -1762,10 +1777,10 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     const io = testing.io;
 
     var random_bytes: [12]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
 
-    var random_b64: [std.fs.base64_encoder.calcSize(random_bytes.len)]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&random_b64, &random_bytes);
+    var random_b64: [std.base64.url_safe.Encoder.calcSize(random_bytes.len)]u8 = undefined;
+    _ = std.base64.url_safe.Encoder.encode(&random_b64, &random_bytes);
 
     const sub_path = random_b64 ++ "-zig-test-absolute-paths.txt";
 

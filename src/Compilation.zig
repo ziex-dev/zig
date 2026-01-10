@@ -27,6 +27,7 @@ const glibc = @import("libs/glibc.zig");
 const musl = @import("libs/musl.zig");
 const freebsd = @import("libs/freebsd.zig");
 const netbsd = @import("libs/netbsd.zig");
+const openbsd = @import("libs/openbsd.zig");
 const mingw = @import("libs/mingw.zig");
 const libunwind = @import("libs/libunwind.zig");
 const libcxx = @import("libs/libcxx.zig");
@@ -54,6 +55,7 @@ gpa: Allocator,
 /// threads at once.
 arena: Allocator,
 io: Io,
+environ_map: *const std.process.Environ.Map,
 thread_limit: usize,
 /// Not every Compilation compiles .zig code! For example you could do `zig build-exe foo.o`.
 zcu: ?*Zcu,
@@ -242,6 +244,7 @@ fuzzer_lib: ?CrtFile = null,
 glibc_so_files: ?glibc.BuiltSharedObjects = null,
 freebsd_so_files: ?freebsd.BuiltSharedObjects = null,
 netbsd_so_files: ?netbsd.BuiltSharedObjects = null,
+openbsd_so_files: ?openbsd.BuiltSharedObjects = null,
 
 /// For example `Scrt1.o` and `libc_nonshared.a`. These are populated after building libc from source,
 /// The set of needed CRT (C runtime) files differs depending on the target and compilation settings.
@@ -306,6 +309,7 @@ const QueuedJobs = struct {
     glibc_crt_file: [@typeInfo(glibc.CrtFile).@"enum".fields.len]bool = @splat(false),
     freebsd_crt_file: [@typeInfo(freebsd.CrtFile).@"enum".fields.len]bool = @splat(false),
     netbsd_crt_file: [@typeInfo(netbsd.CrtFile).@"enum".fields.len]bool = @splat(false),
+    openbsd_crt_file: [@typeInfo(openbsd.CrtFile).@"enum".fields.len]bool = @splat(false),
     /// one of WASI libc static objects
     wasi_libc_crt_file: [@typeInfo(wasi_libc.CrtFile).@"enum".fields.len]bool = @splat(false),
     /// one of the mingw-w64 static objects
@@ -314,6 +318,7 @@ const QueuedJobs = struct {
     glibc_shared_objects: bool = false,
     freebsd_shared_objects: bool = false,
     netbsd_shared_objects: bool = false,
+    openbsd_shared_objects: bool = false,
     /// libunwind.a, usually needed when linking libc
     libunwind: bool = false,
     libcxx: bool = false,
@@ -753,24 +758,22 @@ pub const Directories = struct {
             search,
             global,
         },
-        wasi_preopens: switch (builtin.target.os.tag) {
-            .wasi => fs.wasi.Preopens,
-            else => void,
-        },
+        preopens: std.process.Preopens,
         self_exe_path: switch (builtin.target.os.tag) {
             .wasi => void,
             else => []const u8,
         },
+        environ_map: *const std.process.Environ.Map,
     ) Directories {
         const wasi = builtin.target.os.tag == .wasi;
 
         const cwd = introspect.getResolvedCwd(arena) catch |err| {
-            fatal("unable to get cwd: {s}", .{@errorName(err)});
+            fatal("unable to get cwd: {t}", .{err});
         };
 
         const zig_lib: Cache.Directory = d: {
             if (override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/lib");
+            if (wasi) break :d getPreopen(preopens, "/lib");
             break :d introspect.findZigLibDirFromSelfExe(arena, io, cwd, self_exe_path) catch |err| {
                 fatal("unable to find zig installation directory '{s}': {t}", .{ self_exe_path, err });
             };
@@ -778,8 +781,8 @@ pub const Directories = struct {
 
         const global_cache: Cache.Directory = d: {
             if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
-            const path = introspect.resolveGlobalCacheDir(arena) catch |err| {
+            if (wasi) break :d getPreopen(preopens, "/cache");
+            const path = introspect.resolveGlobalCacheDir(arena, environ_map) catch |err| {
                 fatal("unable to resolve zig cache directory: {t}", .{err});
             };
             break :d openUnresolved(arena, io, cwd, path, .@"global cache");
@@ -811,11 +814,12 @@ pub const Directories = struct {
             .local_cache = local_cache,
         };
     }
-    fn openWasiPreopen(preopens: fs.wasi.Preopens, name: []const u8) Cache.Directory {
+    fn getPreopen(preopens: std.process.Preopens, name: []const u8) Cache.Directory {
         return .{
             .path = if (std.mem.eql(u8, name, ".")) null else name,
-            .handle = .{
-                .handle = preopens.find(name) orelse fatal("WASI preopen not found: '{s}'", .{name}),
+            .handle = switch (preopens.get(name) orelse fatal("preopen not found: '{s}'", .{name})) {
+                .file => fatal("preopen {s} is not a directory", .{name}),
+                .dir => |d| d,
             },
         };
     }
@@ -1398,6 +1402,8 @@ pub const MiscTask = enum {
     freebsd_shared_objects,
     netbsd_crt_file,
     netbsd_shared_objects,
+    openbsd_crt_file,
+    openbsd_shared_objects,
     mingw_crt_file,
     windows_import_lib,
     libunwind,
@@ -1433,6 +1439,9 @@ pub const MiscTask = enum {
 
     @"netbsd libc Scrt0.o",
     @"netbsd libc shared object",
+
+    @"openbsd libc Scrt0.o",
+    @"openbsd libc shared object",
 
     @"mingw-w64 crt2.o",
     @"mingw-w64 dllcrt2.o",
@@ -1797,6 +1806,8 @@ pub const CreateOptions = struct {
 
     parent_whole_cache: ?ParentWholeCache = null,
 
+    environ_map: *const std.process.Environ.Map,
+
     pub const Entry = link.File.OpenOptions.Entry;
 
     /// Which fields are valid depends on the `cache_mode` given.
@@ -1967,6 +1978,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             options.root_mod.resolved_target.is_native_abi,
             link_libc,
             options.libc_installation,
+            options.environ_map,
         ) catch |err| switch (err) {
             error.OutOfMemory => |e| return e,
             // Every other error is specifically related to finding the native installation
@@ -2123,6 +2135,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .manifest_dir = options.dirs.local_cache.handle.createDirPathOpen(io, "h", .{}) catch |err| {
                 return diag.fail(.{ .create_cache_path = .{ .which = .local, .sub = "h", .err = err } });
             },
+            .cwd = options.dirs.cwd,
         };
         // These correspond to std.zig.Server.Message.PathPrefix.
         cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
@@ -2306,6 +2319,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .emit_llvm_ir = try options.emit_llvm_ir.resolve(arena, &options, .llvm_ir),
             .emit_llvm_bc = try options.emit_llvm_bc.resolve(arena, &options, .llvm_bc),
             .emit_docs = try options.emit_docs.resolve(arena, &options, .docs),
+            .environ_map = options.environ_map,
         };
 
         errdefer {
@@ -2613,6 +2627,14 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                     }
 
                     comp.queued_jobs.netbsd_shared_objects = true;
+                } else if (target.isOpenBSDLibC()) {
+                    if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
+
+                    if (openbsd.needsCrt0(comp.config.output_mode)) |f| {
+                        comp.queued_jobs.openbsd_crt_file[@intFromEnum(f)] = true;
+                    }
+
+                    comp.queued_jobs.openbsd_shared_objects = true;
                 } else if (target.isWasiLibC()) {
                     if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
 
@@ -2761,6 +2783,10 @@ pub fn destroy(comp: *Compilation) void {
 
     if (comp.netbsd_so_files) |*netbsd_file| {
         netbsd_file.deinit(gpa, io);
+    }
+
+    if (comp.openbsd_so_files) |*openbsd_file| {
+        openbsd_file.deinit(gpa, io);
     }
 
     for (comp.c_object_table.keys()) |key| {
@@ -2914,7 +2940,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         .none => |none| {
             assert(none.tmp_artifact_directory == null);
             none.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -2995,7 +3021,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
 
             // Compile the artifacts to a temporary directory.
             whole.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -3432,7 +3458,7 @@ fn renameTmpIntoCache(
                 },
                 else => return error.AccessDenied,
             },
-            error.PathAlreadyExists => {
+            error.DirNotEmpty => {
                 try cache_directory.handle.deleteTree(io, o_sub_path);
                 continue;
             },
@@ -3909,11 +3935,14 @@ pub fn saveState(comp: *Compilation) !void {
 
     // Using an atomic file prevents a crash or power failure from corrupting
     // the previous incremental compilation state.
+    var af = try lf.emit.root_dir.handle.createFileAtomic(io, basename, .{ .replace = true });
+    defer af.deinit(io);
+
     var write_buffer: [1024]u8 = undefined;
-    var af = try lf.emit.root_dir.handle.atomicFile(io, basename, .{ .write_buffer = &write_buffer });
-    defer af.deinit();
-    try af.file_writer.interface.writeVecAll(bufs.items);
-    try af.finish();
+    var file_writer = af.file.writer(io, &write_buffer);
+    try file_writer.interface.writeVecAll(bufs.items);
+    try file_writer.interface.flush();
+    try af.replace(io);
 }
 
 fn addBuf(list: *std.array_list.Managed([]const u8), buf: []const u8) void {
@@ -4985,6 +5014,10 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         prelink_group.async(io, buildNetBSDSharedObjects, .{ comp, main_progress_node });
     }
 
+    if (comp.queued_jobs.openbsd_shared_objects) {
+        prelink_group.async(io, buildOpenBSDSharedObjects, .{ comp, main_progress_node });
+    }
+
     if (comp.queued_jobs.libunwind) {
         prelink_group.async(io, buildLibUnwind, .{ comp, main_progress_node });
     }
@@ -5030,6 +5063,13 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         if (comp.queued_jobs.netbsd_crt_file[i]) {
             const tag: netbsd.CrtFile = @enumFromInt(i);
             prelink_group.async(io, buildNetBSDCrtFile, .{ comp, tag, main_progress_node });
+        }
+    }
+
+    for (0..@typeInfo(openbsd.CrtFile).@"enum".fields.len) |i| {
+        if (comp.queued_jobs.openbsd_crt_file[i]) {
+            const tag: openbsd.CrtFile = @enumFromInt(i);
+            prelink_group.async(io, buildOpenBSDCrtFile, .{ comp, tag, main_progress_node });
         }
     }
 
@@ -5237,26 +5277,31 @@ fn processOneJob(
     }
 }
 
-fn createDepFile(comp: *Compilation, depfile: []const u8, binfile: Cache.Path) anyerror!void {
+fn createDepFile(comp: *Compilation, dep_file: []const u8, bin_file: Cache.Path) anyerror!void {
     const io = comp.io;
+
+    var af = try Io.Dir.cwd().createFileAtomic(io, dep_file, .{ .replace = true });
+    defer af.deinit(io);
+
     var buf: [4096]u8 = undefined;
-    var af = try Io.Dir.cwd().atomicFile(io, depfile, .{ .write_buffer = &buf });
-    defer af.deinit();
+    var file_writer = af.file.writer(io, &buf);
 
-    comp.writeDepFile(binfile, &af.file_writer.interface) catch return af.file_writer.err.?;
-
-    try af.finish();
+    comp.writeDepFile(bin_file, &file_writer.interface) catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
+    try file_writer.flush();
+    try af.replace(io);
 }
 
 fn writeDepFile(
     comp: *Compilation,
-    binfile: Cache.Path,
+    bin_file: Cache.Path,
     w: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
     const prefixes = comp.cache_parent.prefixes();
     const fsi = comp.file_system_inputs.?.items;
 
-    try w.print("{f}:", .{binfile});
+    try w.print("{f}:", .{bin_file});
 
     {
         var it = std.mem.splitScalar(u8, fsi, 0);
@@ -5503,6 +5548,7 @@ fn workerDocsWasmFallible(comp: *Compilation, prog_node: std.Progress.Node) SubU
         .verbose_llvm_bc = comp.verbose_llvm_bc,
         .verbose_cimport = comp.verbose_cimport,
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(.docs_wasm, "sub-compilation of docs_wasm failed: {f}", .{sub_create_diag});
@@ -5705,12 +5751,17 @@ pub fn translateC(
     translated_basename: []const u8,
     owner_mod: *Package.Module,
     prog_node: std.Progress.Node,
+    environ_map: *const std.process.Environ.Map,
 ) !CImportResult {
     dev.check(.translate_c_command);
 
     const gpa = comp.gpa;
     const io = comp.io;
-    const tmp_basename = std.fmt.hex(std.crypto.random.int(u64));
+    const tmp_basename = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r std.fmt.hex(x);
+    };
     const tmp_sub_path = "tmp" ++ fs.path.sep_str ++ tmp_basename;
     const cache_dir = comp.dirs.local_cache.handle;
     var cache_tmp_dir = try cache_dir.createDirPathOpen(io, tmp_sub_path, .{});
@@ -5774,7 +5825,7 @@ pub fn translateC(
     }
 
     var stdout: []u8 = undefined;
-    try @import("main.zig").translateC(gpa, arena, io, argv.items, prog_node, &stdout);
+    try @import("main.zig").translateC(gpa, arena, io, argv.items, environ_map, prog_node, &stdout);
 
     if (out_dep_path) |dep_file_path| add_deps: {
         if (comp.verbose_cimport) log.info("processing dep file at {s}", .{dep_file_path});
@@ -5861,7 +5912,8 @@ pub fn cImport(
         defer arena_allocator.deinit();
         const arena = arena_allocator.allocator();
 
-        break :result try comp.translateC(
+        break :result try translateC(
+            comp,
             arena,
             &man,
             .c,
@@ -5869,6 +5921,7 @@ pub fn cImport(
             translated_basename,
             owner_mod,
             prog_node,
+            comp.environ_map,
         );
     };
 
@@ -6025,6 +6078,29 @@ fn buildNetBSDSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) vo
     } else |err| switch (err) {
         error.AlreadyReported => return,
         else => comp.lockAndSetMiscFailure(.netbsd_shared_objects, "unable to build NetBSD libc shared objects: {s}", .{
+            @errorName(err),
+        }),
+    }
+}
+
+fn buildOpenBSDCrtFile(comp: *Compilation, crt_file: openbsd.CrtFile, prog_node: std.Progress.Node) void {
+    if (openbsd.buildCrtFile(comp, crt_file, prog_node)) |_| {
+        comp.queued_jobs.openbsd_crt_file[@intFromEnum(crt_file)] = false;
+    } else |err| switch (err) {
+        error.AlreadyReported => return,
+        else => comp.lockAndSetMiscFailure(.openbsd_crt_file, "unable to build OpenBSD {s}: {s}", .{
+            @tagName(crt_file), @errorName(err),
+        }),
+    }
+}
+
+fn buildOpenBSDSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) void {
+    if (openbsd.buildSharedObjects(comp, prog_node)) |_| {
+        // The job should no longer be queued up since it succeeded.
+        comp.queued_jobs.openbsd_shared_objects = false;
+    } else |err| switch (err) {
+        error.AlreadyReported => return,
+        else => comp.lockAndSetMiscFailure(.openbsd_shared_objects, "unable to build OpenBSD libc shared objects: {s}", .{
             @errorName(err),
         }),
     }
@@ -6249,7 +6325,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         // that we could "tail call" clang by doing an execve, and any use of
         // the caching system would actually be problematic since the user is
         // presumably doing their own caching by using dep file flags.
-        if (std.process.can_execv and direct_o and
+        if (std.process.can_replace and direct_o and
             comp.disable_c_depfile and comp.clang_passthrough_mode)
         {
             try comp.addCCArgs(arena, &argv, ext, null, c_object.src.owner);
@@ -6281,8 +6357,8 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                 try dumpArgv(io, argv.items);
             }
 
-            const err = std.process.execv(arena, argv.items);
-            fatal("unable to execv clang: {s}", .{@errorName(err)});
+            const err = std.process.replace(io, .{ .argv = argv.items });
+            fatal("unable to replace process with clang: {t}", .{err});
         }
 
         // We can't know the digest until we do the C compiler invocation,
@@ -6337,17 +6413,24 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
             else => log.warn("failed to delete '{s}': {s}", .{ dep_file_path, @errorName(err) }),
         };
         if (std.process.can_spawn) {
-            var child = std.process.Child.init(argv.items, arena);
             if (comp.clang_passthrough_mode) {
-                child.stdin_behavior = .Inherit;
-                child.stdout_behavior = .Inherit;
-                child.stderr_behavior = .Inherit;
-
-                const term = child.spawnAndWait(io) catch |err| {
-                    return comp.failCObj(c_object, "failed to spawn zig clang (passthrough mode) {s}: {s}", .{ argv.items[0], @errorName(err) });
+                var child = std.process.spawn(io, .{
+                    .argv = argv.items,
+                    .stdin = .inherit,
+                    .stdout = .inherit,
+                    .stderr = .inherit,
+                }) catch |err| {
+                    return comp.failCObj(c_object, "failed to spawn zig clang (passthrough mode) {s}: {t}", .{
+                        argv.items[0], err,
+                    });
+                };
+                const term = child.wait(io) catch |err| {
+                    return comp.failCObj(c_object, "failed to wait zig clang (passthrough mode) {s}: {t}", .{
+                        argv.items[0], err,
+                    });
                 };
                 switch (term) {
-                    .Exited => |code| {
+                    .exited => |code| {
                         if (code != 0) {
                             std.process.exit(code);
                         }
@@ -6357,21 +6440,21 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                     else => std.process.abort(),
                 }
             } else {
-                child.stdin_behavior = .Ignore;
-                child.stdout_behavior = .Ignore;
-                child.stderr_behavior = .Pipe;
-
-                try child.spawn(io);
+                var child = try std.process.spawn(io, .{
+                    .argv = argv.items,
+                    .stdin = .ignore,
+                    .stdout = .ignore,
+                    .stderr = .pipe,
+                });
 
                 var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
                 const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
 
-                const term = child.wait(io) catch |err| {
-                    return comp.failCObj(c_object, "failed to spawn zig clang {s}: {s}", .{ argv.items[0], @errorName(err) });
-                };
+                const term = child.wait(io) catch |err|
+                    return comp.failCObj(c_object, "failed to spawn zig clang {s}: {t}", .{ argv.items[0], err });
 
                 switch (term) {
-                    .Exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
+                    .exited => |code| if (code != 0) if (out_diag_path) |diag_file_path| {
                         const bundle = CObject.Diag.Bundle.parse(gpa, io, diag_file_path) catch |err| {
                             log.err("{}: failed to parse clang diagnostics: {s}", .{ err, stderr });
                             return comp.failCObj(c_object, "clang exited with code {d}", .{code});
@@ -6380,6 +6463,10 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                     } else {
                         log.err("clang failed with stderr: {s}", .{stderr});
                         return comp.failCObj(c_object, "clang exited with code {d}", .{code});
+                    },
+                    .signal => |sig| {
+                        log.err("clang failed with stderr: {s}", .{stderr});
+                        return comp.failCObj(c_object, "clang terminated with signal {t}", .{sig});
                     },
                     else => {
                         log.err("clang terminated with stderr: {s}", .{stderr});
@@ -6741,15 +6828,16 @@ fn spawnZigRc(
     var node_name: std.ArrayList(u8) = .empty;
     defer node_name.deinit(arena);
 
-    var child = std.process.Child.init(argv, arena);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    child.progress_node = child_progress_node;
-
-    child.spawn(io) catch |err| {
-        return comp.failWin32Resource(win32_resource, "unable to spawn {s} rc: {t}", .{ argv[0], err });
-    };
+    var child = std.process.spawn(io, .{
+        .argv = argv,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .progress_node = child_progress_node,
+    }) catch |err| return comp.failWin32Resource(win32_resource, "unable to spawn {s} rc: {t}", .{
+        argv[0], err,
+    });
+    defer child.kill(io);
 
     var poller = std.Io.poll(comp.gpa, enum { stdout, stderr }, .{
         .stdout = child.stdout.?,
@@ -6781,15 +6869,19 @@ fn spawnZigRc(
     const stderr = poller.reader(.stderr);
 
     const term = child.wait(io) catch |err| {
-        return comp.failWin32Resource(win32_resource, "unable to wait for {s} rc: {s}", .{ argv[0], @errorName(err) });
+        return comp.failWin32Resource(win32_resource, "unable to wait for {s} rc: {t}", .{ argv[0], err });
     };
 
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 log.err("zig rc failed with stderr:\n{s}", .{stderr.buffered()});
                 return comp.failWin32Resource(win32_resource, "zig rc exited with code {d}", .{code});
             }
+        },
+        .signal => |sig| {
+            log.err("zig rc signaled {t} with stderr:\n{s}", .{ sig, stderr.buffered() });
+            return comp.failWin32Resource(win32_resource, "zig rc terminated unexpectedly", .{});
         },
         else => {
             log.err("zig rc terminated with stderr:\n{s}", .{stderr.buffered()});
@@ -6799,8 +6891,13 @@ fn spawnZigRc(
 }
 
 pub fn tmpFilePath(comp: Compilation, ally: Allocator, suffix: []const u8) error{OutOfMemory}![]const u8 {
+    const io = comp.io;
+    const rand_int = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r x;
+    };
     const s = fs.path.sep_str;
-    const rand_int = std.crypto.random.int(u64);
     if (comp.dirs.local_cache.path) |p| {
         return std.fmt.allocPrint(ally, "{s}" ++ s ++ "tmp" ++ s ++ "{x}-{s}", .{ p, rand_int, suffix });
     } else {
@@ -6950,6 +7047,21 @@ fn addCommonCCArgs(
                         // our abilists file only tracks major and minor NetBSD releases, so the link-time stub symbols
                         // would be inconsistent with header declarations.
                         (min_ver.major * 100_000_000) + (min_ver.minor * 1_000_000),
+                    }));
+                } else if (target.isOpenBSDLibC()) {
+                    const min_ver = target.os.version_range.semver.min;
+                    // The macro in sys/param.h doesn't have the leading underscores, but we don't want to pollute the
+                    // global namespace in all compilation units. So we use leading underscores and modify sys/param.h
+                    // to just alias this one.
+                    try argv.append(try std.fmt.allocPrint(arena, "-D___OpenBSD={d}", .{
+                        // Brilliantly, OpenBSD defines this macro to the year and month of the release, so we need to
+                        // maintain a manual mapping here whenever we update the headers.
+                        202510,
+                    }));
+                    // We can't avoid pollution for this one...
+                    try argv.append(try std.fmt.allocPrint(arena, "-DOpenBSD{d}_{d}", .{
+                        min_ver.major,
+                        min_ver.minor,
                     }));
                 }
             }
@@ -7959,6 +8071,7 @@ fn buildOutputFromZig(
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(misc_task_tag, "sub-compilation of {t} failed: {f}", .{ misc_task_tag, sub_create_diag });
@@ -7978,8 +8091,8 @@ fn buildOutputFromZig(
 }
 
 pub const CrtFileOptions = struct {
-    function_sections: ?bool = null,
-    data_sections: ?bool = null,
+    function_sections: bool = true,
+    data_sections: bool = true,
     omit_frame_pointer: ?bool = null,
     unwind_tables: ?std.builtin.UnwindTables = null,
     pic: ?bool = null,
@@ -8082,8 +8195,8 @@ pub fn build_crt_file(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = options.function_sections orelse false,
-        .data_sections = options.data_sections orelse false,
+        .function_sections = options.function_sections,
+        .data_sections = options.data_sections,
         .c_source_files = c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
@@ -8096,6 +8209,7 @@ pub fn build_crt_file(
         .verbose_llvm_cpu_features = comp.verbose_llvm_cpu_features,
         .clang_passthrough_mode = comp.clang_passthrough_mode,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(misc_task_tag, "sub-compilation of {t} failed: {f}", .{ misc_task_tag, sub_create_diag });

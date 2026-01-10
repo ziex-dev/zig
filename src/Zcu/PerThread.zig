@@ -1269,6 +1269,7 @@ fn analyzeNavVal(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Zcu.CompileErr
                 .visibility = .default,
                 .is_dll_import = false,
                 .relocation = .any,
+                .decoration = null,
                 .is_const = is_const,
                 .alignment = modifiers.alignment,
                 .@"addrspace" = modifiers.@"addrspace",
@@ -2571,10 +2572,7 @@ fn newEmbedFile(
         try whole.cache_manifest_mutex.lock(io);
         defer whole.cache_manifest_mutex.unlock(io);
 
-        man.addFilePostContents(path_str, contents, new_file.stat) catch |err| switch (err) {
-            error.Unexpected => unreachable,
-            else => |e| return e,
-        };
+        try man.addFilePostContents(path_str, contents, new_file.stat);
     }
 
     return new_file;
@@ -3493,6 +3491,7 @@ pub fn getCoerced(pt: Zcu.PerThread, val: Value, new_ty: Type) Allocator.Error!V
                 .visibility = e.visibility,
                 .is_dll_import = e.is_dll_import,
                 .relocation = e.relocation,
+                .decoration = e.decoration,
                 .alignment = e.alignment,
                 .@"addrspace" = e.@"addrspace",
                 .zir_index = e.zir_index,

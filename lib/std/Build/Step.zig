@@ -29,7 +29,6 @@ dependants: ArrayList(*Step),
 /// retain previous value, or update.
 inputs: Inputs,
 
-state: State,
 /// Set this field to declare an upper bound on the amount of bytes of memory it will
 /// take to run the step. Zero means no limit.
 ///
@@ -50,6 +49,9 @@ state: State,
 /// runner. This value is configurable on the command line, and defaults to the
 /// total system memory available.
 max_rss: usize,
+
+state: State,
+pending_deps: u32,
 
 result_error_msgs: ArrayList([]const u8),
 result_error_bundle: std.zig.ErrorBundle,
@@ -111,12 +113,7 @@ pub const TestResults = struct {
 pub const MakeOptions = struct {
     progress_node: std.Progress.Node,
     watch: bool,
-    web_server: switch (builtin.target.cpu.arch) {
-        else => ?*Build.WebServer,
-        // WASM code references `Build.abi` which happens to incidentally reference this type, but
-        // it currently breaks because `std.net.Address` doesn't work there. Work around for now.
-        .wasm32 => void,
-    },
+    web_server: ?*Build.WebServer,
     /// If set, this is a timeout to enforce on all individual unit tests, in nanoseconds.
     unit_test_timeout_ns: ?u64,
     /// Not to be confused with `Build.allocator`, which is an alias of `Build.graph.arena`.
@@ -134,7 +131,6 @@ pub const State = enum {
     /// file system inputs have been modified, meaning that the step needs to
     /// be re-evaluated.
     precheck_done,
-    running,
     dependency_failure,
     success,
     failure,
@@ -173,7 +169,6 @@ pub const Id = enum {
             .install_artifact => InstallArtifact,
             .install_file => InstallFile,
             .install_dir => InstallDir,
-            .remove_dir => RemoveDir,
             .fail => Fail,
             .fmt => Fmt,
             .translate_c => TranslateC,
@@ -201,7 +196,6 @@ pub const InstallFile = @import("Step/InstallFile.zig");
 pub const ObjCopy = @import("Step/ObjCopy.zig");
 pub const Compile = @import("Step/Compile.zig");
 pub const Options = @import("Step/Options.zig");
-pub const RemoveDir = @import("Step/RemoveDir.zig");
 pub const Run = @import("Step/Run.zig");
 pub const TranslateC = @import("Step/TranslateC.zig");
 pub const WriteFile = @import("Step/WriteFile.zig");
@@ -249,6 +243,7 @@ pub fn init(options: StepOptions) Step {
         .dependants = .empty,
         .inputs = Inputs.init,
         .state = .precheck_unstarted,
+        .pending_deps = undefined, // initialized by build runner
         .max_rss = options.max_rss,
         .debug_stack_trace = blk: {
             const addr_buf = arena.alloc(usize, options.owner.debug_stack_frames_count) catch @panic("OOM");
@@ -348,19 +343,21 @@ pub fn captureChildProcess(
     gpa: Allocator,
     progress_node: std.Progress.Node,
     argv: []const []const u8,
-) !std.process.Child.RunResult {
-    const arena = s.owner.allocator;
-    const io = s.owner.graph.io;
+) !std.process.RunResult {
+    const graph = s.owner.graph;
+    const arena = graph.arena;
+    const io = graph.io;
 
     // If an error occurs, it's happened in this command:
     assert(s.result_failed_command == null);
-    s.result_failed_command = try allocPrintCmd(gpa, null, argv);
+    s.result_failed_command = try allocPrintCmd(gpa, null, null, argv);
 
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    const result = std.process.Child.run(arena, io, .{
+    const result = std.process.run(arena, io, .{
         .argv = argv,
+        .environ_map = &graph.environ_map,
         .progress_node = progress_node,
     }) catch |err| return s.fail("failed to run {s}: {t}", .{ argv[0], err });
 
@@ -406,7 +403,7 @@ pub fn evalZigProcess(
 
     // If an error occurs, it's happened in this command:
     assert(s.result_failed_command == null);
-    s.result_failed_command = try allocPrintCmd(gpa, null, argv);
+    s.result_failed_command = try allocPrintCmd(gpa, null, null, argv);
 
     if (s.getZigProcess()) |zp| update: {
         assert(watch);
@@ -442,35 +439,34 @@ pub fn evalZigProcess(
         return result;
     }
     assert(argv.len != 0);
-    const arena = b.allocator;
 
     try handleChildProcUnsupported(s);
     try handleVerbose(s.owner, null, argv);
 
-    var child = std.process.Child.init(argv, arena);
-    child.env_map = &b.graph.env_map;
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    child.request_resource_usage_statistics = true;
-    child.progress_node = prog_node;
-
-    child.spawn(io) catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
-
     const zp = try gpa.create(ZigProcess);
+    defer if (!watch) gpa.destroy(zp);
+
+    zp.child = std.process.spawn(io, .{
+        .argv = argv,
+        .environ_map = &b.graph.environ_map,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .request_resource_usage_statistics = true,
+        .progress_node = prog_node,
+    }) catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
+    defer if (!watch) zp.child.kill(io);
+
     zp.* = .{
-        .child = child,
+        .child = zp.child,
         .poller = Io.poll(gpa, ZigProcess.StreamEnum, .{
-            .stdout = child.stdout.?,
-            .stderr = child.stderr.?,
+            .stdout = zp.child.stdout.?,
+            .stderr = zp.child.stderr.?,
         }),
-        .progress_ipc_fd = if (std.Progress.have_ipc) child.progress_node.getIpcFd() else {},
+        .progress_ipc_fd = if (std.Progress.have_ipc) prog_node.getIpcFd() else {},
     };
     if (watch) s.setZigProcess(zp);
-    defer if (!watch) {
-        zp.poller.deinit();
-        gpa.destroy(zp);
-    };
+    defer if (!watch) zp.poller.deinit();
 
     const result = try zigProcessUpdate(s, zp, watch, web_server, gpa);
 
@@ -486,7 +482,7 @@ pub fn evalZigProcess(
 
         // Special handling for Compile step that is expecting compile errors.
         if (s.cast(Compile)) |compile| switch (term) {
-            .Exited => {
+            .exited => {
                 // Note that the exit code may be 0 in this case due to the
                 // compiler server protocol.
                 if (compile.expect_errors != null) {
@@ -692,13 +688,17 @@ pub fn handleVerbose(
 pub fn handleVerbose2(
     b: *Build,
     opt_cwd: ?[]const u8,
-    opt_env: ?*const std.process.EnvMap,
+    opt_env: ?*const std.process.Environ.Map,
     argv: []const []const u8,
 ) error{OutOfMemory}!void {
     if (b.verbose) {
+        const graph = b.graph;
         // Intention of verbose is to print all sub-process command lines to
         // stderr before spawning them.
-        const text = try allocPrintCmd2(b.allocator, opt_cwd, opt_env, argv);
+        const text = try allocPrintCmd(b.allocator, opt_cwd, if (opt_env) |env| .{
+            .child = env,
+            .parent = &graph.environ_map,
+        } else null, argv);
         std.debug.print("{s}\n", .{text});
     }
 }
@@ -714,12 +714,15 @@ pub inline fn handleChildProcUnsupported(s: *Step) error{ OutOfMemory, MakeFaile
 pub fn handleChildProcessTerm(s: *Step, term: std.process.Child.Term) error{ MakeFailed, OutOfMemory }!void {
     assert(s.result_failed_command != null);
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 return s.fail("process exited with error code {d}", .{code});
             }
         },
-        .Signal, .Stopped, .Unknown => {
+        .signal => |sig| {
+            return s.fail("process terminated with signal {t}", .{sig});
+        },
+        .stopped, .unknown => {
             return s.fail("process terminated unexpectedly", .{});
         },
     }
@@ -728,15 +731,10 @@ pub fn handleChildProcessTerm(s: *Step, term: std.process.Child.Term) error{ Mak
 pub fn allocPrintCmd(
     gpa: Allocator,
     opt_cwd: ?[]const u8,
-    argv: []const []const u8,
-) Allocator.Error![]u8 {
-    return allocPrintCmd2(gpa, opt_cwd, null, argv);
-}
-
-pub fn allocPrintCmd2(
-    gpa: Allocator,
-    opt_cwd: ?[]const u8,
-    opt_env: ?*const std.process.EnvMap,
+    opt_env: ?struct {
+        child: *const std.process.Environ.Map,
+        parent: *const std.process.Environ.Map,
+    },
     argv: []const []const u8,
 ) Allocator.Error![]u8 {
     const shell = struct {
@@ -779,13 +777,11 @@ pub fn allocPrintCmd2(
     const writer = &aw.writer;
     if (opt_cwd) |cwd| writer.print("cd {s} && ", .{cwd}) catch return error.OutOfMemory;
     if (opt_env) |env| {
-        var process_env_map = std.process.getEnvMap(gpa) catch std.process.EnvMap.init(gpa);
-        defer process_env_map.deinit();
-        var it = env.iterator();
+        var it = env.child.iterator();
         while (it.next()) |entry| {
             const key = entry.key_ptr.*;
             const value = entry.value_ptr.*;
-            if (process_env_map.get(key)) |process_value| {
+            if (env.parent.get(key)) |process_value| {
                 if (std.mem.eql(u8, value, process_value)) continue;
             }
             writer.print("{s}=", .{key}) catch return error.OutOfMemory;
@@ -986,14 +982,17 @@ pub fn reset(step: *Step, gpa: Allocator) void {
 }
 
 /// Implementation detail of file watching. Prepares the step for being re-evaluated.
-pub fn recursiveReset(step: *Step, gpa: Allocator) void {
-    assert(step.state != .precheck_done);
+/// Returns `true` if the step was newly invalidated, `false` if it was already invalidated.
+pub fn invalidateResult(step: *Step, gpa: Allocator) bool {
+    if (step.state == .precheck_done) return false;
+    assert(step.pending_deps == 0);
     step.state = .precheck_done;
     step.reset(gpa);
-    for (step.dependants.items) |dep| {
-        if (dep.state == .precheck_done) continue;
-        dep.recursiveReset(gpa);
+    for (step.dependants.items) |dependant| {
+        _ = dependant.invalidateResult(gpa);
+        dependant.pending_deps += 1;
     }
+    return true;
 }
 
 test {
@@ -1007,7 +1006,6 @@ test {
     _ = ObjCopy;
     _ = Compile;
     _ = Options;
-    _ = RemoveDir;
     _ = Run;
     _ = TranslateC;
     _ = WriteFile;

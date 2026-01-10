@@ -1,27 +1,17 @@
-const builtin = @import("builtin");
 const std = @import("std");
 
-// See https://github.com/ziglang/zig/issues/24510
-// for the plan to simplify this code.
-pub fn main() !void {
-    var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_allocator.deinit();
-    const gpa = debug_allocator.allocator();
-
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var stdout_writer = std.Io.File.stdout().writerStreaming(io, &.{});
+pub fn main(init: std.process.Init) !void {
+    var stdout_writer = std.Io.File.stdout().writerStreaming(init.io, &.{});
     const out = &stdout_writer.interface;
 
     var line_buffer: [20]u8 = undefined;
-    var stdin_reader: std.Io.File.Reader = .init(.stdin(), io, &line_buffer);
+    var stdin_reader: std.Io.File.Reader = .init(.stdin(), init.io, &line_buffer);
     const in = &stdin_reader.interface;
 
     try out.writeAll("Welcome to the Guess Number Game in Zig.\n");
 
-    const answer = std.crypto.random.intRangeLessThan(u8, 0, 100) + 1;
+    var rng: std.Random.IoSource = .{ .io = init.io };
+    const answer = rng.interface().intRangeLessThan(u8, 0, 100) + 1;
 
     while (true) {
         try out.writeAll("\nGuess a number between 1 and 100: ");

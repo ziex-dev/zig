@@ -1210,6 +1210,13 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
                         });
                         try argv.append(lib_path);
                     }
+                } else if (target.isOpenBSDLibC()) {
+                    for (openbsd.libs) |lib| {
+                        const lib_path = try std.fmt.allocPrint(arena, "{f}{c}lib{s}.so", .{
+                            comp.openbsd_so_files.?.dir_path, fs.path.sep, lib.name,
+                        });
+                        try argv.append(lib_path);
+                    }
                 } else {
                     diags.flags.missing_libc = true;
                 }
@@ -1604,19 +1611,24 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
     var stderr: []u8 = &.{};
     defer gpa.free(stderr);
 
-    var child = std.process.Child.init(argv, arena);
+    // TODO rework this awkward logic to call child.kill() in the failure case
     const term = (if (comp.clang_passthrough_mode) term: {
-        child.stdin_behavior = .Inherit;
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdin = .inherit,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        }) catch |err| break :term err;
 
-        break :term child.spawnAndWait(io);
+        break :term child.wait(io);
     } else term: {
-        child.stdin_behavior = .Ignore;
-        child.stdout_behavior = .Ignore;
-        child.stderr_behavior = .Pipe;
+        var child = std.process.spawn(io, .{
+            .argv = argv,
+            .stdin = .ignore,
+            .stdout = .ignore,
+            .stderr = .pipe,
+        }) catch |err| break :term err;
 
-        child.spawn(io) catch |err| break :term err;
         var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
         stderr = try stderr_reader.interface.allocRemaining(gpa, .unlimited);
         break :term child.wait(io);
@@ -1624,7 +1636,11 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
         const err = switch (first_err) {
             error.NameTooLong => err: {
                 const s = fs.path.sep_str;
-                const rand_int = std.crypto.random.int(u64);
+                const rand_int = r: {
+                    var x: u64 = undefined;
+                    io.random(@ptrCast(&x));
+                    break :r x;
+                };
                 const rsp_path = "tmp" ++ s ++ std.fmt.hex(rand_int) ++ ".rsp";
 
                 const rsp_file = try comp.dirs.local_cache.handle.createFile(io, rsp_path, .{});
@@ -1650,23 +1666,21 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
                     try rsp_writer.flush();
                 }
 
-                var rsp_child = std.process.Child.init(&.{ argv[0], argv[1], try std.fmt.allocPrint(
-                    arena,
-                    "@{s}",
-                    .{try comp.dirs.local_cache.join(arena, &.{rsp_path})},
-                ) }, arena);
+                var rsp_child = std.process.spawn(io, .{
+                    .argv = &.{
+                        argv[0],
+                        argv[1],
+                        try std.fmt.allocPrint(arena, "@{s}", .{
+                            try comp.dirs.local_cache.join(arena, &.{rsp_path}),
+                        }),
+                    },
+                    .stdin = if (comp.clang_passthrough_mode) .inherit else .ignore,
+                    .stdout = if (comp.clang_passthrough_mode) .inherit else .ignore,
+                    .stderr = if (comp.clang_passthrough_mode) .inherit else .pipe,
+                }) catch |err| break :err err;
                 if (comp.clang_passthrough_mode) {
-                    rsp_child.stdin_behavior = .Inherit;
-                    rsp_child.stdout_behavior = .Inherit;
-                    rsp_child.stderr_behavior = .Inherit;
-
-                    break :term rsp_child.spawnAndWait(io) catch |err| break :err err;
+                    break :term rsp_child.wait(io) catch |err| break :err err;
                 } else {
-                    rsp_child.stdin_behavior = .Ignore;
-                    rsp_child.stdout_behavior = .Ignore;
-                    rsp_child.stderr_behavior = .Pipe;
-
-                    rsp_child.spawn(io) catch |err| break :err err;
                     var stderr_reader = rsp_child.stderr.?.readerStreaming(io, &.{});
                     stderr = try stderr_reader.interface.allocRemaining(gpa, .unlimited);
                     break :term rsp_child.wait(io) catch |err| break :err err;
@@ -1674,13 +1688,13 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
             },
             else => first_err,
         };
-        log.err("unable to spawn LLD {s}: {s}", .{ argv[0], @errorName(err) });
+        log.err("unable to spawn LLD {s}: {t}", .{ argv[0], err });
         return error.UnableToSpawnSelf;
     };
 
     const diags = &comp.link_diags;
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             if (comp.clang_passthrough_mode) std.process.exit(code);
             diags.lockAndParseLldStderr(argv[1], stderr);
             return error.LinkFailure;
@@ -1710,6 +1724,7 @@ const dev = @import("../dev.zig");
 const freebsd = @import("../libs/freebsd.zig");
 const glibc = @import("../libs/glibc.zig");
 const netbsd = @import("../libs/netbsd.zig");
+const openbsd = @import("../libs/openbsd.zig");
 const wasi_libc = @import("../libs/wasi_libc.zig");
 const link = @import("../link.zig");
 const lldMain = @import("../main.zig").lldMain;

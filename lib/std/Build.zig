@@ -12,7 +12,6 @@ const StringHashMap = std.StringHashMap;
 const Allocator = std.mem.Allocator;
 const Target = std.Target;
 const process = std.process;
-const EnvMap = std.process.EnvMap;
 const File = std.Io.File;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const ArrayList = std.ArrayList;
@@ -112,13 +111,14 @@ pub const ReleaseMode = enum {
 /// Settings that are here rather than in Build are not configurable per-package.
 pub const Graph = struct {
     io: Io,
+    /// Process lifetime.
     arena: Allocator,
     system_library_options: std.StringArrayHashMapUnmanaged(SystemLibraryMode) = .empty,
     system_package_mode: bool = false,
     debug_compiler_runtime_libs: bool = false,
     cache: Cache,
     zig_exe: [:0]const u8,
-    env_map: EnvMap,
+    environ_map: process.Environ.Map,
     global_cache_root: Cache.Directory,
     zig_lib_directory: Cache.Directory,
     needed_lazy_dependencies: std.StringArrayHashMapUnmanaged(void) = .empty,
@@ -190,7 +190,7 @@ pub const RunError = error{
     ExitCodeFailure,
     ProcessTerminated,
     ExecNotSupported,
-} || std.process.Child.SpawnError;
+} || std.process.SpawnError;
 
 pub const PkgConfigError = error{
     PkgConfigCrashed,
@@ -289,7 +289,7 @@ pub fn create(
         .lib_dir = undefined,
         .exe_dir = undefined,
         .h_dir = undefined,
-        .dest_dir = graph.env_map.get("DESTDIR"),
+        .dest_dir = graph.environ_map.get("DESTDIR"),
         .install_tls = .{
             .step = .init(.{
                 .id = TopLevelStep.base_id,
@@ -1058,16 +1058,44 @@ pub fn addNamedLazyPath(b: *Build, name: []const u8, lp: LazyPath) void {
     b.named_lazy_paths.put(b.dupe(name), lp.dupe(b)) catch @panic("OOM");
 }
 
+/// Creates a step for mutating files inside a temporary directory created lazily
+/// and automatically cleaned up upon successful build.
+///
+/// The directory will be placed inside "tmp" rather than "o", and caching will
+/// be skipped. During the `make` phase, the step will always do all the file
+/// system operations, and on successful build completion, the dir will be
+/// deleted along with all other tmp directories. The directory is therefore
+/// eligible to be used for mutations by other steps.
+///
+/// See also:
+/// * `addWriteFiles`
+/// * `addMutateFiles`
+pub fn addTempFiles(b: *Build) *Step.WriteFile {
+    const wf = addWriteFiles(b);
+    wf.mode = .tmp;
+    return wf;
+}
+
+/// Creates a step for mutating temporary directories created with `addTempFiles`.
+///
+/// Consider instead `addWriteFiles` which is for creating a cached directory
+/// of files to operate on.
+///
+/// This should only be used with a `tmp_path` obtained via `addTempFiles` or
+/// `tmpPath`.
+pub fn addMutateFiles(b: *Build, tmp_path: LazyPath) *Step.WriteFile {
+    const wf = addWriteFiles(b);
+    wf.mode = .{ .mutate = tmp_path };
+    tmp_path.addStepDependencies(&wf.step);
+    return wf;
+}
+
 pub fn addWriteFiles(b: *Build) *Step.WriteFile {
     return Step.WriteFile.create(b);
 }
 
 pub fn addUpdateSourceFiles(b: *Build) *Step.UpdateSourceFiles {
     return Step.UpdateSourceFiles.create(b);
-}
-
-pub fn addRemoveDirTree(b: *Build, dir_path: LazyPath) *Step.RemoveDir {
-    return Step.RemoveDir.create(b, dir_path);
 }
 
 pub fn addFail(b: *Build, error_msg: []const u8) *Step.Fail {
@@ -1738,8 +1766,7 @@ pub fn pathFromRoot(b: *Build, sub_path: []const u8) []u8 {
 }
 
 fn pathFromCwd(b: *Build, sub_path: []const u8) []u8 {
-    const cwd = process.getCwdAlloc(b.allocator) catch @panic("OOM");
-    return b.pathResolve(&.{ cwd, sub_path });
+    return b.pathResolve(&.{ b.graph.cache.cwd, sub_path });
 }
 
 pub fn pathJoin(b: *Build, paths: []const []const u8) []u8 {
@@ -1755,7 +1782,7 @@ pub fn fmt(b: *Build, comptime format: []const u8, args: anytype) []u8 {
 }
 
 fn supportedWindowsProgramExtension(ext: []const u8) bool {
-    inline for (@typeInfo(std.process.Child.WindowsExtension).@"enum".fields) |field| {
+    inline for (@typeInfo(std.process.WindowsExtension).@"enum".fields) |field| {
         if (std.ascii.eqlIgnoreCase(ext, "." ++ field.name)) return true;
     }
     return false;
@@ -1773,7 +1800,7 @@ fn tryFindProgram(b: *Build, full_path: []const u8) ?[]const u8 {
     }
 
     if (builtin.os.tag == .windows) {
-        if (b.graph.env_map.get("PATHEXT")) |PATHEXT| {
+        if (b.graph.environ_map.get("PATHEXT")) |PATHEXT| {
             var it = mem.tokenizeScalar(u8, PATHEXT, fs.path.delimiter);
 
             while (it.next()) |ext| {
@@ -1804,7 +1831,7 @@ pub fn findProgram(b: *Build, names: []const []const u8, paths: []const []const 
             return tryFindProgram(b, b.pathJoin(&.{ search_prefix, "bin", name })) orelse continue;
         }
     }
-    if (b.graph.env_map.get("PATH")) |PATH| {
+    if (b.graph.environ_map.get("PATH")) |PATH| {
         for (names) |name| {
             if (fs.path.isAbsolute(name)) {
                 return name;
@@ -1830,24 +1857,26 @@ pub fn runAllowFail(
     b: *Build,
     argv: []const []const u8,
     out_code: *u8,
-    stderr_behavior: std.process.Child.StdIo,
+    stderr_behavior: std.process.SpawnOptions.StdIo,
 ) RunError![]u8 {
     assert(argv.len != 0);
 
     if (!process.can_spawn)
         return error.ExecNotSupported;
 
-    const io = b.graph.io;
+    const graph = b.graph;
+    const io = graph.io;
 
     const max_output_size = 400 * 1024;
-    var child = std.process.Child.init(argv, b.allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = stderr_behavior;
-    child.env_map = &b.graph.env_map;
+    try Step.handleVerbose2(b, null, &graph.environ_map, argv);
 
-    try Step.handleVerbose2(b, null, child.env_map, argv);
-    try child.spawn(io);
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .environ_map = &graph.environ_map,
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = stderr_behavior,
+    });
 
     var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
     const stdout = stdout_reader.interface.allocRemaining(b.allocator, .limited(max_output_size)) catch {
@@ -1857,14 +1886,18 @@ pub fn runAllowFail(
 
     const term = try child.wait(io);
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) {
                 out_code.* = @as(u8, @truncate(code));
                 return error.ExitCodeFailure;
             }
             return stdout;
         },
-        .Signal, .Stopped, .Unknown => |code| {
+        .signal => |sig| {
+            out_code.* = @as(u8, @truncate(@intFromEnum(sig)));
+            return error.ProcessTerminated;
+        },
+        .stopped, .unknown => |code| {
             out_code.* = @as(u8, @truncate(code));
             return error.ProcessTerminated;
         },
@@ -1875,21 +1908,11 @@ pub fn runAllowFail(
 /// inside step make() functions. If any errors occur, it fails the build with
 /// a helpful message.
 pub fn run(b: *Build, argv: []const []const u8) []u8 {
-    if (!process.can_spawn) {
-        std.debug.print("unable to spawn the following command: cannot spawn child process\n{s}\n", .{
-            try Step.allocPrintCmd(b.allocator, null, argv),
-        });
-        process.exit(1);
-    }
-
     var code: u8 = undefined;
-    return b.runAllowFail(argv, &code, .Inherit) catch |err| {
-        const printed_cmd = Step.allocPrintCmd(b.allocator, null, argv) catch @panic("OOM");
-        std.debug.print("unable to spawn the following command: {s}\n{s}\n", .{
-            @errorName(err), printed_cmd,
-        });
-        process.exit(1);
-    };
+    return b.runAllowFail(argv, &code, .inherit) catch |err| process.fatal(
+        "the following command failed with {t}:\n{s}",
+        .{ err, Step.allocPrintCmd(b.allocator, null, null, argv) catch @panic("OOM") },
+    );
 }
 
 pub fn addSearchPrefix(b: *Build, search_prefix: []const u8) void {
@@ -2241,9 +2264,8 @@ pub fn runBuild(b: *Build, build_zig: anytype) anyerror!void {
 /// A file that is generated by a build step.
 /// This struct is an interface that is meant to be used with `@fieldParentPtr` to implement the actual path logic.
 pub const GeneratedFile = struct {
-    /// The step that generates the file
+    /// The step that generates the file.
     step: *Step,
-
     /// The path to the generated file. Must be either absolute or relative to the build runner cwd.
     /// This value must be set in the `fn make()` of the `step` and must not be `null` afterwards.
     path: ?[]const u8 = null,
@@ -2327,9 +2349,11 @@ pub const LazyPath = union(enum) {
 
     /// An absolute path or a path relative to the current working directory of
     /// the build runner process.
+    ///
     /// This is uncommon but used for system environment paths such as `--zig-lib-dir` which
     /// ignore the file system path of build.zig and instead are relative to the directory from
     /// which `zig build` was invoked.
+    ///
     /// Use of this tag indicates a dependency on the host system.
     cwd_relative: []const u8,
 
@@ -2652,19 +2676,12 @@ pub const InstallDir = union(enum) {
     }
 };
 
-/// This function is intended to be called in the `configure` phase only.
-/// It returns an absolute directory path, which is potentially going to be a
-/// source of API breakage in the future, so keep that in mind when using this
-/// function.
-pub fn makeTempPath(b: *Build) []const u8 {
-    const io = b.graph.io;
-    const rand_int = std.crypto.random.int(u64);
-    const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
-    const result_path = b.cache_root.join(b.allocator, &.{tmp_dir_sub_path}) catch @panic("OOM");
-    b.cache_root.handle.createDirPath(io, tmp_dir_sub_path) catch |err| {
-        std.debug.print("unable to make tmp path '{s}': {t}\n", .{ result_path, err });
-    };
-    return result_path;
+/// Creates a path leading to a directory inside "tmp" subdirectory of
+/// `cache_root` which is created on demand and cleaned up by the build runner
+/// upon success.
+pub fn tmpPath(b: *Build) LazyPath {
+    const wf = b.addTempFiles();
+    return wf.getDirectory();
 }
 
 /// A pair of target query and fully resolved target.

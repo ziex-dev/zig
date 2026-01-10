@@ -4,19 +4,13 @@ const std = @import("std");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-pub fn main() anyerror!void {
-    var debug_alloc_inst: std.heap.DebugAllocator(.{}) = .init;
-    defer std.debug.assert(debug_alloc_inst.deinit() == .ok);
-    const gpa = debug_alloc_inst.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var threaded: Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    var it = try std.process.argsWithAllocator(gpa);
+    var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
     _ = it.next() orelse unreachable; // skip binary name
-    const child_exe_path_orig = it.next() orelse unreachable;
 
     const iterations: u64 = iterations: {
         const arg = it.next() orelse "0";
@@ -28,7 +22,7 @@ pub fn main() anyerror!void {
         const seed_arg = it.next() orelse {
             rand_seed = true;
             var buf: [8]u8 = undefined;
-            try std.posix.getrandom(&buf);
+            io.random(&buf);
             break :seed std.mem.readInt(u64, &buf, builtin.cpu.arch.endian());
         };
         break :seed try std.fmt.parseUnsigned(u64, seed_arg, 10);
@@ -42,37 +36,6 @@ pub fn main() anyerror!void {
         std.debug.print("rand seed: {}\n", .{seed});
     }
 
-    var tmp = tmpDir(io, .{});
-    defer tmp.cleanup(io);
-
-    try std.process.setCurrentDir(io, tmp.dir);
-    defer std.process.setCurrentDir(io, tmp.parent_dir) catch {};
-
-    // `child_exe_path_orig` might be relative; make it relative to our new cwd.
-    const child_exe_path = try std.fs.path.resolve(gpa, &.{ "..\\..\\..", child_exe_path_orig });
-    defer gpa.free(child_exe_path);
-
-    var buf: std.ArrayList(u8) = .empty;
-    defer buf.deinit(gpa);
-    try buf.print(gpa,
-        \\@echo off
-        \\"{s}"
-    , .{child_exe_path});
-    // Trailing newline intentionally omitted above so we can add args.
-    const preamble_len = buf.items.len;
-
-    try buf.appendSlice(gpa, " %*");
-    try tmp.dir.writeFile(io, .{ .sub_path = "args1.bat", .data = buf.items });
-    buf.shrinkRetainingCapacity(preamble_len);
-
-    try buf.appendSlice(gpa, " %1 %2 %3 %4 %5 %6 %7 %8 %9");
-    try tmp.dir.writeFile(io, .{ .sub_path = "args2.bat", .data = buf.items });
-    buf.shrinkRetainingCapacity(preamble_len);
-
-    try buf.appendSlice(gpa, " \"%~1\" \"%~2\" \"%~3\" \"%~4\" \"%~5\" \"%~6\" \"%~7\" \"%~8\" \"%~9\"");
-    try tmp.dir.writeFile(io, .{ .sub_path = "args3.bat", .data = buf.items });
-    buf.shrinkRetainingCapacity(preamble_len);
-
     var i: u64 = 0;
     while (iterations == 0 or i < iterations) {
         const rand_arg = try randomArg(gpa, rand);
@@ -84,13 +47,13 @@ pub fn main() anyerror!void {
     }
 }
 
-fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExec(gpa: Allocator, io: Io, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
     try testExecBat(gpa, io, "args1.bat", args, env);
     try testExecBat(gpa, io, "args2.bat", args, env);
     try testExecBat(gpa, io, "args3.bat", args, env);
 }
 
-fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.EnvMap) !void {
+fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8, env: ?*std.process.Environ.Map) !void {
     const argv = try gpa.alloc([]const u8, 1 + args.len);
     defer gpa.free(argv);
     argv[0] = bat;
@@ -98,8 +61,8 @@ fn testExecBat(gpa: Allocator, io: Io, bat: []const u8, args: []const []const u8
 
     const can_have_trailing_empty_args = std.mem.eql(u8, bat, "args3.bat");
 
-    const result = try std.process.Child.run(gpa, io, .{
-        .env_map = env,
+    const result = try std.process.run(gpa, io, .{
+        .environ_map = env,
         .argv = argv,
     });
     defer gpa.free(result.stdout);
@@ -168,41 +131,3 @@ fn randomArg(gpa: Allocator, rand: std.Random) ![]const u8 {
 
     return buf.toOwnedSlice(gpa);
 }
-
-pub fn tmpDir(io: Io, opts: Io.Dir.OpenOptions) TmpDir {
-    var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
-    var sub_path: [TmpDir.sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
-
-    const cwd = Io.Dir.cwd();
-    var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache dir");
-    defer cache_dir.close(io);
-    const parent_dir = cache_dir.createDirPathOpen(io, "tmp", .{}) catch
-        @panic("unable to make tmp dir for testing: unable to make and open .zig-cache/tmp dir");
-    const dir = parent_dir.createDirPathOpen(io, &sub_path, .{ .open_options = opts }) catch
-        @panic("unable to make tmp dir for testing: unable to make and open the tmp dir");
-
-    return .{
-        .dir = dir,
-        .parent_dir = parent_dir,
-        .sub_path = sub_path,
-    };
-}
-
-pub const TmpDir = struct {
-    dir: Io.Dir,
-    parent_dir: Io.Dir,
-    sub_path: [sub_path_len]u8,
-
-    const random_bytes_count = 12;
-    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
-
-    pub fn cleanup(self: *TmpDir, io: Io) void {
-        self.dir.close(io);
-        self.parent_dir.deleteTree(io, &self.sub_path) catch {};
-        self.parent_dir.close(io);
-        self.* = undefined;
-    }
-};

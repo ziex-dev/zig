@@ -56,6 +56,7 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 },
             };
             return comp.build_crt_file("crt2", .Obj, .@"mingw-w64 crt2.o", prog_node, &files, .{
+                .function_sections = false, // https://codeberg.org/ziglang/zig/issues/30702
                 .unwind_tables = unwind_tables,
             });
         },
@@ -259,6 +260,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         .gpa = gpa,
         .io = io,
         .manifest_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, "h", .{}),
+        .cwd = comp.dirs.cwd,
     };
     cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
@@ -608,9 +610,6 @@ const mingw32_generic_src = [_][]const u8{
     "gdtoa" ++ path.sep_str ++ "sum.c",
     "gdtoa" ++ path.sep_str ++ "ulp.c",
     "math" ++ path.sep_str ++ "coshl.c",
-    "math" ++ path.sep_str ++ "fp_consts.c",
-    "math" ++ path.sep_str ++ "fp_constsf.c",
-    "math" ++ path.sep_str ++ "fp_constsl.c",
     "math" ++ path.sep_str ++ "fpclassify.c",
     "math" ++ path.sep_str ++ "fpclassifyf.c",
     "math" ++ path.sep_str ++ "fpclassifyl.c",
@@ -997,9 +996,6 @@ const mingw32_x86_src = [_][]const u8{
 const mingw32_x86_32_src = [_][]const u8{
     // ucrtbase
     "math" ++ path.sep_str ++ "coshf.c",
-    "math" ++ path.sep_str ++ "expf.c",
-    "math" ++ path.sep_str ++ "log10f.c",
-    "math" ++ path.sep_str ++ "logf.c",
     "math" ++ path.sep_str ++ "modff.c",
     "math" ++ path.sep_str ++ "powf.c",
     "math" ++ path.sep_str ++ "sinhf.c",

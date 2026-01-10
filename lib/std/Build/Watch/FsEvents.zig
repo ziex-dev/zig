@@ -43,6 +43,8 @@ dispatch_queue: dispatch_queue_t,
 /// of writing. See the comment at the start of `wait` for details.
 since_event: FSEventStreamEventId,
 
+cwd_path: []const u8,
+
 /// All of the symbols we pull from the `dlopen`ed CoreServices framework. If any of these symbols
 /// is not present, `init` will close the framework and return an error.
 const ResolvedSymbols = struct {
@@ -78,7 +80,7 @@ const ResolvedSymbols = struct {
     kCFAllocatorUseContext: *const CFAllocatorRef,
 };
 
-pub fn init() error{ OpenFrameworkFailed, MissingCoreServicesSymbol }!FsEvents {
+pub fn init(cwd_path: []const u8) error{ OpenFrameworkFailed, MissingCoreServicesSymbol }!FsEvents {
     var core_services = std.DynLib.open("/System/Library/Frameworks/CoreServices.framework/CoreServices") catch
         return error.OpenFrameworkFailed;
     errdefer core_services.close();
@@ -99,6 +101,7 @@ pub fn init() error{ OpenFrameworkFailed, MissingCoreServicesSymbol }!FsEvents {
         // Not `.since_now`, because this means we can init `FsEvents` *before* we do work in order
         // to notice any changes which happened during said work.
         .since_event = resolved_symbols.FSEventsGetCurrentEventId(),
+        .cwd_path = cwd_path,
     };
 }
 
@@ -120,9 +123,6 @@ pub fn setPaths(fse: *FsEvents, gpa: Allocator, steps: []const *std.Build.Step) 
     defer fse.paths_arena = paths_arena_instance.state;
     const paths_arena = paths_arena_instance.allocator();
 
-    const cwd_path = try std.process.getCwdAlloc(gpa);
-    defer gpa.free(cwd_path);
-
     var need_dirs: std.StringArrayHashMapUnmanaged(void) = .empty;
     defer need_dirs.deinit(gpa);
 
@@ -131,7 +131,9 @@ pub fn setPaths(fse: *FsEvents, gpa: Allocator, steps: []const *std.Build.Step) 
     // We take `step` by pointer for a slight memory optimization in a moment.
     for (steps) |*step| {
         for (step.*.inputs.table.keys(), step.*.inputs.table.values()) |path, *files| {
-            const resolved_dir = try std.fs.path.resolvePosix(paths_arena, &.{ cwd_path, path.root_dir.path orelse ".", path.sub_path });
+            const resolved_dir = try std.fs.path.resolvePosix(paths_arena, &.{
+                fse.cwd_path, path.root_dir.path orelse ".", path.sub_path,
+            });
             try need_dirs.put(gpa, resolved_dir, {});
             for (files.items) |file_name| {
                 const watch_path = if (std.mem.eql(u8, file_name, "."))
@@ -347,13 +349,17 @@ fn eventCallback(
             false => {
                 if (fse.watch_paths.get(event_path)) |steps| {
                     assert(steps.len > 0);
-                    for (steps) |s| dirtyStep(s, gpa, &any_dirty);
+                    for (steps) |s| {
+                        if (s.invalidateResult(gpa)) any_dirty = true;
+                    }
                 }
                 if (std.fs.path.dirname(event_path)) |event_dirname| {
                     // Modifying '/foo/bar' triggers the watch on '/foo'.
                     if (fse.watch_paths.get(event_dirname)) |steps| {
                         assert(steps.len > 0);
-                        for (steps) |s| dirtyStep(s, gpa, &any_dirty);
+                        for (steps) |s| {
+                            if (s.invalidateResult(gpa)) any_dirty = true;
+                        }
                     }
                 }
             },
@@ -366,7 +372,9 @@ fn eventCallback(
                 const changed_path = std.fs.path.dirname(event_path) orelse event_path;
                 for (fse.watch_paths.keys(), fse.watch_paths.values()) |watching_path, steps| {
                     if (dirStartsWith(watching_path, changed_path)) {
-                        for (steps) |s| dirtyStep(s, gpa, &any_dirty);
+                        for (steps) |s| {
+                            if (s.invalidateResult(gpa)) any_dirty = true;
+                        }
                     }
                 }
             },
@@ -376,11 +384,6 @@ fn eventCallback(
         fse.since_event = rs.FSEventStreamGetLatestEventId(stream);
         _ = dispatch_semaphore_signal(fse.waiting_semaphore);
     }
-}
-fn dirtyStep(s: *std.Build.Step, gpa: Allocator, any_dirty: *bool) void {
-    if (s.state == .precheck_done) return;
-    s.recursiveReset(gpa);
-    any_dirty.* = true;
 }
 fn dirStartsWith(path: []const u8, prefix: []const u8) bool {
     if (std.mem.eql(u8, path, prefix)) return true;

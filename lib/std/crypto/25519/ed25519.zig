@@ -333,12 +333,10 @@ pub const Ed25519 = struct {
         }
 
         /// Generate a new, random key pair.
-        ///
-        /// `crypto.random.bytes` must be supported by the target.
-        pub fn generate() KeyPair {
+        pub fn generate(io: std.Io) KeyPair {
             var random_seed: [seed_length]u8 = undefined;
             while (true) {
-                crypto.random.bytes(&random_seed);
+                io.random(&random_seed);
                 return generateDeterministic(random_seed) catch {
                     @branchHint(.unlikely);
                     continue;
@@ -387,20 +385,23 @@ pub const Ed25519 = struct {
             );
         }
 
-        /// Create a Signer, that can be used for incremental signing.
-        /// Note that the signature is not deterministic.
-        /// The noise parameter, if set, should be something unique for each message,
-        /// such as a random nonce, or a counter.
-        pub fn signer(key_pair: KeyPair, noise: ?[noise_length]u8) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
+        /// Create a signer that can be used for incremental signing, using a custom base nonce.
+        /// `base_nonce` must be unique for each signed message; otherwise, the secret key can
+        /// be trivially recovered by an attacker.
+        /// It can be generated using a cryptographically secure random number generator.
+        pub fn signerWithBaseNonce(
+            key_pair: KeyPair,
+            base_nonce: [32]u8,
+            /// If set, should be something unique for each message, such as a counter.
+            noise: ?[noise_length]u8,
+        ) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
             if (!mem.eql(u8, &key_pair.secret_key.publicKeyBytes(), &key_pair.public_key.toBytes())) {
                 return error.KeyMismatch;
             }
             const scalar_and_prefix = key_pair.secret_key.scalarAndPrefix();
             var h = Sha512.init(.{});
             h.update(&scalar_and_prefix.prefix);
-            var noise2: [noise_length]u8 = undefined;
-            crypto.random.bytes(&noise2);
-            h.update(&noise2);
+            h.update(&base_nonce);
             if (noise) |*z| {
                 h.update(z);
             }
@@ -409,6 +410,20 @@ pub const Ed25519 = struct {
             const nonce = Curve.scalar.reduce64(nonce64);
 
             return Signer.init(scalar_and_prefix.scalar, nonce, key_pair.public_key);
+        }
+
+        /// Create a Signer, that can be used for incremental signing.
+        /// Note that the signature is not deterministic.
+        pub fn signer(
+            key_pair: KeyPair,
+            /// If set, should be something unique for each message, such as a
+            /// random nonce, or a counter.
+            noise: ?[noise_length]u8,
+            io: std.Io,
+        ) (IdentityElementError || KeyMismatchError || NonCanonicalError || WeakPublicKeyError)!Signer {
+            var base_nonce: [32]u8 = undefined;
+            io.random(&base_nonce);
+            return key_pair.signerWithBaseNonce(base_nonce, noise);
         }
     };
 
@@ -420,7 +435,7 @@ pub const Ed25519 = struct {
     };
 
     /// Verify several signatures in a single operation, much faster than verifying signatures one-by-one
-    pub fn verifyBatch(comptime count: usize, signature_batch: [count]BatchElement) (SignatureVerificationError || IdentityElementError || WeakPublicKeyError || EncodingError || NonCanonicalError)!void {
+    pub fn verifyBatch(io: std.Io, comptime count: usize, signature_batch: [count]BatchElement) (SignatureVerificationError || IdentityElementError || WeakPublicKeyError || EncodingError || NonCanonicalError)!void {
         var r_batch: [count]CompressedScalar = undefined;
         var s_batch: [count]CompressedScalar = undefined;
         var a_batch: [count]Curve = undefined;
@@ -454,7 +469,7 @@ pub const Ed25519 = struct {
 
         var z_batch: [count]Curve.scalar.CompressedScalar = undefined;
         for (&z_batch) |*z| {
-            crypto.random.bytes(z[0..16]);
+            io.random(z[0..16]);
             @memset(z[16..], 0);
         }
 
@@ -587,12 +602,14 @@ test "signature" {
 }
 
 test "batch verification" {
+    const io = std.testing.io;
+
     for (0..16) |_| {
-        const key_pair = Ed25519.KeyPair.generate();
+        const key_pair = Ed25519.KeyPair.generate(io);
         var msg1: [32]u8 = undefined;
         var msg2: [32]u8 = undefined;
-        crypto.random.bytes(&msg1);
-        crypto.random.bytes(&msg2);
+        io.random(&msg1);
+        io.random(&msg2);
         const sig1 = try key_pair.sign(&msg1, null);
         const sig2 = try key_pair.sign(&msg2, null);
         var signature_batch = [_]Ed25519.BatchElement{
@@ -607,10 +624,10 @@ test "batch verification" {
                 .public_key = key_pair.public_key,
             },
         };
-        try Ed25519.verifyBatch(2, signature_batch);
+        try Ed25519.verifyBatch(io, 2, signature_batch);
 
         signature_batch[1].sig = sig1;
-        try std.testing.expectError(error.SignatureVerificationFailed, Ed25519.verifyBatch(signature_batch.len, signature_batch));
+        try std.testing.expectError(error.SignatureVerificationFailed, Ed25519.verifyBatch(io, signature_batch.len, signature_batch));
     }
 }
 
@@ -718,14 +735,15 @@ test "test vectors" {
 }
 
 test "with blind keys" {
+    const io = std.testing.io;
     const BlindKeyPair = Ed25519.key_blinding.BlindKeyPair;
 
     // Create a standard Ed25519 key pair
-    const kp = Ed25519.KeyPair.generate();
+    const kp = Ed25519.KeyPair.generate(io);
 
     // Create a random blinding seed
     var blind: [32]u8 = undefined;
-    crypto.random.bytes(&blind);
+    io.random(&blind);
 
     // Blind the key pair
     const blind_kp = try BlindKeyPair.init(kp, blind, "ctx");
@@ -741,9 +759,10 @@ test "with blind keys" {
 }
 
 test "signatures with streaming" {
-    const kp = Ed25519.KeyPair.generate();
+    const io = std.testing.io;
+    const kp = Ed25519.KeyPair.generate(io);
 
-    var signer = try kp.signer(null);
+    var signer = try kp.signer(null, io);
     signer.update("mes");
     signer.update("sage");
     const sig = signer.finalize();
@@ -757,7 +776,8 @@ test "signatures with streaming" {
 }
 
 test "key pair from secret key" {
-    const kp = Ed25519.KeyPair.generate();
+    const io = std.testing.io;
+    const kp = Ed25519.KeyPair.generate(io);
     const kp2 = try Ed25519.KeyPair.fromSecretKey(kp.secret_key);
     try std.testing.expectEqualSlices(u8, &kp.secret_key.toBytes(), &kp2.secret_key.toBytes());
     try std.testing.expectEqualSlices(u8, &kp.public_key.toBytes(), &kp2.public_key.toBytes());
@@ -788,7 +808,8 @@ test "cofactored vs cofactorless verification" {
 }
 
 test "regular signature verifies with both verify and verifyStrict" {
-    const kp = Ed25519.KeyPair.generate();
+    const io = std.testing.io;
+    const kp = Ed25519.KeyPair.generate(io);
     const msg = "test message";
     const sig = try kp.sign(msg, null);
     try sig.verify(msg, kp.public_key);
