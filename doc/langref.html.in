@@ -2252,6 +2252,10 @@ or
         the backing integer.</li>
         <li>A {#link|bool|Primitive Types#} field uses exactly 1 bit.</li>
         <li>An {#link|enum#} field uses exactly the bit width of its integer tag type.</li>
+        <li>An {#link|array|Arrays#} field uses exactly its bit width (the array has a
+        well-defined bit layout).</li>
+        <li>A {#link|vector|Vectors#} field uses exactly its bit width (the vector has a
+        well-defined bit layout, but not a byte layout).</li>
         <li>A {#link|packed union#} field uses exactly the bit width of the union field with
         the largest bit width.</li>
         <li>A {#syntax#}packed struct{#endsyntax#} field uses the bits of its backing integer.</li>
