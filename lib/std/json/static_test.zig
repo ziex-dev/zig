@@ -784,8 +784,7 @@ test "max_value_len" {
 
 test "max_value_len sentinel string" {
     const json_string =
-        "\""
-        ++ "a" ** (std.json.default_max_value_len + 1) ++
+        "\"" ++ "a" ** (std.json.default_max_value_len + 1) ++
         "\"";
     const parsed = try parseFromSlice([:0]const u8, testing.allocator, json_string, .{
         .max_value_len = std.json.default_max_value_len + 1,
