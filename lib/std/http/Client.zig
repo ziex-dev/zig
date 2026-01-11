@@ -588,7 +588,7 @@ pub const Response = struct {
 
                     if (iter.next()) |_| return error.HttpTransferEncodingUnsupported;
                 } else if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
-                    const content_length = std.fmt.parseInt(u64, header_value, 10) catch return error.InvalidContentLength;
+                    const content_length = try parseContentLength(header_value);
 
                     if (res.content_length != null and res.content_length != content_length) return error.HttpHeadersInvalid;
 
@@ -696,6 +696,20 @@ pub const Response = struct {
 
         inline fn int64(array: *const [8]u8) u64 {
             return @bitCast(array.*);
+        }
+
+        fn parseContentLength(text: []const u8) error{InvalidContentLength}!u64 {
+            if (text.len == 0) return error.InvalidContentLength;
+
+            var value: u64 = 0;
+            for (text) |ch| {
+                if (!std.ascii.isDigit(ch)) return error.InvalidContentLength;
+                const digit: u64 = @intCast(ch - '0');
+                if (value > (std.math.maxInt(u64) - digit) / 10) return error.InvalidContentLength;
+                value = value * 10 + digit;
+            }
+
+            return value;
         }
 
         fn parseInt3(text: *const [3]u8) u10 {
