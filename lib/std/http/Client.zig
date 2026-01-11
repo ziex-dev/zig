@@ -633,6 +633,13 @@ pub const Response = struct {
             try testing.expectEqual(.deflate, head.content_encoding);
         }
 
+        test "parse invalid content-length" {
+            const response_bytes = "HTTP/1.1 200 OK\r\n" ++
+                "content-Length:10_000\r\n\r\n";
+
+            try testing.expectError(error.InvalidContentLength, Head.parse(response_bytes));
+        }
+
         pub fn iterateHeaders(h: Head) http.HeaderIterator {
             return .init(h.bytes);
         }
