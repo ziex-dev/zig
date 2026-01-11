@@ -490,7 +490,7 @@ pub fn innerParse(
                             if (ptrInfo.sentinel()) |s| {
                                 // Use our own array list so we can append the sentinel.
                                 var value_list = ArrayList(u8).init(allocator);
-                                _ = try source.allocNextIntoArrayList(&value_list, .alloc_always);
+                                _ = try source.allocNextIntoArrayListMax(&value_list, .alloc_always, options.max_value_len.?);
                                 return try value_list.toOwnedSliceSentinel(s);
                             }
                             if (ptrInfo.is_const) {
