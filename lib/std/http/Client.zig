@@ -704,9 +704,9 @@ pub const Response = struct {
             var value: u64 = 0;
             for (text) |ch| {
                 if (!std.ascii.isDigit(ch)) return error.InvalidContentLength;
-                const digit: u64 = @intCast(ch - '0');
-                if (value > (std.math.maxInt(u64) - digit) / 10) return error.InvalidContentLength;
-                value = value * 10 + digit;
+                const digit: u64 = ch - '0';
+                value = std.math.mul(u64, value, 10) catch return error.InvalidContentLength;
+                value = std.math.add(u64, value, digit) catch return error.InvalidContentLength;
             }
 
             return value;
