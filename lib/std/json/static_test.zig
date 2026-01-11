@@ -782,6 +782,19 @@ test "max_value_len" {
     try testing.expectError(error.ValueTooLong, parseFromSlice([]u8, testing.allocator, "\"0123456789\"", .{ .max_value_len = 5 }));
 }
 
+test "max_value_len sentinel string" {
+    const json_string =
+        "\""
+        ++ "a" ** (std.json.default_max_value_len + 1) ++
+        "\"";
+    const parsed = try parseFromSlice([:0]const u8, testing.allocator, json_string, .{
+        .max_value_len = std.json.default_max_value_len + 1,
+    });
+    defer parsed.deinit();
+
+    try testing.expectEqual(parsed.value.len, std.json.default_max_value_len + 1);
+}
+
 test "parse into vector" {
     const T = struct {
         vec_i32: @Vector(4, i32),
