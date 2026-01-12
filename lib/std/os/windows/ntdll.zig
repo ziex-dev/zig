@@ -585,3 +585,5 @@ pub extern "ntdll" fn NtCancelSynchronousIoFile(
 pub extern "ntdll" fn RtlNtStatusToDosError(
     Status: NTSTATUS,
 ) callconv(.winapi) ULONG;
+
+pub extern "ntdll" fn RtlSetLastWin32Error(err: DWORD) callconv(.winapi) void;

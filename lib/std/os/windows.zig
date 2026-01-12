@@ -4915,6 +4915,54 @@ pub const SYSTEM_INFO = extern struct {
     wProcessorRevision: WORD,
 };
 
+pub const GetSystemInfoError = error{
+    AccessDenied,
+    InvalidHandle,
+    InvalidParameter,
+    Unexpected,
+};
+
+pub fn GetSystemInfo(lpSystemInfo: *SYSTEM_INFO) GetSystemInfoError!void {
+    var basic_info = SYSTEM_BASIC_INFORMATION{};
+    var proc_info = SYSTEM_PROCESSOR_INFORMATION{};
+
+    var rc = ntdll.NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS.SystemBasicInformation, &basic_info, @sizeOf(SYSTEM_BASIC_INFORMATION), null);
+    switch (rc) {
+        .SUCCESS => {},
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_HANDLE => return error.InvalidHandle,
+        .INVALID_PARAMETER => return error.InvalidParameter,
+        else => return unexpectedStatus(rc),
+    }
+
+    rc = ntdll.NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS.SystemProcessorInformation, &proc_info, @sizeOf(SYSTEM_PROCESSOR_INFORMATION), null);
+    switch (rc) {
+        .SUCCESS => {},
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_HANDLE => return error.InvalidHandle,
+        .INVALID_PARAMETER => return error.InvalidParameter,
+        else => return unexpectedStatus(rc),
+    }
+
+    lpSystemInfo.* = SYSTEM_INFO{
+        .dwPageSize = basic_info.PageSize,
+        .anon1 = .{ .anon2 = .{
+            .wProcessorArchitecture = proc_info.ProcessorArchitecture,
+            .wReserved = 0,
+        } },
+        .lpMinimumApplicationAddress = basic_info.MinimumUserModeAddress,
+        .lpMaximumApplicationAddress = basic_info.MaximumUserModeAddress,
+        .dwActiveProcessorMask = basic_info.ActiveProcessorsAffinityMask,
+        .dwNumberOfProcessors = basic_info.NumberOfProcessors, // ! Fix
+        .dwProcessorType = 0, // ! Extend
+        .dwAllocationGranularity = basic_info.AllocationGranularity,
+        .wProcessorLevel = proc_info.ProcessorLevel,
+        .wProcessorRevision = proc_info.ProcessorRevision,
+    };
+
+    // TODO: Extended Processor Logic (Matches ASM 0x91A - 0x965)
+}
+
 pub const HRESULT = c_long;
 
 pub const KNOWNFOLDERID = GUID;
@@ -6683,6 +6731,7 @@ pub const MODULEENTRY32 = extern struct {
 
 pub const SYSTEM_INFORMATION_CLASS = enum(c_int) {
     SystemBasicInformation = 0,
+    SystemProcessorInformation = 1,
     SystemPerformanceInformation = 2,
     SystemTimeOfDayInformation = 3,
     SystemProcessInformation = 5,
@@ -6707,6 +6756,14 @@ pub const SYSTEM_BASIC_INFORMATION = extern struct {
     MaximumUserModeAddress: ULONG_PTR,
     ActiveProcessorsAffinityMask: KAFFINITY,
     NumberOfProcessors: UCHAR,
+};
+
+pub const SYSTEM_PROCESSOR_INFORMATION = extern struct {
+    ProcessorArchitecture: USHORT,
+    ProcessorLevel: USHORT,
+    ProcessorRevision: USHORT,
+    Unknown: USHORT,
+    FeatureBits: ULONG,
 };
 
 pub const PROCESS_BASIC_INFORMATION = extern struct {
