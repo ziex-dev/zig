@@ -281,7 +281,7 @@ test "listen on a unix socket, send bytes, receive bytes" {
     const socket_addr = try net.UnixAddress.init(socket_path);
     defer Io.Dir.cwd().deleteFile(io, socket_path) catch {};
 
-    var server = try socket_addr.listen(io, .{});
+    var server = try socket_addr.listen(io, .{ .permissions = .default_file });
     defer server.socket.close(io);
 
     const S = struct {

@@ -10004,6 +10004,25 @@ fn netListenIpUnavailable(
     return error.NetworkDown;
 }
 
+const SocketFilePermissionsError = error{SystemResources} || Io.Cancelable || Io.UnexpectedError;
+
+fn socketSetFilePermissions(
+    userdata: ?*anyopaque,
+    raw_handle: Io.net.Socket.Handle,
+    perms: Io.File.Permissions,
+) SocketFilePermissionsError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    fileSetPermissions(t, Io.File{ .handle = raw_handle }, perms) catch |err| switch (err) {
+        error.AccessDenied => unreachable,
+        error.PermissionDenied => unreachable,
+        error.InputOutput => unreachable,
+        error.SymLinkLoop => unreachable,
+        error.FileNotFound => unreachable,
+        error.ReadOnlyFileSystem => unreachable,
+        else => |e| return e,
+    };
+}
+
 fn netListenUnixPosix(
     userdata: ?*anyopaque,
     address: *const net.UnixAddress,
@@ -10011,7 +10030,6 @@ fn netListenUnixPosix(
 ) net.UnixAddress.ListenError!net.Socket.Handle {
     if (!net.has_unix_sockets) return error.AddressFamilyUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
     const socket_fd = openSocketPosix(posix.AF.UNIX, .{ .mode = .stream }) catch |err| switch (err) {
         error.ProtocolUnsupportedBySystem => return error.AddressFamilyUnsupported,
         error.ProtocolUnsupportedByAddressFamily => return error.AddressFamilyUnsupported,
@@ -10020,6 +10038,9 @@ fn netListenUnixPosix(
         else => |e| return e,
     };
     errdefer posix.close(socket_fd);
+
+    if (options.permissions) |perms|
+        try socketSetFilePermissions(t, socket_fd, perms);
 
     var storage: UnixAddress = undefined;
     const addr_len = addressUnixToPosix(address, &storage);
@@ -10058,6 +10079,9 @@ fn netListenUnixWindows(
         else => |e| return e,
     };
     errdefer closeSocketWindows(socket_handle);
+
+    if (options.permissions) |perms|
+        try socketSetFilePermissions(t, socket_handle, perms);
 
     var storage: WsaAddress = undefined;
     const addr_len = addressUnixToWsa(address, &storage);

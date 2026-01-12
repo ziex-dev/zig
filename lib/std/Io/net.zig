@@ -854,6 +854,9 @@ pub const UnixAddress = struct {
         /// If more than this many connections pool in the kernel, clients will start
         /// seeing "Connection refused".
         kernel_backlog: u31 = default_kernel_backlog,
+        /// Sets the filesystem permissions of the listening unix socket file,
+        /// which determine whether clients can connect, in a race-free way.
+        permissions: ?Io.File.Permissions = null,
     };
 
     pub fn listen(ua: *const UnixAddress, io: Io, options: ListenOptions) ListenError!Server {
