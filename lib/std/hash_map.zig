@@ -661,6 +661,16 @@ pub fn HashMapUnmanaged(
         pub const ValueIterator = FieldIterator(V);
 
         fn FieldIterator(comptime T: type) type {
+            if (T == void) {
+                return struct {
+                    len: usize,
+                    metadata: [*]const Metadata,
+                    items: [*]T,
+
+                    pub fn next() void {}
+                };
+            }
+
             return struct {
                 len: usize,
                 metadata: [*]const Metadata,
