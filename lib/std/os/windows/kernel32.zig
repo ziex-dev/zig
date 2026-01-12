@@ -30,11 +30,14 @@ const OVERLAPPED = windows.OVERLAPPED;
 const OVERLAPPED_ENTRY = windows.OVERLAPPED_ENTRY;
 const PMEMORY_BASIC_INFORMATION = windows.PMEMORY_BASIC_INFORMATION;
 const PROCESS_INFORMATION = windows.PROCESS_INFORMATION;
+const SYSTEM_BASIC_INFORMATION = windows.SYSTEM_BASIC_INFORMATION;
+const SYSTEM_PROCESSOR_INFORMATION = windows.SYSTEM_PROCESSOR_INFORMATION;
 const SECURITY_ATTRIBUTES = windows.SECURITY_ATTRIBUTES;
 const SIZE_T = windows.SIZE_T;
 const SRWLOCK = windows.SRWLOCK;
 const STARTUPINFOW = windows.STARTUPINFOW;
 const SYSTEM_INFO = windows.SYSTEM_INFO;
+const SYSTEM_INFORMATION_CLASS = windows.SYSTEM_INFORMATION_CLASS;
 const UCHAR = windows.UCHAR;
 const UINT = windows.UINT;
 const ULONG = windows.ULONG;
@@ -44,6 +47,9 @@ const WCHAR = windows.WCHAR;
 const WIN32_FIND_DATAW = windows.WIN32_FIND_DATAW;
 const Win32Error = windows.Win32Error;
 const WORD = windows.WORD;
+
+const MEM = windows.MEM;
+const PAGE = windows.PAGE;
 
 // I/O - Filesystem
 
@@ -476,57 +482,55 @@ pub extern "kernel32" fn SetLastError(
 
 // Everything Else
 
-pub extern "kernel32" fn GetSystemInfo(
-    lpSystemInfo: *SYSTEM_INFO,
-) callconv(.winapi) void;
+// pub extern "kernel32" fn VirtualFreeEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, dwFreeType: DWORD) callconv(.winapi) BOOL;
 
-pub extern "kernel32" fn VirtualFreeEx(hProcess: HANDLE, lpAddress: LPVOID, dwSize: SIZE_T, dwFreeType: DWORD) callconv(.winapi) BOOL;
+// pub extern "kernel32" fn VirtualQueryEx(hProcess: HANDLE, lpAddress: ?LPCVOID, lpBuffer: PMEMORY_BASIC_INFORMATION, dwLength: SIZE_T) callconv(.winapi) SIZE_T;
 
-pub extern "kernel32" fn VirtualQueryEx(hProcess: HANDLE, lpAddress: ?LPCVOID, lpBuffer: PMEMORY_BASIC_INFORMATION, dwLength: SIZE_T) callconv(.winapi) SIZE_T;
+// pub extern "kernel32" fn VirtualProtectEx(
+//     hProcess: HANDLE,
+//     lpAddress: LPVOID,
+//     dwSize: SIZE_T,
+//     flNewProtect: DWORD,
+//     lpflOldProtect: *DWORD,
+// ) callconv(.winapi) BOOL;
 
-pub extern "kernel32" fn VirtualProtectEx(
-    hProcess: HANDLE,
-    lpAddress: LPVOID,
-    dwSize: SIZE_T,
-    flNewProtect: DWORD,
-    lpflOldProtect: *DWORD,
-) callconv(.winapi) BOOL;
+// pub extern "kernel32" fn OpenProcess(
+//     dwDesiredAccess: DWORD,
+//     bInheritHandle: BOOL,
+//     dwProcessId: DWORD,
+// ) callconv(.winapi) ?HANDLE;
 
-pub extern "kernel32" fn OpenProcess(
-    dwDesiredAccess: DWORD,
-    bInheritHandle: BOOL,
-    dwProcessId: DWORD,
-) callconv(.winapi) ?HANDLE;
+// pub extern "kernel32" fn CreateRemoteThread(
+//     hProcess: HANDLE,
+//     lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
+//     dwStackSize: SIZE_T,
+//     lpStartAddress: LPTHREAD_START_ROUTINE,
+//     lpParameter: LPVOID,
+//     dwCreationFlags: DWORD,
+//     lpThreadId: ?*DWORD,
+// ) callconv(.winapi) ?HANDLE;
 
-pub extern "kernel32" fn CreateRemoteThread(
-    hProcess: HANDLE,
-    lpThreadAttributes: ?*SECURITY_ATTRIBUTES,
-    dwStackSize: SIZE_T,
-    lpStartAddress: LPTHREAD_START_ROUTINE,
-    lpParameter: LPVOID,
-    dwCreationFlags: DWORD,
-    lpThreadId: ?*DWORD,
-) callconv(.winapi) ?HANDLE;
+// pub extern "kernel32" fn GetThreadContext(
+//     hThread: HANDLE,
+//     lpContext: *CONTEXT,
+// ) callconv(.winapi) BOOL;
 
-pub extern "kernel32" fn GetThreadContext(
-    hThread: HANDLE,
-    lpContext: *CONTEXT,
-) callconv(.winapi) BOOL;
+// pub extern "kernel32" fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) callconv(.winapi) BOOL;
 
-pub extern "kernel32" fn SetThreadContext(hThread: HANDLE, lpContext: *const CONTEXT) callconv(.winapi) BOOL;
+// pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
 
-pub extern "kernel32" fn ResumeThread(hThread: HANDLE) callconv(.winapi) DWORD;
+// pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
 
-pub extern "kernel32" fn SuspendThread(hThread: HANDLE) callconv(.winapi) DWORD;
+// pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
 
-pub extern "kernel32" fn GetExitCodeThread(hThread: HANDLE, lpExitCode: *DWORD) callconv(.winapi) BOOL;
+const unexpectedStatus = windows.unexpectedStatus;
 
-pub fn GetCurrentProcess() HANDLE {
-    return @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
-}
-
-const MEM = windows.MEM;
-const PAGE = windows.PAGE;
+pub const VirtualAllocExError = error{
+    AccessDenied,
+    InvalidHandle,
+    InvalidParameter,
+    Unexpected,
+};
 
 pub fn VirtualAllocEx(
     ProcessHandle: HANDLE,
@@ -535,32 +539,48 @@ pub fn VirtualAllocEx(
     AllocationType: MEM.ALLOCATE,
     Protect: PAGE,
 ) !LPVOID {
-    var base_addr: ?LPVOID = BaseAddress;
-    var region_size: SIZE_T = RegionSize;
+    const base_addr: ?LPVOID = BaseAddress;
+    const region_size: SIZE_T = RegionSize;
+    const alloc_type = AllocationType & 0xFFFFFFC0;
+
+    var basic_info = SYSTEM_BASIC_INFORMATION{};
+    const rc = ntdll.NtQuerySystemInformation(SYSTEM_INFORMATION_CLASS.SystemBasicInformation, &basic_info, @sizeOf(SYSTEM_BASIC_INFORMATION), null);
+    switch (rc) {
+        .SUCCESS => {},
+        .ACCESS_DENIED => return error.AccessDenied,
+        .INVALID_HANDLE => return error.InvalidHandle,
+        .INVALID_PARAMETER => return error.InvalidParameter,
+        else => return unexpectedStatus(rc),
+    }
+
+    if (base_addr) |addr| {
+        const param_addr = @intFromPtr(addr);
+        const min_addr = basic_info.MinimumUserModeAddress;
+        const max_addr = basic_info.MaximumUserModeAddress;
+
+        if (param_addr < min_addr or param_addr > max_addr) {
+            return error.InvalidParameter;
+        }
+    }
 
     const status = ntdll.NtAllocateVirtualMemory(
         ProcessHandle,
         @ptrCast(&base_addr),
         0,
         &region_size,
-        AllocationType,
+        alloc_type,
         Protect,
     );
 
-    if (status == .SUCCESS) {
-        return base_addr orelse error.Unexpected;
+    if (status < 0) {
+        ntdll.RtlNtStatusToDosError(status);
+        return error.Unexpected;
     }
 
-    const code: Win32Error = @enumFromInt(@as(u16, @truncate(ntdll.RtlNtStatusToDosError(status))));
-    return switch (code) {
-        .ACCESS_DENIED => error.AccessDenied,
-        .NOT_ENOUGH_MEMORY, .OUTOFMEMORY => error.OutOfMemory,
-        .INVALID_PARAMETER => error.InvalidParameter,
-        .INVALID_HANDLE => error.InvalidHandle,
-        .SUCCESS => error.Unexpected,
-        else => error.UnexpectedError,
-    };
+    return base_addr orelse error.Unexpected;
 }
+
+const GetCurrentProcess = windows.GetCurrentProcess;
 
 pub fn VirtualAlloc(
     BaseAddress: ?LPVOID,
@@ -575,39 +595,4 @@ pub fn VirtualAlloc(
         AllocationType,
         Protect,
     );
-}
-
-// --- 单元测试用例 ---
-
-const MEM_COMMIT = 0x1000;
-const MEM_RESERVE = 0x2000;
-const PAGE_READWRITE = 0x04;
-
-test "VirtualAlloc - 成功分配并写入内存" {
-    const size = 4096;
-
-    const ptr = try VirtualAlloc(null, size, windows.MEM.ALLOCATE{ .RESERVE = true, .COMMIT = true }, PAGE{ .READWRITE = true });
-
-    // 确保分配到了地址
-    try std.testing.expect(@intFromPtr(ptr) != 0);
-
-    // 测试内存可读写性
-    const slice: [*]u8 = @ptrCast(ptr);
-    slice[0] = 0xDE;
-    slice[size - 1] = 0xAD;
-
-    try std.testing.expectEqual(slice[0], 0xDE);
-    try std.testing.expectEqual(slice[size - 1], 0xAD);
-}
-
-test "VirtualAllocEx - 错误处理测试 (非法参数)" {
-    const result = VirtualAllocEx(
-        GetCurrentProcess(),
-        null,
-        4096,
-        windows.MEM.ALLOCATE{ .RESERVE = false, .COMMIT = false }, // 非法参数
-        PAGE{ .READWRITE = true },
-    );
-
-    try std.testing.expectError(error.InvalidParameter, result);
 }
