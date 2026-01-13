@@ -1087,10 +1087,11 @@ pub fn lowerValue(pt: Zcu.PerThread, val: Value, target: *const std.Target) Allo
                                 if (zcu.typeToFunc(fn_ty).?.is_generic) {
                                     return .{ .immediate = fn_ty.abiAlignment(zcu).toByteUnits().? };
                                 }
-                            } else if (ty.zigTypeTag(zcu) == .pointer) {
-                                const elem_ty = ty.elemType2(zcu);
+                            } else {
+                                const elem_ty = ty.childType(zcu);
                                 if (!elem_ty.hasRuntimeBits(zcu)) {
-                                    return .{ .immediate = elem_ty.abiAlignment(zcu).toByteUnits().? };
+                                    return .{ .immediate = ty.ptrAlignment(zcu)
+                                        .forward(@intCast((@as(u66, 1) << @intCast(target.ptrBitWidth() | 1)) / 3)) };
                                 }
                             }
 

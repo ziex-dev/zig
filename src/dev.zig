@@ -186,6 +186,7 @@ pub const Env = enum {
             .@"riscv64-linux" => switch (feature) {
                 .riscv64_backend,
                 .elf_linker,
+                .legalize,
                 => true,
                 else => Env.sema.supports(feature),
             },

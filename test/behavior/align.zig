@@ -504,6 +504,9 @@ test "alignment of zero-bit types is respected" {
     var v32: void align(32) = {};
     var x32: u0 align(32) = 0;
     var s32: S align(32) = .{};
+    const global = struct {
+        var v32_2: void align(32) = {};
+    };
 
     var zero: usize = 0;
     _ = &zero;
@@ -512,6 +515,7 @@ test "alignment of zero-bit types is respected" {
     try expect(@intFromPtr(&s.arr) % @alignOf(usize) == 0);
     try expect(@intFromPtr(s.arr[zero..zero].ptr) % @alignOf(usize) == 0);
     try expect(@intFromPtr(&v32) % 32 == 0);
+    try expect(@intFromPtr(&global.v32_2) % 32 == 0);
     try expect(@intFromPtr(&x32) % 32 == 0);
     try expect(@intFromPtr(&s32) % 32 == 0);
     try expect(@intFromPtr(&s32.arr) % 32 == 0);
