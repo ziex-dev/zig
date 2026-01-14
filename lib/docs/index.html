@@ -6,12 +6,25 @@
     <title>Zig Documentation</title>
     <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxNTMgMTQwIj48ZyBmaWxsPSIjRjdBNDFEIj48Zz48cG9seWdvbiBwb2ludHM9IjQ2LDIyIDI4LDQ0IDE5LDMwIi8+PHBvbHlnb24gcG9pbnRzPSI0NiwyMiAzMywzMyAyOCw0NCAyMiw0NCAyMiw5NSAzMSw5NSAyMCwxMDAgMTIsMTE3IDAsMTE3IDAsMjIiIHNoYXBlLXJlbmRlcmluZz0iY3Jpc3BFZGdlcyIvPjxwb2x5Z29uIHBvaW50cz0iMzEsOTUgMTIsMTE3IDQsMTA2Ii8+PC9nPjxnPjxwb2x5Z29uIHBvaW50cz0iNTYsMjIgNjIsMzYgMzcsNDQiLz48cG9seWdvbiBwb2ludHM9IjU2LDIyIDExMSwyMiAxMTEsNDQgMzcsNDQgNTYsMzIiIHNoYXBlLXJlbmRlcmluZz0iY3Jpc3BFZGdlcyIvPjxwb2x5Z29uIHBvaW50cz0iMTE2LDk1IDk3LDExNyA5MCwxMDQiLz48cG9seWdvbiBwb2ludHM9IjExNiw5NSAxMDAsMTA0IDk3LDExNyA0MiwxMTcgNDIsOTUiIHNoYXBlLXJlbmRlcmluZz0iY3Jpc3BFZGdlcyIvPjxwb2x5Z29uIHBvaW50cz0iMTUwLDAgNTIsMTE3IDMsMTQwIDEwMSwyMiIvPjwvZz48Zz48cG9seWdvbiBwb2ludHM9IjE0MSwyMiAxNDAsNDAgMTIyLDQ1Ii8+PHBvbHlnb24gcG9pbnRzPSIxNTMsMjIgMTUzLDExNyAxMDYsMTE3IDEyMCwxMDUgMTI1LDk1IDEzMSw5NSAxMzEsNDUgMTIyLDQ1IDEzMiwzNiAxNDEsMjIiIHNoYXBlLXJlbmRlcmluZz0iY3Jpc3BFZGdlcyIvPjxwb2x5Z29uIHBvaW50cz0iMTI1LDk1IDEzMCwxMTAgMTA2LDExNyIvPjwvZz48L2c+PC9zdmc+">
     <style type="text/css">
+      * {
+        --ac-f: #ffbb4d;
+        --ac-grey-a: #afab8d;
+        --ac-grey-d: #efebcd;
+      }
       *, *::before, *::after {
         box-sizing: border-box;
       }
       body {
         font-family: system-ui, -apple-system, Roboto, "Segoe UI", sans-serif;
         color: #000000;
+        display: flex;
+        flex-direction: column;
+      }
+      main {
+        width: 80%;
+        min-width: 20em;
+        max-width: 60em;
+        align-self: center;
       }
       .hidden {
         display: none;
@@ -40,17 +53,44 @@
       code a {
         color: #000000;
       }
-      #listFields > div, #listParams > div {
+      #listFields tr, #listParams tr {
         margin-bottom: 1em;
       }
-      #hdrName a {
-        font-size: 0.7em;
-        padding-left: 1em;
+      #listFields .item-desc, #listParams .item-desc {
+        background: var(--ac-grey-d);
+      }
+      #listFields .item-name, #listParams .item-name {
+        border: 0.15em solid var(--ac-grey-a);
+        /* https://stackoverflow.com/a/43615091/11535110 */
+        width: 0.1%;
+        white-space: nowrap;
+      }
+      #hdrName {
+        display: flex;
+        align-items: baseline;
+        font-size: 1.5rem;
+        justify-content: space-between;
+        border-bottom: 0.1em dashed;
+        padding: 0 0 0.3rem 0;
+        margin: 0 0;
+        div {
+          span:first-child {
+            font-weight: bold;
+            font-size: 2rem;
+          }
+          span:nth-child(3) {
+            color: #900;
+          }
+        }
+        a {
+          font-size: 0.7em;
+          padding-left: 1em;
+        }
       }
       .fieldDocs {
         border: 1px solid #F5F5F5;
         border-top: 0px;
-        padding: 1px 1em;
+        padding: 1px 1.5em;
       }
 
       #logo {
@@ -89,10 +129,6 @@
         clear: both;
         padding-top: 1em;
       }
-      section h1 {
-        border-bottom: 1px dashed;
-        margin: 0 0;
-      }
       section h2 {
         font-size: 1.3em;
         margin: 0.5em 0;
@@ -121,7 +157,7 @@
         color: #fff;
       }
       #listNav li a.active {
-        background-color: #FFBB4D;
+        background-color: var(--ac-f);
         color: #000;
       }
 
@@ -194,8 +230,7 @@
       td, th {
         text-align: unset;
         vertical-align: top;
-        margin: 0;
-        padding: 0.5em;
+        padding: 0.3em;
         max-width: 20em;
         text-overflow: ellipsis;
         overflow-x: hidden;
@@ -311,142 +346,150 @@
     </style>
   </head>
   <body>
-    <nav>
-      <a class="logo" href="#">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 140">
-        <g fill="#F7A41D">
-          <g>
-            <polygon points="46,22 28,44 19,30"/>
-            <polygon points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22" shape-rendering="crispEdges"/>
-            <polygon points="31,95 12,117 4,106"/>
+    <main>
+      <nav>
+        <a class="logo" href="#">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 140">
+          <g fill="#F7A41D">
+            <g>
+              <polygon points="46,22 28,44 19,30"/>
+              <polygon points="46,22 33,33 28,44 22,44 22,95 31,95 20,100 12,117 0,117 0,22" shape-rendering="crispEdges"/>
+              <polygon points="31,95 12,117 4,106"/>
+            </g>
+            <g>
+              <polygon points="56,22 62,36 37,44"/>
+              <polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"/>
+              <polygon points="116,95 97,117 90,104"/>
+              <polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"/>
+              <polygon points="150,0 52,117 3,140 101,22"/>
+            </g>
+            <g>
+              <polygon points="141,22 140,40 122,45"/>
+              <polygon points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22" shape-rendering="crispEdges"/>
+              <polygon points="125,95 130,110 106,117"/>
+            </g>
           </g>
-          <g>
-            <polygon points="56,22 62,36 37,44"/>
-            <polygon points="56,22 111,22 111,44 37,44 56,32" shape-rendering="crispEdges"/>
-            <polygon points="116,95 97,117 90,104"/>
-            <polygon points="116,95 100,104 97,117 42,117 42,95" shape-rendering="crispEdges"/>
-            <polygon points="150,0 52,117 3,140 101,22"/>
+          <style>
+          #text { fill: #121212 }
+          @media (prefers-color-scheme: dark) { #text { fill: #f2f2f2 } }
+          </style>
+          <g id="text">
+            <g>
+              <polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"/>
+              <polygon points="260,37 207,99 207,103 176,103 229,40 229,37"/>
+              <polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"/>
+            </g>
+            <rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"/>
+            <g>
+              <polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"/>
+              <polygon points="360,68 376,81 346,67"/>
+              <path d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1    c14.3,0,29.2,5.5,38.9,14l-13,15c-7.1-6.3-16.8-10-25.9-10c-17,0-30.2,12.9-30.2,29.5c0,16.8,13.3,29.6,30.3,29.6    c5.7,0,12.8-2.3,19-5.5L394,106z"/>
+            </g>
           </g>
-          <g>
-            <polygon points="141,22 140,40 122,45"/>
-            <polygon points="153,22 153,117 106,117 120,105 125,95 131,95 131,45 122,45 132,36 141,22" shape-rendering="crispEdges"/>
-            <polygon points="125,95 130,110 106,117"/>
-          </g>
-        </g>
-        <style>
-        #text { fill: #121212 }
-        @media (prefers-color-scheme: dark) { #text { fill: #f2f2f2 } }
-        </style>
-        <g id="text">
-          <g>
-            <polygon points="260,22 260,37 229,40 177,40 177,22" shape-rendering="crispEdges"/>
-            <polygon points="260,37 207,99 207,103 176,103 229,40 229,37"/>
-            <polygon points="261,99 261,117 176,117 176,103 206,99" shape-rendering="crispEdges"/>
-          </g>
-          <rect x="272" y="22" shape-rendering="crispEdges" width="22" height="95"/>
-          <g>
-            <polygon points="394,67 394,106 376,106 376,81 360,70 346,67" shape-rendering="crispEdges"/>
-            <polygon points="360,68 376,81 346,67"/>
-            <path d="M394,106c-10.2,7.3-24,12-37.7,12c-29,0-51.1-20.8-51.1-48.3c0-27.3,22.5-48.1,52-48.1    c14.3,0,29.2,5.5,38.9,14l-13,15c-7.1-6.3-16.8-10-25.9-10c-17,0-30.2,12.9-30.2,29.5c0,16.8,13.3,29.6,30.3,29.6    c5.7,0,12.8-2.3,19-5.5L394,106z"/>
-          </g>
-        </g>
-        </svg>
-      </a>
-    </nav>
-    <div id="navWrap">
-      <input type="search" id="search" autocomplete="off" spellcheck="false" placeholder="`s` to search, `?` to see more options">
-      <div id="sectNav" class="hidden"><ul id="listNav"></ul></div>
-    </div>
-    <section>
-    <p id="status">Loading...</p>
-    <h1 id="hdrName" class="hidden"><span></span><a href="#">[src]</a></h1>
-    <div id="fnProto" class="hidden">
-      <pre><code id="fnProtoCode"></code></pre>
-    </div>
-    <div id="tldDocs" class="hidden"></div>
-    <div id="sectParams" class="hidden">
-      <h2>Parameters</h2>
-      <div id="listParams">
+          </svg>
+        </a>
+      </nav>
+      <div id="navWrap">
+        <input type="search" id="search" autocomplete="off" spellcheck="false" placeholder="`s` to search, `?` to see more options">
+        <div id="sectNav" class="hidden"><ul id="listNav"></ul></div>
       </div>
-    </div>
-    <div id="sectFnErrors" class="hidden">
-      <h2>Errors</h2>
-      <div id="fnErrorsAnyError">
-        <p><span class="tok-type">anyerror</span> means the error set is known only at runtime.</p>
+      <section>
+      <p id="status">Loading...</p>
+      <div id="hdrName" class="hidden">
+        <div>
+          <span></span>
+          <span>is a</span>
+          <span></span>
+        </div>
+        <a href="#">[src]</a>
       </div>
-      <div id="tableFnErrors"><dl id="listFnErrors"></dl></div>
-    </div>
-    <div id="sectSearchResults" class="hidden">
-      <h2>Search Results</h2>
-      <ul id="listSearchResults"></ul>
-    </div>
-    <div id="sectSearchNoResults" class="hidden">
-      <h2>No Results Found</h2>
-      <p>Press escape to exit search and then '?' to see more options.</p>
-    </div>
-    <div id="sectFields" class="hidden">
-      <h2>Fields</h2>
-      <div id="listFields">
+      <!-- <h1 id="hdrName" class="hidden"><span></span><span></span><a href="#">[src]</a></h1> -->
+      <div id="fnProto" class="hidden">
+        <pre><code id="fnProtoCode"></code></pre>
       </div>
-    </div>
-    <div id="sectTypes" class="hidden">
-      <h2>Types</h2>
-      <ul id="listTypes" class="columns">
-      </ul>
-    </div>
-    <div id="sectNamespaces" class="hidden">
-      <h2>Namespaces</h2>
-      <ul id="listNamespaces" class="columns">
-      </ul>
-    </div>
-    <div id="sectGlobalVars" class="hidden">
-      <h2>Global Variables</h2>
-      <table>
-        <tbody id="listGlobalVars">
-        </tbody>
-      </table>
-    </div>
-    <div id="sectValues" class="hidden">
-      <h2>Values</h2>
-      <table>
-        <tbody id="listValues">
-        </tbody>
-      </table>
-    </div>
-    <div id="sectFns" class="hidden">
-      <h2>Functions</h2>
-      <dl id="listFns">
-      </dl>
-    </div>
-    <div id="sectErrSets" class="hidden">
-      <h2>Error Sets</h2>
-      <ul id="listErrSets" class="columns">
-      </ul>
-    </div>
-    <div id="sectDocTests" class="hidden">
-      <h2>Example Usage</h2>
-      <pre><code id="docTestsCode"></code></pre>
-    </div>
-    <div id="sectSource" class="hidden">
-      <h2>Source Code</h2>
-      <pre><code id="sourceText"></code></pre>
-    </div>
-    </section>
-    <div id="helpDialog" class="hidden">
-      <h1>Keyboard Shortcuts</h1>
-      <dl><dt><kbd>?</kbd></dt><dd>Show this help dialog</dd></dl>
-      <dl><dt><kbd>Esc</kbd></dt><dd>Clear focus; close this dialog</dd></dl>
-      <dl><dt><kbd>s</kbd></dt><dd>Focus the search field</dd></dl>
-      <dl><dt><kbd>u</kbd></dt><dd>Go to source code</dd></dl>
-      <dl><dt><kbd>↑</kbd></dt><dd>Move up in search results</dd></dl>
-      <dl><dt><kbd>↓</kbd></dt><dd>Move down in search results</dd></dl>
-      <dl><dt><kbd>⏎</kbd></dt><dd>Go to active search result</dd></dl>
-    </div>
-    <div id="errors" class="hidden">
-      <h1>Errors</h1>
-      <pre id="errorsText"></pre>
-    </div>
-    <script src="main.js"></script>
+      <div id="tldDocs" class="hidden"></div>
+      <div id="sectParams" class="hidden">
+        <h2>Parameters</h2>
+        <table id="listParams"></table>
+      </div>
+      <div id="sectFnErrors" class="hidden">
+        <h2>Errors</h2>
+        <div id="fnErrorsAnyError">
+          <p><span class="tok-type">anyerror</span> means the error set is known only at runtime.</p>
+        </div>
+        <div id="tableFnErrors"><dl id="listFnErrors"></dl></div>
+      </div>
+      <div id="sectSearchResults" class="hidden">
+        <h2>Search Results</h2>
+        <ul id="listSearchResults"></ul>
+      </div>
+      <div id="sectSearchNoResults" class="hidden">
+        <h2>No Results Found</h2>
+        <p>Press escape to exit search and then '?' to see more options.</p>
+      </div>
+      <div id="sectFields" class="hidden">
+        <h2>Fields</h2>
+        <table id="listFields"></table>
+      </div>
+      <div id="sectTypes" class="hidden">
+        <h2>Types</h2>
+        <ul id="listTypes" class="columns">
+        </ul>
+      </div>
+      <div id="sectNamespaces" class="hidden">
+        <h2>Namespaces</h2>
+        <ul id="listNamespaces" class="columns">
+        </ul>
+      </div>
+      <div id="sectGlobalVars" class="hidden">
+        <h2>Global Variables</h2>
+        <table>
+          <tbody id="listGlobalVars">
+          </tbody>
+        </table>
+      </div>
+      <div id="sectValues" class="hidden">
+        <h2>Values</h2>
+        <table>
+          <tbody id="listValues">
+          </tbody>
+        </table>
+      </div>
+      <div id="sectFns" class="hidden">
+        <h2>Functions</h2>
+        <dl id="listFns">
+        </dl>
+      </div>
+      <div id="sectErrSets" class="hidden">
+        <h2>Error Sets</h2>
+        <ul id="listErrSets" class="columns">
+        </ul>
+      </div>
+      <div id="sectDocTests" class="hidden">
+        <h2>Example Usage</h2>
+        <pre><code id="docTestsCode"></code></pre>
+      </div>
+      <div id="sectSource" class="hidden">
+        <h2>Source Code</h2>
+        <pre><code id="sourceText"></code></pre>
+      </div>
+      </section>
+      <div id="helpDialog" class="hidden">
+        <h1>Keyboard Shortcuts</h1>
+        <dl><dt><kbd>?</kbd></dt><dd>Show this help dialog</dd></dl>
+        <dl><dt><kbd>Esc</kbd></dt><dd>Clear focus; close this dialog</dd></dl>
+        <dl><dt><kbd>s</kbd></dt><dd>Focus the search field</dd></dl>
+        <dl><dt><kbd>u</kbd></dt><dd>Go to source code</dd></dl>
+        <dl><dt><kbd>↑</kbd></dt><dd>Move up in search results</dd></dl>
+        <dl><dt><kbd>↓</kbd></dt><dd>Move down in search results</dd></dl>
+        <dl><dt><kbd>⏎</kbd></dt><dd>Go to active search result</dd></dl>
+      </div>
+      <div id="errors" class="hidden">
+        <h1>Errors</h1>
+        <pre id="errorsText"></pre>
+      </div>
+      <script src="main.js"></script>
+    </main>
   </body>
 </html>
 

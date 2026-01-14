@@ -468,16 +468,23 @@ fn decl_field_html_fallible(
 ) !void {
     const decl = decl_index.get();
     const ast = decl.file.get_ast();
-    try out.appendSlice(gpa, "<pre><code>");
-    try fileSourceHtml(decl.file, out, field_node, .{});
-    try out.appendSlice(gpa, "</code></pre>");
 
     const field = ast.fullContainerField(field_node).?;
+    const name_token = field.ast.main_token;
+    const name = ast.tokenSlice(name_token);
+    const rest_node = field.ast.type_expr.unwrap().?;
+
+    try out.appendSlice(gpa, "<tr class='item'><td class='item-name'><code>");
+    try appendEscaped(out, name);
+    try out.appendSlice(gpa, "</code></td>");
+    try out.appendSlice(gpa, "<td class='item-desc'><code>");
+    try fileSourceHtml(decl.file, out, rest_node, .{});
+    try out.appendSlice(gpa, "</code></td></tr>");
 
     if (Decl.findFirstDocComment(ast, field.firstToken()).unwrap()) |first_doc_comment| {
-        try out.appendSlice(gpa, "<div class=\"fieldDocs\">");
+        try out.appendSlice(gpa, "<tr><td colspan=2 class='fieldDocs'>");
         try render_docs(out, decl_index, first_doc_comment, false);
-        try out.appendSlice(gpa, "</div>");
+        try out.appendSlice(gpa, "</td></tr>");
     }
 }
 
@@ -503,16 +510,17 @@ fn decl_param_html_fallible(
     };
     const name = ast.tokenSlice(name_token);
 
-    try out.appendSlice(gpa, "<pre><code>");
+    try out.appendSlice(gpa, "<tr class='item'><td class='item-name'><code>");
     try appendEscaped(out, name);
-    try out.appendSlice(gpa, ": ");
+    try out.appendSlice(gpa, "</code></td>");
+    try out.appendSlice(gpa, "<td class='item-desc'><code>");
     try fileSourceHtml(decl.file, out, param_node, .{});
-    try out.appendSlice(gpa, "</code></pre>");
+    try out.appendSlice(gpa, "</code></td></tr>");
 
     if (ast.tokenTag(first_doc_comment) == .doc_comment) {
-        try out.appendSlice(gpa, "<div class=\"fieldDocs\">");
+        try out.appendSlice(gpa, "<tr><td colspan=2 class='fieldDocs'>");
         try render_docs(out, decl_index, first_doc_comment, false);
-        try out.appendSlice(gpa, "</div>");
+        try out.appendSlice(gpa, "</td></tr>");
     }
 }
 
