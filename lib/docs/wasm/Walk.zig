@@ -89,8 +89,7 @@ pub const File = struct {
             const file = i.get();
             if (file.ast == null) {
                 const src = tar_bytes[file.tar_offset..][0..file.tar_size];
-                const bytes = gpa.dupe(u8, src) catch @panic("OOM");
-                file.ast = parse(i.path(), bytes) catch @panic("parse failed");
+                file.ast = parse(i.path(), src) catch @panic("parse failed");
                 walkFile(i) catch @panic("walk failed");
             }
             return &file.ast.?;
