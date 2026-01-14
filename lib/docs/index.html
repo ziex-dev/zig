@@ -8,8 +8,10 @@
     <style type="text/css">
       * {
         --ac-f: #ffbb4d;
-        --ac-grey-a: #afab8d;
-        --ac-grey-d: #efebcd;
+        --ac-grey-mid: #afab8d;
+        --ac-grey-lit: #efebcd;
+        --func: #990000;
+	--lit: #008080;
       }
       *, *::before, *::after {
         box-sizing: border-box;
@@ -57,10 +59,10 @@
         margin-bottom: 1em;
       }
       #listFields .item-desc, #listParams .item-desc {
-        background: var(--ac-grey-d);
+        background: var(--ac-grey-lit);
       }
       #listFields .item-name, #listParams .item-name {
-        border: 0.15em solid var(--ac-grey-a);
+        border: 0.15em solid var(--ac-grey-mid);
         /* https://stackoverflow.com/a/43615091/11535110 */
         width: 0.1%;
         white-space: nowrap;
@@ -74,17 +76,20 @@
         padding: 0 0 0.3rem 0;
         margin: 0 0;
         div {
+          span {
+            display: inline-block;
+          }
           span:first-child {
             font-weight: bold;
             font-size: 2rem;
           }
           span:nth-child(3) {
-            color: #900;
+            color: var(--func);
           }
         }
         a {
           font-size: 0.7em;
-          padding-left: 1em;
+          margin-top: auto;
         }
       }
       .fieldDocs {
@@ -93,34 +98,33 @@
         padding: 1px 1.5em;
       }
 
-      #logo {
-        width: 8em;
-        padding: 0.5em 1em;
+      #top {
+        display: flex;
+        gap: 1em;
+
+        .logo {
+          display: inline-block;
+        }
       }
 
       #navWrap {
         width: -moz-available;
         width: -webkit-fill-available;
         width: stretch;
-        margin-left: 11em;
       }
 
       #search {
         width: 100%;
       }
 
-      nav {
-        width: 10em;
-        float: left;
-      }
-      nav h2 {
+      #top h2 {
         font-size: 1.2em;
         text-decoration: underline;
         margin: 0;
         padding: 0.5em 0;
         text-align: center;
       }
-      nav p {
+      #top p {
         margin: 0;
         padding: 0;
         text-align: center;
@@ -255,21 +259,33 @@
           font-style: italic;
       }
       .tok-fn {
-          color: #900;
+          color: var(--func);
           font-weight: bold;
       }
       .tok-null {
-          color: #008080;
+          color: var(--lit);
       }
       .tok-number {
-          color: #008080;
+          color: var(--lit);
       }
       .tok-type {
           color: #458;
           font-weight: bold;
       }
 
+      @media screen and (max-width:35rem) {
+        #top {
+          flex-direction: column;
+        }
+      }
+
       @media (prefers-color-scheme: dark) {
+        * {
+          --ac-grey-mid: #6f6b4d;
+          --ac-grey-lit: #3f3b1d;
+          --func: #db311f;
+	  --lit: #50c0c0;
+        }
         body {
           background-color: #111;
           color: #bbb;
@@ -298,7 +314,6 @@
           color: #fff;
         }
         #listNav li a.active {
-          background-color: #FFBB4D;
           color: #000;
         }
         #listSearchResults li.selected {
@@ -330,15 +345,6 @@
         .tok-comment {
             color: #aa7;
         }
-        .tok-fn {
-            color: #B1A0F8;
-        }
-        .tok-null {
-            color: #ff8080;
-        }
-        .tok-number {
-            color: #ff8080;
-        }
         .tok-type {
             color: #68f;
         }
@@ -347,9 +353,9 @@
   </head>
   <body>
     <main>
-      <nav>
+      <div id="top">
         <a class="logo" href="#">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 140">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 140" height="70" width="200">
           <g fill="#F7A41D">
             <g>
               <polygon points="46,22 28,44 19,30"/>
@@ -388,10 +394,10 @@
           </g>
           </svg>
         </a>
-      </nav>
-      <div id="navWrap">
-        <input type="search" id="search" autocomplete="off" spellcheck="false" placeholder="`s` to search, `?` to see more options">
-        <div id="sectNav" class="hidden"><ul id="listNav"></ul></div>
+        <div id="navWrap">
+          <input type="search" id="search" autocomplete="off" spellcheck="false" placeholder="`s` to search, `?` to see more options">
+          <div id="sectNav" class="hidden"><ul id="listNav"></ul></div>
+        </div>
       </div>
       <section>
       <p id="status">Loading...</p>
