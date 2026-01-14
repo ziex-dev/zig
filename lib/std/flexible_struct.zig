@@ -64,7 +64,7 @@ pub fn FlexibleStruct(Layout: type) type {
             const aligned = std.mem.alignInBytes(buf, alignment.toByteUnits()).?;
             const bytes = aligned[0..size];
 
-            const self: *@This() = @ptrFromInt(@intFromPtr(bytes.ptr));
+            const self: *@This() = @ptrCast(@alignCast(bytes.ptr));
             inline for (@typeInfo(Lens).@"struct".fields) |f| {
                 const len_field = comptime stringToEnum(FieldEnum(Layout), f.name).?;
                 self.ptr(len_field).* = @field(lengths, f.name);
@@ -77,7 +77,7 @@ pub fn FlexibleStruct(Layout: type) type {
             const size = calcSize(lengths);
             const bytes = try allocator.alignedAlloc(u8, alignment, size);
 
-            const self: *@This() = @ptrFromInt(@intFromPtr(bytes.ptr));
+            const self: *@This() = @ptrCast(@alignCast(bytes.ptr));
             inline for (@typeInfo(Lens).@"struct".fields) |f| {
                 const len_field = comptime stringToEnum(FieldEnum(Layout), f.name).?;
                 self.ptr(len_field).* = @field(lengths, f.name);
