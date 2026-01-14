@@ -13,6 +13,8 @@ pub const Decl = @import("Decl.zig");
 pub var files: std.StringArrayHashMapUnmanaged(File) = .empty;
 pub var decls: std.ArrayList(Decl) = .empty;
 pub var modules: std.StringArrayHashMapUnmanaged(File.Index) = .empty;
+/// Global tar bytes for lazy file parsing
+pub var tar_bytes: []u8 = &.{};
 
 file: File.Index,
 
@@ -40,7 +42,12 @@ pub const Category = union(enum(u8)) {
 };
 
 pub const File = struct {
-    ast: Ast,
+    /// AST - null until file is parsed (lazy loading)
+    ast: ?Ast = null,
+    /// Offset of file content in tar_bytes
+    tar_offset: usize = 0,
+    /// Size of file content in tar
+    tar_size: usize = 0,
     /// Maps identifiers to the declarations they point to.
     ident_decls: std.AutoArrayHashMapUnmanaged(Ast.TokenIndex, Ast.Node.Index) = .empty,
     /// Maps field access identifiers to the containing field access node.
@@ -77,8 +84,16 @@ pub const File = struct {
             return &files.values()[@intFromEnum(i)];
         }
 
+        /// Get AST, parsing on-demand if needed
         pub fn get_ast(i: File.Index) *Ast {
-            return &i.get().ast;
+            const file = i.get();
+            if (file.ast == null) {
+                const src = tar_bytes[file.tar_offset..][0..file.tar_size];
+                const bytes = gpa.dupe(u8, src) catch @panic("OOM");
+                file.ast = parse(i.path(), bytes) catch @panic("parse failed");
+                walkFile(i) catch @panic("walk failed");
+            }
+            return &file.ast.?;
         }
 
         pub fn path(i: File.Index) []const u8 {
@@ -86,7 +101,10 @@ pub const File = struct {
         }
 
         pub fn findRootDecl(file_index: File.Index) Decl.Index {
-            return file_index.get().node_decls.values()[0];
+            _ = file_index.get_ast(); // ensure parsed
+            const file = file_index.get();
+            if (file.node_decls.count() == 0) return .none;
+            return file.node_decls.values()[0];
         }
 
         pub fn categorize_decl(file_index: File.Index, node: Ast.Node.Index) Category {
@@ -385,29 +403,33 @@ pub const ModuleIndex = enum(u32) {
     _,
 };
 
-pub fn add_file(file_name: []const u8, bytes: []u8) !File.Index {
-    const ast = try parse(file_name, bytes);
-    assert(ast.errors.len == 0);
+/// Add a file without parsing (lazy loading using offset and size in tar_bytes).
+pub fn addFile(file_name: []const u8, offset: usize, size: usize) !File.Index {
     const file_index: File.Index = @enumFromInt(files.entries.len);
-    try files.put(gpa, file_name, .{ .ast = ast });
+    try files.put(gpa, file_name, .{
+        .tar_offset = offset,
+        .tar_size = size,
+    });
+    return file_index;
+}
 
-    var w: Walk = .{
-        .file = file_index,
-    };
+/// Walk a file's declarations (called on-demand after parsing).
+fn walkFile(file_index: File.Index) !void {
+    const file = file_index.get();
+    const ast = &file.ast.?;
+
+    var w: Walk = .{ .file = file_index };
     const scope = try gpa.create(Scope);
     scope.* = .{ .tag = .top };
 
     const decl_index = try file_index.add_decl(.root, .none);
     try struct_decl(&w, scope, decl_index, .root, ast.containerDeclRoot());
 
-    const file = file_index.get();
     shrinkToFit(&file.ident_decls);
     shrinkToFit(&file.token_parents);
     shrinkToFit(&file.node_decls);
     shrinkToFit(&file.doctests);
     shrinkToFit(&file.scopes);
-
-    return file_index;
 }
 
 /// Parses a file and returns its `Ast`. If the file cannot be parsed, returns

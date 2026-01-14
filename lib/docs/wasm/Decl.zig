@@ -184,8 +184,9 @@ pub fn lookup(decl: *const Decl, name: []const u8) ?Decl.Index {
         else => decl.parent.get().ast_node,
     };
     const file = decl.file.get();
+    const ast = decl.file.get_ast();
     const scope = file.scopes.get(namespace_node) orelse return null;
-    const resolved_node = scope.lookup(&file.ast, name) orelse return null;
+    const resolved_node = scope.lookup(ast, name) orelse return null;
     return file.node_decls.get(resolved_node);
 }
 

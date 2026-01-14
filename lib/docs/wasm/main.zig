@@ -778,6 +778,7 @@ export fn decl_type_html(decl_index: Decl.Index) String {
 const Oom = error{OutOfMemory};
 
 fn unpackInner(tar_bytes: []u8) !void {
+    Walk.tar_bytes = tar_bytes; // store for lazy loading
     var reader: std.Io.Reader = .fixed(tar_bytes);
     var file_name_buffer: [1024]u8 = undefined;
     var link_name_buffer: [1024]u8 = undefined;
@@ -802,8 +803,9 @@ fn unpackInner(tar_bytes: []u8) !void {
                         {
                             gop.value_ptr.* = file;
                         }
-                        const file_bytes = tar_bytes[reader.seek..][0..@intCast(tar_file.size)];
-                        assert(file == try Walk.add_file(file_name, file_bytes));
+                        const offset = reader.seek;
+                        const size: usize = @intCast(tar_file.size);
+                        assert(file == try Walk.addFile(file_name, offset, size));
                     }
                 } else {
                     log.warn("skipping: '{s}' - the tar creation should have done that", .{

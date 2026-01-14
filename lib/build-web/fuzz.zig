@@ -214,6 +214,7 @@ export fn fuzzUnpackSources(tar_ptr: [*]u8, tar_len: usize) void {
 }
 
 fn unpackSourcesInner(tar_bytes: []u8) !void {
+    Walk.tar_bytes = tar_bytes; // store for lazy loading
     var tar_reader: std.Io.Reader = .fixed(tar_bytes);
     var file_name_buffer: [1024]u8 = undefined;
     var link_name_buffer: [1024]u8 = undefined;
@@ -240,9 +241,9 @@ fn unpackSourcesInner(tar_bytes: []u8) !void {
                     const gop = try Walk.modules.getOrPut(gpa, mod_name);
                     const file: Walk.File.Index = @enumFromInt(Walk.files.entries.len);
                     if (!gop.found_existing or is_module_root) gop.value_ptr.* = file;
-                    const file_bytes = tar_reader.take(@intCast(tar_file.size)) catch unreachable;
-                    it.unread_file_bytes = 0; // we have read the whole thing
-                    assert(file == try Walk.add_file(file_name, file_bytes));
+                    const offset = tar_reader.seek;
+                    const size: usize = @intCast(tar_file.size);
+                    assert(file == try Walk.addFile(file_name, offset, size));
                 } else {
                     log.warn("skipping: '{s}' - the tar creation should have done that", .{tar_file.name});
                 }
