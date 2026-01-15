@@ -23,7 +23,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
     const freebsd_src_path = args.positional.freebsd_src_path;
     const zig_src_path = args.positional.zig_src_path;
 

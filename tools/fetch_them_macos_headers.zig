@@ -53,12 +53,15 @@ const Target = struct {
 const headers_source_prefix: []const u8 = "headers";
 
 const Args = struct {
-     named: struct {
+    pub const arg0 = "fetch_them_macos_headers";
+    named: struct {
         sysroot: []const u8 = "",
-        pub const sysroot_help = "Path to macOS SDK";
+        pub const help = .{
+            .sysroot = "Path to macOS SDK",
+        };
     },
     positional: struct {
-        cc_args: []const [:0]const u8 = &.{},
+        @"cc args": []const [:0]const u8 = &.{},
     },
 };
 
@@ -66,12 +69,12 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
     const sysroot_path = if (args.named.sysroot.len > 0) args.named.sysroot else blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
-        break :blk std.zig.system.darwin.getSdk(arena, io, &target) orelse
-            fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
+        if (std.zig.system.darwin.getSdk(arena, io, &target)) |sdk| break :blk sdk;
+        try std.cli.usageError(Args, .{}, "no SDK found; you can provide one explicitly with '--sysroot' flag", .{}) catch unreachable;
     };
 
     var sdk_dir = try Dir.cwd().openDir(io, sysroot_path, .{});
@@ -96,14 +99,14 @@ pub fn main(init: std.process.Init) !void {
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(arena, io, args.positional.cc_args, sysroot_path, target, version, tmp_dir);
+        try fetchTarget(arena, io, args.positional.@"cc args", sysroot_path, target, version, tmp_dir);
     }
 }
 
 fn fetchTarget(
     arena: Allocator,
     io: Io,
-    cc_args: []const []const u8,
+    args: []const []const u8,
     sysroot: []const u8,
     target: Target,
     ver: Version,
@@ -141,7 +144,7 @@ fn fetchTarget(
         "-MF",
         headers_list_path,
     });
-    try cc_argv.appendSlice(cc_args);
+    try cc_argv.appendSlice(args);
 
     const res = try std.process.run(arena, io, .{ .argv = cc_argv.items });
 

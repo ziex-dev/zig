@@ -1901,8 +1901,8 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
-    
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
+
     const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen";
     const llvm_src_root = args.positional.@"/path/git/llvm-project";
     const zig_src_root = args.positional.@"/path/git/zig";

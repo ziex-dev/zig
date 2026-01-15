@@ -18,11 +18,14 @@ const max_doc_file_size = 10 * 1024 * 1024;
 const obj_ext = builtin.object_format.fileExt(builtin.cpu.arch);
 
 const Args = struct {
+    pub const arg0 = "docgen";
     pub const description = "Generates an HTML document from a docgen template.";
 
     named: struct {
         @"code-dir": [:0]const u8,
-        pub const @"code-dir_help" = "Path to directory containing code example outputs";
+        pub const help = .{
+            .@"code-dir" = "Path to directory containing code example outputs",
+        };
     },
     positional: struct {
         input: [:0]const u8,
@@ -34,7 +37,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
     const input_path = args.positional.input;
     const output_path = args.positional.output;

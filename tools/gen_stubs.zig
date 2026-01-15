@@ -281,16 +281,18 @@ const Parse = struct {
     arch: Arch,
 };
 
+const Args = struct {
+    positional: struct {
+        build_all_path: [:0]const u8,
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const args = try std.cli.parse(struct {
-        positional: struct {
-            build_all_path: [:0]const u8,
-        },
-     }, io, arena, init.minimal.args, .{});
-    
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
+
     var build_all_dir = try Io.Dir.cwd().openDir(io, args.positional.build_all_path, .{});
 
     var sym_table = std.StringArrayHashMap(MultiSym).init(arena);

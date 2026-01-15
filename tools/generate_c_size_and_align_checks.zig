@@ -29,18 +29,17 @@ fn cName(ty: std.Target.CType) []const u8 {
 var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
 
 const Args = struct {
-        positional: struct {
-            target_triple: [:0]const u8,
-        },
-     };
-
+    positional: struct {
+        target_triple: [:0]const u8,
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
-const arena = init.arena.allocator();
+    const arena = init.arena.allocator();
     const io = init.io;
- 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
-    
+
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
+
     const query = try std.Target.Query.parse(.{ .arch_os_abi = args.positional.target_triple });
     const target = try std.zig.system.resolveTargetQuery(io, query);
 

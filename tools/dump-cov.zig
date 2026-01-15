@@ -8,27 +8,27 @@ const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
+const Args = struct {
+    pub const description =
+        \\example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
+    ;
+
+    positional: struct {
+        @"path/to/exe": [:0]const u8,
+        @"path/to/coverage": [:0]const u8,
+        target: [:0]const u8 = "native",
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const stderr = std.debug.lockStderr(&.{});
-    const args = try std.cli.parse(struct {
-        named: struct {},
-        positional: struct {
-            exe_file: [:0]const u8,
-            cov_file: [:0]const u8,
-            target: [:0]const u8 = "native",
-        },
-    }, io, arena, init.minimal.args, .{
-        .exit = true,
-        .writer = stderr.terminal().writer,
-    });
-    std.debug.unlockStderr();
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const exe_file_name = args.positional.exe_file;
-    const cov_file_name = args.positional.cov_file;
+    const exe_file_name = args.positional.@"path/to/exe";
+    const cov_file_name = args.positional.@"path/to/coverage";
 
     const target = std.zig.resolveTargetQueryOrFatal(io, try .parse(.{
         .arch_os_abi = args.positional.target,

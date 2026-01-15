@@ -142,14 +142,16 @@ const TargetToHash = std.ArrayHashMap(DestTarget, []const u8, DestTarget.HashCon
 const PathTable = std.StringHashMap(*TargetToHash);
 
 const Args = struct {
-        named: struct {
-            @"search-path": []const []const u8 = &.{},
-            out: []const u8,
+    named: struct {
+        @"search-path": []const []const u8 = &.{},
+        out: []const u8,
 
-            pub const @"search-path_help" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu";
-            pub const out_help = "a dir that will be created, and populated with the results";
-        },
-     };
+        pub const help = .{
+            .@"search-path" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu",
+            .out = "a dir that will be created, and populated with the results",
+        };
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
@@ -157,8 +159,8 @@ pub fn main(init: std.process.Init) !void {
     const environ_map = init.environ_map;
     const cwd = try std.process.getCwdAlloc(arena);
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
-    
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
+
     const search_paths = args.named.@"search-path";
     const out_dir = args.named.out;
 
@@ -312,12 +314,4 @@ pub fn main(init: std.process.Init) !void {
         const full_path = try Dir.path.join(arena, &[_][]const u8{ out_dir, bad_file });
         try Dir.cwd().deleteFile(io, full_path);
     }
-}
-
-fn usageAndExit(arg0: []const u8) noreturn {
-    std.debug.print("Usage: {s} [--search-path <dir>] --out <dir> --abi <name>\n", .{arg0});
-    std.debug.print("--search-path can be used any number of times.\n", .{});
-    std.debug.print("    subdirectories of search paths look like, e.g. x86_64-linux-gnu\n", .{});
-    std.debug.print("--out is a dir that will be created, and populated with the results\n", .{});
-    std.process.exit(1);
 }

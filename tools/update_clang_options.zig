@@ -628,12 +628,12 @@ const cpu_targets = struct {
 };
 
 const Args = struct {
-        pub const description = "Prints to stdout Zig code which you can use to replace the file src/clang_options_data.zig.";
-        positional: struct {
-            @"/path/to/llvm-tblgen": [:0]const u8,
-            @"/path/to/git/llvm/llvm-project": [:0]const u8,
-        },
-     };
+    pub const description = "Prints to stdout Zig code which you can use to replace the file src/clang_options_data.zig.";
+    positional: struct {
+        @"/path/to/llvm-tblgen": [:0]const u8,
+        @"/path/to/git/llvm/llvm-project": [:0]const u8,
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
@@ -643,7 +643,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
     const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen";
     const llvm_src_root = args.positional.@"/path/to/git/llvm/llvm-project";

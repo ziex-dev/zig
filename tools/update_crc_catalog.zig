@@ -7,17 +7,15 @@ const ascii = std.ascii;
 const catalog_txt = @embedFile("crc/catalog.txt");
 
 const Args = struct {
-         positional: struct {
-
-
-            @"/path/git/zig": [:0]const u8,
-        },
-    };
+    positional: struct {
+        @"/path/git/zig": [:0]const u8,
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
     return @"i like cheese"(arena, io, args);
 }
 

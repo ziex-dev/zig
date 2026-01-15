@@ -4,8 +4,6 @@ const Dir = std.Io.Dir;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 
-const usage = "usage: incr-check <zig binary path> <input file> [--zig-lib-dir lib] [--debug-log foo] [--preserve-tmp] [--zig-cc-binary /path/to/zig]";
-
 pub const std_options: std.Options = .{
     .logFn = logImpl,
 };
@@ -28,21 +26,20 @@ fn logImpl(
 }
 
 const Args = struct {
+    pub const arg0 = "incr-check";
+
     positional: struct {
         @"zig-binary-path": []const u8,
         @"input-file": []const u8,
     },
     named: struct {
         @"zig-lib-dir": []const u8 = "",
+        @"debug-log": []const []const u8 = &.{},
+        @"preserve-tmp": bool = false,
         qemu: bool = false,
         wine: bool = false,
         wasmtime: bool = false,
         darling: bool = false,
-        @"debug-zcu": bool = false,
-        @"debug-dwarf": bool = false,
-        @"debug-link": bool = false,
-        @"debug-log": []const []const u8 = &.{},
-        preserve_tmp: bool = false,
         @"zig-cc-binary": []const u8 = "",
     },
 };
@@ -54,19 +51,16 @@ pub fn main(init: std.process.Init) !void {
     const environ_map = init.environ_map;
     const cwd_path = try std.process.getCwdAlloc(arena);
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
     const opt_lib_dir: ?[]const u8 = if (args.named.@"zig-lib-dir".len > 0) args.named.@"zig-lib-dir" else null;
     const opt_cc_zig: ?[]const u8 = if (args.named.@"zig-cc-binary".len > 0) args.named.@"zig-cc-binary" else null;
+    const preserve_tmp = args.named.@"preserve-tmp";
     const enable_qemu = args.named.qemu;
     const enable_wine = args.named.wine;
     const enable_wasmtime = args.named.wasmtime;
     const enable_darling = args.named.darling;
-    // const debug_zcu = args.named.@"debug-zcu";
-    // const debug_dwarf = args.named.@"debug-dwarf";
-    // const debug_link = args.named.@"debug-link";
     const debug_log_args = args.named.@"debug-log";
-    const preserve_tmp = args.named.preserve_tmp;
     const zig_exe = args.positional.@"zig-binary-path";
     const input_file_name = args.positional.@"input-file";
 

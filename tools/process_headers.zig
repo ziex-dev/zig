@@ -145,10 +145,12 @@ const Args = struct {
     named: struct {
         @"search-path": []const []const u8 = &.{},
         out: []const u8,
-        abi: enum { musl, glibc, freebsd, netbsd },
+        abi: LibCVendor,
 
-        pub const @"search-path_help" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu";
-        pub const out_help = "a dir that will be created, and populated with the results";
+        pub const help = .{
+            .@"search-path" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu",
+            .out = "a dir that will be created, and populated with the results",
+        };
     },
 };
 
@@ -158,7 +160,7 @@ pub fn main(init: std.process.Init) !void {
     const cwd_path = try std.process.getCwdAlloc(arena);
     const environ_map = init.environ_map;
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
     const search_paths = args.named.@"search-path";
     const out_dir = args.named.out;
@@ -377,13 +379,4 @@ pub fn main(init: std.process.Init) !void {
             try Dir.cwd().writeFile(io, .{ .sub_path = full_path, .data = contents.bytes });
         }
     }
-}
-
-fn usageAndExit(arg0: []const u8) noreturn {
-    std.debug.print("Usage: {s} [--search-path <dir>] --out <dir> --abi <name>\n", .{arg0});
-    std.debug.print("--search-path can be used any number of times.\n", .{});
-    std.debug.print("    subdirectories of search paths look like, e.g. x86_64-linux-gnu\n", .{});
-    std.debug.print("--out is a dir that will be created, and populated with the results\n", .{});
-    std.debug.print("--abi is either glibc, musl, freebsd, netbsd, or openbsd\n", .{});
-    std.process.exit(1);
 }

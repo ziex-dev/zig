@@ -62,9 +62,11 @@ const Args = struct {
         \\files in src/codegen/spirv. Don't forget to format the output.
     ;
     positional: struct {
-        pub const @"path/to/SPIRV-Headers_help" = "should point to a clone of https://github.com/KhronosGroup/SPIRV-Headers/";
         @"path/to/SPIRV-Headers": [:0]const u8,
         @"path/to/zig/src/codegen/spirv/extinst.zig.grammar.json": [:0]const u8,
+        pub const help = .{
+            .@"path/to/SPIRV-Headers" = "should point to a clone of https://github.com/KhronosGroup/SPIRV-Headers/",
+        };
     },
 };
 
@@ -73,7 +75,7 @@ pub fn main(init: std.process.Init) !void {
 
     const io = init.io;
 
-    const args = try std.cli.parse(Args, io, arena, init.minimal.args, .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
     const json_path = try std.fs.path.join(arena, &.{ args.positional.@"path/to/SPIRV-Headers", "include/spirv/unified1/" });
     const dir = try Io.Dir.cwd().openDir(io, json_path, .{ .iterate = true });
 
