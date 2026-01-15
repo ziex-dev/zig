@@ -1349,8 +1349,8 @@ fn netSendOne(
     var addr: Io.Threaded.PosixAddress = undefined;
     var iovec: posix.iovec_const = .{ .base = @constCast(message.data_ptr), .len = message.data_len };
     const msg: posix.msghdr_const = .{
-        .name = &addr.any,
-        .namelen = Io.Threaded.addressToPosix(message.address, &addr),
+        .name = if (message.address != null) &addr.any else null,
+        .namelen = if (message.address) |address| Io.Threaded.addressToPosix(address, &addr) else 0,
         .iov = (&iovec)[0..1],
         .iovlen = 1,
         // OS returns EINVAL if this pointer is invalid even if controllen is zero.

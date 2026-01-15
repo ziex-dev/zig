@@ -937,7 +937,7 @@ pub const IncomingMessage = struct {
 };
 
 pub const OutgoingMessage = struct {
-    address: *const IpAddress,
+    address: ?*const IpAddress,
     data_ptr: [*]const u8,
     /// Initialized with how many bytes of `data_ptr` to send. After sending
     /// succeeds, replaced with how many bytes were actually sent.
@@ -1095,8 +1095,8 @@ pub const Socket = struct {
         AccessDenied,
     } || Io.UnexpectedError || Io.Cancelable;
 
-    /// Transfers `data` to `dest`, connectionless, in one packet.
-    pub fn send(s: *const Socket, io: Io, dest: *const IpAddress, data: []const u8) SendError!void {
+    /// Transfers `data` to `dest`, optionally connectionless, in one packet.
+    pub fn send(s: *const Socket, io: Io, dest: ?*const IpAddress, data: []const u8) SendError!void {
         var message: OutgoingMessage = .{ .address = dest, .data_ptr = data.ptr, .data_len = data.len };
         const err, const n = io.vtable.netSend(io.userdata, s.handle, (&message)[0..1], .{});
         if (n != 1) return err.?;
