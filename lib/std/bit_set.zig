@@ -810,12 +810,22 @@ pub const DynamicBitSetUnmanaged = struct {
 
     /// Returns the total number of set bits in this bit set.
     pub fn count(self: Self) usize {
-        const num_masks = (self.bit_length + (@bitSizeOf(MaskInt) - 1)) / @bitSizeOf(MaskInt);
         var total: usize = 0;
-        for (self.masks[0..num_masks]) |mask| {
-            // Note: This is where we depend on padding bits being zero
+        const num_masks = numMasks(self.bit_length);
+        if (num_masks == 0) {
+            return total;
+        }
+
+        // Non-padding masks
+        for (self.masks[0 .. num_masks - 1]) |mask| {
             total += @popCount(mask);
         }
+
+        // Last mask with padding bits
+        const padding_bits = num_masks * @bitSizeOf(MaskInt) - self.bit_length;
+        const last_item_mask = (~@as(MaskInt, 0)) >> @as(ShiftInt, @intCast(padding_bits));
+        total += @popCount(self.masks[num_masks - 1] & last_item_mask);
+
         return total;
     }
 
