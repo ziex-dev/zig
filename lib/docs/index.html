@@ -72,7 +72,7 @@
           border-top: 0;
         }
       }
-      #hdrName {
+      #hdrNameSec {
         display: flex;
         align-items: baseline;
         font-size: 1.5rem;
@@ -84,16 +84,17 @@
           span {
             display: inline-block;
           }
-          span:first-child {
+	  span#hdrName {
             font-weight: bold;
-            font-size: 2rem;
+            font-size: 1.8rem;
           }
-          span:nth-child(3) {
+	  span#hdrKind {
+            margin-left: 0.5rem;
             color: var(--func);
           }
         }
-        a {
-          font-size: 0.7em;
+        #srcLinkSec {
+          font-size: 1.2rem;
           margin-top: auto;
         }
       }
@@ -399,13 +400,13 @@
       </div>
       <section>
       <p id="status">Loading...</p>
-      <div id="hdrName" class="hidden">
+      <div id="hdrNameSec" class="hidden">
         <div>
-          <span></span>
-          <span>is a</span>
-          <span></span>
+          <span id="hdrName"></span><span>:</span><span id="hdrKind"></span>
         </div>
-        <a href="#">[src]</a>
+        <div id="srcLinkSec">
+          <span>[</span><a id="srcLink" href="#">src</a><span>]</span>
+        </div>
       </div>
       <!-- <h1 id="hdrName" class="hidden"><span></span><span></span><a href="#">[src]</a></h1> -->
       <div id="fnProto" class="hidden">
