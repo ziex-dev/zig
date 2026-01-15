@@ -1363,6 +1363,14 @@ pub const Range = struct {
 
 const testing = std.testing;
 
+/// Expect the number of iterated items in `iterator` is not more than `len`.
+/// `iterator` is any BitSetIterator().
+fn testIteratorLen(iterator: anytype, len: usize) !void {
+    var count: usize = 0;
+    while (iterator.next()) |_| : (count += 1) {}
+    try testing.expect(count <= len);
+}
+
 fn testEql(empty: anytype, full: anytype, len: usize) !void {
     try testing.expect(empty.eql(empty));
     try testing.expect(full.eql(full));
@@ -1432,6 +1440,17 @@ fn testBitSet(a: anytype, b: anytype, len: usize) !void {
 
     try testing.expectEqual((len + 1) / 2, a.count());
     try testing.expectEqual((len + 3) / 4 + (len + 2) / 4, b.count());
+
+    // For each combination of IteratorOptions: test whether the number of iterated items is as expected
+    inline for (.{ IteratorOptions.Direction.forward, IteratorOptions.Direction.reverse }) |it_dir| {
+        inline for (.{ IteratorOptions.Type.set, IteratorOptions.Type.unset }) |it_type| {
+            const options = IteratorOptions{ .direction = it_dir, .kind = it_type };
+            var it = a.iterator(options);
+            try testIteratorLen(&it, len);
+            it = b.iterator(options);
+            try testIteratorLen(&it, len);
+        }
+    }
 
     {
         var iter = a.iterator(.{});
@@ -1771,6 +1790,18 @@ test DynamicBitSetUnmanaged {
             try testSupersetOf(empty, full, even, odd, size);
         }
         try testBitSet(&a, &full, size);
+
+        // Also test with all bits (including padding bits) set to 1
+        var abnormal = try DynamicBitSetUnmanaged.initEmpty(allocator, size);
+        defer abnormal.deinit(allocator);
+        const abnormal_num_masks = (abnormal.bit_length +
+            (@bitSizeOf(DynamicBitSetUnmanaged.MaskInt) - 1)) /
+            @bitSizeOf(DynamicBitSetUnmanaged.MaskInt);
+        // Set each mask to all 0xFF's
+        for (0..abnormal_num_masks) |idx| {
+            abnormal.masks[idx] |= std.math.maxInt(DynamicBitSetUnmanaged.MaskInt);
+        }
+        try testBitSet(&a, &abnormal, size);
     }
 }
 
