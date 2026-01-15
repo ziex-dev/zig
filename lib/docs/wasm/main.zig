@@ -477,7 +477,7 @@ fn decl_field_html_fallible(
     try out.appendSlice(gpa, "<tr class='item'><td class='item-name'><code>");
     try appendEscaped(out, name);
     try out.appendSlice(gpa, "</code></td>");
-    try out.appendSlice(gpa, "<td class='item-desc'><code>");
+    try out.appendSlice(gpa, "<td class='item-type'><code>");
     try fileSourceHtml(decl.file, out, type_expr_node, .{});
     if (field.ast.align_expr.unwrap()) |align_expr_node| {
         try out.appendSlice(gpa, " <span class='tok-kw'>align</span>(");
@@ -522,7 +522,7 @@ fn decl_param_html_fallible(
     try out.appendSlice(gpa, "<tr class='item'><td class='item-name'><code>");
     try appendEscaped(out, name);
     try out.appendSlice(gpa, "</code></td>");
-    try out.appendSlice(gpa, "<td class='item-desc'><code>");
+    try out.appendSlice(gpa, "<td class='item-type'><code>");
     try fileSourceHtml(decl.file, out, param_node, .{});
     try out.appendSlice(gpa, "</code></td></tr>");
 

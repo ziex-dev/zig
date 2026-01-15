@@ -10,9 +10,11 @@
         --ac-f: #ffbb4d;
         --ac-grey-mid: #afab8d;
         --ac-grey-lit: #efebcd;
+        --blue-grey-mid: #8dabaf;
+        --blue-grey-lit: #cdebef;
         --func: #990000;
         --lit: #008080;
-        --subtle-bg: #efefef;
+        --subtle-bg: #e0e0e0;
       }
       *, *::before, *::after {
         box-sizing: border-box;
@@ -56,8 +58,8 @@
       code a {
         color: #000000;
       }
-      #listFields, #listParams {
-        .item-desc {
+      #listParams, #listFields {
+        .item-type {
           background: var(--ac-grey-lit);
         }
         .item-name {
@@ -70,6 +72,24 @@
           padding: 1rem 1rem .6rem 1.7rem;
           border: 1px solid var(--subtle-bg);
           border-top: 0;
+        }
+      }
+      #listValues {
+        .item-name, .item-type {
+          /* https://stackoverflow.com/a/43615091/11535110 */
+          width: 0.1%;
+          white-space: nowrap;
+        }
+        .item-type {
+          background: var(--blue-grey-lit);
+          width: 20%;
+        }
+        .item-name {
+          border: 0.15em solid var(--blue-grey-mid);
+          width: 15%;
+        }
+        td:last-child {
+          border: 1px solid var(--subtle-bg);
         }
       }
       #hdrNameSec {
@@ -288,6 +308,8 @@
         * {
           --ac-grey-mid: #6f6b4d;
           --ac-grey-lit: #3f3b1d;
+          --blue-grey-mid: #4d6b6f;
+          --blue-grey-lit: #1d3b3f;
           --func: #db311f;
           --lit: #50c0c0;
           --subtle-bg: #3a3a3a;
@@ -459,9 +481,8 @@
       </div>
       <div id="sectValues" class="hidden">
         <h2>Values</h2>
-        <table>
-          <tbody id="listValues">
-          </tbody>
+        <table id="listValues">
+          <tbody></tbody>
         </table>
       </div>
       <div id="sectFns" class="hidden">
