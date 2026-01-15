@@ -472,13 +472,22 @@ fn decl_field_html_fallible(
     const field = ast.fullContainerField(field_node).?;
     const name_token = field.ast.main_token;
     const name = ast.tokenSlice(name_token);
-    const rest_node = field.ast.type_expr.unwrap().?;
+    const type_expr_node = field.ast.type_expr.unwrap().?;
 
     try out.appendSlice(gpa, "<tr class='item'><td class='item-name'><code>");
     try appendEscaped(out, name);
     try out.appendSlice(gpa, "</code></td>");
     try out.appendSlice(gpa, "<td class='item-desc'><code>");
-    try fileSourceHtml(decl.file, out, rest_node, .{});
+    try fileSourceHtml(decl.file, out, type_expr_node, .{});
+    if (field.ast.align_expr.unwrap()) |align_expr_node| {
+        try out.appendSlice(gpa, " <span class='tok-kw'>align</span>(");
+        try fileSourceHtml(decl.file, out, align_expr_node, .{});
+        try out.appendSlice(gpa, ")");
+    }
+    if (field.ast.value_expr.unwrap()) |value_expr_node| {
+        try out.appendSlice(gpa, " = ");
+        try fileSourceHtml(decl.file, out, value_expr_node, .{});
+    }
     try out.appendSlice(gpa, "</code></td></tr>");
 
     if (Decl.findFirstDocComment(ast, field.firstToken()).unwrap()) |first_doc_comment| {
