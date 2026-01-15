@@ -2856,7 +2856,7 @@ fn testUnwindInfo(b: *Build, opts: Options) *Step {
 fn testEhFramePointerEncodingSdata4(b: *Build, opts: Options) *Step {
     const test_step = addTestStep(b, "eh_frame-pointer-encoding-sdata4", opts);
 
-    const a_o = addObject(b, opts, .{ .name = "foo", .asm_source_bytes = 
+    const a_o = addObject(b, opts, .{ .name = "foo", .asm_source_bytes =
         \\.global _foo
         \\.align 2
         \\_foo:
@@ -2901,7 +2901,7 @@ fn testEhFramePointerEncodingSdata4(b: *Build, opts: Options) *Step {
         \\LFDE_end:
     });
 
-    const exe = addExecutable(b, opts, .{ .name = "main", .c_source_bytes = 
+    const exe = addExecutable(b, opts, .{ .name = "main", .c_source_bytes =
         \\#include <stdio.h>
         \\int foo();
         \\int main() {
