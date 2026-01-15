@@ -11,8 +11,6 @@ class ZigPrettyPrinter(gdb.printing.PrettyPrinter):
         tag = val.type.tag
         if tag is None:
             return None
-        if tag == '[]u8':
-            return StringPrinter(val)
         if tag.startswith('[]'):
             return SlicePrinter(val)
         if tag.startswith('?'):
@@ -36,17 +34,6 @@ class SlicePrinter:
 
     def display_hint(self):
         return 'array'
-
-
-class StringPrinter:
-    def __init__(self, val):
-        self.val = val
-
-    def to_string(self):
-        return self.val['ptr'].string(length=int(self.val['len']))
-
-    def display_hint(self):
-        return 'string'
 
 
 class OptionalPrinter:
