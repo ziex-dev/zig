@@ -11,7 +11,8 @@
         --ac-grey-mid: #afab8d;
         --ac-grey-lit: #efebcd;
         --func: #990000;
-	--lit: #008080;
+        --lit: #008080;
+        --subtle-bg: #efefef;
       }
       *, *::before, *::after {
         box-sizing: border-box;
@@ -55,17 +56,21 @@
       code a {
         color: #000000;
       }
-      #listFields tr, #listParams tr {
-        margin-bottom: 1em;
-      }
-      #listFields .item-desc, #listParams .item-desc {
-        background: var(--ac-grey-lit);
-      }
-      #listFields .item-name, #listParams .item-name {
-        border: 0.15em solid var(--ac-grey-mid);
-        /* https://stackoverflow.com/a/43615091/11535110 */
-        width: 0.1%;
-        white-space: nowrap;
+      #listFields, #listParams {
+        .item-desc {
+          background: var(--ac-grey-lit);
+        }
+        .item-name {
+          border: 0.15em solid var(--ac-grey-mid);
+          /* https://stackoverflow.com/a/43615091/11535110 */
+          width: 0.1%;
+          white-space: nowrap;
+        }
+        .fieldDocs {
+          padding: 0 1rem .6rem 1.7rem;
+          border: 1px solid var(--subtle-bg);
+          border-top: 0;
+        }
       }
       #hdrName {
         display: flex;
@@ -91,11 +96,6 @@
           font-size: 0.7em;
           margin-top: auto;
         }
-      }
-      .fieldDocs {
-        border: 1px solid #F5F5F5;
-        border-top: 0px;
-        padding: 1px 1.5em;
       }
 
       #top {
@@ -284,7 +284,8 @@
           --ac-grey-mid: #6f6b4d;
           --ac-grey-lit: #3f3b1d;
           --func: #db311f;
-	  --lit: #50c0c0;
+          --lit: #50c0c0;
+          --subtle-bg: #3a3a3a;
         }
         body {
           background-color: #111;
@@ -299,9 +300,6 @@
         }
         code a {
           color: #ccc;
-        }
-        .fieldDocs {
-          border-color:#2A2A2A;
         }
         #listNav {
           background-color: #333;
