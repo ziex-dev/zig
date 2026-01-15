@@ -1335,13 +1335,16 @@ fn BitSetIterator(comptime MaskInt: type, comptime options: IteratorOptions) typ
                 .set => {},
                 .unset => {
                     word = ~word;
-                    if ((direction == .reverse and is_first_word) or
-                        (direction == .forward and self.words_remain.len == 1))
-                    {
-                        word &= self.last_word_mask;
-                    }
                 },
             }
+
+            // Mask off the padding bits
+            if ((direction == .reverse and is_first_word) or
+                (direction == .forward and self.words_remain.len == 1))
+            {
+                word &= self.last_word_mask;
+            }
+
             switch (direction) {
                 .forward => self.words_remain = self.words_remain[1..],
                 .reverse => self.words_remain.len -= 1,
