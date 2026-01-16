@@ -1,4 +1,50 @@
-//! The engines provided here should be initialized from an external source.
+//! An interface for random number generation. It can be acquired by
+//! initializing an engine and then calling `random()` on it.
+//!
+//! Example:
+//!
+//! ```zig
+//! const std = @import("std");
+//! const Random = std.Random;
+//!
+//! pub fn main() void {
+//!     // In practice, you'd use a timestamp or some other external source for
+//!     // seeding the engine.
+//!     const seed = 0xdeadbeef;
+//!
+//!     // For most purposes, DefaultPrng is a good choice of an engine.
+//!     var rngin = Random.DefaultPrng.init(seed);
+//!
+//!     const rng = rngin.random();
+//!
+//!     // You could call the engine directly, but most of the useful utility
+//!     // functions are with Random.
+//!     std.log.info("Random boolean: {}", .{rng.boolean()});
+//!
+//!     // rng.int() returns an integer in the range [minInt(T), maxInt(T)]
+//!     std.log.info("Random u32: {}", .{rng.int(u32)});
+//!
+//!     doSomething(rng);
+//!     doSomethingElse(rng);
+//! }
+//!
+//! // Getting a range in the range [a, b)
+//! fn doSomething(rng: Random) void {
+//!     const a = 3;
+//!     const b = 271;
+//!     const rand_range = rng.intRangeLessThan(usize, a, b);
+//!     std.log.info("Random number in range [{}, {}): {}", .{ a, b, rand_range });
+//! }
+//!
+//! // rng.intRangeAtMost returns a random value in the range [a, b]
+//! fn doSomethingElse(rng: Random) void {
+//!     const a = 25;
+//!     const b = 38;
+//!     const rand_range = rng.intRangeAtMost(usize, a, b);
+//!     std.log.info("Random number in range [{}, {}]: {}", .{ a, b, rand_range });
+//! }
+//! ```
+//!
 //! Be sure to use a CSPRNG when required, otherwise using a normal PRNG will
 //! be faster and use substantially less stack space.
 const Random = @This();
