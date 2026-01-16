@@ -11,6 +11,8 @@ pub const Tag = struct {
     constructed: bool,
     class: Class,
 
+    pub const max_encoded_len = 3;
+
     /// These values apply to class == .universal.
     pub const Number = enum(u16) {
         // 0 is reserved by spec
@@ -90,38 +92,35 @@ pub const Tag = struct {
         };
     }
 
-    pub fn encode(self: Tag, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    pub fn encode(self: Tag, buffer: *[max_encoded_len]u8) []u8 {
         var tag1 = FirstTag{
             .number = undefined,
             .constructed = self.constructed,
             .class = self.class,
         };
 
-        var buffer: [3]u8 = undefined;
-        var writer2: std.Io.Writer = .fixed(&buffer);
-
+        var writer: std.Io.Writer = .fixed(buffer);
         switch (@intFromEnum(self.number)) {
             0...std.math.maxInt(u5) => |n| {
                 tag1.number = @intCast(n);
-                writer2.writeByte(@bitCast(tag1)) catch unreachable;
+                writer.writeByte(@bitCast(tag1)) catch unreachable;
             },
             std.math.maxInt(u5) + 1...std.math.maxInt(u7) => |n| {
                 tag1.number = 15;
                 const tag2 = NextTag{ .number = @intCast(n), .continues = false };
-                writer2.writeByte(@bitCast(tag1)) catch unreachable;
-                writer2.writeByte(@bitCast(tag2)) catch unreachable;
+                writer.writeByte(@bitCast(tag1)) catch unreachable;
+                writer.writeByte(@bitCast(tag2)) catch unreachable;
             },
             else => |n| {
                 tag1.number = 15;
                 const tag2 = NextTag{ .number = @intCast(n >> 7), .continues = true };
                 const tag3 = NextTag{ .number = @truncate(n), .continues = false };
-                writer2.writeByte(@bitCast(tag1)) catch unreachable;
-                writer2.writeByte(@bitCast(tag2)) catch unreachable;
-                writer2.writeByte(@bitCast(tag3)) catch unreachable;
+                writer.writeByte(@bitCast(tag1)) catch unreachable;
+                writer.writeByte(@bitCast(tag2)) catch unreachable;
+                writer.writeByte(@bitCast(tag3)) catch unreachable;
             },
         }
-
-        _ = try writer.write(writer2.buffered());
+        return writer.buffered();
     }
 
     const FirstTag = packed struct(u8) { number: u5, constructed: bool, class: Tag.Class };
@@ -312,10 +311,7 @@ pub const BitString = struct {
     }
 
     pub fn encodeDer(self: BitString, encoder: *der.Encoder) !void {
-        try encoder.writer().writeAll(self.bytes);
-        try encoder.writer().writeByte(self.right_padding);
-        try encoder.length(self.bytes.len + 1);
-        try encoder.tag(asn1_tag);
+        try encoder.tagVec(asn1_tag, &.{ self.bytes, &.{self.right_padding} });
     }
 };
 

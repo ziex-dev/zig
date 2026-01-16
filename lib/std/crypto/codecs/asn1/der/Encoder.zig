@@ -78,7 +78,8 @@ fn anyTag(self: *Encoder, tag_: Tag, val: anytype) !void {
 /// Encode a tag.
 pub fn tag(self: *Encoder, tag_: Tag) !void {
     const t = self.mergedTag(tag_);
-    try t.encode(self.writer());
+    var buffer: [Tag.max_encoded_len]u8 = undefined;
+    try self.buffer.prependSlice(t.encode(&buffer));
 }
 
 fn mergedTag(self: *Encoder, tag_: Tag) Tag {
@@ -94,15 +95,14 @@ fn mergedTag(self: *Encoder, tag_: Tag) Tag {
 
 /// Encode a length.
 pub fn length(self: *Encoder, len: usize) !void {
-    const writer_ = self.writer();
     if (len < 128) {
-        try writer_.writeInt(u8, @intCast(len), .big);
+        try self.buffer.prependInt(u8, @intCast(len), .big);
         return;
     }
     inline for ([_]type{ u8, u16, u32 }) |T| {
         if (len < std.math.maxInt(T)) {
-            try writer_.writeInt(T, @intCast(len), .big);
-            try writer_.writeInt(u8, @sizeOf(T) | 0x80, .big);
+            try self.buffer.prependInt(T, @intCast(len), .big);
+            try self.buffer.prependInt(u8, @sizeOf(T) | 0x80, .big);
             return;
         }
     }
@@ -116,9 +116,11 @@ pub fn tagBytes(self: *Encoder, tag_: Tag, bytes: []const u8) !void {
     try self.tag(tag_);
 }
 
-/// Warning: This writer writes backwards. `fn print` will NOT work as expected.
-pub fn writer(self: *Encoder) *std.Io.Writer {
-    return &self.buffer.writer;
+/// Encode a tag and a length-prefixed vector of bytes.
+pub fn tagVec(self: *Encoder, tag_: Tag, data: []const []const u8) !void {
+    for (data) |bytes| try self.buffer.prependSlice(bytes);
+    try self.length(std.Io.Writer.countSplat(data, 1));
+    try self.tag(tag_);
 }
 
 fn int(self: *Encoder, comptime T: type, value: T) !void {
@@ -135,9 +137,8 @@ fn int(self: *Encoder, comptime T: type, value: T) !void {
     } else 0;
     const bytes_needed = try std.math.divCeil(usize, bits_needed, 8) + needs_padding;
 
-    const writer_ = self.writer();
-    for (0..bytes_needed - needs_padding) |i| try writer_.writeByte(big_bytes[big_bytes.len - i - 1]);
-    if (needs_padding == 1) try writer_.writeByte(0);
+    for (0..bytes_needed - needs_padding) |i| try self.buffer.prependByte(big_bytes[big_bytes.len - i - 1]);
+    if (needs_padding == 1) try self.buffer.prependByte(0);
 }
 
 test int {
