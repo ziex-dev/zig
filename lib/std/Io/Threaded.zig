@@ -1961,7 +1961,7 @@ fn groupAsync(
         .num_running = 1,
         .have_awaiter = false,
         .canceled = false,
-    }, .monotonic);
+    }, .release);
     t.run_queue.prepend(&task.runnable.node);
 
     t.mutex.unlock();
@@ -2056,7 +2056,7 @@ fn groupConcurrent(
         .num_running = 1,
         .have_awaiter = false,
         .canceled = false,
-    }, .monotonic);
+    }, .release);
     t.run_queue.prepend(&task.runnable.node);
 
     t.cond.signal();
