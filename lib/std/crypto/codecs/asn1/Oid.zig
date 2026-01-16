@@ -47,7 +47,7 @@ test fromDot {
     }
 }
 
-pub fn toDot(self: Oid, writer: anytype) std.Io.Writer.Error!void {
+pub fn toDot(self: Oid, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     const encoded = self.encoded;
     const first = @divTrunc(encoded[0], 40);
     const second = encoded[0] - first * 40;
