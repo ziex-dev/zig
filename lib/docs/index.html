@@ -25,7 +25,7 @@
       }
       main {
         width: 80%;
-        min-width: 20em;
+        min-width: 18em;
         max-width: 60em;
         align-self: center;
       }
@@ -99,10 +99,8 @@
         padding: 0 0 0.3rem 0;
         margin: 0 0;
         div {
-          span {
-            display: inline-block;
-          }
           span#hdrName {
+            overflow-wrap: anywhere;
             font-weight: bold;
             font-size: 1.8rem;
           }
@@ -430,7 +428,6 @@
           <span>[</span><a id="srcLink" href="#">src</a><span>]</span>
         </div>
       </div>
-      <!-- <h1 id="hdrName" class="hidden"><span></span><span></span><a href="#">[src]</a></h1> -->
       <div id="fnProto" class="hidden">
         <pre><code id="fnProtoCode"></code></pre>
       </div>
