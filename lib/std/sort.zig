@@ -1,3 +1,27 @@
+//! Utilities for searching and sorting. Three sorting algorithms are provided:
+//! blocksort, heapsort, insertion sort, and pattern-defeating quicksort
+//! (`pdq()`).
+//!
+//! Sorting quickstart:
+//!
+//! ```
+//! var numbers = [_]u8{ 3, 5, 18, 59, 2, 7, 0 };
+//!
+//! // Sorting in ascending order.
+//! std.sort.block(u8, &numbers, {}, std.sort.asc(u8));
+//!
+//! // Prints { 0, 2, 3, 5, 7, 18, 59 }
+//! std.log.info("{any}", .{&numbers});
+//!
+//! // Sorting in descending order.
+//! std.sort.block(u8, &numbers, {}, std.sort.desc(u8));
+//!
+//! // Prints { 59, 18, 7, 5, 3, 2, 0 }
+//! std.log.info("{any}", .{&numbers});
+//! ```
+//!
+//! Note the use of `asc()` and `desc()` to provide a comparison function.
+
 const std = @import("std.zig");
 const assert = std.debug.assert;
 const testing = std.testing;

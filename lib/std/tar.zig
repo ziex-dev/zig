@@ -1,19 +1,81 @@
-//! Tar archive is single ordinary file which can contain many files (or
-//! directories, symlinks, ...). It's build by series of blocks each size of 512
-//! bytes. First block of each entry is header which defines type, name, size
-//! permissions and other attributes. Header is followed by series of blocks of
-//! file content, if any that entry has content. Content is padded to the block
-//! size, so next header always starts at block boundary.
+//! A tar archive is a single ordinary file which can contain many files (or
+//! directories, symlinks, ...). It's build by series of blocks, each 512
+//! bytes. The first block of an entry is a header, defining the type, name,
+//! size permissions and other attributes. A header is followed by series of
+//! blocks of file content, if any that entry has content. Content is padded to
+//! the block size, so the next header always starts at a block boundary.
 //!
 //! This simple format is extended by GNU and POSIX pax extensions to support
 //! file names longer than 256 bytes and additional attributes.
 //!
-//! This is not comprehensive tar parser. Here we are only file types needed to
-//! support Zig package manager; normal file, directory, symbolic link. And
-//! subset of attributes: name, size, permissions.
+//! This module is not intended to be a comprehensive tar parser; only features
+//! needed for the Zig package manager are added. This includes the common
+//! entry types (normal file, directory, symlink) and a subset of attributes
+//! (name, size, permissions).
 //!
 //! GNU tar reference: https://www.gnu.org/software/tar/manual/html_node/Standard.html
 //! pax reference: https://pubs.opengroup.org/onlinepubs/9699919799/utilities/pax.html#tag_20_92_13
+//!
+//! Quick example, showing how to write a simple tar archive and then read it:
+//!
+//! ```
+//! const std = @import("std");
+//! const tar = std.tar;
+//! const gzip = std.compress.gzip;
+//! const fs = std.fs;
+//!
+//! pub fn main(init: std.process.Init) !void {
+//!     const io = init.io;
+//!
+//!     var f = try std.Io.Dir.cwd().createFile(io, "foo.tar", .{ .read = true });
+//!     defer f.close(io);
+//!
+//!     var writer = f.writer(io, &.{});
+//!     try write(&writer.interface);
+//!
+//!     var reader = f.reader(io, &.{});
+//!     try read(&reader.interface);
+//! }
+//!
+//! fn write(writer: *std.Io.Writer) !void {
+//!     var tar_writer = tar.Writer{ .underlying_writer = writer };
+//!
+//!     // Write a file header, and then the file bytes.
+//!     const DATA = "FOR GREAT JUSTICE";
+//!     try tar_writer.writeFileBytes("file.txt", DATA, .{});
+//! }
+//!
+//! fn read(reader: *std.Io.Reader) !void {
+//!     // Buffers used to allocate file name strings by tar.Iterator.
+//!     var fname_buf: [std.fs.max_path_bytes]u8 = undefined;
+//!     var lname_buf: [std.fs.max_path_bytes]u8 = undefined;
+//!
+//!     // Iterate through the tar archive, listing each of its entries.
+//!     var tar_iter = tar.Iterator.init(reader, .{
+//!         .file_name_buffer = &fname_buf,
+//!         .link_name_buffer = &lname_buf,
+//!     });
+//!
+//!     while (try tar_iter.next()) |entry| {
+//!         std.log.info("Entry:", .{});
+//!         std.log.info("* name: {s}", .{entry.name});
+//!         std.log.info("* size: {}", .{entry.size});
+//!         std.log.info("* mode: {o}", .{entry.mode});
+//!
+//!         switch (entry.kind) {
+//!             // Print file contents.
+//!             .file => {
+//!                 var buffer: [32]u8 = undefined;
+//!                 var w: std.Io.Writer = .fixed(&buffer);
+//!                 try tar_iter.streamRemaining(entry, &w);
+//!                 std.log.info("* data: {s}", .{w.buffered()});
+//!             },
+//!             .sym_link => std.log.info("* link: {s}", .{entry.link_name}),
+//!             .directory => std.log.info("* kind: directory", .{}),
+//!         }
+//!     }
+//! }
+//! ```
 
 const std = @import("std");
 const Io = std.Io;
