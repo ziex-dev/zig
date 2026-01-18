@@ -254,6 +254,8 @@ test "Group.cancel" {
 }
 
 test "Group.concurrent" {
+    if (builtin.os.tag == .linux and !builtin.link_libc) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30096
+
     const io = testing.io;
 
     var group: Io.Group = .init;
@@ -589,4 +591,60 @@ test "randomSecure" {
     // If this test fails the chance is significantly higher that there is a bug than
     // that two sets of 50 bytes were equal.
     try expect(!mem.eql(u8, &buf_a, &buf_b));
+}
+
+test "memory mapping" {
+    if (builtin.cpu.arch == .hexagon) return error.SkipZigTest; // mmap returned EINVAL
+    if (builtin.os.tag == .wasi and builtin.link_libc) {
+        // https://github.com/ziglang/zig/issues/20747 (open fd does not have write permission)
+        return error.SkipZigTest;
+    }
+
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "blah.txt",
+        .data = "this is my data123",
+    });
+
+    {
+        var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_write });
+        defer file.close(io);
+
+        var mm = try file.createMemoryMap(io, .{ .len = "this is my data123".len });
+        defer mm.destroy(io);
+
+        try expectEqualStrings("this is my data123", mm.memory);
+        mm.memory[4] = '9';
+        mm.memory[7] = '9';
+
+        try mm.write(io);
+    }
+
+    var buffer: [100]u8 = undefined;
+    const updated_contents = try tmp.dir.readFile(io, "blah.txt", &buffer);
+    try expectEqualStrings("this9is9my data123", updated_contents);
+
+    {
+        var file = try tmp.dir.openFile(io, "blah.txt", .{ .mode = .read_write });
+        defer file.close(io);
+
+        var mm = try file.createMemoryMap(io, .{
+            .len = "this9is9my".len,
+        });
+        defer mm.destroy(io);
+
+        try expectEqualStrings("this9is9my", mm.memory);
+
+        // Cross a page boundary to require an actual remap.
+        try mm.setLength(io, .{
+            .len = std.heap.pageSize() * 2,
+        });
+        try mm.read(io);
+
+        try expectEqualStrings("this9is9my data123\x00\x00", mm.memory[0.."this9is9my data123\x00\x00".len]);
+    }
 }

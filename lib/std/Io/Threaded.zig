@@ -22,6 +22,12 @@ const windows = std.os.windows;
 const ws2_32 = std.os.windows.ws2_32;
 
 /// Thread-safe.
+///
+/// Used for:
+/// * allocating `Io.Future` and `Io.Group` closures.
+/// * formatting spawning child processes
+/// * scanning environment variables on some targets
+/// * memory-mapping when mmap or equivalent is not available
 allocator: Allocator,
 mutex: std.Thread.Mutex = .{},
 cond: std.Thread.Condition = .{},
@@ -51,6 +57,7 @@ use_sendfile: UseSendfile = .default,
 use_copy_file_range: UseCopyFileRange = .default,
 use_fcopyfile: UseFcopyfile = .default,
 use_fchmodat2: UseFchmodat2 = .default,
+disable_memory_mapping: bool,
 
 stderr_writer: File.Writer = .{
     .io = undefined,
@@ -68,6 +75,13 @@ null_file: NullFile = .{},
 random_file: RandomFile = .{},
 
 csprng: Csprng = .{},
+
+system_basic_information: SystemBasicInformation = .{},
+
+const SystemBasicInformation = if (!is_windows) struct {} else struct {
+    buffer: windows.SYSTEM_BASIC_INFORMATION = undefined,
+    initialized: std.atomic.Value(bool) = .{ .raw = false },
+};
 
 pub const Csprng = struct {
     rng: std.Random.DefaultCsprng = .{
@@ -1214,6 +1228,8 @@ pub const InitOptions = struct {
     /// * `processExecutablePath` on OpenBSD and Haiku (observes "PATH").
     /// * `processSpawn`, `processSpawnPath`, `processReplace`, `processReplacePath`
     environ: process.Environ,
+    /// If set to `true`, `File.MemoryMap` APIs will always take the fallback path.
+    disable_memory_mapping: bool = false,
 };
 
 /// Related:
@@ -1241,6 +1257,7 @@ pub fn init(
         .argv0 = options.argv0,
         .environ = .{ .process_environ = options.environ },
         .worker_threads = init_single_threaded.worker_threads,
+        .disable_memory_mapping = options.disable_memory_mapping,
     };
 
     const cpu_count = std.Thread.getCpuCount();
@@ -1257,6 +1274,7 @@ pub fn init(
         .argv0 = options.argv0,
         .environ = .{ .process_environ = options.environ },
         .worker_threads = .init(null),
+        .disable_memory_mapping = options.disable_memory_mapping,
     };
 
     if (posix.Sigaction != void) {
@@ -1293,6 +1311,7 @@ pub const init_single_threaded: Threaded = .{
     .argv0 = .empty,
     .environ = .{},
     .worker_threads = .init(null),
+    .disable_memory_mapping = false,
 };
 
 var global_single_threaded_instance: Threaded = .init_single_threaded;
@@ -1490,6 +1509,12 @@ pub fn io(t: *Threaded) Io {
             .fileRealPath = fileRealPath,
             .fileHardLink = fileHardLink,
 
+            .fileMemoryMapCreate = fileMemoryMapCreate,
+            .fileMemoryMapDestroy = fileMemoryMapDestroy,
+            .fileMemoryMapSetLength = fileMemoryMapSetLength,
+            .fileMemoryMapRead = fileMemoryMapRead,
+            .fileMemoryMapWrite = fileMemoryMapWrite,
+
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
             .lockStderr = lockStderr,
@@ -1642,6 +1667,12 @@ pub fn ioBasic(t: *Threaded) Io {
             .fileRealPath = fileRealPath,
             .fileHardLink = fileHardLink,
 
+            .fileMemoryMapCreate = fileMemoryMapCreate,
+            .fileMemoryMapDestroy = fileMemoryMapDestroy,
+            .fileMemoryMapSetLength = fileMemoryMapSetLength,
+            .fileMemoryMapRead = fileMemoryMapRead,
+            .fileMemoryMapWrite = fileMemoryMapWrite,
+
             .processExecutableOpen = processExecutableOpen,
             .processExecutablePath = processExecutablePath,
             .lockStderr = lockStderr,
@@ -1733,15 +1764,24 @@ const have_wait4 = switch (native_os) {
     else => false,
 };
 
+const have_mmap = switch (native_os) {
+    .wasi, .windows => false,
+    else => true,
+};
+
 const open_sym = if (posix.lfs64_abi) posix.system.open64 else posix.system.open;
 const openat_sym = if (posix.lfs64_abi) posix.system.openat64 else posix.system.openat;
 const fstat_sym = if (posix.lfs64_abi) posix.system.fstat64 else posix.system.fstat;
 const fstatat_sym = if (posix.lfs64_abi) posix.system.fstatat64 else posix.system.fstatat;
 const lseek_sym = if (posix.lfs64_abi) posix.system.lseek64 else posix.system.lseek;
 const preadv_sym = if (posix.lfs64_abi) posix.system.preadv64 else posix.system.preadv;
+const pread_sym = if (posix.lfs64_abi) posix.system.pread64 else posix.system.pread;
 const ftruncate_sym = if (posix.lfs64_abi) posix.system.ftruncate64 else posix.system.ftruncate;
 const pwritev_sym = if (posix.lfs64_abi) posix.system.pwritev64 else posix.system.pwritev;
+const pwrite_sym = if (posix.lfs64_abi) posix.system.pwrite64 else posix.system.pwrite;
 const sendfile_sym = if (posix.lfs64_abi) posix.system.sendfile64 else posix.system.sendfile;
+const mmap_sym = if (posix.lfs64_abi) posix.system.mmap64 else posix.system.mmap;
+
 const linux_copy_file_range_use_c = std.c.versionCheck(if (builtin.abi.isAndroid()) .{
     .major = 34,
     .minor = 0,
@@ -2908,7 +2948,11 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
 
 fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
+
+    const block_size: u32 = if (t.systemBasicInformation()) |sbi|
+        @intCast(@max(sbi.PageSize, sbi.AllocationGranularity))
+    else
+        std.heap.page_size_max;
 
     var io_status_block: windows.IO_STATUS_BLOCK = undefined;
     var info: windows.FILE.ALL_INFORMATION = undefined;
@@ -2970,8 +3014,29 @@ fn fileStatWindows(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
         .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
         .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
         .ctime = windows.fromSysTime(info.BasicInformation.ChangeTime),
-        .nlink = 0,
+        .nlink = info.StandardInformation.NumberOfLinks,
+        .block_size = block_size,
     };
+}
+
+fn systemBasicInformation(t: *Threaded) ?*const windows.SYSTEM_BASIC_INFORMATION {
+    if (!t.system_basic_information.initialized.load(.acquire)) {
+        t.mutex.lock();
+        defer t.mutex.unlock();
+
+        switch (windows.ntdll.NtQuerySystemInformation(
+            .SystemBasicInformation,
+            &t.system_basic_information.buffer,
+            @sizeOf(windows.SYSTEM_BASIC_INFORMATION),
+            null,
+        )) {
+            .SUCCESS => {},
+            else => return null,
+        }
+
+        t.system_basic_information.initialized.store(true, .release);
+    }
+    return &t.system_basic_information.buffer;
 }
 
 fn fileStatWasi(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
@@ -3963,10 +4028,7 @@ pub fn dirOpenFileWtf16(
                 // kernel bug with retry attempts.
                 syscall.finish();
                 if (max_attempts - attempt == 0) return error.SharingViolation;
-                try parking_sleep.sleep(.{ .duration = .{
-                    .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
-                    .clock = .awake,
-                } });
+                try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
                 attempt += 1;
                 syscall = try .start();
                 continue;
@@ -3988,10 +4050,7 @@ pub fn dirOpenFileWtf16(
                 // fixed by sleeping and retrying until the error goes away.
                 syscall.finish();
                 if (max_attempts - attempt == 0) return error.SharingViolation;
-                try parking_sleep.sleep(.{ .duration = .{
-                    .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
-                    .clock = .awake,
-                } });
+                try parking_sleep.windowsRetrySleep((@as(u32, 1) << attempt) >> 1);
                 attempt += 1;
                 syscall = try .start();
                 continue;
@@ -5550,7 +5609,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
     // FileDispositionInformation if the return value lets us know that some aspect of it is not supported.
     const rc = rc: {
         // Deletion with posix semantics if the filesystem supports it.
-        const info: w.FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
+        var info: w.FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
             .DELETE = true,
             .POSIX_SEMANTICS = true,
             .IGNORE_READONLY_ATTRIBUTE = true,
@@ -5585,7 +5644,7 @@ fn dirDeleteWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8, remov
 
         // Deletion with file pending semantics, which requires waiting or moving
         // files to get them removed (from here).
-        const file_dispo: w.FILE.DISPOSITION.INFORMATION = .{
+        var file_dispo: w.FILE.DISPOSITION.INFORMATION = .{
             .DeleteFile = w.TRUE,
         };
 
@@ -5801,7 +5860,7 @@ fn dirRenameWindowsInner(
     // The strategy here is just to try using FileRenameInformationEx and fall back to
     // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
     const need_fallback = need_fallback: {
-        const rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{
                 .REPLACE_IF_EXISTS = replace_if_exists,
                 .POSIX_SEMANTICS = true,
@@ -5834,7 +5893,7 @@ fn dirRenameWindowsInner(
     };
 
     if (need_fallback) {
-        const rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
             .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
             .FileName = new_path_w,
@@ -7104,7 +7163,7 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
 
     if (is_windows) {
         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-        const eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
+        var eof_info: windows.FILE.END_OF_FILE_INFORMATION = .{
             .EndOfFile = signed_len,
         };
 
@@ -7195,7 +7254,7 @@ fn fileSetPermissions(userdata: ?*anyopaque, file: File, permissions: File.Permi
     switch (native_os) {
         .windows => {
             var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-            const info: windows.FILE.BASIC_INFORMATION = .{
+            var info: windows.FILE.BASIC_INFORMATION = .{
                 .CreationTime = 0,
                 .LastAccessTime = 0,
                 .LastWriteTime = 0,
@@ -7895,7 +7954,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     syscall.finish();
                     return nread;
                 },
-                .INTR => {
+                .INTR, .TIMEDOUT => {
                     try syscall.checkCancel();
                     continue;
                 },
@@ -7904,14 +7963,13 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     switch (e) {
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
-                        .BADF => return error.NotOpenForReading, // File operation on directory.
+                        .BADF => return error.IsDir, // File operation on directory.
                         .IO => return error.InputOutput,
                         .ISDIR => return error.IsDir,
                         .NOBUFS => return error.SystemResources,
                         .NOMEM => return error.SystemResources,
                         .NOTCONN => return error.SocketUnconnected,
                         .CONNRESET => return error.ConnectionResetByPeer,
-                        .TIMEDOUT => return error.Timeout,
                         .NOTCAPABLE => return error.AccessDenied,
                         else => |err| return posix.unexpectedErrno(err),
                     }
@@ -7928,7 +7986,7 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                 syscall.finish();
                 return @intCast(rc);
             },
-            .INTR => {
+            .INTR, .TIMEDOUT => {
                 try syscall.checkCancel();
                 continue;
             },
@@ -7938,9 +7996,9 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     .INVAL => |err| return errnoBug(err),
                     .FAULT => |err| return errnoBug(err),
                     .AGAIN => return error.WouldBlock,
-                    .BADF => |err| {
-                        if (native_os == .wasi) return error.NotOpenForReading; // File operation on directory.
-                        return errnoBug(err); // File descriptor used after closed.
+                    .BADF => {
+                        if (native_os == .wasi) return error.IsDir; // File operation on directory.
+                        return error.NotOpenForReading;
                     },
                     .IO => return error.InputOutput,
                     .ISDIR => return error.IsDir,
@@ -7948,7 +8006,6 @@ fn fileReadStreamingPosix(userdata: ?*anyopaque, file: File, data: []const []u8)
                     .NOMEM => return error.SystemResources,
                     .NOTCONN => return error.SocketUnconnected,
                     .CONNRESET => return error.ConnectionResetByPeer,
-                    .TIMEDOUT => return error.Timeout,
                     else => |err| return posix.unexpectedErrno(err),
                 }
             },
@@ -7987,10 +8044,10 @@ fn fileReadStreamingWindows(userdata: ?*anyopaque, file: File, data: []const []u
                 syscall.finish();
                 return 0;
             },
-            .NETNAME_DELETED => return syscall.fail(error.ConnectionResetByPeer),
+            .NETNAME_DELETED => if (is_debug) unreachable else return error.Unexpected,
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
-            .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            .INVALID_HANDLE => if (is_debug) unreachable else return error.Unexpected,
             // TODO: Determine if INVALID_FUNCTION is possible in more scenarios than just passing
             // a handle to a directory.
             .INVALID_FUNCTION => return syscall.fail(error.IsDir),
@@ -8030,31 +8087,25 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                     syscall.finish();
                     return nread;
                 },
-                .INTR => {
+                .INTR, .TIMEDOUT => {
                     try syscall.checkCancel();
                     continue;
                 },
-                else => |e| {
-                    syscall.finish();
-                    switch (e) {
-                        .INVAL => |err| return errnoBug(err),
-                        .FAULT => |err| return errnoBug(err),
-                        .AGAIN => |err| return errnoBug(err),
-                        .BADF => return error.NotOpenForReading, // File operation on directory.
-                        .IO => return error.InputOutput,
-                        .ISDIR => return error.IsDir,
-                        .NOBUFS => return error.SystemResources,
-                        .NOMEM => return error.SystemResources,
-                        .NOTCONN => return error.SocketUnconnected,
-                        .CONNRESET => return error.ConnectionResetByPeer,
-                        .TIMEDOUT => return error.Timeout,
-                        .NXIO => return error.Unseekable,
-                        .SPIPE => return error.Unseekable,
-                        .OVERFLOW => return error.Unseekable,
-                        .NOTCAPABLE => return error.AccessDenied,
-                        else => |err| return posix.unexpectedErrno(err),
-                    }
-                },
+                .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err), // segmentation fault
+                .AGAIN => |err| return syscall.errnoBug(err),
+                .IO => return syscall.fail(error.InputOutput),
+                .ISDIR => return syscall.fail(error.IsDir),
+                .BADF => return syscall.fail(error.IsDir),
+                .NOBUFS => return syscall.fail(error.SystemResources),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .NOTCAPABLE => return syscall.fail(error.AccessDenied),
+                else => |err| return syscall.unexpectedErrno(err),
             }
         }
     }
@@ -8067,33 +8118,28 @@ fn fileReadPositionalPosix(userdata: ?*anyopaque, file: File, data: []const []u8
                 syscall.finish();
                 return @bitCast(rc);
             },
-            .INTR => {
+            .INTR, .TIMEDOUT => {
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
+            .NXIO => return syscall.fail(error.Unseekable),
+            .SPIPE => return syscall.fail(error.Unseekable),
+            .OVERFLOW => return syscall.fail(error.Unseekable),
+            .NOBUFS => return syscall.fail(error.SystemResources),
+            .NOMEM => return syscall.fail(error.SystemResources),
+            .AGAIN => return syscall.fail(error.WouldBlock),
+            .IO => return syscall.fail(error.InputOutput),
+            .ISDIR => return syscall.fail(error.IsDir),
+            .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+            .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+            .INVAL => |err| return syscall.errnoBug(err),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .BADF => {
                 syscall.finish();
-                switch (e) {
-                    .INVAL => |err| return errnoBug(err),
-                    .FAULT => |err| return errnoBug(err),
-                    .AGAIN => return error.WouldBlock,
-                    .BADF => |err| {
-                        if (native_os == .wasi) return error.NotOpenForReading; // File operation on directory.
-                        return errnoBug(err); // File descriptor used after closed.
-                    },
-                    .IO => return error.InputOutput,
-                    .ISDIR => return error.IsDir,
-                    .NOBUFS => return error.SystemResources,
-                    .NOMEM => return error.SystemResources,
-                    .NOTCONN => return error.SocketUnconnected,
-                    .CONNRESET => return error.ConnectionResetByPeer,
-                    .TIMEDOUT => return error.Timeout,
-                    .NXIO => return error.Unseekable,
-                    .SPIPE => return error.Unseekable,
-                    .OVERFLOW => return error.Unseekable,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
+                if (native_os == .wasi) return error.IsDir; // File operation on directory.
+                return error.NotOpenForReading;
             },
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
@@ -8107,14 +8153,17 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
 
-    const DWORD = windows.DWORD;
-
     var index: usize = 0;
     while (index < data.len and data[index].len == 0) index += 1;
     if (index == data.len) return 0;
     const buffer = data[index];
-    const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
 
+    return readFilePositionalWindows(file, buffer, offset);
+}
+
+fn readFilePositionalWindows(file: File, buffer: []u8, offset: u64) File.ReadPositionalError!usize {
+    const DWORD = windows.DWORD;
+    const want_read_count: DWORD = @min(std.math.maxInt(DWORD), buffer.len);
     var overlapped: windows.OVERLAPPED = .{
         .Internal = 0,
         .InternalHigh = 0,
@@ -8147,10 +8196,10 @@ fn fileReadPositionalWindows(userdata: ?*anyopaque, file: File, data: []const []
                 syscall.finish();
                 return 0;
             },
-            .NETNAME_DELETED => return syscall.fail(error.ConnectionResetByPeer),
+            .NETNAME_DELETED => if (is_debug) unreachable else return error.Unexpected,
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
-            .INVALID_HANDLE => return syscall.fail(error.NotOpenForReading),
+            .INVALID_HANDLE => if (is_debug) unreachable else return error.Unexpected,
             // TODO: Determine if INVALID_FUNCTION is possible in more scenarios than just passing
             // a handle to a directory.
             .INVALID_FUNCTION => return syscall.fail(error.IsDir),
@@ -8745,7 +8794,7 @@ fn fileWritePositional(
                         .INVAL => |err| return errnoBug(err),
                         .FAULT => |err| return errnoBug(err),
                         .AGAIN => |err| return errnoBug(err),
-                        .BADF => return error.NotOpenForWriting, // can be a race condition.
+                        .BADF => return error.NotOpenForWriting,
                         .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
                         .DQUOT => return error.DiskQuota,
                         .FBIG => return error.FileTooBig,
@@ -8776,29 +8825,24 @@ fn fileWritePositional(
                 try syscall.checkCancel();
                 continue;
             },
-            else => |e| {
-                syscall.finish();
-                switch (e) {
-                    .INVAL => |err| return errnoBug(err),
-                    .FAULT => |err| return errnoBug(err),
-                    .AGAIN => return error.WouldBlock,
-                    .BADF => return error.NotOpenForWriting, // Usually a race condition.
-                    .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
-                    .DQUOT => return error.DiskQuota,
-                    .FBIG => return error.FileTooBig,
-                    .IO => return error.InputOutput,
-                    .NOSPC => return error.NoSpaceLeft,
-                    .PERM => return error.PermissionDenied,
-                    .PIPE => return error.BrokenPipe,
-                    .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
-                    .BUSY => return error.DeviceBusy,
-                    .TXTBSY => return error.FileBusy,
-                    .NXIO => return error.Unseekable,
-                    .SPIPE => return error.Unseekable,
-                    .OVERFLOW => return error.Unseekable,
-                    else => |err| return posix.unexpectedErrno(err),
-                }
-            },
+            .INVAL => |err| return syscall.errnoBug(err),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .DESTADDRREQ => |err| return syscall.errnoBug(err), // `connect` was never called.
+            .CONNRESET => |err| return syscall.errnoBug(err), // Not a socket handle.
+            .BADF => return syscall.fail(error.NotOpenForWriting),
+            .AGAIN => return syscall.fail(error.WouldBlock),
+            .DQUOT => return syscall.fail(error.DiskQuota),
+            .FBIG => return syscall.fail(error.FileTooBig),
+            .IO => return syscall.fail(error.InputOutput),
+            .NOSPC => return syscall.fail(error.NoSpaceLeft),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .PIPE => return syscall.fail(error.BrokenPipe),
+            .BUSY => return syscall.fail(error.DeviceBusy),
+            .TXTBSY => return syscall.fail(error.FileBusy),
+            .NXIO => return syscall.fail(error.Unseekable),
+            .SPIPE => return syscall.fail(error.Unseekable),
+            .OVERFLOW => return syscall.fail(error.Unseekable),
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
@@ -8836,7 +8880,7 @@ fn writeFilePositionalWindows(
             .NOT_ENOUGH_MEMORY => return syscall.fail(error.SystemResources),
             .NOT_ENOUGH_QUOTA => return syscall.fail(error.SystemResources),
             .NO_DATA => return syscall.fail(error.BrokenPipe),
-            .INVALID_HANDLE => return syscall.fail(error.NotOpenForWriting),
+            .INVALID_HANDLE => if (is_debug) unreachable else return error.Unexpected, // use after free
             .LOCK_VIOLATION => return syscall.fail(error.LockViolation),
             .ACCESS_DENIED => return syscall.fail(error.AccessDenied),
             .WORKING_SET_QUOTA => return syscall.fail(error.SystemResources),
@@ -9638,6 +9682,9 @@ fn nowPosix(clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
 fn now(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
+    return nowInner(clock);
+}
+fn nowInner(clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
     return switch (native_os) {
         .windows => nowWindows(clock),
         .wasi => nowWasi(clock),
@@ -9687,7 +9734,7 @@ fn nowWasi(clock: Io.Clock) Io.Clock.Error!Io.Timestamp {
 
 fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.SleepError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    if (use_parking_sleep) return parking_sleep.sleep(timeout);
+    if (use_parking_sleep) return parking_sleep.sleep(try timeout.toDeadline(ioBasic(t)));
     if (native_os == .wasi) return sleepWasi(t, timeout);
     if (@TypeOf(posix.system.clock_nanosleep) != void) return sleepPosix(timeout);
     return sleepNanosleep(t, timeout);
@@ -12461,6 +12508,7 @@ const linux_statx_request: std.os.linux.STATX = .{
     .INO = true,
     .SIZE = true,
     .NLINK = true,
+    .BLOCKS = true,
 };
 
 const linux_statx_check: std.os.linux.STATX = .{
@@ -12472,6 +12520,7 @@ const linux_statx_check: std.os.linux.STATX = .{
     .INO = true,
     .SIZE = true,
     .NLINK = true,
+    .BLOCKS = false,
 };
 
 fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
@@ -12490,6 +12539,7 @@ fn statFromLinux(stx: *const std.os.linux.Statx) Io.UnexpectedError!File.Stat {
         },
         .mtime = .{ .nanoseconds = @intCast(@as(i128, stx.mtime.sec) * std.time.ns_per_s + stx.mtime.nsec) },
         .ctime = .{ .nanoseconds = @intCast(@as(i128, stx.ctime.sec) * std.time.ns_per_s + stx.ctime.nsec) },
+        .block_size = if (stx.mask.BLOCKS) stx.blksize else 1,
     };
 }
 
@@ -12538,6 +12588,7 @@ fn statFromPosix(st: *const posix.Stat) File.Stat {
         .atime = timestampFromPosix(&atime),
         .mtime = timestampFromPosix(&mtime),
         .ctime = timestampFromPosix(&ctime),
+        .block_size = @intCast(st.blksize),
     };
 }
 
@@ -12559,6 +12610,7 @@ fn statFromWasi(st: *const std.os.wasi.filestat_t) File.Stat {
         .atime = .fromNanoseconds(st.atim),
         .mtime = .fromNanoseconds(st.mtim),
         .ctime = .fromNanoseconds(st.ctim),
+        .block_size = 1,
     };
 }
 
@@ -14197,10 +14249,7 @@ fn getNulHandle(t: *Threaded) !windows.HANDLE {
             // this other than retrying the creation after the OS finishes
             // the deletion.
             syscall.finish();
-            try parking_sleep.sleep(.{ .duration = .{
-                .raw = .fromMilliseconds(1),
-                .clock = .awake,
-            } });
+            try parking_sleep.windowsRetrySleep(1);
             syscall = try .start();
             continue;
         },
@@ -15570,9 +15619,13 @@ const parking_futex = struct {
         ///
         /// * Removing the `Waiter` from `Bucket.waiters`
         /// * Decrementing `Bucket.num_waiters`
-        /// * Unparking the thread (*after* the above, so that the `Waiter` does not go out of scope
-        ///   while it is still in the `Bucket`).
+        /// * Atomically setting `done` (after this, the `Waiter` may go out of scope at any time,
+        ///   so must not be referenced again)
+        /// * Unparking the thread (last, so that the unparked thread definitely sees `done`)
         thread_status: *std.atomic.Value(Thread.Status),
+        /// Initially `false`. Whoever updates `thread_status` to `.none`/`.canceling` will update
+        /// this to `true` once they are done with the `Waiter`, just before unparking `tid`.
+        done: std.atomic.Value(bool),
     };
 
     fn bucketForAddress(address: usize) *Bucket {
@@ -15611,6 +15664,7 @@ const parking_futex = struct {
             .address = @intFromPtr(ptr),
             .tid = self_tid,
             .thread_status = undefined, // populated in critical section
+            .done = .init(false),
         };
 
         var status_buf: std.atomic.Value(Thread.Status) = undefined;
@@ -15667,40 +15721,43 @@ const parking_futex = struct {
             bucket.waiters.append(&waiter.node);
         }
 
-        if (park(timeout, ptr)) {
-            // We were unparked by either `wake` or cancelation, so our current status is either
-            // `.none` or `.canceling`. In either case, they've already removed `waiter` from
-            // `bucket`, so we have nothing more to do!
+        const deadline: ?Io.Clock.Timestamp = switch (timeout) {
+            .none => null,
+            .duration => |d| .{
+                .raw = (nowInner(d.clock) catch unreachable).addDuration(d.raw),
+                .clock = d.clock,
+            },
+            .deadline => |d| d,
+        };
+        while (park(deadline, ptr)) {
+            if (waiter.done.load(.acquire)) return; // all done!
         } else |err| switch (err) {
-            error.Timeout => {
-                // We're not out of the woods yet: an unpark could race with the timeout.
-                const old_status = waiter.thread_status.fetchAnd(
-                    .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
-                    .monotonic,
-                );
-                switch (old_status.cancelation) {
-                    .parked => {
-                        // No race. It is our responsibility to remove `waiter` from `bucket`.
-                        // New status is `.none`.
-                        bucket.mutex.lock();
-                        defer bucket.mutex.unlock();
-                        bucket.waiters.remove(&waiter.node);
-                        assert(bucket.num_waiters.fetchSub(1, .monotonic) > 0);
-                    },
-                    .none, .canceling => {
-                        // Race condition: the timeout was reached, then `wake` or a canceler tried
-                        // to unpark us. Whoever did that will remove us from `bucket`. Wait for
-                        // that (and drop the unpark request in doing so).
-                        // New status is `.none` or `.canceling` respectively.
-                        park(.none, ptr) catch |e| switch (e) {
+            error.Timeout => switch (waiter.thread_status.fetchAnd(
+                .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                .monotonic,
+            ).cancelation) {
+                .parked => {
+                    // We saw a timeout and updated our own status from `.parked` to `.none`. It is
+                    // our responsibility to remove `waiter` from `bucket`.
+                    bucket.mutex.lock();
+                    defer bucket.mutex.unlock();
+                    bucket.waiters.remove(&waiter.node);
+                    assert(bucket.num_waiters.fetchSub(1, .monotonic) > 0);
+                },
+                .none, .canceling => {
+                    // Race condition: the timeout was reached, then `wake` or a cancelation tried
+                    // to update our status. They won the race, so wait for them to do the cleanup.
+                    // They'll tell us by setting `waiter.done` and unparking us.
+                    while (!waiter.done.load(.acquire)) {
+                        park(null, ptr) catch |e| switch (e) {
                             error.Timeout => unreachable,
                         };
-                    },
-                    .canceled => unreachable,
-                    .blocked => unreachable,
-                    .blocked_windows_dns => unreachable,
-                    .blocked_canceling => unreachable,
-                }
+                    }
+                },
+                .canceled => unreachable,
+                .blocked => unreachable,
+                .blocked_windows_dns => unreachable,
+                .blocked_canceling => unreachable,
             },
         }
     }
@@ -15748,9 +15805,6 @@ const parking_futex = struct {
                 waiter.node.next = waking_head;
                 waking_head = &waiter.node;
                 num_removed += 1;
-                // Signal to `waiter` that they're about to be unparked, in case we're racing with their
-                // timeout. See corresponding logic in `wake`.
-                waiter.address = 0;
             }
 
             _ = bucket.num_waiters.fetchSub(num_removed, .monotonic);
@@ -15765,6 +15819,8 @@ const parking_futex = struct {
             const waiter: *Waiter = @fieldParentPtr("node", node);
             unpark_buf[unpark_len] = waiter.tid;
             unpark_len += 1;
+            waiter.done.store(true, .release);
+            // `waiter.*` is now potentially invalid so must not be referenced again.
             if (unpark_len == unpark_buf.len) {
                 unpark(&unpark_buf, ptr);
                 unpark_len = 0;
@@ -15781,13 +15837,14 @@ const parking_futex = struct {
         defer bucket.mutex.unlock();
         bucket.waiters.remove(&waiter.node);
         assert(bucket.num_waiters.fetchSub(1, .monotonic) > 0);
+        waiter.done.store(true, .release); // potentially invalidates `waiter.*`
     }
 };
 const parking_sleep = struct {
     comptime {
         assert(use_parking_sleep);
     }
-    fn sleep(timeout: Io.Timeout) Io.Cancelable!void {
+    fn sleep(deadline: ?Io.Clock.Timestamp) Io.SleepError!void {
         const opt_thread = Thread.current;
         cancelable: {
             const thread = opt_thread orelse break :cancelable;
@@ -15796,85 +15853,90 @@ const parking_sleep = struct {
                 .unblocked => {},
             }
             thread.futex_waiter = null;
-            {
-                const old_status = thread.status.fetchOr(
-                    .{ .cancelation = @enumFromInt(0b001), .awaitable = .null },
-                    .release, // release `thread.futex_waiter`
-                );
-                switch (old_status.cancelation) {
-                    .none => {}, // status is now `.parked`
-                    .canceling => return error.Canceled, // status is now `.canceled`
-                    .canceled => break :cancelable, // status is still `.canceled`
-                    .parked => unreachable,
+            const orig_status = thread.status.fetchOr(
+                .{ .cancelation = @enumFromInt(0b001), .awaitable = .null },
+                .release, // release `thread.futex_waiter`
+            );
+            switch (orig_status.cancelation) {
+                .none => {}, // status is now `.parked`
+                .canceling => return error.Canceled, // status is now `.canceled`
+                .canceled => break :cancelable, // status is still `.canceled`
+                .parked => unreachable,
+                .blocked => unreachable,
+                .blocked_windows_dns => unreachable,
+                .blocked_canceling => unreachable,
+            }
+            while (park(deadline, null)) {
+                // Either a cancelation or a spurious unpark; let's see which!
+                switch (thread.status.load(.monotonic).cancelation) {
+                    .parked => continue, // spurious unpark; keep sleeping
+                    .canceling => {
+                        // We got canceled; update our state and return.
+                        thread.status.store(
+                            .{ .cancelation = .canceled, .awaitable = orig_status.awaitable },
+                            .monotonic,
+                        );
+                        return error.Canceled;
+                    },
+                    .none => unreachable,
+                    .canceled => unreachable,
                     .blocked => unreachable,
                     .blocked_windows_dns => unreachable,
                     .blocked_canceling => unreachable,
                 }
-            }
-            if (park(timeout, null)) {
-                // The only reason this could possibly happen is cancelation.
-                const old_status = thread.status.load(.monotonic);
-                assert(old_status.cancelation == .canceling);
-                thread.status.store(
-                    .{ .cancelation = .canceled, .awaitable = old_status.awaitable },
-                    .monotonic,
-                );
-                return error.Canceled;
             } else |err| switch (err) {
-                error.Timeout => {
-                    // We're not out of the woods yet: an unpark could race with the timeout.
-                    const old_status = thread.status.fetchAnd(
-                        .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
-                        .monotonic,
-                    );
-                    switch (old_status.cancelation) {
-                        .parked => return, // No race; new status is `.none`
-                        .canceling => {
-                            // Race condition: the timeout was reached, then someone tried to unpark
-                            // us for a cancelation. Whoever did that will have called `unpark`, so
-                            // drop that unpark request by waiting for it.
-                            // Status is still `.canceling`.
-                            park(.none, null) catch |e| switch (e) {
-                                error.Timeout => unreachable,
-                            };
-                            return;
-                        },
-                        .none => unreachable,
-                        .canceled => unreachable,
-                        .blocked => unreachable,
-                        .blocked_windows_dns => unreachable,
-                        .blocked_canceling => unreachable,
-                    }
+                error.Timeout => switch (thread.status.fetchAnd(
+                    .{ .cancelation = @enumFromInt(0b110), .awaitable = .all_ones },
+                    .monotonic,
+                ).cancelation) {
+                    // We updated our own status from `.parked` to `.none`.
+                    .parked => return, // new status is `.none`
+                    .canceling => {
+                        // Timeout raced with a cancelation. We don't need to do anything, but
+                        // the next `park` on this thread will see a spurious unpark.
+                        // Status is still `.canceling`.
+                        return;
+                    },
+                    .none => unreachable,
+                    .canceled => unreachable,
+                    .blocked => unreachable,
+                    .blocked_windows_dns => unreachable,
+                    .blocked_canceling => unreachable,
                 },
             }
         }
-        // Uncancelable sleep; we expect not to be manually unparked.
-        if (park(timeout, null)) {
-            unreachable; // unexpected unpark
+        // Uncancelable sleep; this case is very simple.
+        while (park(deadline, null)) {
+            // Definitely spurious; nothing to do.
         } else |err| switch (err) {
             error.Timeout => return,
         }
     }
+    /// Sleep for approximately `ms` awake milliseconds in an attempt to work around Windows kernel bugs.
+    fn windowsRetrySleep(ms: u32) (Io.Cancelable || Io.UnexpectedError)!void {
+        const now_timestamp = nowWindows(.awake) catch unreachable; // '.awake' is supported on Windows
+        const deadline = now_timestamp.addDuration(.fromMilliseconds(ms));
+        parking_sleep.sleep(.{ .raw = deadline, .clock = .awake }) catch |err| switch (err) {
+            error.UnsupportedClock => unreachable,
+            else => |e| return e,
+        };
+    }
 };
 
+/// Spurious wakeups are possible.
+///
 /// `addr_hint` has no semantic effect, but may allow the OS to optimize this operation.
-fn park(timeout: Io.Timeout, addr_hint: ?*const anyopaque) error{Timeout}!void {
+fn park(opt_deadline: ?std.Io.Clock.Timestamp, addr_hint: ?*const anyopaque) error{Timeout}!void {
     comptime assert(use_parking_futex or use_parking_sleep);
     switch (builtin.target.os.tag) {
         .windows => {
             var timeout_buf: windows.LARGE_INTEGER = undefined;
-            const raw_timeout: ?*windows.LARGE_INTEGER = timeout: switch (timeout) {
-                .none => null,
-                .deadline => |timestamp| continue :timeout .{ .duration = .{
-                    .clock = timestamp.clock,
-                    .raw = (nowWindows(timestamp.clock) catch unreachable).durationTo(timestamp.raw),
-                } },
-                .duration => |duration| {
-                    _ = duration.clock; // Windows only supports monotonic
-                    timeout_buf = @intCast(@divTrunc(-duration.raw.nanoseconds, 100));
-                    break :timeout &timeout_buf;
-                },
-            };
+            const raw_timeout: ?*windows.LARGE_INTEGER = if (opt_deadline) |deadline| timeout: {
+                const now_timestamp = nowWindows(deadline.clock) catch unreachable;
+                const nanoseconds = now_timestamp.durationTo(deadline.raw).nanoseconds;
+                timeout_buf = @intCast(@divTrunc(-nanoseconds, 100));
+                break :timeout &timeout_buf;
+            } else null;
             // `RtlWaitOnAddress` passes the futex address in as the first argument to this call,
             // but it's unclear what that actually does, especially since `NtAlertThreadByThreadId`
             // does *not* accept the address so the kernel can't really be using it as a hint. An
@@ -15896,20 +15958,13 @@ fn park(timeout: Io.Timeout, addr_hint: ?*const anyopaque) error{Timeout}!void {
         },
         .netbsd => {
             var ts_buf: posix.timespec = undefined;
-            const ts: ?*posix.timespec, const abstime: bool, const clock_real: bool = switch (timeout) {
-                .none => .{ null, false, false },
-                .deadline => |timestamp| timeout: {
-                    ts_buf = timestampToPosix(timestamp.raw.nanoseconds);
-                    break :timeout .{ &ts_buf, true, timestamp.clock == .real };
-                },
-                .duration => |duration| timeout: {
-                    ts_buf = timestampToPosix(duration.raw.nanoseconds);
-                    break :timeout .{ &ts_buf, false, duration.clock == .real };
-                },
-            };
+            const ts: ?*posix.timespec, const clock_real: bool = if (opt_deadline) |deadline| timeout: {
+                ts_buf = timestampToPosix(deadline.raw.nanoseconds);
+                break :timeout .{ &ts_buf, deadline.clock == .real };
+            } else .{ null, true };
             switch (posix.errno(std.c._lwp_park(
                 if (clock_real) .REALTIME else .MONOTONIC,
-                .{ .ABSTIME = abstime },
+                .{ .ABSTIME = true },
                 ts,
                 0,
                 addr_hint,
@@ -16106,4 +16161,530 @@ pub fn chdir(dir_path: []const u8) ChdirError!void {
         .FAULT => |err| return syscall.errnoBug(err),
         else => |err| return syscall.unexpectedErrno(err),
     };
+}
+
+fn fileMemoryMapCreate(
+    userdata: ?*anyopaque,
+    file: File,
+    options: File.MemoryMap.CreateOptions,
+) File.MemoryMap.CreateError!File.MemoryMap {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const offset = options.offset;
+    const len = options.len;
+
+    if (!t.disable_memory_mapping) {
+        if (createFileMap(file, options.protection, offset, options.populate, len)) |result| {
+            return result;
+        } else |err| switch (err) {
+            error.Unseekable, error.Canceled, error.AccessDenied => |e| return e,
+            error.OperationUnsupported => {},
+            else => {
+                if (builtin.mode == .Debug)
+                    std.log.warn("memory mapping failed with {t}, falling back to file operations", .{err});
+            },
+        }
+    }
+
+    const gpa = t.allocator;
+    const page_size = std.heap.pageSize();
+    const alignment: Alignment = .fromByteUnits(page_size);
+    const memory = m: {
+        const ptr = gpa.rawAlloc(len, alignment, @returnAddress()) orelse return error.OutOfMemory;
+        break :m ptr[0..len];
+    };
+    errdefer gpa.rawFree(memory, alignment, @returnAddress());
+
+    if (!options.undefined_contents) try mmSyncRead(file, memory, offset);
+
+    return .{
+        .file = file,
+        .offset = offset,
+        .memory = @alignCast(memory),
+        .section = null,
+    };
+}
+
+const CreateFileMapError = error{
+    /// MaximumSize is greater than the system-defined maximum for sections, or
+    /// greater than the specified file and the section is not writable.
+    SectionOversize,
+    /// A file descriptor refers to a non-regular file. Or a file mapping was requested,
+    /// but the file descriptor is not open for reading. Or `MAP.SHARED` was requested
+    /// and `PROT_WRITE` is set, but the file descriptor is not open in `RDWR` mode.
+    /// Or `PROT_WRITE` is set, but the file is append-only.
+    AccessDenied,
+    /// The `prot` argument asks for `PROT_EXEC` but the mapped area belongs to a file on
+    /// a filesystem that was mounted no-exec.
+    PermissionDenied,
+    FileBusy,
+    LockedMemoryLimitExceeded,
+    OperationUnsupported,
+    ProcessFdQuotaExceeded,
+    SystemFdQuotaExceeded,
+    OutOfMemory,
+    MappingAlreadyExists,
+    Unseekable,
+    FileLockConflict,
+} || Io.Cancelable || Io.UnexpectedError;
+
+fn createFileMap(
+    file: File,
+    protection: std.process.MemoryProtection,
+    offset: u64,
+    populate: bool,
+    len: usize,
+) CreateFileMapError!File.MemoryMap {
+    if (is_windows) {
+        try Thread.checkCancel();
+
+        var section = windows.INVALID_HANDLE_VALUE;
+        const section_size: windows.LARGE_INTEGER = @intCast(len);
+        const page = windows.PAGE.fromProtection(protection) orelse return error.AccessDenied;
+        switch (windows.ntdll.NtCreateSection(
+            &section,
+            .{
+                .SPECIFIC = .{ .SECTION = .{
+                    .QUERY = true,
+                    .MAP_WRITE = protection.write,
+                    .MAP_READ = protection.read,
+                    .MAP_EXECUTE = protection.execute,
+                    .EXTEND_SIZE = true,
+                } },
+                .STANDARD = .{ .RIGHTS = .REQUIRED },
+            },
+            null,
+            &section_size,
+            page,
+            .{ .COMMIT = populate },
+            file.handle,
+        )) {
+            .SUCCESS => {},
+            .FILE_LOCK_CONFLICT => return error.FileLockConflict,
+            .INVALID_FILE_FOR_SECTION => return error.OperationUnsupported,
+            .ACCESS_DENIED => return error.AccessDenied,
+            .SECTION_TOO_BIG => return error.SectionOversize,
+            else => |status| return windows.unexpectedStatus(status),
+        }
+        var contents_ptr: ?[*]align(std.heap.page_size_min) u8 = null;
+        var contents_len = len;
+        switch (windows.ntdll.NtMapViewOfSection(
+            section,
+            windows.current_process,
+            @ptrCast(&contents_ptr),
+            null,
+            0,
+            null,
+            &contents_len,
+            .Unmap,
+            .{},
+            page,
+        )) {
+            .SUCCESS => {},
+            .CONFLICTING_ADDRESSES => return error.MappingAlreadyExists,
+            .SECTION_PROTECTION => return error.PermissionDenied,
+            .ACCESS_DENIED => return error.AccessDenied,
+            .INVALID_VIEW_SIZE => |status| return windows.statusBug(status),
+            else => |status| return windows.unexpectedStatus(status),
+        }
+        if (builtin.mode == .Debug) {
+            const page_size = std.heap.pageSize();
+            const alignment: Alignment = .fromByteUnits(page_size);
+            assert(contents_len == alignment.forward(len));
+        }
+        return .{
+            .file = file,
+            .offset = offset,
+            .memory = contents_ptr.?[0..len],
+            .section = section,
+        };
+    } else if (have_mmap) {
+        const prot: posix.PROT = .{
+            .READ = protection.read,
+            .WRITE = protection.write,
+            .EXEC = protection.execute,
+        };
+        const flags: posix.MAP = switch (native_os) {
+            .linux => .{
+                .TYPE = .SHARED_VALIDATE,
+                .POPULATE = populate,
+            },
+            else => .{
+                .TYPE = .SHARED,
+            },
+        };
+
+        const page_align = std.heap.page_size_min;
+
+        const contents = while (true) {
+            const syscall: Syscall = try .start();
+            const casted_offset = std.math.cast(i64, offset) orelse return error.Unseekable;
+            const rc = mmap_sym(null, len, prot, flags, file.handle, casted_offset);
+            syscall.finish();
+            const err: posix.E = if (builtin.link_libc) e: {
+                if (rc != std.c.MAP_FAILED) {
+                    break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..len];
+                }
+                break :e @enumFromInt(posix.system._errno().*);
+            } else e: {
+                const err = posix.errno(rc);
+                if (err == .SUCCESS) {
+                    break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..len];
+                }
+                break :e err;
+            };
+            switch (err) {
+                .SUCCESS => unreachable,
+                .INTR => continue,
+                .ACCES => return error.AccessDenied,
+                .AGAIN => return error.LockedMemoryLimitExceeded,
+                .EXIST => return error.MappingAlreadyExists,
+                .MFILE => return error.ProcessFdQuotaExceeded,
+                .NFILE => return error.SystemFdQuotaExceeded,
+                .NODEV => return error.OperationUnsupported,
+                .NOMEM => return error.OutOfMemory,
+                .PERM => return error.PermissionDenied,
+                .TXTBSY => return error.FileBusy,
+                .OVERFLOW => return error.Unseekable,
+                .BADF => return errnoBug(err), // Always a race condition.
+                .INVAL => return errnoBug(err), // Invalid parameters to mmap()
+                else => return posix.unexpectedErrno(err),
+            }
+        };
+        return .{
+            .file = file,
+            .offset = offset,
+            .memory = contents,
+            .section = {},
+        };
+    }
+
+    return error.OperationUnsupported;
+}
+
+fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const memory = mm.memory;
+    if (mm.section) |section| switch (native_os) {
+        .windows => {
+            if (section == windows.INVALID_HANDLE_VALUE) return;
+            _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, memory.ptr);
+            windows.CloseHandle(section);
+        },
+        .wasi => unreachable,
+        else => {
+            if (memory.len == 0) return;
+            switch (posix.errno(posix.system.munmap(memory.ptr, memory.len))) {
+                .SUCCESS => {},
+                else => |e| {
+                    if (builtin.mode == .Debug)
+                        std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, e });
+                },
+            }
+        },
+    } else {
+        const gpa = t.allocator;
+        gpa.rawFree(memory, .fromByteUnits(std.heap.pageSize()), @returnAddress());
+    }
+    mm.* = undefined;
+}
+
+fn fileMemoryMapSetLength(
+    userdata: ?*anyopaque,
+    mm: *File.MemoryMap,
+    options: File.MemoryMap.CreateOptions,
+) File.MemoryMap.SetLengthError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    const page_size = std.heap.pageSize();
+    const alignment: Alignment = .fromByteUnits(page_size);
+    const page_align = std.heap.page_size_min;
+    const old_memory = mm.memory;
+    const new_len = options.len;
+
+    if (mm.section) |section| {
+        if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
+            mm.memory.len = new_len;
+            return;
+        }
+        switch (native_os) {
+            .windows => {
+                _ = windows.ntdll.NtUnmapViewOfSection(windows.current_process, old_memory.ptr);
+                windows.CloseHandle(section);
+                mm.section = windows.INVALID_HANDLE_VALUE;
+                mm.memory = &.{};
+            },
+            .wasi => unreachable,
+            .linux => {
+                const flags: posix.MREMAP = .{ .MAYMOVE = true };
+                const addr_hint: ?[*]const u8 = null;
+                const new_memory = while (true) {
+                    const syscall: Syscall = try .start();
+                    const rc = posix.system.mremap(old_memory.ptr, old_memory.len, new_len, flags, addr_hint);
+                    syscall.finish();
+                    const err: posix.E = if (builtin.link_libc) e: {
+                        if (rc != std.c.MAP_FAILED) break @as([*]align(page_align) u8, @ptrCast(@alignCast(rc)))[0..new_len];
+                        break :e @enumFromInt(posix.system._errno().*);
+                    } else e: {
+                        const err = posix.errno(rc);
+                        if (err == .SUCCESS) break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..new_len];
+                        break :e err;
+                    };
+                    switch (err) {
+                        .SUCCESS => unreachable,
+                        .INTR => continue,
+                        .AGAIN => return error.LockedMemoryLimitExceeded,
+                        .NOMEM => return error.OutOfMemory,
+                        .INVAL => return errnoBug(err),
+                        .FAULT => return errnoBug(err),
+                        else => return posix.unexpectedErrno(err),
+                    }
+                };
+                mm.memory = new_memory;
+                return;
+            },
+            else => {
+                switch (posix.errno(posix.system.munmap(old_memory.ptr, old_memory.len))) {
+                    .SUCCESS => {},
+                    else => |e| {
+                        if (builtin.mode == .Debug) std.log.err("failed to unmap {d} bytes at {*}: {t}", .{
+                            old_memory.len, old_memory.ptr, e,
+                        });
+                        // munmap must be infallible, or we cannot design reliable software.
+                        return error.Unexpected;
+                    },
+                }
+                mm.memory = &.{};
+            },
+        }
+        if (createFileMap(mm.file, options.protection, mm.offset, options.populate, new_len)) |result| {
+            mm.* = result;
+            return;
+        } else |err| switch (err) {
+            error.OperationUnsupported,
+            error.Unseekable,
+            error.SectionOversize,
+            error.MappingAlreadyExists,
+            error.FileLockConflict,
+            => return error.Unexpected, // It worked before on the same open file.
+            else => |e| return e,
+        }
+    } else {
+        const gpa = t.allocator;
+        if (gpa.rawRemap(old_memory, alignment, new_len, @returnAddress())) |new_ptr| {
+            mm.memory = @alignCast(new_ptr[0..new_len]);
+        } else {
+            const new_ptr: [*]align(page_align) u8 = @alignCast(
+                gpa.rawAlloc(new_len, alignment, @returnAddress()) orelse return error.OutOfMemory,
+            );
+            const copy_len = @min(new_len, old_memory.len);
+            @memcpy(new_ptr[0..copy_len], old_memory[0..copy_len]);
+            mm.memory = new_ptr[0..new_len];
+            gpa.rawFree(old_memory, alignment, @returnAddress());
+        }
+    }
+}
+
+fn fileMemoryMapRead(userdata: ?*anyopaque, mm: *File.MemoryMap) File.ReadPositionalError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    const section = mm.section orelse return mmSyncRead(mm.file, mm.memory, mm.offset);
+    _ = section;
+}
+
+fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePositionalError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    _ = t;
+    const section = mm.section orelse return mmSyncWrite(mm.file, mm.memory, mm.offset);
+    _ = section;
+}
+
+fn mmSyncRead(file: File, memory: []u8, offset: u64) File.ReadPositionalError!void {
+    if (is_windows) {
+        var i: usize = 0;
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) break;
+            const n = try readFilePositionalWindows(file, buf, offset + i);
+            if (n == 0) {
+                @memset(memory[i..], 0);
+                break;
+            }
+            i += n;
+        }
+    } else if (native_os == .wasi and !builtin.link_libc) {
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
+            }
+            var n: usize = undefined;
+            const vec: std.os.wasi.iovec_t = .{ .base = buf.ptr, .len = buf.len };
+            switch (std.os.wasi.fd_pread(file.handle, (&vec)[0..1], 1, offset + i, &n)) {
+                .SUCCESS => {
+                    if (n == 0) {
+                        syscall.finish();
+                        @memset(memory[i..], 0);
+                        break;
+                    }
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR, .TIMEDOUT => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err), // segmentation fault
+                .AGAIN => |err| return syscall.errnoBug(err),
+                .IO => return syscall.fail(error.InputOutput),
+                .ISDIR => return syscall.fail(error.IsDir),
+                .NOBUFS => return syscall.fail(error.SystemResources),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .NOTCAPABLE => return syscall.fail(error.AccessDenied),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    } else {
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
+            }
+            const rc = pread_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    const n: usize = @intCast(rc);
+                    if (n == 0) {
+                        syscall.finish();
+                        @memset(memory[i..], 0);
+                        break;
+                    }
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR, .TIMEDOUT => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .NOBUFS => return syscall.fail(error.SystemResources),
+                .NOMEM => return syscall.fail(error.SystemResources),
+                .AGAIN => return syscall.fail(error.WouldBlock),
+                .IO => return syscall.fail(error.InputOutput),
+                .ISDIR => return syscall.fail(error.IsDir),
+                .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err),
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
+}
+
+fn mmSyncWrite(file: File, memory: []u8, offset: u64) File.WritePositionalError!void {
+    if (is_windows) {
+        var i: usize = 0;
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) break;
+            i += try writeFilePositionalWindows(file.handle, memory[i..], offset + i);
+        }
+    } else if (native_os == .wasi and !builtin.link_libc) {
+        var i: usize = 0;
+        var n: usize = undefined;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
+            }
+            const iovec: std.os.wasi.ciovec_t = .{ .base = buf.ptr, .len = buf.len };
+            switch (std.os.wasi.fd_pwrite(file.handle, (&iovec)[0..1], 1, offset + i, &n)) {
+                .SUCCESS => {
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .DQUOT => return syscall.fail(error.DiskQuota),
+                .FBIG => return syscall.fail(error.FileTooBig),
+                .IO => return syscall.fail(error.InputOutput),
+                .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .PIPE => return syscall.fail(error.BrokenPipe),
+                .NOTCAPABLE => return syscall.fail(error.AccessDenied),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err),
+                .AGAIN => |err| return syscall.errnoBug(err),
+                .BADF => |err| return syscall.errnoBug(err), // use after free
+                .DESTADDRREQ => |err| return syscall.errnoBug(err), // not a socket
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    } else {
+        var i: usize = 0;
+        const syscall: Syscall = try .start();
+        while (true) {
+            const buf = memory[i..];
+            if (buf.len == 0) {
+                syscall.finish();
+                break;
+            }
+            const rc = pwrite_sym(file.handle, buf.ptr, buf.len, @intCast(offset + i));
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    const n: usize = @bitCast(rc);
+                    i += n;
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INTR => {
+                    try syscall.checkCancel();
+                    continue;
+                },
+                .INVAL => |err| return syscall.errnoBug(err),
+                .FAULT => |err| return syscall.errnoBug(err),
+                .DESTADDRREQ => |err| return syscall.errnoBug(err), // not a socket
+                .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
+                .BADF => return syscall.fail(error.NotOpenForWriting),
+                .AGAIN => return syscall.fail(error.WouldBlock),
+                .DQUOT => return syscall.fail(error.DiskQuota),
+                .FBIG => return syscall.fail(error.FileTooBig),
+                .IO => return syscall.fail(error.InputOutput),
+                .NOSPC => return syscall.fail(error.NoSpaceLeft),
+                .PERM => return syscall.fail(error.PermissionDenied),
+                .PIPE => return syscall.fail(error.BrokenPipe),
+                .BUSY => return syscall.fail(error.DeviceBusy),
+                .TXTBSY => return syscall.fail(error.FileBusy),
+                .NXIO => return syscall.fail(error.Unseekable),
+                .SPIPE => return syscall.fail(error.Unseekable),
+                .OVERFLOW => return syscall.fail(error.Unseekable),
+                else => |err| return syscall.unexpectedErrno(err),
+            }
+        }
+    }
 }

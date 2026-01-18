@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 
 const std = @import("std.zig");
 const Io = std.Io;
+const Environ = std.process.Environ;
 const assert = std.debug.assert;
 const math = std.math;
 
@@ -32,6 +33,8 @@ pub var allocator_instance: std.heap.GeneralPurposeAllocator(.{
 
 pub var io_instance: Io.Threaded = undefined;
 pub const io = if (builtin.is_test) io_instance.io() else @compileError("not testing");
+
+pub var environ: Environ = if (builtin.is_test) undefined else @compileError("not testing");
 
 /// TODO https://github.com/ziglang/zig/issues/5738
 pub var log_level = std.log.Level.warn;
@@ -1196,21 +1199,6 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
 pub fn refAllDecls(comptime T: type) void {
     if (!builtin.is_test) return;
     inline for (comptime std.meta.declarations(T)) |decl| {
-        _ = &@field(T, decl.name);
-    }
-}
-
-/// Given a type, recursively references all the declarations inside, so that the semantic analyzer sees them.
-/// For deep types, you may use `@setEvalBranchQuota`.
-pub fn refAllDeclsRecursive(comptime T: type) void {
-    if (!builtin.is_test) return;
-    inline for (comptime std.meta.declarations(T)) |decl| {
-        if (@TypeOf(@field(T, decl.name)) == type) {
-            switch (@typeInfo(@field(T, decl.name))) {
-                .@"struct", .@"enum", .@"union", .@"opaque" => refAllDeclsRecursive(@field(T, decl.name)),
-                else => {},
-            }
-        }
         _ = &@field(T, decl.name);
     }
 }
