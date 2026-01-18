@@ -474,6 +474,27 @@ pub fn parseUnsigned(comptime T: type, buf: []const u8, base: u8) ParseIntError!
     return parseIntWithSign(T, u8, buf, base, .pos);
 }
 
+/// Parses a base-10 unsigned integer with no sign and no '_' separators.
+pub fn parseUnsignedDecimalStrict(comptime T: type, buf: []const u8) ParseIntError!T {
+    if (buf.len == 0) return error.InvalidCharacter;
+
+    const info = @typeInfo(T);
+    const Accumulate = std.meta.Int(info.int.signedness, @max(8, info.int.bits));
+    var accumulate: Accumulate = 0;
+
+    for (buf) |c| {
+        if (c < '0' or c > '9') return error.InvalidCharacter;
+        const digit: Accumulate = @intCast(c - '0');
+        accumulate = try math.mul(Accumulate, accumulate, 10);
+        accumulate = try math.add(Accumulate, accumulate, digit);
+    }
+
+    return if (T == Accumulate)
+        accumulate
+    else
+        math.cast(T, accumulate) orelse return error.Overflow;
+}
+
 test parseUnsigned {
     try std.testing.expectEqual(50124, try parseUnsigned(u16, "050124", 10));
     try std.testing.expectEqual(65535, try parseUnsigned(u16, "65535", 10));
@@ -508,6 +529,19 @@ test parseUnsigned {
 
     // test empty string error
     try std.testing.expectError(error.InvalidCharacter, parseUnsigned(u8, "", 10));
+}
+
+test parseUnsignedDecimalStrict {
+    try std.testing.expectEqual(@as(u8, 0), try parseUnsignedDecimalStrict(u8, "0"));
+    try std.testing.expectEqual(@as(u8, 10), try parseUnsignedDecimalStrict(u8, "10"));
+    try std.testing.expectEqual(@as(u8, 10), try parseUnsignedDecimalStrict(u8, "0010"));
+    try std.testing.expectError(error.InvalidCharacter, parseUnsignedDecimalStrict(u8, ""));
+    try std.testing.expectError(error.InvalidCharacter, parseUnsignedDecimalStrict(u8, "+10"));
+    try std.testing.expectError(error.InvalidCharacter, parseUnsignedDecimalStrict(u8, "-10"));
+    try std.testing.expectError(error.InvalidCharacter, parseUnsignedDecimalStrict(u8, "10_000"));
+    try std.testing.expectError(error.InvalidCharacter, parseUnsignedDecimalStrict(u8, " 10"));
+    try std.testing.expectError(error.InvalidCharacter, parseUnsignedDecimalStrict(u8, "10 "));
+    try std.testing.expectError(error.Overflow, parseUnsignedDecimalStrict(u8, "256"));
 }
 
 /// Parses a number like '2G', '2Gi', or '2GiB'.

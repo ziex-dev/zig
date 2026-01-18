@@ -699,17 +699,7 @@ pub const Response = struct {
         }
 
         fn parseContentLength(text: []const u8) error{InvalidContentLength}!u64 {
-            if (text.len == 0) return error.InvalidContentLength;
-
-            var value: u64 = 0;
-            for (text) |ch| {
-                if (!std.ascii.isDigit(ch)) return error.InvalidContentLength;
-                const digit: u64 = ch - '0';
-                value = std.math.mul(u64, value, 10) catch return error.InvalidContentLength;
-                value = std.math.add(u64, value, digit) catch return error.InvalidContentLength;
-            }
-
-            return value;
+            return std.fmt.parseUnsignedDecimalStrict(u64, text) catch error.InvalidContentLength;
         }
 
         fn parseInt3(text: *const [3]u8) u10 {
