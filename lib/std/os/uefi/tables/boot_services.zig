@@ -236,7 +236,7 @@ pub const BootServices = extern struct {
     };
 
     pub const NumHandlesError = uefi.UnexpectedError || error{
-        OutOfResources,
+        InvalidParameter,
     };
 
     pub const LocateHandleError = uefi.UnexpectedError || error{
@@ -704,16 +704,7 @@ pub const BootServices = extern struct {
         )) {
             .buffer_too_small => return @divExact(len, @sizeOf(uefi.Handle)),
             .not_found => return 0,
-            // .success => unreachable, // if len == 0, should return not_found, otherwise buffer_too_small
-            //.invalid_parameter => {
-            // reasons:
-            // - SearchType is not a member of EFI_LOCATE_SEARCH_TYPE. (Only possible if search is undefined)
-            // - SearchType is ByRegisterNotify and SearchKey is NULL. (Accounted for in function call)
-            // - SearchType is ByProtocol and ProtocoL is NULL. (Accounted for in function call)
-            // - One or more matches are found and BufferSize is NULL. (len is not NULL, not possible)
-            // - BufferSize is large enough for the result and Buffer is NULL. (BufferSize is always 0)
-            // unreachable;
-            // },
+            .invalid_parameter => return error.InvalidParameter,
             else => |status| return uefi.unexpectedStatus(status),
         }
     }
