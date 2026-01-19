@@ -45,7 +45,7 @@ comptime {
 }
 
 fn acos(x: f64) callconv(.c) f64 {
-    return std.math.acos64(x);
+    return std.math.acos(x);
 }
 
 fn isnan(x: f64) callconv(.c) c_int {
