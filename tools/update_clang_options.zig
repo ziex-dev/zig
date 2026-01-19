@@ -630,8 +630,8 @@ const cpu_targets = struct {
 const Args = struct {
     pub const description = "Prints to stdout Zig code which you can use to replace the file src/clang_options_data.zig.";
     positional: struct {
-        @"/path/to/llvm-tblgen": [:0]const u8,
-        @"/path/to/git/llvm/llvm-project": [:0]const u8,
+        @"/path/to/llvm-tblgen": struct { value: [:0]const u8 },
+        @"/path/to/git/llvm/llvm-project": struct { value: [:0]const u8 },
     },
 };
 
@@ -645,8 +645,8 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen";
-    const llvm_src_root = args.positional.@"/path/to/git/llvm/llvm-project";
+    const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen".value;
+    const llvm_src_root = args.positional.@"/path/to/git/llvm/llvm-project".value;
 
     var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(arena);
 

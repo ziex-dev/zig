@@ -9,7 +9,7 @@ const Allocator = std.mem.Allocator;
 const Args = struct {
     pub const arg0 = "gen_macos_headers_c";
     positional: struct {
-        dir: []const u8,
+        dir: struct { value: []const u8 },
     },
 };
 
@@ -19,7 +19,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    var dir = try Io.Dir.cwd().openDir(io, args.positional.dir, .{ .follow_symlinks = false });
+    var dir = try Io.Dir.cwd().openDir(io, args.positional.dir.value, .{ .follow_symlinks = false });
     defer dir.close(io);
     var paths = std.array_list.Managed([]const u8).init(arena);
     try findHeaders(arena, io, dir, "", &paths);

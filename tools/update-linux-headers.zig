@@ -143,8 +143,8 @@ const PathTable = std.StringHashMap(*TargetToHash);
 
 const Args = struct {
     named: struct {
-        @"search-path": []const []const u8 = &.{},
-        out: []const u8,
+        @"search-path": struct { value: []const []const u8 = &.{} },
+        out: struct { value: []const u8 },
 
         pub const help = .{
             .@"search-path" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu",

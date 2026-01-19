@@ -43,18 +43,18 @@ pub const Error = error{
 ///     pub const description = "this program does a thing";
 ///     pub const epilog = "example: myprog --output o.txt hello.txt";
 ///     named: struct {
-///         verbose: bool = false,
-///         output: [:0]const u8,
-///         pub const help = .{
-///             .output = "path to output file",
+///         verbose: struct { value: bool = false },
+///         output: struct {
+///             value: [:0]const u8,
+///             pub const description = "path to output file";
 ///         },
 ///     },
 ///     positional: struct {
-///         input: []const u8,
-///         args: []const []const u8 = &.{},
-///         pub const help = .{
-///             .input = "path to input file",
-///         };
+///         input: struct {
+///             value: []const u8,
+///             pub const description = "path to input file";
+///         },
+///         args: struct { value: []const []const u8 = &.{} },
 ///     },
 /// };
 /// ```
@@ -271,14 +271,14 @@ test parseSlice {
 
     const Args = struct {
         named: struct {
-            example_required: []const u8,
-            example_optional: [:0]const u8 = "-",
-            level: i32 = -1,
-            flag: bool = true,
-            @"enum-option": enum { auto, always, never } = .auto,
+            example_required: struct { value: []const u8 },
+            example_optional: struct { value: [:0]const u8 = "-" },
+            level: struct { value: i32 = -1 },
+            flag: struct { value: bool = true },
+            @"enum-option": struct { value: enum { auto, always, never } = .auto },
         },
         positional: struct {
-            args: []const []const u8 = &.{},
+            args: struct { value: []const []const u8 = &.{} },
         },
     };
     const args = try parseSlice(Args, allocator, &[_][]const u8{
@@ -293,13 +293,15 @@ test parseSlice {
 
     try testing.expectEqualDeep(Args{
         .named = .{
-            .example_required = "a.txt",
-            .example_optional = "-",
-            .level = 255,
-            .flag = false,
-            .@"enum-option" = .always,
+            .example_required = .{ .value = "a.txt" },
+            .example_optional = .{ .value = "-" },
+            .level = .{ .value = 255 },
+            .flag = .{ .value = false },
+            .@"enum-option" = .{ .value = .always },
         },
-        .positional = .{ .args = &.{ "positional1", "positional2", "-12345678", "--positional4", "--positional=5" } },
+        .positional = .{
+            .args = .{ .value = &.{ "positional1", "positional2", "-12345678", "--positional4", "--positional=5" } },
+        },
     }, args);
 }
 
@@ -378,7 +380,7 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
                             if (immediate_value) |val| try usageError(Args, options, "unexpected value for argument --{s}: {s}", .{
                                 probably_name, if (val.len == 0) "''" else val,
                             });
-                            @field(result.named, field.name) = !@"no-";
+                            @field(result.named, field.name).value = !@"no-";
                             continue :argparse;
                         }
 
@@ -388,7 +390,7 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
                         if (field.type == .list) {
                             try @field(named_array_lists, field.name).append(gpa, value);
                         } else {
-                            @field(result.named, field.name) = value;
+                            @field(result.named, field.name).value = value;
                         }
                         continue :argparse;
                     }
@@ -414,7 +416,7 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
                 if (field.type == .list) {
                     try @field(positional_array_lists, field.name).append(gpa, value);
                 } else {
-                    @field(result.positional, field.name) = value;
+                    @field(result.positional, field.name).value = value;
                     positional_field_index += 1;
                 }
                 continue :argparse;
@@ -428,12 +430,12 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
     inline for (named_fields, 0..) |field, i| {
         if (!named_fields_seen[i]) {
             if (field.defaultValue()) |default| {
-                @field(result.named, field.name) = default;
+                @field(result.named, field.name).value = default;
             } else {
                 try usageError(Args, options, "missing required argument: {s}", .{field.namedFlagUsage()});
             }
         } else if (field.type == .list) {
-            @field(result.named, field.name) = try @field(named_array_lists, field.name).toOwnedSlice(gpa);
+            @field(result.named, field.name).value = try @field(named_array_lists, field.name).toOwnedSlice(gpa);
         }
     }
 
@@ -444,10 +446,10 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
             if (values.len == 0 and field.default_value_ptr != null) {
                 values = try gpa.dupe(field.type.elemType(), field.defaultValue().?);
             }
-            @field(result.positional, field.name) = values;
+            @field(result.positional, field.name).value = values;
         } else if (positional_field_index <= i) {
             if (field.defaultValue()) |default| {
-                @field(result.positional, field.name) = default;
+                @field(result.positional, field.name).value = default;
             } else {
                 try usageError(Args, options, "missing required argument: {s}", .{field.name});
             }
@@ -528,6 +530,7 @@ const ArgField = struct {
     name: []const u8,
     type: ArgType,
     default_value_ptr: ?*const anyopaque,
+    description: ?[]const u8,
 
     fn namedFlagUsage(comptime field: ArgField) []const u8 {
         return comptime switch (field.type.flatten()) {
@@ -550,36 +553,43 @@ const ArgField = struct {
         if (mem.eql(u8, sf.name, "help")) @compileError("Args cannot be named 'help'.");
         if (mem.startsWith(u8, sf.name, "no-")) @compileError("Args may not have 'no-' prefix: " ++ sf.name ++ "\nHint: use a bool argument in Args.named, and --<name> and --no-<name> will set the value to true or false.");
         if (mem.indexOfScalar(u8, sf.name, '=')) |_| @compileError("Arg names may not contain '=': " ++ sf.name);
-        const at: ArgType = switch (sf.type) {
+        if (@typeInfo(sf.type) != .@"struct" or @typeInfo(sf.type).@"struct".fields.len != 1) @compileError("Arguments must be a `struct { value: <type> }`: " ++ sf.name);
+
+        const value_field = @typeInfo(sf.type).@"struct".fields[0];
+        if (!mem.eql(u8, value_field.name, "value")) @compileError("Arguments must be a `struct { value: <type> }`: " ++ sf.name ++ "." ++ value_field.name);
+
+        const at: ArgType = switch (value_field.type) {
             bool => .bool,
             []const u8 => .string,
             [:0]const u8 => .cstring,
             []const []const u8 => .{ .list = .string },
             []const [:0]const u8 => .{ .list = .cstring },
-            else => |T| switch (@typeInfo(T)) {
-                .int => .{ .int = T },
-                .float => .{ .float = T },
+            else => |Value| switch (@typeInfo(Value)) {
+                .int => .{ .int = Value },
+                .float => .{ .float = Value },
                 .@"enum" => |@"enum"| type: {
-                    if (@"enum".fields.len == 0) @compileError("Empty enums are not allowed: " ++ sf.name ++ " (" ++ @typeName(T) ++ ")");
-                    break :type .{ .@"enum" = T };
+                    if (@"enum".fields.len == 0) @compileError("Empty enums are not allowed: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")");
+                    break :type .{ .@"enum" = Value };
                 },
                 .pointer => |pointer| type: {
-                    if (pointer.size != .slice) @compileError("Only slice pointers are supported: " ++ sf.name ++ " (" ++ @typeName(T) ++ ")");
+                    if (pointer.size != .slice) @compileError("Only slice pointers are supported: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")");
                     const Elem = pointer.child;
                     switch (@typeInfo(Elem)) {
                         .@"enum" => break :type .{ .list = .{ .@"enum" = Elem } },
                         .int => break :type .{ .list = .{ .int = Elem } },
                         .float => break :type .{ .list = .{ .float = Elem } },
-                        else => @compileError("Unsupported slice argument type: " ++ sf.name ++ " (" ++ @typeName(T) ++ ")"),
+                        else => @compileError("Unsupported slice argument type: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")"),
                     }
                 },
-                else => @compileError("Unsupported argument type: " ++ sf.name ++ " (" ++ @typeName(T) ++ ")"),
+                else => @compileError("Unsupported argument type: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")"),
             },
         };
+
         return .{
             .name = sf.name,
             .type = at,
-            .default_value_ptr = sf.default_value_ptr,
+            .default_value_ptr = value_field.default_value_ptr,
+            .description = if (@hasDecl(sf.type, "description")) @field(sf.type, "description") else null,
         };
     }
 };
@@ -682,21 +692,20 @@ test printUsage {
         pub const description = "my description";
 
         named: struct {
-            foo: [:0]const u8,
-            bar: bool = false,
-            baz: u8 = 0,
-            quux: f32 = -1,
-            quuz: i32,
-
-            pub const help = .{
-                .foo = "does a foo thing",
-            };
+            foo: struct {
+                value: [:0]const u8,
+                pub const description = "does a foo thing";
+            },
+            bar: struct { value: bool = false },
+            baz: struct { value: u8 = 0 },
+            quux: struct { value: f32 = -1 },
+            quuz: struct { value: i32 },
         },
         positional: struct {
-            foo: [:0]const u8,
-            bar: u32,
-            baz: [:0]const u8 = "baz thing",
-            quux: []const []const u8,
+            foo: struct { value: [:0]const u8 },
+            bar: struct { value: u32 },
+            baz: struct { value: [:0]const u8 = "baz thing" },
+            quux: struct { value: []const []const u8 },
         },
     };
 
@@ -736,21 +745,20 @@ test printUsageArg0 {
         pub const description = "my description";
 
         named: struct {
-            foo: [:0]const u8,
-            bar: bool = false,
-            baz: u8 = 0,
-            quux: f32 = -1,
-            quuz: i32,
-
-            pub const help = .{
-                .foo = "does a foo thing",
-            };
+            foo: struct {
+                value: [:0]const u8,
+                pub const description = "does a foo thing";
+            },
+            bar: struct { value: bool = false },
+            baz: struct { value: u8 = 0 },
+            quux: struct { value: f32 = -1 },
+            quuz: struct { value: i32 },
         },
         positional: struct {
-            foo: [:0]const u8,
-            bar: u32,
-            baz: [:0]const u8 = "baz thing",
-            quux: []const []const u8,
+            foo: struct { value: [:0]const u8 },
+            bar: struct { value: u32 },
+            baz: struct { value: [:0]const u8 = "baz thing" },
+            quux: struct { value: []const []const u8 },
         },
     };
 
@@ -819,12 +827,12 @@ test getUsageFmt {
     const Args = struct {
         pub const arg0 = "program";
         named: struct {
-            optional: bool = false,
-            required: bool,
+            optional: struct { value: bool = false },
+            required: struct { value: bool },
         },
         positional: struct {
-            required: []const u8,
-            optional: []const u8 = "",
+            required: struct { value: []const u8 },
+            optional: struct { value: []const u8 = "" },
         },
     };
 
@@ -917,30 +925,34 @@ test printHelp {
         pub const description = "my special description";
 
         named: struct {
-            foo: [:0]const u8 = "",
-            bar: []const u8,
-            baz: u32 = 10,
-            quux: i8 = -1,
-            quuz: f32 = -420,
-            foobar: bool = false,
-            barfoo: bool,
-            foobaz: []const []const u8,
-
-            pub const help = .{
-                .foo = "does a foo thing",
-                .bar = "does a bar thing",
-                .quuz = "Nice.",
-            };
+            foo: struct {
+                value: [:0]const u8 = "",
+                pub const description = "does a foo thing";
+            },
+            bar: struct {
+                value: []const u8,
+                pub const description = "does a bar thing";
+            },
+            baz: struct { value: u32 = 10 },
+            quux: struct { value: i8 = -1 },
+            quuz: struct {
+                value: f32 = -420,
+                pub const description = "Nice.";
+            },
+            foobar: struct { value: bool = false },
+            barfoo: struct { value: bool },
+            foobaz: struct { value: []const []const u8 },
         },
         positional: struct {
-            foo: []const u8,
-            bar: []const u8 = "",
-            baz: []const []const u8,
-
-            pub const help = .{
-                .foo = "a special foo thing",
-                .baz = "not-so-special baz thing",
-            };
+            foo: struct {
+                value: []const u8,
+                pub const description = "a special foo thing";
+            },
+            bar: struct { value: []const u8 = "" },
+            baz: struct {
+                value: []const []const u8,
+                pub const description = "not-so-special baz thing";
+            },
         },
     };
 
@@ -991,30 +1003,34 @@ test printHelpArg0 {
         pub const epilogue = "my special epilogue";
 
         named: struct {
-            foo: [:0]const u8 = "",
-            bar: []const u8,
-            baz: u32 = 10,
-            quux: i8 = -1,
-            quuz: f32 = -420,
-            foobar: bool = false,
-            barfoo: bool,
-            foobaz: []const []const u8,
-
-            pub const help = .{
-                .foo = "does a foo thing",
-                .bar = "does a bar thing",
-                .quuz = "Nice.",
-            };
+            foo: struct {
+                value: [:0]const u8 = "",
+                pub const description = "does a foo thing";
+            },
+            bar: struct {
+                value: []const u8,
+                pub const description = "does a bar thing";
+            },
+            baz: struct { value: u32 = 10 },
+            quux: struct { value: i8 = -1 },
+            quuz: struct {
+                value: f32 = -420,
+                pub const description = "Nice.";
+            },
+            foobar: struct { value: bool = false },
+            barfoo: struct { value: bool },
+            foobaz: struct { value: []const []const u8 },
         },
         positional: struct {
-            foo: []const u8,
-            bar: []const u8 = "",
-            baz: []const []const u8,
-
-            pub const help = .{
-                .foo = "a special foo thing",
-                .baz = "not-so-special baz thing",
-            };
+            foo: struct {
+                value: []const u8,
+                pub const description = "a special foo thing";
+            },
+            bar: struct { value: []const u8 = "" },
+            baz: struct {
+                value: []const []const u8,
+                pub const description = "not-so-special baz thing";
+            },
         },
     };
 
@@ -1093,8 +1109,6 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         var lhs_max_width = 0;
 
         var arguments_table: [positional_fields.len]struct { []const u8, []const u8 } = undefined;
-        const Positional = if (positional_fields.len > 0) @FieldType(Args, "positional") else struct {};
-        const arguments_help = field_help_text(Positional);
         for (positional_fields, 0..) |field, i| {
             const lhs: []const u8 = field.name ++ (if (field.type == .list) "..." else "");
             var rhs: []const u8 = comptimePrint("[{s}{s}]", .{
@@ -1113,7 +1127,7 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
                     .list => "",
                 } else if (field.type == .list) "" else ". required",
             });
-            if (@field(arguments_help, field.name)) |description| {
+            if (field.description) |description| {
                 rhs = rhs ++ " " ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
             }
 
@@ -1125,8 +1139,6 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         options_table[0] = .{ "--help", "Print this help text and exit." };
         lhs_max_width = @max(lhs_max_width, "--help".len);
 
-        const Named = if (named_fields.len > 0) @FieldType(Args, "named") else struct {};
-        const options_help = field_help_text(Named);
         for (named_fields, 1..) |field, i| {
             const lhs: []const u8 = field.namedFlagUsage();
             var rhs: []const u8 = "[";
@@ -1144,7 +1156,7 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
                 rhs = rhs ++ "required";
             }
             rhs = rhs ++ "]";
-            if (@field(options_help, field.name)) |description| {
+            if (field.description) |description| {
                 rhs = rhs ++ " " ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
             }
 
@@ -1216,14 +1228,14 @@ test "bool" {
 
     const Args = struct {
         named: struct {
-            b: bool,
+            b: struct { value: bool },
         },
     };
 
-    try testing.expectEqualDeep(Args{ .named = .{ .b = true } }, try parseSlice(Args, allocator, &[_][]const u8{"--b"}, .{}));
-    try testing.expectEqualDeep(Args{ .named = .{ .b = false } }, try parseSlice(Args, allocator, &[_][]const u8{"--no-b"}, .{}));
-    try testing.expectEqualDeep(Args{ .named = .{ .b = true } }, try parseSlice(Args, allocator, &[_][]const u8{ "--no-b", "--b" }, .{}));
-    try testing.expectEqualDeep(Args{ .named = .{ .b = false } }, try parseSlice(Args, allocator, &[_][]const u8{ "--b", "--no-b" }, .{}));
+    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = true } } }, try parseSlice(Args, allocator, &[_][]const u8{"--b"}, .{}));
+    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = false } } }, try parseSlice(Args, allocator, &[_][]const u8{"--no-b"}, .{}));
+    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = true } } }, try parseSlice(Args, allocator, &[_][]const u8{ "--no-b", "--b" }, .{}));
+    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = false } } }, try parseSlice(Args, allocator, &[_][]const u8{ "--b", "--no-b" }, .{}));
 
     try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{"--b=true"}, silent_options));
     try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{"--b=false"}, silent_options));
@@ -1236,8 +1248,8 @@ test "string" {
 
     const Args = struct {
         named: struct {
-            a: []const u8,
-            b: [:0]const u8,
+            a: struct { value: []const u8 },
+            b: struct { value: [:0]const u8 },
         },
     };
     const args = try parseSlice(Args, allocator, &[_][:0]const u8{
@@ -1247,8 +1259,8 @@ test "string" {
 
     try testing.expectEqualDeep(Args{
         .named = .{
-            .a = "a",
-            .b = "b",
+            .a = .{ .value = "a" },
+            .b = .{ .value = "b" },
         },
     }, args);
 }
@@ -1260,14 +1272,14 @@ test "ints and floats" {
 
     const Args = struct {
         named: struct {
-            int_u32: u32,
-            int_i32: i32,
-            int_u8: u8,
-            int_u256: u256,
-            float_f32: f32,
-            float_f64: f64,
-            inf_f32: f32,
-            ninf_f64: f64,
+            int_u32: struct { value: u32 },
+            int_i32: struct { value: i32 },
+            int_u8: struct { value: u8 },
+            int_u256: struct { value: u256 },
+            float_f32: struct { value: f32 },
+            float_f64: struct { value: f64 },
+            inf_f32: struct { value: f32 },
+            ninf_f64: struct { value: f64 },
         },
     };
     const args = try parseSlice(Args, allocator, &[_][]const u8{
@@ -1283,27 +1295,27 @@ test "ints and floats" {
 
     try testing.expectEqualDeep(Args{
         .named = .{
-            .int_u32 = 0xffffffff,
-            .int_i32 = -0x80000000,
-            .int_u8 = 0o310,
-            .int_u256 = 115792089237316195423570985008687907853269984665640564039457584007913129639935,
-            .float_f32 = 1.25,
-            .float_f64 = -0xab.cdef012345p-12,
-            .inf_f32 = std.math.inf(f32),
-            .ninf_f64 = -std.math.inf(f64),
+            .int_u32 = .{ .value = 0xffffffff },
+            .int_i32 = .{ .value = -0x80000000 },
+            .int_u8 = .{ .value = 0o310 },
+            .int_u256 = .{ .value = 115792089237316195423570985008687907853269984665640564039457584007913129639935 },
+            .float_f32 = .{ .value = 1.25 },
+            .float_f64 = .{ .value = -0xab.cdef012345p-12 },
+            .inf_f32 = .{ .value = std.math.inf(f32) },
+            .ninf_f64 = .{ .value = -std.math.inf(f64) },
         },
     }, args);
 
     const Args2 = struct {
         named: struct {
-            nan: f64,
+            nan: struct { value: f64 },
         },
     };
     const args2 = try parseSlice(Args2, allocator, &[_][]const u8{
         "--nan", "nAN",
     }, .{});
 
-    try testing.expect(std.math.isNan(args2.named.nan));
+    try testing.expect(std.math.isNan(args2.named.nan.value));
 }
 
 test "array" {
@@ -1313,21 +1325,21 @@ test "array" {
 
     const Args = struct {
         named: struct {
-            path: []const []const u8 = &.{},
-            id: []const i32 = &.{},
+            path: struct { value: []const []const u8 = &.{} },
+            id: struct { value: []const i32 = &.{} },
         },
         positional: struct {
-            args: []const []const u8 = &.{},
+            args: struct { value: []const []const u8 = &.{} },
         },
     };
 
     try testing.expectEqualDeep(Args{
         .named = .{
-            .path = &[_][]const u8{ "a", "b", "a" },
-            .id = &[_]i32{ 1, -12 },
+            .path = .{ .value = &[_][]const u8{ "a", "b", "a" } },
+            .id = .{ .value = &[_]i32{ 1, -12 } },
         },
         .positional = .{
-            .args = &[_][]const u8{ "x", "y" },
+            .args = .{ .value = &[_][]const u8{ "x", "y" } },
         },
     }, try parseSlice(Args, allocator, &[_][]const u8{
         "--path", "a",
@@ -1346,19 +1358,19 @@ test "enum" {
 
     const Args = struct {
         named: struct {
-            color: enum {
+            color: struct { value: enum {
                 always,
                 never,
                 auto,
-            },
-            guess: enum {
+            } },
+            guess: struct { value: enum {
                 @"the-only-option",
-            },
-            signal: enum(u8) {
+            } },
+            signal: struct { value: enum(u8) {
                 KILL = 9,
                 TERM = 15,
                 VTALRM = 26,
-            },
+            } },
         },
     };
     const args = try parseSlice(Args, allocator, &[_][]const u8{
@@ -1369,9 +1381,9 @@ test "enum" {
 
     try testing.expectEqualDeep(Args{
         .named = .{
-            .color = .always,
-            .guess = .@"the-only-option",
-            .signal = .TERM,
+            .color = .{ .value = .always },
+            .guess = .{ .value = .@"the-only-option" },
+            .signal = .{ .value = .TERM },
         },
     }, args);
 }
@@ -1383,17 +1395,13 @@ test "defaults" {
 
     const Args = struct {
         named: struct {
-            level: i8 = -1,
-            ratio: f32 = 0.5,
-            path: []const u8 = "-",
-            color: enum {
-                always,
-                never,
-                auto,
-            } = .auto,
-            file: []const []const u8 = &.{},
-            force: bool = false,
-            cleanup: bool = true,
+            level: struct { value: i8 = -1 } = .{},
+            ratio: struct { value: f32 = 0.5 } = .{},
+            path: struct { value: []const u8 = "-" } = .{},
+            color: struct { value: enum { always, never, auto } = .auto } = .{},
+            file: struct { value: []const []const u8 = &.{} } = .{},
+            force: struct { value: bool = false } = .{},
+            cleanup: struct { value: bool = true } = .{},
         },
     };
 
@@ -1402,19 +1410,19 @@ test "defaults" {
     }, try parseSlice(Args, allocator, &[_][]const u8{}, .{}));
     try testing.expectEqualDeep(Args{
         .named = .{
-            .color = .always,
+            .color = .{ .value = .always },
         },
     }, try parseSlice(Args, allocator, &[_][]const u8{ "--color", "always" }, .{}));
     try testing.expectEqualDeep(Args{
         .named = .{
-            .file = &[_][]const u8{"file.txt"},
+            .file = .{ .value = &[_][]const u8{"file.txt"} },
         },
     }, try parseSlice(Args, allocator, &[_][]const u8{ "--file", "file.txt" }, .{}));
 
     try testing.expectEqualDeep(Args{
         .named = .{
-            .force = true,
-            .cleanup = false,
+            .force = .{ .value = true },
+            .cleanup = .{ .value = false },
         },
     }, try parseSlice(Args, allocator, &[_][]const u8{ "--force", "--no-cleanup" }, .{}));
 }
@@ -1428,15 +1436,11 @@ test "positional" {
     {
         const Args = struct {
             positional: struct {
-                level: i8 = -1,
-                ratio: f32 = 0.5,
-                path: []const u8 = "-",
-                color: enum {
-                    always,
-                    never,
-                    auto,
-                } = .auto,
-                file: []const []const u8 = &.{},
+                level: struct { value: i8 = -1 } = .{},
+                ratio: struct { value: f32 = 0.5 } = .{},
+                path: struct { value: []const u8 = "-" } = .{},
+                color: struct { value: enum { always, never, auto } = .auto } = .{},
+                file: struct { value: []const []const u8 = &.{} } = .{},
             },
         };
 
@@ -1445,11 +1449,11 @@ test "positional" {
         }, try parseSlice(Args, allocator, &[_][]const u8{}, .{}));
         try testing.expectEqualDeep(Args{
             .positional = .{
-                .level = 1,
-                .ratio = 2,
-                .path = "a.txt",
-                .color = .always,
-                .file = &[_][]const u8{ "file1", "file2" },
+                .level = .{ .value = 1 },
+                .ratio = .{ .value = 2 },
+                .path = .{ .value = "a.txt" },
+                .color = .{ .value = .always },
+                .file = .{ .value = &[_][]const u8{ "file1", "file2" } },
             },
         }, try parseSlice(Args, allocator, &[_][]const u8{ "1", "2", "a.txt", "always", "file1", "file2" }, .{}));
     }
@@ -1458,15 +1462,11 @@ test "positional" {
     {
         const Args = struct {
             positional: struct {
-                level: i8,
-                ratio: f32,
-                path: []const u8,
-                color: enum {
-                    always,
-                    never,
-                    auto,
-                },
-                file: []const []const u8 = &.{},
+                level: struct { value: i8 },
+                ratio: struct { value: f32 },
+                path: struct { value: []const u8 },
+                color: struct { value: enum { always, never, auto } },
+                file: struct { value: []const []const u8 = &.{} } = .{},
             },
         };
 
@@ -1474,10 +1474,10 @@ test "positional" {
         try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{ "1", "2", "a.txt" }, silent_options));
         try testing.expectEqualDeep(Args{
             .positional = .{
-                .level = 1,
-                .ratio = 2,
-                .path = "a.txt",
-                .color = .always,
+                .level = .{ .value = 1 },
+                .ratio = .{ .value = 2 },
+                .path = .{ .value = "a.txt" },
+                .color = .{ .value = .always },
             },
         }, try parseSlice(Args, allocator, &[_][]const u8{ "1", "2", "a.txt", "always" }, .{}));
     }
@@ -1495,7 +1495,7 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: []const u8 = "",
+            name: struct { value: []const u8 = "" },
         },
     }, allocator, &[_][]const u8{"--bogus"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--bogus") != null);
@@ -1504,7 +1504,7 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: []const u8 = "",
+            name: struct { value: []const u8 = "" },
         },
     }, allocator, &[_][]const u8{"--name"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
@@ -1513,7 +1513,7 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: []const u8 = "",
+            name: struct { value: []const u8 = "" },
         },
     }, allocator, &[_][]const u8{"--no-name"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--no-name") != null);
@@ -1522,7 +1522,7 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: bool = false,
+            name: struct { value: bool = false },
         },
     }, allocator, &[_][]const u8{"--name=true"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
@@ -1531,7 +1531,7 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: []const u8,
+            name: struct { value: []const u8 },
         },
     }, allocator, &[_][]const u8{}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
@@ -1540,14 +1540,14 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: i32,
+            name: struct { value: i32 },
         },
     }, allocator, &[_][]const u8{"--name=abc"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: []const i32 = &.{},
+            name: struct { value: []const i32 = &.{} },
         },
     }, allocator, &[_][]const u8{"--name=abc"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
@@ -1556,14 +1556,14 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: f32,
+            name: struct { value: f32 },
         },
     }, allocator, &[_][]const u8{"--name=abc"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: []const f32 = &.{},
+            name: struct { value: []const f32 = &.{} },
         },
     }, allocator, &[_][]const u8{"--name=abc"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
@@ -1572,7 +1572,7 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            name: enum { auto, never, always },
+            name: struct { value: enum { auto, never, always } },
         },
     }, allocator, &[_][]const u8{"--name=abc"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
@@ -1584,10 +1584,10 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
-            z: bool = false,
+            z: struct { value: bool = false },
         },
         positional: struct {
-            args: []const []const u8 = &.{},
+            args: struct { value: []const []const u8 = &.{} },
         },
     }, allocator, &[_][]const u8{"-z"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "-z") != null);
@@ -1596,24 +1596,24 @@ test "usage errors" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         positional: struct {
-            input_file: []const u8,
+            input_file: struct { value: []const u8 },
         },
     }, allocator, &[_][]const u8{}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "input_file") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         positional: struct {
-            input_file: []const u8,
-            output_file: []const u8 = "",
+            input_file: struct { value: []const u8 },
+            output_file: struct { value: []const u8 = "" },
         },
     }, allocator, &[_][]const u8{}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "input_file") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         positional: struct {
-            input_file: []const u8,
-            output_file: []const u8,
-            other: []const u8 = "",
+            input_file: struct { value: []const u8 },
+            output_file: struct { value: []const u8 },
+            other: struct { value: []const u8 = "" },
         },
     }, allocator, &[_][]const u8{"input.txt"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "output_file") != null);
@@ -1630,9 +1630,9 @@ test "help" {
 
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            str: []const u8,
-            int: i32,
-            flag: bool,
+            str: struct { value: []const u8 },
+            int: struct { value: i32 },
+            flag: struct { value: bool },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     // Because the help output is primarily for humans, don't get too strict in the unit test.
@@ -1647,7 +1647,7 @@ test "help" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            color: enum { never, auto, always } = .auto,
+            color: struct { value: enum { never, auto, always } = .auto },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     // All allowed values for an enum should be spelled out.
@@ -1660,13 +1660,13 @@ test "help" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            name: []const u8,
+            name: struct { value: []const u8 },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     const scalar_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            name: []const []const u8 = &.{},
+            name: struct { value: []const []const u8 = &.{} },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     try testing.expect(!mem.eql(u8, scalar_help, aw.written()));
@@ -1675,9 +1675,9 @@ test "help" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            str: []const u8 = "hello",
-            int: i32 = 3,
-            f: f32 = 1.25,
+            str: struct { value: []const u8 = "hello" },
+            int: struct { value: i32 = 3 },
+            f: struct { value: f32 = 1.25 },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "hello") != null);
@@ -1688,19 +1688,19 @@ test "help" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            b: bool,
+            b: struct { value: bool },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     const bool_required_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            b: bool = true,
+            b: struct { value: bool = true },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     const default_true_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            b: bool = false,
+            b: struct { value: bool = false },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     const default_false_help = try aw.toOwnedSlice();
@@ -1712,19 +1712,19 @@ test "help" {
     aw.clearRetainingCapacity();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            color: enum { never, auto, always },
+            color: struct { value: enum { never, auto, always } },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     const enum_required_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            color: enum { never, auto, always } = .auto,
+            color: struct { value: enum { never, auto, always } = .auto },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     const default_auto_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
-            color: enum { never, auto, always } = .never,
+            color: struct { value: enum { never, auto, always } = .never },
         },
     }, allocator, &[_][]const u8{"--help"}, options));
     const default_never_help = try aw.toOwnedSlice();
@@ -1744,12 +1744,12 @@ test "minimal" {
 test "manual deinit" {
     const Args = struct {
         named: struct {
-            str_arr: []const []const u8 = &.{},
-            int_arr: []const i32 = &.{},
-            empty_arr: []const []const u8 = &.{},
+            str_arr: struct { value: []const []const u8 = &.{} } = .{},
+            int_arr: struct { value: []const i32 = &.{} } = .{},
+            empty_arr: struct { value: []const []const u8 = &.{} } = .{},
         },
         positional: struct {
-            args: []const []const u8 = &.{},
+            args: struct { value: []const []const u8 = &.{} } = .{},
         },
     };
 
@@ -1761,19 +1761,19 @@ test "manual deinit" {
 
     try testing.expectEqualDeep(Args{
         .named = .{
-            .str_arr = &.{ "hello1", "hello2" },
-            .int_arr = &.{ 123456, 789012 },
+            .str_arr = .{ .value = &.{ "hello1", "hello2" } },
+            .int_arr = .{ .value = &.{ 123456, 789012 } },
         },
         .positional = .{
-            .args = &.{ "positional-12345", "positi" },
+            .args = .{ .value = &.{ "positional-12345", "positi" } },
         },
     }, args);
 
     // Surgically cleanup memory.
-    testing.allocator.free(args.named.str_arr);
-    testing.allocator.free(args.named.int_arr);
-    testing.allocator.free(args.named.empty_arr);
-    testing.allocator.free(args.positional.args);
+    testing.allocator.free(args.named.str_arr.value);
+    testing.allocator.free(args.named.int_arr.value);
+    testing.allocator.free(args.named.empty_arr.value);
+    testing.allocator.free(args.positional.args.value);
     // Should be no memory leak errors now.
 }
 
@@ -1799,11 +1799,11 @@ test "custom help" {
             \\
         ;
         named: struct {
-            output: []const u8,
-            force: bool = false,
+            output: struct { value: []const u8 },
+            force: struct { value: bool = false },
         },
         positional: struct {
-            args: []const []const u8 = &.{},
+            args: struct { value: []const []const u8 = &.{} },
         },
     };
     try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
@@ -1839,19 +1839,19 @@ test "field help" {
 
     const Args = struct {
         named: struct {
-            output: []const u8,
-            pub const help = .{
-                .output = "help for output",
-            };
+            output: struct {
+                value: []const u8,
+                pub const description = "help for output";
+            },
         },
         positional: struct {
-            args: []const []const u8 = &.{},
-            pub const help = .{
-                .args = "help for args",
-            };
+            args: struct {
+                value: []const []const u8 = &.{},
+                pub const description = "help for args";
+            },
         },
     };
     try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
-    try testing.expect(mem.indexOf(u8, aw.written(), @FieldType(Args, "named").help.output) != null);
-    try testing.expect(mem.indexOf(u8, aw.written(), @FieldType(Args, "positional").help.args) != null);
+    try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "named"), "output").description));
+    try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "positional"), "args").description));
 }

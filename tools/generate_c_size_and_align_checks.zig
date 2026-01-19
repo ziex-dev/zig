@@ -30,7 +30,7 @@ var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
 
 const Args = struct {
     positional: struct {
-        target_triple: [:0]const u8,
+        target_triple: struct { value: [:0]const u8 },
     },
 };
 
@@ -40,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const query = try std.Target.Query.parse(.{ .arch_os_abi = args.positional.target_triple });
+    const query = try std.Target.Query.parse(.{ .arch_os_abi = args.positional.target_triple.value });
     const target = try std.zig.system.resolveTargetQuery(io, query);
 
     var buffer: [2000]u8 = undefined;

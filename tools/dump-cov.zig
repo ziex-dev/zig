@@ -14,9 +14,9 @@ const Args = struct {
     ;
 
     positional: struct {
-        @"path/to/exe": [:0]const u8,
-        @"path/to/coverage": [:0]const u8,
-        target: [:0]const u8 = "native",
+        @"path/to/exe": struct { value: [:0]const u8 },
+        @"path/to/coverage": struct { value: [:0]const u8 },
+        target: struct { value: [:0]const u8 = "native" },
     },
 };
 
@@ -27,11 +27,11 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const exe_file_name = args.positional.@"path/to/exe";
-    const cov_file_name = args.positional.@"path/to/coverage";
+    const exe_file_name = args.positional.@"path/to/exe".value;
+    const cov_file_name = args.positional.@"path/to/coverage".value;
 
     const target = std.zig.resolveTargetQueryOrFatal(io, try .parse(.{
-        .arch_os_abi = args.positional.target,
+        .arch_os_abi = args.positional.target.value,
     }));
 
     const exe_path: Path = .{

@@ -8,7 +8,7 @@ const catalog_txt = @embedFile("crc/catalog.txt");
 
 const Args = struct {
     positional: struct {
-        @"/path/git/zig": [:0]const u8,
+        @"/path/git/zig": struct { value: [:0]const u8 },
     },
 };
 
@@ -20,7 +20,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: Args) !void {
-    const zig_src_root = args.positional.@"/path/git/zig";
+    const zig_src_root = args.positional.@"/path/git/zig".value;
 
     var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
     defer zig_src_dir.close(io);

@@ -14,8 +14,8 @@ const exempt_files = [_][]const u8{
 
 const Args = struct {
     positional: struct {
-        netbsd_src_path: [:0]const u8,
-        zig_src_path: [:0]const u8,
+        netbsd_src_path: struct { value: [:0]const u8 },
+        zig_src_path: struct { value: [:0]const u8 },
     },
 };
 
@@ -24,8 +24,8 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
-    const netbsd_src_path = args.positional.netbsd_src_path;
-    const zig_src_path = args.positional.zig_src_path;
+    const netbsd_src_path = args.positional.netbsd_src_path.value;
+    const zig_src_path = args.positional.zig_src_path.value;
 
     const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/netbsd", .{zig_src_path});
 

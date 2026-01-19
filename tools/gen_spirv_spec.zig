@@ -62,8 +62,8 @@ const Args = struct {
         \\files in src/codegen/spirv. Don't forget to format the output.
     ;
     positional: struct {
-        @"path/to/SPIRV-Headers": [:0]const u8,
-        @"path/to/zig/src/codegen/spirv/extinst.zig.grammar.json": [:0]const u8,
+        @"path/to/SPIRV-Headers": struct { value: [:0]const u8 },
+        @"path/to/zig/src/codegen/spirv/extinst.zig.grammar.json": struct { value: [:0]const u8 },
         pub const help = .{
             .@"path/to/SPIRV-Headers" = "should point to a clone of https://github.com/KhronosGroup/SPIRV-Headers/",
         };

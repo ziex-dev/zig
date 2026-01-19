@@ -176,7 +176,7 @@ const Args = struct {
         \\Prints to stdout Zig code which you can use to replace the file lib/std/os/linux/syscalls.zig.
     ;
     positional: struct {
-        @"/path/to/linux": [:0]const u8,
+        @"/path/to/linux": struct { value: [:0]const u8 },
     },
 };
 
@@ -187,7 +187,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const linux_path = args.positional.@"/path/to/linux";
+    const linux_path = args.positional.@"/path/to/linux".value;
 
     var stdout_buffer: [2048]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);

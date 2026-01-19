@@ -1890,10 +1890,10 @@ const Args = struct {
         \\On a less beefy system, or when debugging, compile with -fsingle-threaded.
     ;
     positional: struct {
-        @"/path/to/llvm-tblgen": [:0]const u8,
-        @"/path/git/llvm-project": [:0]const u8,
-        @"/path/git/zig": [:0]const u8,
-        zig_name_filter: []const u8 = "",
+        @"/path/to/llvm-tblgen": struct { value: [:0]const u8 },
+        @"/path/git/llvm-project": struct { value: [:0]const u8 },
+        @"/path/git/zig": struct { value: [:0]const u8 },
+        zig_name_filter: struct { value: []const u8 = "" },
     },
 };
 
@@ -1903,10 +1903,10 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen";
-    const llvm_src_root = args.positional.@"/path/git/llvm-project";
-    const zig_src_root = args.positional.@"/path/git/zig";
-    const filter: ?[]const u8 = if (args.positional.zig_name_filter.len > 0) args.positional.zig_name_filter else null;
+    const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen".value;
+    const llvm_src_root = args.positional.@"/path/git/llvm-project".value;
+    const zig_src_root = args.positional.@"/path/git/zig".value;
+    const filter: ?[]const u8 = if (args.positional.zig_name_filter.value.len > 0) args.positional.zig_name_filter.value else null;
 
     var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
     defer zig_src_dir.close(io);

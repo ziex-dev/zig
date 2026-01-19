@@ -22,14 +22,14 @@ const Args = struct {
     pub const description = "Generates an HTML document from a docgen template.";
 
     named: struct {
-        @"code-dir": [:0]const u8,
-        pub const help = .{
-            .@"code-dir" = "Path to directory containing code example outputs",
-        };
+        @"code-dir": struct {
+            value: [:0]const u8,
+            pub const description = "Path to directory containing code example outputs";
+        },
     },
     positional: struct {
-        input: [:0]const u8,
-        output: [:0]const u8,
+        input: struct { value: [:0]const u8 },
+        output: struct { value: [:0]const u8 },
     },
 };
 
@@ -39,9 +39,9 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const input_path = args.positional.input;
-    const output_path = args.positional.output;
-    const code_dir_path = args.named.@"code-dir";
+    const input_path = args.positional.input.value;
+    const output_path = args.positional.output.value;
+    const code_dir_path = args.named.@"code-dir".value;
 
     var in_file = try Dir.cwd().openFile(io, input_path, .{});
     defer in_file.close(io);

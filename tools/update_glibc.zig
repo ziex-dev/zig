@@ -40,8 +40,8 @@ const exempt_extensions = [_][]const u8{
 
 const Args = struct {
     positional: struct {
-        glibc_src_path: [:0]const u8,
-        zig_src_path: [:0]const u8,
+        glibc_src_path: struct { value: [:0]const u8 },
+        zig_src_path: struct { value: [:0]const u8 },
     },
 };
 
@@ -50,8 +50,8 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
-    const glibc_src_path = args.positional.glibc_src_path;
-    const zig_src_path = args.positional.zig_src_path;
+    const glibc_src_path = args.positional.glibc_src_path.value;
+    const zig_src_path = args.positional.zig_src_path.value;
     const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/glibc", .{zig_src_path});
 
     var dest_dir = Dir.cwd().openDir(io, dest_dir_path, .{ .iterate = true }) catch |err| {

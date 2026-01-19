@@ -4,8 +4,8 @@ const Dir = std.Io.Dir;
 
 const Args = struct {
     positional: struct {
-        zig_src_lib_path: [:0]const u8,
-        mingw_src_path: [:0]const u8,
+        zig_src_lib_path: struct { value: [:0]const u8 },
+        mingw_src_path: struct { value: [:0]const u8 },
     },
 };
 
@@ -14,8 +14,8 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
-    const zig_src_lib_path = args.positional.zig_src_lib_path;
-    const mingw_src_path = args.positional.mingw_src_path;
+    const zig_src_lib_path = args.positional.zig_src_lib_path.value;
+    const mingw_src_path = args.positional.mingw_src_path.value;
 
     const dest_mingw_crt_path = try Dir.path.join(arena, &.{
         zig_src_lib_path, "libc", "mingw",

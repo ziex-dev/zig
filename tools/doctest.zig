@@ -21,19 +21,26 @@ const Args = struct {
     ;
 
     named: struct {
-        input: []const u8,
-        output: []const u8,
-        zig: []const u8,
-        @"zig-lib-dir": []const u8 = "",
-        @"cache-root": []const u8,
-
-        pub const help = .{
-            .input = "Source code file path",
-            .output = "Where to write output HTML docs to",
-            .zig = "Path to the zig compiler",
-            .@"zig-lib-dir" = "Override the zig compiler library path",
-            .@"cache-root" = "Path to local .zig-cache/",
-        };
+        input: struct {
+            value: []const u8,
+            pub const description = "Source code file path";
+        },
+        output: struct {
+            value: []const u8,
+            pub const description = "Where to write output HTML docs to";
+        },
+        zig: struct {
+            value: []const u8,
+            pub const description = "Path to the zig compiler";
+        },
+        @"zig-lib-dir": struct {
+            value: []const u8 = "",
+            pub const description = "Override the zig compiler library path";
+        },
+        @"cache-root": struct {
+            value: []const u8,
+            pub const description = "Path to local .zig-cache/";
+        },
     },
 };
 
@@ -46,12 +53,12 @@ pub fn main(init: std.process.Init) !void {
     try environ_map.put("CLICOLOR_FORCE", "1");
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
-    const input_path = args.named.input;
-    const output_path = args.named.output;
-    const zig_path = args.named.zig;
-    const cache_root = args.named.@"cache-root";
+    const input_path = args.named.input.value;
+    const output_path = args.named.output.value;
+    const zig_path = args.named.zig.value;
+    const cache_root = args.named.@"cache-root".value;
 
-    const opt_zig_lib_dir = if (args.named.@"zig-lib-dir".len == 0) null else args.named.@"zig-lib-dir";
+    const opt_zig_lib_dir = if (args.named.@"zig-lib-dir".value.len == 0) null else args.named.@"zig-lib-dir".value;
 
     const source_bytes = try Dir.cwd().readFileAlloc(io, input_path, arena, .limited(std.math.maxInt(u32)));
     const code = try parseManifest(arena, source_bytes);

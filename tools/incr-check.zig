@@ -29,18 +29,18 @@ const Args = struct {
     pub const arg0 = "incr-check";
 
     positional: struct {
-        @"zig-binary-path": []const u8,
-        @"input-file": []const u8,
+        @"zig-binary-path": struct { value: []const u8 },
+        @"input-file": struct { value: []const u8 },
     },
     named: struct {
-        @"zig-lib-dir": []const u8 = "",
-        @"debug-log": []const []const u8 = &.{},
-        @"preserve-tmp": bool = false,
-        qemu: bool = false,
-        wine: bool = false,
-        wasmtime: bool = false,
-        darling: bool = false,
-        @"zig-cc-binary": []const u8 = "",
+        @"zig-lib-dir": struct { value: []const u8 = "" },
+        @"debug-log": struct { value: []const []const u8 = &.{} },
+        @"preserve-tmp": struct { value: bool = false },
+        qemu: struct { value: bool = false },
+        wine: struct { value: bool = false },
+        wasmtime: struct { value: bool = false },
+        darling: struct { value: bool = false },
+        @"zig-cc-binary": struct { value: []const u8 = "" },
     },
 };
 
@@ -53,16 +53,16 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const opt_lib_dir: ?[]const u8 = if (args.named.@"zig-lib-dir".len > 0) args.named.@"zig-lib-dir" else null;
-    const opt_cc_zig: ?[]const u8 = if (args.named.@"zig-cc-binary".len > 0) args.named.@"zig-cc-binary" else null;
-    const preserve_tmp = args.named.@"preserve-tmp";
-    const enable_qemu = args.named.qemu;
-    const enable_wine = args.named.wine;
-    const enable_wasmtime = args.named.wasmtime;
-    const enable_darling = args.named.darling;
-    const debug_log_args = args.named.@"debug-log";
-    const zig_exe = args.positional.@"zig-binary-path";
-    const input_file_name = args.positional.@"input-file";
+    const opt_lib_dir: ?[]const u8 = if (args.named.@"zig-lib-dir".value.len > 0) args.named.@"zig-lib-dir".value else null;
+    const opt_cc_zig: ?[]const u8 = if (args.named.@"zig-cc-binary".value.len > 0) args.named.@"zig-cc-binary".value else null;
+    const preserve_tmp = args.named.@"preserve-tmp".value;
+    const enable_qemu = args.named.qemu.value;
+    const enable_wine = args.named.wine.value;
+    const enable_wasmtime = args.named.wasmtime.value;
+    const enable_darling = args.named.darling.value;
+    const debug_log_args = args.named.@"debug-log".value;
+    const zig_exe = args.positional.@"zig-binary-path".value;
+    const input_file_name = args.positional.@"input-file".value;
 
     const input_file_bytes = try Dir.cwd().readFileAlloc(io, input_file_name, arena, .limited(std.math.maxInt(u32)));
     const case = try Case.parse(arena, io, input_file_bytes);

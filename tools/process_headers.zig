@@ -143,9 +143,9 @@ const LibCVendor = enum {
 
 const Args = struct {
     named: struct {
-        @"search-path": []const []const u8 = &.{},
-        out: []const u8,
-        abi: LibCVendor,
+        @"search-path": struct { value: []const []const u8 = &.{} },
+        out: struct { value: []const u8 },
+        abi: struct { value: LibCVendor },
 
         pub const help = .{
             .@"search-path" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu",
@@ -162,9 +162,9 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const search_paths = args.named.@"search-path";
-    const out_dir = args.named.out;
-    const vendor = args.named.abi;
+    const search_paths = args.named.@"search-path".value;
+    const out_dir = args.named.out.value;
+    const vendor = args.named.abi.value;
     const abi_name = @tagName(vendor);
 
     const generic_name = try std.fmt.allocPrint(arena, "generic-{s}", .{abi_name});
