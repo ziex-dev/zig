@@ -9,7 +9,7 @@ const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
 const Args = struct {
-    pub const description =
+    pub const epilogue =
         \\example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
     ;
 

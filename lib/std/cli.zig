@@ -41,6 +41,7 @@ pub const Error = error{
 /// const Args = struct {
 ///     pub const arg0 = "myprog";
 ///     pub const description = "this program does a thing";
+///     pub const epilog = "example: myprog --output o.txt hello.txt";
 ///     named: struct {
 ///         verbose: bool = false,
 ///         output: [:0]const u8,
@@ -987,6 +988,7 @@ test printHelpArg0 {
     const Args = struct {
         pub const arg0 = "hello";
         pub const description = "my special description";
+        pub const epilogue = "my special epilogue";
 
         named: struct {
             foo: [:0]const u8 = "",
@@ -1043,6 +1045,8 @@ test printHelpArg0 {
         \\  --[no-]barfoo       [required]
         \\  --foobaz=string     [multiple]
         \\
+        \\my special epilogue
+        \\
     , aw.written());
 }
 
@@ -1062,6 +1066,8 @@ test printHelpArg0 {
 /// Options:
 ///   --help        Print this help text and exit.
 ///   {argname}     [{default/multiple/required}] {description}
+///
+/// {epilogue}
 /// ```
 ///
 /// The template has the following caveats:
@@ -1072,6 +1078,7 @@ test printHelpArg0 {
 /// - If `@TypeOf(Args.positional).help` is omitted, or if `argname` field is omitted from the anonymous struct, then `{description}` is omitted.
 /// - If a named arg is a boolean, `{argname}` is `--[no-]{argname}`, otherwise it's `--{argname}={type}`.
 /// - If `@TypeOf(Args.named).help` is omitted, or if `argname` field is omitted from the anonymous struct, then `{description}` is omitted
+/// - `{epilogue}` is `Args.epilogue` if present. Otherwise, this is omitted.
 pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
     return comptime fmt: {
         const usage, const has_arg0_fmt = getUsageFmt(Args);
@@ -1168,6 +1175,9 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
             help = help ++ "  " ++ lhs ++ middle_spacing ++ rhs ++ "\n";
         }
 
+        if (@hasDecl(Args, "epilogue")) {
+            help = help ++ "\n" ++ @as([]const u8, Args.epilogue) ++ "\n";
+        }
 
         break :fmt .{ help, has_arg0_fmt };
     };
