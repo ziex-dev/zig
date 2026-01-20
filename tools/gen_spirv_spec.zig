@@ -56,17 +56,21 @@ const set_names = std.StaticStringMap(struct { []const u8, []const u8 }).initCom
 });
 
 const Args = struct {
-    pub const description =
+    pub const info: std.cli.Info = .{
+        .description =
         \\Generates Zig bindings for SPIR-V specifications found in the SPIRV-Headers
         \\repository. The result, printed to stdout, should be used to update
         \\files in src/codegen/spirv. Don't forget to format the output.
-    ;
+        ,
+    };
     positional: struct {
-        @"path/to/SPIRV-Headers": struct { value: [:0]const u8 },
+        @"path/to/SPIRV-Headers": struct {
+            value: [:0]const u8,
+            pub const info: std.cli.PositionalInfo = .{
+                .description = "should point to a clone of https://github.com/KhronosGroup/SPIRV-Headers/",
+            };
+        },
         @"path/to/zig/src/codegen/spirv/extinst.zig.grammar.json": struct { value: [:0]const u8 },
-        pub const help = .{
-            .@"path/to/SPIRV-Headers" = "should point to a clone of https://github.com/KhronosGroup/SPIRV-Headers/",
-        };
     },
 };
 
@@ -76,7 +80,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
-    const json_path = try std.fs.path.join(arena, &.{ args.positional.@"path/to/SPIRV-Headers", "include/spirv/unified1/" });
+    const json_path = try std.fs.path.join(arena, &.{ args.positional.@"path/to/SPIRV-Headers".value, "include/spirv/unified1/" });
     const dir = try Io.Dir.cwd().openDir(io, json_path, .{ .iterate = true });
 
     const core_spec = try readRegistry(io, arena, CoreRegistry, dir, "spirv.core.grammar.json");
@@ -93,7 +97,7 @@ pub fn main(init: std.process.Init) !void {
         try readExtRegistry(io, arena, &exts, dir, entry.name);
     }
 
-    try readExtRegistry(io, arena, &exts, Io.Dir.cwd(), args.positional.@"path/to/zig/src/codegen/spirv/extinst.zig.grammar.json");
+    try readExtRegistry(io, arena, &exts, Io.Dir.cwd(), args.positional.@"path/to/zig/src/codegen/spirv/extinst.zig.grammar.json".value);
 
     var allocating: std.Io.Writer.Allocating = .init(arena);
     defer allocating.deinit();

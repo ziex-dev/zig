@@ -14,32 +14,44 @@ const getExternalExecutor = std.zig.system.getExternalExecutor;
 const max_doc_file_size = 10 * 1024 * 1024;
 
 const Args = struct {
-    pub const arg0 = "doctest";
-    pub const description =
+    pub const info: std.cli.Info = .{
+        .arg0 = "doctest",
+        .description =
         \\Compiles and possibly runs a code example, capturing output and rendering
         \\it to HTML documentation.
-    ;
+        ,
+    };
 
     named: struct {
         input: struct {
             value: []const u8,
-            pub const description = "Source code file path";
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Source code file path",
+            };
         },
         output: struct {
             value: []const u8,
-            pub const description = "Where to write output HTML docs to";
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Where to write output HTML docs to",
+            };
         },
         zig: struct {
             value: []const u8,
-            pub const description = "Path to the zig compiler";
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to the zig compiler",
+            };
         },
         @"zig-lib-dir": struct {
             value: ?[]const u8 = null,
-            pub const description = "Override the zig compiler library path";
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Override the zig compiler library path",
+            };
         },
         @"cache-root": struct {
             value: []const u8,
-            pub const description = "Path to local .zig-cache/";
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to local .zig-cache/",
+            };
         },
     },
 };
@@ -56,8 +68,8 @@ pub fn main(init: std.process.Init) !void {
     const input_path = args.named.input.value;
     const output_path = args.named.output.value;
     const zig_path = args.named.zig.value;
-    const cache_root = args.named.@"cache-root".value;
     const opt_zig_lib_dir = args.named.@"zig-lib-dir".value;
+    const cache_root = args.named.@"cache-root".value;
 
     const source_bytes = try Dir.cwd().readFileAlloc(io, input_path, arena, .limited(std.math.maxInt(u32)));
     const code = try parseManifest(arena, source_bytes);

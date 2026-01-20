@@ -161,8 +161,8 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const search_paths = args.named.@"search-path";
-    const out_dir = args.named.out;
+    const search_paths = args.named.@"search-path".value;
+    const out_dir = args.named.out.value;
 
     const generic_name = "any-linux-any";
 

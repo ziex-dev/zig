@@ -35,24 +35,65 @@ pub const Error = error{
     Help,
 } || Allocator.Error;
 
+/// Declare `pub const info: std.cli.Info` on your `Args` type to provide additional information about your program.
+pub const Info = struct {
+    /// Use this to override the arg0 shown in your usage string.
+    /// Only necessary when using the generated usage documentation (when `.usage = null`).
+    arg0: ?[]const u8 = null,
+    /// Use this to override the generated usage string.
+    /// May contain a single `{s}` fmt template which will contain the arg0 of the program.
+    usage: ?[]const u8 = null,
+    /// Use this to override the generated help text.
+    /// Prepended with the usage string of the program.
+    help: ?[]const u8 = null,
+    /// Use this to add a helpful description of your program before arguments/options info in the generated long help text.
+    /// Ignored if `.help` is not null.
+    description: ?[]const u8 = null,
+    /// Use this to add helpful information of your program after arguments/options info in the generated long help text.
+    /// Ignore if `.help` is not null.
+    epilogue: ?[]const u8 = null,
+};
+
+/// Declare `pub const info: std.cli.NamedInfo` in the value type of each named argument to provide additional information about the argument.
+pub const NamedInfo = struct {
+    /// Use this to add a helpful description of this argument for use in the generated long help text.
+    /// Ignored if `Args.info.help` is not null.
+    description: ?[]const u8 = null,
+    short: ?u8 = null,
+};
+
+/// Declare `pub const info: std.cli.PositionalInfo` in the value type of each positional argument to provide additional information about the argument.
+pub const PositionalInfo = struct {
+    /// Use this to add a helpful description of this argument for use in the generated long help text.
+    /// Ignored if `Args.info.help` is not null.
+    description: ?[]const u8 = null,
+};
+
 /// Parses CLI args from a `std.process.ArgIterator` according to the configuration in `Args`.
 /// `Args` is a struct that you define looking like this:
 /// ```zig
 /// const Args = struct {
-///     pub const arg0 = "myprog";
-///     pub const description = "this program does a thing";
-///     pub const epilog = "example: myprog --output o.txt hello.txt";
+///     pub const info: std.cli.Info = .{
+///         .arg0 = "myprog",
+///         .description = "this program does a thing",
+///         .epilogue = "example: myprog --output o.txt hello.txt",
+///     };
+///
 ///     named: struct {
 ///         verbose: struct { value: bool = false },
 ///         output: struct {
 ///             value: [:0]const u8,
-///             pub const description = "path to output file";
+///             pub const info: std.cli.NamedInfo = .{
+///                 .description = "path to output file",
+///             };
 ///         },
 ///     },
 ///     positional: struct {
 ///         input: struct {
 ///             value: []const u8,
-///             pub const description = "path to input file";
+///             pub const info: std.cli.PositionalInfo = .{
+///                 .description = "path to input file",
+///             };
 ///         },
 ///         args: struct { value: []const []const u8 = &.{} },
 ///     },
@@ -156,30 +197,35 @@ pub const Error = error{
 /// If no variadic positional arguments are parsed, the value is the default value declared, or the empty list if no default is declared.
 ///
 /// This module may generate a usage string and help text for the given program, and will use an appropriate value as the arg 0 in such documentation.
+/// This can be influenced by optionally declaring `pub const info: std.cli.Info` on `Args` for program-level information,
+/// `pub const info: std.cli.NamedInfo` on each field value type in `Args.named`,
+/// and `pub const info: std.cli.PositionalInfo` on each field value type in `Args.positional`.
+///
 /// This arg 0 value is selected according to priority:
-/// - The value of `pub const arg0` declared on `Args`, if it exists
+/// - The value of `Args.info.arg0`, if `info` exists and `arg0` is non-null
 /// - The value of `Options.arg0` if non-null
 /// - The first value of the `argv` if not using `parseSlice`
 /// - The string "<prog>". This is the least-descriptive value, and it's recommended that one of the above options are used
 ///
-/// It's possible to override the automatically-generated usage string by declaring `pub const usage` on the given `Args` struct.
+/// It's possible to override the automatically-generated usage string by declaring `Args.info.usage`.
 /// This API assumes the presence of any string templates `{s}` represents `arg0` as described above.
-/// The value must coerce to `[]const u8`.
 ///
-/// It's also possible to override the automatically-generated long help documentation by declaring a public constant named `help` in `Args`.
+/// It's also possible to override the automatically-generated long help documentation by declaring `Args.info.help`.
 /// This API automatically prepends help text with a usage string as described above for consistency.
-/// The help text override must coerce to `[]const u8`.
 ///
 /// ```zig
 /// const Args = struct {
-///     pub const arg0 = "your-command";
-///     pub const usage = "usage: {s} --your-usage goes-here";
-///     pub const help =
-///         \\options:
-///         \\  --help     Print this help text and exit.
-///         \\  [...]
-///         \\
-///     ;
+///     pub const info: std.cli.Info = .{
+///         .arg0 = "your-command",
+///         .usage = "usage: {s} --your-usage goes-here",
+///         .help =
+///             \\options:
+///             \\  --help     Print this help text and exit.
+///             \\  [...]
+///             \\
+///         ,
+///     };
+///
 ///     named: struct {
 ///         // [...]
 ///     },
@@ -209,7 +255,7 @@ pub fn parse(comptime Args: type, arena: Allocator, args: StdArgs, options: Opti
 /// ```
 /// Where `String` is `[]const u8` or `[:0]const u8`.
 ///
-/// If `options.arg0` is `null`, then the first result of `argv.next()` is used by default; otherwise, this value is ignored.
+/// If `Args.info.arg0` and `options.arg0` are `null`, then the first result of `argv.next()` is used by default; otherwise, this value is ignored.
 ///
 /// If a parsing/validation error occurs or the `--help` arg is given,
 /// this function returns `error.Usage` or `error.Help` respectively,
@@ -249,7 +295,7 @@ fn ArgIteratorSlice(comptime String: type) type {
 /// where `String` is `[]const u8` or `[:0]const u8`.
 ///
 /// Unlike `parse` and `parseIter`, this function does not use the first item of `argv` as `arg0`.
-/// Use `options.arg0` instead.
+/// Use `Args.info.arg0` or `options.arg0` instead.
 ///
 /// If a parsing/validation error occurs or the `--help` arg is given,
 /// this function returns `error.Usage` or `error.Help` respectively,
@@ -348,7 +394,7 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
     };
 
     // Do all comptime checks up front so that we can be sure any compile error the user sees is the one we wrote.
-    const named_fields, const positional_fields = comptime reflectArgs(Args);
+    _, const named_fields, const positional_fields = comptime reflectArgs(Args);
 
     var named_array_lists: ArrayListsForFields(named_fields) = .{};
     var positional_array_lists: ArrayListsForFields(positional_fields) = .{};
@@ -626,11 +672,17 @@ const ArgType = union(enum) {
     }
 };
 
+const ArgInfo = union(enum) {
+    absent,
+    named: NamedInfo,
+    positional: PositionalInfo,
+};
+
 const ArgField = struct {
     name: []const u8,
     type: ArgType,
     default_value_ptr: ?*const anyopaque,
-    description: ?[]const u8,
+    info: ArgInfo,
 
     fn namedFlagUsage(comptime field: ArgField) []const u8 {
         const is_optional = field.type == .optional;
@@ -675,12 +727,16 @@ const ArgField = struct {
             .name = sf.name,
             .type = .of(sf.name, value_field.type),
             .default_value_ptr = value_field.default_value_ptr,
-            .description = if (@hasDecl(sf.type, "description")) @field(sf.type, "description") else null,
+            .info = if (!@hasDecl(sf.type, "info")) .absent else switch (@TypeOf(sf.type.info)) {
+                NamedInfo => .{ .named = @field(sf.type, "info") },
+                PositionalInfo => .{ .positional = @field(sf.type, "info") },
+                else => |T| @compileError("Expected `std.cli.NamedInfo` or `std.cli.PositionalInfo`, got `" ++ @typeName(T) ++ "`: " ++ sf.name),
+            },
         };
     }
 };
 
-fn reflectArgs(comptime Args: type) struct { []const ArgField, []const ArgField } {
+fn reflectArgs(comptime Args: type) struct { Info, []const ArgField, []const ArgField } {
     var has_named = false;
     var has_positional = false;
     inline for (@typeInfo(Args).@"struct".fields) |field| {
@@ -694,14 +750,20 @@ fn reflectArgs(comptime Args: type) struct { []const ArgField, []const ArgField 
     const named_fields = if (has_named) @typeInfo(@FieldType(Args, "named")).@"struct".fields else &.{};
     var named_args: [named_fields.len]ArgField = undefined;
     inline for (named_fields, 0..) |sf, i| {
-        named_args[i] = .of(sf);
+        var arg: ArgField = .of(sf);
+        switch (arg.info) {
+            .named => {},
+            .positional => @compileError("Expected `pub const info: std.cli.NamedInfo`, but got PositionalInfo: Args.named." ++ sf.name),
+            .absent => arg.info = .{ .named = .{} },
+        }
+        named_args[i] = arg;
     }
 
     const positional_fields = if (has_positional) @typeInfo(@FieldType(Args, "positional")).@"struct".fields else &.{};
     var positional_args: [positional_fields.len]ArgField = undefined;
     var has_optionals = false;
     inline for (positional_fields, 0..) |sf, i| {
-        const arg: ArgField = .of(sf);
+        var arg: ArgField = .of(sf);
         switch (arg.type) {
             .bool => @compileError("Args.positional cannot have bool fields: " ++ arg.name),
             .list => {
@@ -721,10 +783,17 @@ fn reflectArgs(comptime Args: type) struct { []const ArgField, []const ArgField 
             });
         } else if (has_optionals and arg.type != .list and arg.type != .optional) @compileError("Args.positional cannot have required arguments after optional arguments: " ++ arg.name);
 
+        switch (arg.info) {
+            .named => @compileError("Expected `pub const info: std.cli.PositionalInfo`, but got NamedInfo: Args.positional." ++ sf.name),
+            .positional => {},
+            .absent => arg.info = .{ .positional = .{} },
+        }
+
         positional_args[i] = arg;
     }
 
-    return .{ &named_args, &positional_args };
+    const info: Info = if (@hasDecl(Args, "info")) Args.info else .{};
+    return .{ info, &named_args, &positional_args };
 }
 
 fn ArrayListsForFields(comptime fields: []const ArgField) type {
@@ -782,12 +851,16 @@ pub fn printUsage(comptime Args: type, writer: *Io.Writer) Io.Writer.Error!void 
 
 test printUsage {
     const Args1 = struct {
-        pub const description = "my description";
+        pub const info: Info = .{
+            .description = "my description",
+        };
 
         named: struct {
             foo: struct {
                 value: [:0]const u8,
-                pub const description = "does a foo thing";
+                pub const info: NamedInfo = .{
+                    .description = "does a foo thing",
+                };
             },
             bar: struct { value: bool = false },
             baz: struct { value: u8 = 0 },
@@ -811,7 +884,9 @@ test printUsage {
     try testing.expectEqualStrings("Usage: <prog> --foo=string --quuz=int [options...] <foo> <bar> [baz] [quux...]\n", aw.written());
 
     const Args2 = struct {
-        const usage = "my custom usage";
+        pub const info: Info = .{
+            .usage = "my custom usage",
+        };
         named: @FieldType(Args1, "named"),
         positional: @FieldType(Args1, "positional"),
     };
@@ -834,13 +909,17 @@ pub fn printUsageArg0(comptime Args: type, writer: *Io.Writer, arg0: []const u8)
 
 test printUsageArg0 {
     const Args1 = struct {
-        pub const arg0 = "fooprog";
-        pub const description = "my description";
+        pub const info: Info = .{
+            .arg0 = "fooprog",
+            .description = "my description",
+        };
 
         named: struct {
             foo: struct {
                 value: [:0]const u8,
-                pub const description = "does a foo thing";
+                pub const info: NamedInfo = .{
+                    .description = "does a foo thing",
+                };
             },
             bar: struct { value: bool = false },
             baz: struct { value: u8 = 0 },
@@ -869,13 +948,13 @@ test printUsageArg0 {
 /// A string template for `arg0` is only present when `Args.arg0` is not defined.
 pub fn getUsageFmt(comptime Args: type) struct { []const u8, bool } {
     return comptime fmt: {
-        const arg0: ?[]const u8 = if (@hasDecl(Args, "arg0")) Args.arg0 else null;
-        if (@hasDecl(Args, "usage")) {
-            var usage: []const u8 = Args.usage;
+        const info, const named_fields, const positional_fields = reflectArgs(Args);
+        if (info.usage) |user_usage| {
+            var usage: []const u8 = user_usage;
             if (!mem.endsWith(u8, usage, "\n")) usage = usage ++ "\n";
             if (hasAtLeastOneStringLiteral(usage)) {
-                break :fmt if (arg0) |s|
-                    .{ comptimePrint(usage, .{s}), false }
+                break :fmt if (info.arg0) |arg0|
+                    .{ comptimePrint(usage, .{arg0}), false }
                 else
                     .{ usage, true };
             } else {
@@ -883,8 +962,7 @@ pub fn getUsageFmt(comptime Args: type) struct { []const u8, bool } {
             }
         }
 
-        const named_fields, const positional_fields = reflectArgs(Args);
-        var usage: []const u8 = "Usage: " ++ (if (arg0) |s| s else "{s}");
+        var usage: []const u8 = "Usage: " ++ (if (info.arg0) |s| s else "{s}");
         var at_least_one_optional_named_argument = false;
 
         for (named_fields) |field| {
@@ -912,13 +990,16 @@ pub fn getUsageFmt(comptime Args: type) struct { []const u8, bool } {
             }
         }
 
-        break :fmt .{ usage ++ "\n", arg0 == null };
+        break :fmt .{ usage ++ "\n", info.arg0 == null };
     };
 }
 
 test getUsageFmt {
     const Args = struct {
-        pub const arg0 = "program";
+        pub const info: Info = .{
+            .arg0 = "program",
+        };
+
         named: struct {
             optional: struct { value: bool = false },
             required: struct { value: bool },
@@ -1015,23 +1096,31 @@ pub fn printHelp(comptime Args: type, writer: *Io.Writer) Io.Writer.Error!void {
 
 test printHelp {
     const Args = struct {
-        pub const arg0 = "hello";
-        pub const description = "my special description";
+        pub const info: Info = .{
+            .arg0 = "hello",
+            .description = "my special description",
+        };
 
         named: struct {
             foo: struct {
                 value: [:0]const u8 = "",
-                pub const description = "does a foo thing";
+                pub const info: NamedInfo = .{
+                    .description = "does a foo thing",
+                };
             },
             bar: struct {
                 value: []const u8,
-                pub const description = "does a bar thing";
+                pub const info: NamedInfo = .{
+                    .description = "does a bar thing",
+                };
             },
             baz: struct { value: u32 = 10 },
             quux: struct { value: i8 = -1 },
             quuz: struct {
                 value: f32 = -420,
-                pub const description = "Nice.";
+                pub const info: NamedInfo = .{
+                    .description = "Nice.",
+                };
             },
             foobar: struct { value: bool = false },
             barfoo: struct { value: bool },
@@ -1040,12 +1129,16 @@ test printHelp {
         positional: struct {
             foo: struct {
                 value: []const u8,
-                pub const description = "a special foo thing";
+                pub const info: PositionalInfo = .{
+                    .description = "a special foo thing",
+                };
             },
             bar: struct { value: []const u8 = "" },
             baz: struct {
                 value: []const []const u8,
-                pub const description = "not-so-special baz thing";
+                pub const info: PositionalInfo = .{
+                    .description = "not-so-special baz thing",
+                };
             },
         },
     };
@@ -1092,24 +1185,32 @@ pub fn printHelpArg0(comptime Args: type, writer: *Io.Writer, arg0: []const u8) 
 
 test printHelpArg0 {
     const Args = struct {
-        pub const arg0 = "hello";
-        pub const description = "my special description";
-        pub const epilogue = "my special epilogue";
+        pub const info: Info = .{
+            .arg0 = "hello",
+            .description = "my special description",
+            .epilogue = "my special epilogue",
+        };
 
         named: struct {
             foo: struct {
                 value: ?[:0]const u8 = null,
-                pub const description = "does a foo thing";
+                pub const info: NamedInfo = .{
+                    .description = "does a foo thing",
+                };
             },
             bar: struct {
                 value: ?[]const u8,
-                pub const description = "does a bar thing";
+                pub const info: NamedInfo = .{
+                    .description = "does a bar thing",
+                };
             },
             baz: struct { value: u32 = 10 },
             quux: struct { value: i8 = -1 },
             quuz: struct {
                 value: f32 = -420,
-                pub const description = "Nice.";
+                pub const info: NamedInfo = .{
+                    .description = "Nice.",
+                };
             },
             foobar: struct { value: bool = false },
             barfoo: struct { value: bool },
@@ -1119,12 +1220,16 @@ test printHelpArg0 {
         positional: struct {
             foo: struct {
                 value: []const u8,
-                pub const description = "a special foo thing";
+                pub const info: PositionalInfo = .{
+                    .description = "a special foo thing",
+                };
             },
             bar: struct { value: ?[]const u8 },
             baz: struct {
                 value: []const []const u8,
-                pub const description = "not-so-special baz thing";
+                pub const info: PositionalInfo = .{
+                    .description = "not-so-special baz thing",
+                };
             },
         },
     };
@@ -1184,22 +1289,22 @@ test printHelpArg0 {
 ///
 /// The template has the following caveats:
 /// - `{usage}` is the result of `getUsageFmt`
-/// - `{description}` is `Args.description` if present. Otherwise, this is omitted.
+/// - `{description}` is `Args.info.description` if present. Otherwise, this is omitted.
 /// - The `Arguments:` section is omitted if `Args.positional` isn't present or is empty.
 /// - If a positional arg is a list, `{argname}` has "..." appended and `{default/required}` is omitted.
-/// - If `@TypeOf(Args.positional).help` is omitted, or if `argname` field is omitted from the anonymous struct, then `{description}` is omitted.
+/// - If `Args.positional.<argname>.info` is omitted, or if `description` field is null, then `{description}` is omitted.
 /// - If a named arg is a boolean, `{argname}` is `--[no-]{argname}`, otherwise it's `--{argname}={type}`.
-/// - If `@TypeOf(Args.named).help` is omitted, or if `argname` field is omitted from the anonymous struct, then `{description}` is omitted
+/// - If `Args.named.<argname>.info` is omitted, or if `description` field is null, then `{description}` is omitted
 /// - `{epilogue}` is `Args.epilogue` if present. Otherwise, this is omitted.
 pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
     return comptime fmt: {
+        const info, const named_fields, const positional_fields = reflectArgs(Args);
         const usage, const has_arg0_fmt = getUsageFmt(Args);
-        if (@hasDecl(Args, "help")) {
-            const help: []const u8 = usage ++ "\n" ++ Args.help;
+        if (info.help) |user_help| {
+            const help: []const u8 = usage ++ "\n" ++ user_help;
             return .{ help, has_arg0_fmt };
         }
 
-        const named_fields, const positional_fields = reflectArgs(Args);
         @setEvalBranchQuota(named_fields.len * 1000 + positional_fields.len * 1000);
 
         var lhs_max_width = 0;
@@ -1223,7 +1328,7 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
                     .list, .optional => "",
                 } else if (field.type == .list or field.type == .optional) "" else ". required",
             });
-            if (field.description) |description| {
+            if (field.info.positional.description) |description| {
                 rhs = rhs ++ " " ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
             }
 
@@ -1259,7 +1364,7 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
                 .list => "[multiple] ",
             };
 
-            if (field.description) |description| {
+            if (field.info.named.description) |description| {
                 rhs = rhs ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
             }
 
@@ -1269,8 +1374,8 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         }
 
         var help: []const u8 = usage;
-        if (@hasDecl(Args, "description")) {
-            help = help ++ "\n" ++ @as([]const u8, Args.description) ++ "\n";
+        if (info.description) |description| {
+            help = help ++ "\n" ++ description ++ "\n";
         }
 
         lhs_max_width += 5; // minimum spacing
@@ -1295,34 +1400,12 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
             help = help ++ "\n";
         }
 
-        if (@hasDecl(Args, "epilogue")) {
-            help = help ++ "\n" ++ @as([]const u8, Args.epilogue) ++ "\n";
+        if (info.epilogue) |epilogue| {
+            help = help ++ "\n" ++ epilogue ++ "\n";
         }
 
         break :fmt .{ help, has_arg0_fmt };
     };
-}
-
-fn field_help_text(comptime Container: type) FieldHelpText(Container) {
-    comptime {
-        var help: FieldHelpText(Container) = .{};
-        if (!@hasDecl(Container, "help")) return help;
-        const help_fields = @typeInfo(@TypeOf(Container.help)).@"struct".fields;
-        for (help_fields) |field| {
-            @field(help, field.name) = @field(Container.help, field.name);
-        }
-        return help;
-    }
-}
-
-fn FieldHelpText(comptime Container: type) type {
-    return @Struct(
-        .auto,
-        null,
-        std.meta.fieldNames(Container),
-        &@splat(?[]const u8),
-        &@splat(.{ .default_value_ptr = &@as(?[]const u8, null) }),
-    );
 }
 
 var failing_writer: Writer = .failing;
@@ -1895,17 +1978,17 @@ test "custom help" {
     const options = Options{ .arg0 = "unused-prog", .terminal = term, .exit = false };
 
     const Args = struct {
-        pub const usage =
-            \\Usage: the-zip-thing --output path [options] input.zip
-        ;
-        pub const help =
+        pub const info: Info = .{
+            .usage = "Usage: the-zip-thing --output path [options] input.zip",
+            .help =
             \\Arguments:
             \\  --output path     where to write the output stuff
             \\  --[no-]force      overwrite output if already exists
             \\  input.zip         the zip file to read
             \\  --help            print this help and exit
             \\
-        ;
+            ,
+        };
         named: struct {
             output: struct { value: []const u8 },
             force: struct { value: bool = false },
@@ -1915,7 +1998,7 @@ test "custom help" {
         },
     };
     try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
-    try testing.expectEqualStrings(Args.usage ++ "\n\n" ++ Args.help, aw.written());
+    try testing.expectEqualStrings(Args.info.usage.? ++ "\n\n" ++ Args.info.help.?, aw.written());
 }
 
 test "description" {
@@ -1928,12 +2011,12 @@ test "description" {
     const options = Options{ .arg0 = "unused-prog", .terminal = term, .exit = false };
 
     const Args = struct {
-        pub const description =
-            \\This is a description
-        ;
+        pub const info: Info = .{
+            .description = "This is a description",
+        };
     };
     try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
-    try testing.expect(mem.indexOf(u8, aw.written(), Args.description) != null);
+    try testing.expect(mem.indexOf(u8, aw.written(), Args.info.description.?) != null);
 }
 
 test "field help" {
@@ -1949,19 +2032,23 @@ test "field help" {
         named: struct {
             output: struct {
                 value: []const u8,
-                pub const description = "help for output";
+                pub const info: NamedInfo = .{
+                    .description = "help for output",
+                };
             },
         },
         positional: struct {
             args: struct {
                 value: []const []const u8 = &.{},
-                pub const description = "help for args";
+                pub const info: PositionalInfo = .{
+                    .description = "help for args",
+                };
             },
         },
     };
     try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
-    try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "named"), "output").description));
-    try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "positional"), "args").description));
+    try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "named"), "output").info.description.?));
+    try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "positional"), "args").info.description.?));
 }
 
 test "optionals" {

@@ -26,7 +26,9 @@ fn logImpl(
 }
 
 const Args = struct {
-    pub const arg0 = "incr-check";
+    pub const info: std.cli.Info = .{
+        .arg0 = "incr-check",
+    };
 
     positional: struct {
         @"zig-binary-path": struct { value: []const u8 },

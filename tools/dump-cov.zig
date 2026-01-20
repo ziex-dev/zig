@@ -9,9 +9,9 @@ const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
 const Args = struct {
-    pub const epilogue =
-        \\example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
-    ;
+    pub const info: std.cli.Info = .{
+        .epilogue = "example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux",
+    };
 
     positional: struct {
         @"path/to/exe": struct { value: [:0]const u8 },

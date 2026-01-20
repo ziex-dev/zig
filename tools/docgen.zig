@@ -18,13 +18,17 @@ const max_doc_file_size = 10 * 1024 * 1024;
 const obj_ext = builtin.object_format.fileExt(builtin.cpu.arch);
 
 const Args = struct {
-    pub const arg0 = "docgen";
-    pub const description = "Generates an HTML document from a docgen template.";
+    pub const info: std.cli.Info = .{
+        .arg0 = "docgen",
+        .description = "Generates an HTML document from a docgen template.",
+    };
 
     named: struct {
         @"code-dir": struct {
             value: [:0]const u8,
-            pub const description = "Path to directory containing code example outputs";
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to directory containing code example outputs",
+            };
         },
     },
     positional: struct {

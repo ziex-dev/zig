@@ -1884,11 +1884,13 @@ const targets = [_]ArchTarget{
 };
 
 const Args = struct {
-    pub const description =
+    pub const info: std.cli.Info = .{
+        .description =
         \\Updates lib/std/target/<target>.zig from llvm/lib/Target/<Target>/<Target>.td .
         \\
         \\On a less beefy system, or when debugging, compile with -fsingle-threaded.
-    ;
+        ,
+    };
     positional: struct {
         @"/path/to/llvm-tblgen": struct { value: [:0]const u8 },
         @"/path/git/llvm-project": struct { value: [:0]const u8 },

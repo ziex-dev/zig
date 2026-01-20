@@ -53,12 +53,16 @@ const Target = struct {
 const headers_source_prefix: []const u8 = "headers";
 
 const Args = struct {
-    pub const arg0 = "fetch_them_macos_headers";
+    pub const info: std.cli.Info = .{
+        .arg0 = "fetch_them_macos_headers",
+    };
     named: struct {
-        sysroot: struct { value: ?[]const u8 = null },
-        pub const help = .{
-            .sysroot = "Path to macOS SDK",
-        };
+        sysroot: struct {
+            value: ?[]const u8 = null,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to macOS SDK",
+            };
+        },
     },
     positional: struct {
         @"cc args": struct { value: []const [:0]const u8 },

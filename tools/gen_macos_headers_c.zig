@@ -7,7 +7,9 @@ const fatal = std.process.fatal;
 const Allocator = std.mem.Allocator;
 
 const Args = struct {
-    pub const arg0 = "gen_macos_headers_c";
+    pub const info: std.cli.Info = .{
+        .arg0 = "gen_macos_headers_c",
+    };
     positional: struct {
         dir: struct { value: []const u8 },
     },

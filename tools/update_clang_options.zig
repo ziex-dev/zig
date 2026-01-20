@@ -628,7 +628,9 @@ const cpu_targets = struct {
 };
 
 const Args = struct {
-    pub const description = "Prints to stdout Zig code which you can use to replace the file src/clang_options_data.zig.";
+    pub const info: std.cli.Info = .{
+        .description = "Prints to stdout Zig code which you can use to replace the file src/clang_options_data.zig.",
+    };
     positional: struct {
         @"/path/to/llvm-tblgen": struct { value: [:0]const u8 },
         @"/path/to/git/llvm/llvm-project": struct { value: [:0]const u8 },
