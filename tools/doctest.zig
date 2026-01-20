@@ -34,7 +34,7 @@ const Args = struct {
             pub const description = "Path to the zig compiler";
         },
         @"zig-lib-dir": struct {
-            value: []const u8 = "",
+            value: ?[]const u8 = null,
             pub const description = "Override the zig compiler library path";
         },
         @"cache-root": struct {
@@ -57,8 +57,7 @@ pub fn main(init: std.process.Init) !void {
     const output_path = args.named.output.value;
     const zig_path = args.named.zig.value;
     const cache_root = args.named.@"cache-root".value;
-
-    const opt_zig_lib_dir = if (args.named.@"zig-lib-dir".value.len == 0) null else args.named.@"zig-lib-dir".value;
+    const opt_zig_lib_dir = args.named.@"zig-lib-dir".value;
 
     const source_bytes = try Dir.cwd().readFileAlloc(io, input_path, arena, .limited(std.math.maxInt(u32)));
     const code = try parseManifest(arena, source_bytes);

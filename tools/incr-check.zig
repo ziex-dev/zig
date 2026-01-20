@@ -33,14 +33,14 @@ const Args = struct {
         @"input-file": struct { value: []const u8 },
     },
     named: struct {
-        @"zig-lib-dir": struct { value: []const u8 = "" },
+        @"zig-lib-dir": struct { value: ?[]const u8 = null },
         @"debug-log": struct { value: []const []const u8 = &.{} },
         @"preserve-tmp": struct { value: bool = false },
         qemu: struct { value: bool = false },
         wine: struct { value: bool = false },
         wasmtime: struct { value: bool = false },
         darling: struct { value: bool = false },
-        @"zig-cc-binary": struct { value: []const u8 = "" },
+        @"zig-cc-binary": struct { value: ?[]const u8 = null },
     },
 };
 
@@ -53,8 +53,8 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const opt_lib_dir: ?[]const u8 = if (args.named.@"zig-lib-dir".value.len > 0) args.named.@"zig-lib-dir".value else null;
-    const opt_cc_zig: ?[]const u8 = if (args.named.@"zig-cc-binary".value.len > 0) args.named.@"zig-cc-binary".value else null;
+    const opt_lib_dir: ?[]const u8 = args.named.@"zig-lib-dir".value;
+    const opt_cc_zig: ?[]const u8 = args.named.@"zig-cc-binary".value;
     const preserve_tmp = args.named.@"preserve-tmp".value;
     const enable_qemu = args.named.qemu.value;
     const enable_wine = args.named.wine.value;

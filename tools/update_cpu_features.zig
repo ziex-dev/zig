@@ -1893,7 +1893,7 @@ const Args = struct {
         @"/path/to/llvm-tblgen": struct { value: [:0]const u8 },
         @"/path/git/llvm-project": struct { value: [:0]const u8 },
         @"/path/git/zig": struct { value: [:0]const u8 },
-        zig_name_filter: struct { value: []const u8 = "" },
+        zig_name_filter: struct { value: ?[]const u8 },
     },
 };
 
@@ -1906,7 +1906,7 @@ pub fn main(init: std.process.Init) !void {
     const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen".value;
     const llvm_src_root = args.positional.@"/path/git/llvm-project".value;
     const zig_src_root = args.positional.@"/path/git/zig".value;
-    const filter: ?[]const u8 = if (args.positional.zig_name_filter.value.len > 0) args.positional.zig_name_filter.value else null;
+    const filter = args.positional.zig_name_filter.value;
 
     var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
     defer zig_src_dir.close(io);

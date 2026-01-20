@@ -55,7 +55,7 @@ const headers_source_prefix: []const u8 = "headers";
 const Args = struct {
     pub const arg0 = "fetch_them_macos_headers";
     named: struct {
-        sysroot: struct { value: []const u8 = "" },
+        sysroot: struct { value: ?[]const u8 = null },
         pub const help = .{
             .sysroot = "Path to macOS SDK",
         };
@@ -71,7 +71,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    const sysroot_path = if (args.named.sysroot.value.len > 0) args.named.sysroot.value else blk: {
+    const sysroot_path = args.named.sysroot.value orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
         if (std.zig.system.darwin.getSdk(arena, io, &target)) |sdk| break :blk sdk;
         try std.cli.usageError(Args, .{}, "no SDK found; you can provide one explicitly with '--sysroot' flag", .{}) catch unreachable;

@@ -114,8 +114,14 @@ pub const Error = error{
 ///     - any float
 ///     - any `enum` with at least one member
 ///     - a string type
+/// - an optional type `?O`, where `O` is one of:
+///     - any integer
+///     - any float
+///     - any `enum` with at least one member
+///     - a string type
 ///
 /// If `T` is `bool`, then form (1) sets it to `true`, form (2) sets it to `false`, and form (3) is not allowed, and a following form (7) is parsed as a positional argument.
+/// If `T` is an optional type, then form (2) sets it to `null`, form (3) specifies the `<value>`, or a form (1) must be followed by a form (7) specifying the `<value>`.
 /// Otherwise, form (2) is not allowed, and form (3) specifies the `<value>` or form (1) must be followed by a form (8) specifying the `<value>`.
 ///
 /// The `<value>` in forms (3) and (7) is parsed from its string representation:
@@ -138,12 +144,14 @@ pub const Error = error{
 /// - any `enum` with at least 1 member
 /// - a string type, namely `[]const u8`, `[]u8`, `[:0]const u8` and `[:0]u8`
 ///
-/// Optional positional arguments may be declared using a default value.
+/// Optional positional arguments may be declared using a default value _or_ as any type `?T`, where `T` is described above.
+/// If the optional positional argument's type is `?T`, then the declared default value _must_ be `null`, though the absence of a default `null` value will use `null` as the default value anyways.
 /// If the argument is not parsed, then the value will be the declared default value.
 /// Optional positional arguments _must_ be declared after all required positional arguments; required positional arguments may _not_ be declared after optional positional arguments.
 ///
 /// The final positional argument may also be a slice type that type `[]T` can coerce into (where `T` is described above).
 /// Such a positional argument is described as the "variadic positional" for future reference.
+/// (Note that the variadic positional may _not_ be `?[]T`).
 /// The variadic positional is always assumed to be optional, and is only parsed after all other (required _and_ optional) arguments have been parsed.
 /// If no variadic positional arguments are parsed, the value is the default value declared, or the empty list if no default is declared.
 ///
@@ -278,6 +286,7 @@ test parseSlice {
             @"enum-option": struct { value: enum { auto, always, never } = .auto },
         },
         positional: struct {
+            optional: struct { value: ?[]const u8 },
             args: struct { value: []const []const u8 = &.{} },
         },
     };
@@ -300,7 +309,8 @@ test parseSlice {
             .@"enum-option" = .{ .value = .always },
         },
         .positional = .{
-            .args = .{ .value = &.{ "positional1", "positional2", "-12345678", "--positional4", "--positional=5" } },
+            .optional = .{ .value = "positional1" },
+            .args = .{ .value = &.{ "positional2", "-12345678", "--positional4", "--positional=5" } },
         },
     }, args);
 }
@@ -384,7 +394,18 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
                             continue :argparse;
                         }
 
-                        if (@"no-") break;
+                        if (@"no-") {
+                            if (field.type == .optional) {
+                                if (immediate_value) |val| try usageError(Args, options, "unexpected value for argument --no-{s}: {s}", .{
+                                    field.name, if (val.len == 0) "''" else val,
+                                });
+
+                                @field(result.named, field.name).value = null;
+                                continue :argparse;
+                            }
+                            break;
+                        }
+
                         const arg_value = immediate_value orelse iter.next() orelse try usageError(Args, options, "expected argument after --{s}", .{field.name});
                         const value = try parseValue(Args, gpa, options, field, arg_value);
                         if (field.type == .list) {
@@ -450,6 +471,8 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
         } else if (positional_field_index <= i) {
             if (field.defaultValue()) |default| {
                 @field(result.positional, field.name).value = default;
+            } else if (field.type == .optional) {
+                @field(result.positional, field.name).value = null;
             } else {
                 try usageError(Args, options, "missing required argument: {s}", .{field.name});
             }
@@ -467,7 +490,7 @@ fn parseValue(comptime Args: type, gpa: Allocator, options: Options, comptime fi
         .string => arg_value,
         .cstring => if (@TypeOf(arg_value) == []const u8) try gpa.dupeZ(u8, arg_value) else arg_value,
         .@"enum" => |Enum| std.meta.stringToEnum(Enum, arg_value) orelse try usageError(Args, options, "unable to parse --{s}={s}, expected one of: {s}", .{ field.name, arg_value, enumValuesString(Enum) }),
-        .list => unreachable, // flattened
+        .list, .optional => unreachable, // flattened
     };
 }
 
@@ -478,23 +501,100 @@ const ArgType = union(enum) {
     int: type,
     string,
     cstring,
-    list: ListElem,
+    list: List,
+    optional: Optional,
 
-    const ListElem = union(enum) {
+    const List = union(enum) {
         int: type,
         float: type,
         string,
         cstring,
         @"enum": type,
 
-        fn toType(comptime elem: ListElem) type {
+        fn of(comptime field_name: []const u8, comptime T: type) List {
+            const inner: ArgType = .of(field_name, T);
+            return switch (inner) {
+                .optional => @compileError("List of optional arguments not supported: " ++ field_name ++ " (" ++ @typeName(T) ++ ")"),
+                .list => @compileError("List of list of arguments not supported: " ++ field_name ++ " (" ++ @typeName(T) ++ ")"),
+                inline else => |payload, tag| @unionInit(List, @tagName(tag), payload),
+            };
+        }
+
+        fn getType(comptime elem: List) type {
             return switch (elem) {
                 .int, .float, .@"enum" => |Passthru| Passthru,
                 .string => []const u8,
                 .cstring => [:0]const u8,
             };
         }
+
+        fn toType(comptime elem: List) type {
+            return []const elem.getType();
+        }
+
+        fn flatten(comptime elem: List) ArgType {
+            return switch (elem) {
+                inline else => |payload, tag| @unionInit(ArgType, @tagName(tag), payload),
+            };
+        }
     };
+
+    const Optional = union(enum) {
+        @"enum": type,
+        float: type,
+        int: type,
+        string,
+        cstring,
+
+        fn of(comptime field_name: []const u8, comptime T: type) Optional {
+            const inner: ArgType = .of(field_name, T);
+            return switch (inner) {
+                .optional => @compileError("Optional optionals are not supported"),
+                .list => @compileError("Optional lists are not supported"),
+                inline else => |payload, tag| @unionInit(Optional, @tagName(tag), payload),
+            };
+        }
+
+        fn getType(comptime opt: Optional) type {
+            return switch (opt) {
+                .@"enum", .int, .float => |Passthru| Passthru,
+                .string => []const u8,
+                .cstring => [:0]const u8,
+            };
+        }
+
+        fn toType(comptime opt: Optional) type {
+            return ?opt.getType();
+        }
+
+        fn flatten(comptime opt: Optional) ArgType {
+            return switch (opt) {
+                inline else => |payload, tag| @unionInit(ArgType, @tagName(tag), payload),
+            };
+        }
+    };
+
+    fn of(comptime field_name: []const u8, comptime T: type) ArgType {
+        return switch (T) {
+            bool => .bool,
+            []const u8 => .string,
+            [:0]const u8 => .cstring,
+            else => switch (@typeInfo(T)) {
+                .@"enum" => |@"enum"| {
+                    if (@"enum".fields.len == 0) @compileError("Empty enums are not allowed: " ++ field_name ++ " (" ++ @typeName(T) ++ ")");
+                    return .{ .@"enum" = T };
+                },
+                .float => .{ .float = T },
+                .int => .{ .int = T },
+                .pointer => |pointer| {
+                    if (pointer.size != .slice) @compileError("Only slice pointers are supported: " ++ field_name ++ " (" ++ @typeName(T) ++ ")");
+                    return .{ .list = .of(field_name, pointer.child) };
+                },
+                .optional => |optional| .{ .optional = .of(field_name, optional.child) },
+                else => @compileError("Unsupported argument type: " ++ field_name ++ " (" ++ @typeName(T) ++ ")"),
+            },
+        };
+    }
 
     /// The type of the field
     fn toType(comptime at: ArgType) type {
@@ -503,7 +603,7 @@ const ArgType = union(enum) {
             .float, .int, .@"enum" => |Passthru| Passthru,
             .string => []const u8,
             .cstring => [:0]const u8,
-            .list => |elem| []const elem.toType(),
+            inline .list, .optional => |fwd| fwd.toType(),
         };
     }
 
@@ -514,14 +614,14 @@ const ArgType = union(enum) {
             .float, .int, .@"enum" => |Passthru| Passthru,
             .string => []const u8,
             .cstring => [:0]const u8,
-            .list => |elem| elem.toType(),
+            inline .list, .optional => |fwd| fwd.getType(),
         };
     }
 
     fn flatten(comptime at: ArgType) ArgType {
-        if (at != .list) return at;
-        return switch (at.list) {
-            inline else => |payload, tag| @unionInit(ArgType, @tagName(tag), payload),
+        return switch (at) {
+            inline .list, .optional => |fwd| fwd.flatten(),
+            else => at,
         };
     }
 };
@@ -533,12 +633,25 @@ const ArgField = struct {
     description: ?[]const u8,
 
     fn namedFlagUsage(comptime field: ArgField) []const u8 {
+        const is_optional = field.type == .optional;
         return comptime switch (field.type.flatten()) {
-            .bool => "--[no-]" ++ field.name,
-            .@"enum" => |Enum| "--" ++ field.name ++ "=[" ++ enumValuesString(Enum) ++ "]",
-            .float => "--" ++ field.name ++ "=float",
-            .int => "--" ++ field.name ++ "=int",
-            .string, .cstring => "--" ++ field.name ++ "=string",
+            .bool => if (is_optional) unreachable else "--[no-]" ++ field.name,
+            .@"enum" => |Enum| if (is_optional)
+                ("--[no-]" ++ field.name ++ "=[(" ++ enumValuesString(Enum) ++ ")]")
+            else
+                ("--" ++ field.name ++ "=(" ++ enumValuesString(Enum) ++ ")"),
+            .float => if (is_optional)
+                ("--[no-]" ++ field.name ++ "=[float]")
+            else
+                ("--" ++ field.name ++ "=float"),
+            .int => if (is_optional)
+                ("--[no-]" ++ field.name ++ "=[int]")
+            else
+                ("--" ++ field.name ++ "=int"),
+            .string, .cstring => if (is_optional)
+                ("--[no-]" ++ field.name ++ "=[string]")
+            else
+                "--" ++ field.name ++ "=string",
             else => unreachable,
         };
     }
@@ -558,36 +671,9 @@ const ArgField = struct {
         const value_field = @typeInfo(sf.type).@"struct".fields[0];
         if (!mem.eql(u8, value_field.name, "value")) @compileError("Arguments must be a `struct { value: <type> }`: " ++ sf.name ++ "." ++ value_field.name);
 
-        const at: ArgType = switch (value_field.type) {
-            bool => .bool,
-            []const u8 => .string,
-            [:0]const u8 => .cstring,
-            []const []const u8 => .{ .list = .string },
-            []const [:0]const u8 => .{ .list = .cstring },
-            else => |Value| switch (@typeInfo(Value)) {
-                .int => .{ .int = Value },
-                .float => .{ .float = Value },
-                .@"enum" => |@"enum"| type: {
-                    if (@"enum".fields.len == 0) @compileError("Empty enums are not allowed: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")");
-                    break :type .{ .@"enum" = Value };
-                },
-                .pointer => |pointer| type: {
-                    if (pointer.size != .slice) @compileError("Only slice pointers are supported: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")");
-                    const Elem = pointer.child;
-                    switch (@typeInfo(Elem)) {
-                        .@"enum" => break :type .{ .list = .{ .@"enum" = Elem } },
-                        .int => break :type .{ .list = .{ .int = Elem } },
-                        .float => break :type .{ .list = .{ .float = Elem } },
-                        else => @compileError("Unsupported slice argument type: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")"),
-                    }
-                },
-                else => @compileError("Unsupported argument type: " ++ sf.name ++ " (" ++ @typeName(Value) ++ ")"),
-            },
-        };
-
         return .{
             .name = sf.name,
-            .type = at,
+            .type = .of(sf.name, value_field.type),
             .default_value_ptr = value_field.default_value_ptr,
             .description = if (@hasDecl(sf.type, "description")) @field(sf.type, "description") else null,
         };
@@ -624,9 +710,16 @@ fn reflectArgs(comptime Args: type) struct { []const ArgField, []const ArgField 
             else => {},
         }
 
-        if (arg.default_value_ptr) |_| {
+        if (arg.defaultValue()) |default| {
             has_optionals = true;
-        } else if (has_optionals and arg.type != .list) @compileError("Args.positional cannot have required arguments after optional arguments: " ++ arg.name);
+            if (arg.type == .optional and default != null) @compileError("Optional Args.positional with optional type must have `null` as default, if present: " ++ arg.name ++ ": " ++ @typeName(arg.type.toType()) ++ " = " ++ switch (arg.type.flatten()) {
+                .@"enum" => @tagName(default),
+                .bool => if (default) "true" else "false",
+                .float, .int => comptimePrint("{d}", .{default}),
+                .cstring, .string => if (default.len == 0) "''" else default,
+                .list, .optional => unreachable,
+            });
+        } else if (has_optionals and arg.type != .list and arg.type != .optional) @compileError("Args.positional cannot have required arguments after optional arguments: " ++ arg.name);
 
         positional_args[i] = arg;
     }
@@ -643,7 +736,7 @@ fn ArrayListsForFields(comptime fields: []const ArgField) type {
     inline for (fields) |field| {
         if (field.type == .list) {
             names[len] = field.name;
-            const Elem = field.type.list.toType();
+            const Elem = field.type.list.getType();
             const ArrayList = std.ArrayList(Elem);
             types[len] = ArrayList;
             attrs[len] = .{ .default_value_ptr = &ArrayList.empty };
@@ -808,7 +901,7 @@ pub fn getUsageFmt(comptime Args: type) struct { []const u8, bool } {
         }
 
         for (positional_fields) |field| {
-            if (field.default_value_ptr != null or field.type == .list) {
+            if (field.default_value_ptr != null or field.type == .list or field.type == .optional) {
                 usage = comptimePrint("{s} [{s}{s}]", .{
                     usage, field.name, if (field.type == .list) "..." else "",
                 });
@@ -833,13 +926,14 @@ test getUsageFmt {
         positional: struct {
             required: struct { value: []const u8 },
             optional: struct { value: []const u8 = "" },
+            optional2: struct { value: ?[]const u8 },
         },
     };
 
     const fmt, const hasFmt = getUsageFmt(Args);
     try testing.expect(!hasFmt); // arg0 provided by `Args.arg0`
     try testing.expectEqualStrings(
-        \\Usage: program --[no-]required [options...] <required> [optional]
+        \\Usage: program --[no-]required [options...] <required> [optional] [optional2]
         \\
     , fmt);
 }
@@ -1004,11 +1098,11 @@ test printHelpArg0 {
 
         named: struct {
             foo: struct {
-                value: [:0]const u8 = "",
+                value: ?[:0]const u8 = null,
                 pub const description = "does a foo thing";
             },
             bar: struct {
-                value: []const u8,
+                value: ?[]const u8,
                 pub const description = "does a bar thing";
             },
             baz: struct { value: u32 = 10 },
@@ -1020,13 +1114,14 @@ test printHelpArg0 {
             foobar: struct { value: bool = false },
             barfoo: struct { value: bool },
             foobaz: struct { value: []const []const u8 },
+            bazfoo: struct { value: ?[]const u8 = null },
         },
         positional: struct {
             foo: struct {
                 value: []const u8,
                 pub const description = "a special foo thing";
             },
-            bar: struct { value: []const u8 = "" },
+            bar: struct { value: ?[]const u8 },
             baz: struct {
                 value: []const []const u8,
                 pub const description = "not-so-special baz thing";
@@ -1041,25 +1136,26 @@ test printHelpArg0 {
     var aw: Writer.Allocating = .init(gpa);
     try printHelpArg0(Args, &aw.writer, "myprog");
     try testing.expectEqualStrings(
-        \\Usage: hello --bar=string --[no-]barfoo [options...] <foo> [bar] [baz...]
+        \\Usage: hello --[no-]bar=[string] --[no-]barfoo [options...] <foo> [bar] [baz...]
         \\
         \\my special description
         \\
         \\Arguments:
-        \\  foo                 [string. required] a special foo thing
-        \\  bar                 [string. default: '']
-        \\  baz...              [string] not-so-special baz thing
+        \\  foo                        [string. required] a special foo thing
+        \\  bar                        [string]
+        \\  baz...                     [string] not-so-special baz thing
         \\
         \\Options:
-        \\  --help              Print this help text and exit.
-        \\  --foo=string        [default: ''] does a foo thing
-        \\  --bar=string        [required] does a bar thing
-        \\  --baz=int           [default: 10]
-        \\  --quux=int          [default: -1]
-        \\  --quuz=float        [default: -420] Nice.
-        \\  --[no-]foobar       [default: no]
-        \\  --[no-]barfoo       [required]
-        \\  --foobaz=string     [multiple]
+        \\  --help                     Print this help text and exit.
+        \\  --[no-]foo=[string]        does a foo thing
+        \\  --[no-]bar=[string]        [required] does a bar thing
+        \\  --baz=int                  [default: 10]
+        \\  --quux=int                 [default: -1]
+        \\  --quuz=float               [default: -420] Nice.
+        \\  --[no-]foobar              [default: no]
+        \\  --[no-]barfoo              [required]
+        \\  --foobaz=string            [multiple]
+        \\  --[no-]bazfoo=[string]
         \\
         \\my special epilogue
         \\
@@ -1113,7 +1209,7 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
             const lhs: []const u8 = field.name ++ (if (field.type == .list) "..." else "");
             var rhs: []const u8 = comptimePrint("[{s}{s}]", .{
                 switch (field.type.flatten()) {
-                    .bool, .list => unreachable,
+                    .bool, .list, .optional => unreachable,
                     .@"enum" => |Enum| enumValuesString(Enum),
                     .float => "float",
                     .int => "int",
@@ -1124,8 +1220,8 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
                     .@"enum" => comptimePrint(". default: {t}", .{default}),
                     .float, .int => comptimePrint(". default: {d}", .{default}),
                     .cstring, .string => comptimePrint(". default: {s}", .{if (default.len == 0) "''" else default}),
-                    .list => "",
-                } else if (field.type == .list) "" else ". required",
+                    .list, .optional => "",
+                } else if (field.type == .list or field.type == .optional) "" else ". required",
             });
             if (field.description) |description| {
                 rhs = rhs ++ " " ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
@@ -1141,25 +1237,33 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
 
         for (named_fields, 1..) |field, i| {
             const lhs: []const u8 = field.namedFlagUsage();
-            var rhs: []const u8 = "[";
-            if (field.type == .list) {
-                rhs = rhs ++ "multiple";
-            } else if (field.defaultValue()) |default| {
-                rhs = rhs ++ switch (field.type) {
-                    .bool => comptimePrint("default: {s}", .{if (default) "yes" else "no"}),
-                    .@"enum" => comptimePrint("default: {t}", .{default}),
-                    .float, .int => comptimePrint("default: {d}", .{default}),
-                    .cstring, .string => comptimePrint("default: {s}", .{if (default.len == 0) "''" else default}),
-                    .list => unreachable,
-                };
-            } else {
-                rhs = rhs ++ "required";
-            }
-            rhs = rhs ++ "]";
+            var rhs: []const u8 = switch (field.type) {
+                .bool => if (field.defaultValue()) |default| comptimePrint("[default: {s}] ", .{if (default) "yes" else "no"}) else "[required] ",
+                .@"enum" => if (field.defaultValue()) |default| comptimePrint("[default: {t}] ", .{default}) else "[required] ",
+                .float, .int => if (field.defaultValue()) |default| comptimePrint("[default: {d}] ", .{default}) else "[required] ",
+                .cstring, .string => if (field.defaultValue()) |default| comptimePrint("[default: {s}] ", .{if (default.len == 0) "''" else default}) else "[required] ",
+                .optional => |inner| default: {
+                    if (field.defaultValue()) |default_optional| {
+                        if (default_optional) |default| switch (inner) {
+                            .@"enum" => break :default comptimePrint("[default: {t}] ", .{default}),
+                            .float, .int => break :default comptimePrint("[default: {d}] ", .{default}),
+                            .cstring, .string => break :default comptimePrint("[default: {s}] ", .{default}),
+                            .list => break :default "[multiple] ",
+                            else => {},
+                        };
+                        break :default "";
+                    } else {
+                        break :default "[required] ";
+                    }
+                },
+                .list => "[multiple] ",
+            };
+
             if (field.description) |description| {
-                rhs = rhs ++ " " ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
+                rhs = rhs ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
             }
 
+            rhs = mem.trimEnd(u8, rhs, " \n");
             options_table[i] = .{ lhs, rhs };
             lhs_max_width = @max(lhs_max_width, lhs.len);
         }
@@ -1183,8 +1287,12 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         help = help ++ "\nOptions:\n";
         for (options_table) |option| {
             const lhs, const rhs = option;
-            const middle_spacing = " " ** (lhs_max_width - lhs.len);
-            help = help ++ "  " ++ lhs ++ middle_spacing ++ rhs ++ "\n";
+            help = help ++ "  " ++ lhs;
+            if (rhs.len != 0) {
+                const middle_spacing = " " ** (lhs_max_width - lhs.len);
+                help = help ++ middle_spacing ++ rhs;
+            }
+            help = help ++ "\n";
         }
 
         if (@hasDecl(Args, "epilogue")) {
@@ -1854,4 +1962,40 @@ test "field help" {
     try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
     try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "named"), "output").description));
     try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "positional"), "args").description));
+}
+
+test "optionals" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const options: Options = .{ .arg0 = "unused-prog", .terminal = failing_terminal, .exit = false };
+
+    const Args = struct {
+        named: struct {
+            foo: struct { value: ?[]const u8 = null },
+            bar: struct { value: ?[]const u8 },
+        },
+        positional: struct {
+            opt1: struct { value: ?[]const u8 },
+            opt2: struct { value: ?[]const u8 = null },
+            splat: struct { value: []const []const u8 },
+        },
+    };
+
+    const args = try parseSlice(Args, allocator, &[_][]const u8{
+        "--bar=hi", "--no-bar",
+        "--bar",    "hello",
+    }, options);
+    try testing.expectEqualDeep(Args{
+        .named = .{
+            .foo = .{},
+            .bar = .{ .value = "hello" },
+        },
+        .positional = .{
+            .opt1 = .{ .value = null },
+            .opt2 = .{},
+            .splat = .{ .value = &.{} },
+        },
+    }, args);
 }
