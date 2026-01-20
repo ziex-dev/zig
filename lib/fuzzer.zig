@@ -155,10 +155,14 @@ const Executable = struct {
                 "incompatible existing coverage file '{s}' (differing pcs length: {} != {})",
                 .{ &coverage_file_name, seen_pcs_header.pcs_len, pcs.len },
             );
-            if (mem.indexOfDiff(usize, seen_pcs_header.pcAddrs(), pcs)) |i| panic(
-                "incompatible existing coverage file '{s}' (differing pc at index {d}: {x} != {x})",
-                .{ &coverage_file_name, i, seen_pcs_header.pcAddrs()[i], pcs[i] },
-            );
+            const stored_vaddrs = seen_pcs_header.pcAddrs();
+            for (stored_vaddrs, pcs, 0..) |stored_vaddr, pc, i| {
+                const pc_vaddr = fuzzer_unslide_address(pc);
+                if (stored_vaddr != pc_vaddr) panic(
+                    "incompatible existing coverage file '{s}' (differing pc at index {d}: {x} != {x})",
+                    .{ &coverage_file_name, i, stored_vaddr, pc_vaddr },
+                );
+            }
 
             return map;
         }
