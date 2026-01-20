@@ -182,20 +182,21 @@ fn testWithPathTypeIfSupported(comptime path_type: PathType, comptime path_sep: 
 }
 
 // For use in test setup.  If the symlink creation fails on Windows with
-// AccessDenied, then make the test failure silent (it is not a Zig failure).
+// AccessDenied/PermissionDenied/FileSystem, then make the test failure silent (it is not a Zig failure).
 fn setupSymlink(io: Io, dir: Dir, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
     return dir.symLink(io, target, link, flags) catch |err| switch (err) {
-        // Symlink requires admin privileges on windows, so this test can legitimately fail.
-        error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
+        // On Windows, symlinks require admin privileges and the underlying filesystem must support symlinks
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
 }
 
 // For use in test setup.  If the symlink creation fails on Windows with
-// AccessDenied, then make the test failure silent (it is not a Zig failure).
+// AccessDeniedPermissionDenied/FileSystem, then make the test failure silent (it is not a Zig failure).
 fn setupSymlinkAbsolute(io: Io, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
     return Dir.symLinkAbsolute(io, target, link, flags) catch |err| switch (err) {
-        error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
+        // On Windows, symlinks require admin privileges and the underlying filesystem must support symlinks
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
 }
@@ -826,11 +827,6 @@ test "file operations on directories" {
                     const buf = try ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited);
                     testing.allocator.free(buf);
                 },
-                .wasi => {
-                    // WASI return EBADF, which gets mapped to NotOpenForReading.
-                    // See https://github.com/bytecodealliance/wasmtime/issues/1935
-                    try expectError(error.NotOpenForReading, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
-                },
                 else => {
                     try expectError(error.IsDir, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
                 },
@@ -847,7 +843,12 @@ test "file operations on directories" {
 
             {
                 const handle = try ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = true, .mode = .read_only });
-                handle.close(io);
+                defer handle.close(io);
+
+                // Reading from the handle should fail
+                var buf: [1]u8 = undefined;
+                try expectError(error.IsDir, handle.readStreaming(io, &.{&buf}));
+                try expectError(error.IsDir, handle.readPositional(io, &.{&buf}, 0));
             }
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
@@ -1022,8 +1023,7 @@ test "Dir.rename directory onto non-empty dir" {
             file.close(io);
             target_dir.close(io);
 
-            // Rename should fail with PathAlreadyExists if target_dir is non-empty
-            try expectError(error.PathAlreadyExists, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
+            try expectError(error.DirNotEmpty, ctx.dir.rename(test_dir_path, ctx.dir, target_dir_path, io));
 
             // Ensure the directory was not renamed
             var dir = try ctx.dir.openDir(io, test_dir_path, .{});
@@ -1131,6 +1131,7 @@ test "renameAbsolute" {
 
 test "openExecutable" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -1140,6 +1141,7 @@ test "openExecutable" {
 
 test "executablePath" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
     var buf: [Dir.max_path_bytes]u8 = undefined;
@@ -1651,12 +1653,26 @@ test "AtomicFile" {
                 \\ this is a test file
             ;
 
+            // link() succeeds with no file already present
             {
-                var buffer: [100]u8 = undefined;
-                var af = try ctx.dir.atomicFile(io, test_out_file, .{ .write_buffer = &buffer });
-                defer af.deinit();
-                try af.file_writer.interface.writeAll(test_content);
-                try af.finish();
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.link(io);
+            }
+            // link() returns error.PathAlreadyExists if file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = false });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try expectError(error.PathAlreadyExists, af.link(io));
+            }
+            // replace() succeeds if file already present
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{ .replace = true });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.replace(io);
             }
             const content = try ctx.dir.readFileAlloc(io, test_out_file, allocator, .limited(9999));
             try expectEqualStrings(test_content, content);
@@ -1762,10 +1778,10 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
     const io = testing.io;
 
     var random_bytes: [12]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
 
-    var random_b64: [std.fs.base64_encoder.calcSize(random_bytes.len)]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&random_b64, &random_bytes);
+    var random_b64: [std.base64.url_safe.Encoder.calcSize(random_bytes.len)]u8 = undefined;
+    _ = std.base64.url_safe.Encoder.encode(&random_b64, &random_bytes);
 
     const sub_path = random_b64 ++ "-zig-test-absolute-paths.txt";
 
@@ -2349,13 +2365,7 @@ test "readlinkat" {
     try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = "nonsense" });
 
     // create a symbolic link
-    tmp.dir.symLink(io, "file.txt", "link", .{}) catch |err| switch (err) {
-        error.AccessDenied => {
-            // Symlink requires admin privileges on windows, so this test can legitimately fail.
-            if (native_os == .windows) return error.SkipZigTest;
-        },
-        else => |e| return e,
-    };
+    try setupSymlink(io, tmp.dir, "file.txt", "link", .{});
 
     // read the link
     var buffer: [Dir.max_path_bytes]u8 = undefined;

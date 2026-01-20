@@ -533,7 +533,7 @@ const PhcFormatHasher = struct {
         if (params.secret != null or params.ad != null) return HasherError.InvalidEncoding;
 
         var salt: [default_salt_len]u8 = undefined;
-        crypto.random.bytes(&salt);
+        io.random(&salt);
 
         var hash: [default_hash_len]u8 = undefined;
         try kdf(allocator, &hash, password, &salt, params, mode, io);
@@ -627,6 +627,8 @@ pub fn strVerify(
 }
 
 test "argon2d" {
+    if (true) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30074
+
     const password = [_]u8{0x01} ** 32;
     const salt = [_]u8{0x02} ** 16;
     const secret = [_]u8{0x03} ** 8;

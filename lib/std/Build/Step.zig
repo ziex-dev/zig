@@ -29,7 +29,6 @@ dependants: ArrayList(*Step),
 /// retain previous value, or update.
 inputs: Inputs,
 
-state: State,
 /// Set this field to declare an upper bound on the amount of bytes of memory it will
 /// take to run the step. Zero means no limit.
 ///
@@ -50,6 +49,9 @@ state: State,
 /// runner. This value is configurable on the command line, and defaults to the
 /// total system memory available.
 max_rss: usize,
+
+state: State,
+pending_deps: u32,
 
 result_error_msgs: ArrayList([]const u8),
 result_error_bundle: std.zig.ErrorBundle,
@@ -111,12 +113,7 @@ pub const TestResults = struct {
 pub const MakeOptions = struct {
     progress_node: std.Progress.Node,
     watch: bool,
-    web_server: switch (builtin.target.cpu.arch) {
-        else => ?*Build.WebServer,
-        // WASM code references `Build.abi` which happens to incidentally reference this type, but
-        // it currently breaks because `std.net.Address` doesn't work there. Work around for now.
-        .wasm32 => void,
-    },
+    web_server: ?*Build.WebServer,
     /// If set, this is a timeout to enforce on all individual unit tests, in nanoseconds.
     unit_test_timeout_ns: ?u64,
     /// Not to be confused with `Build.allocator`, which is an alias of `Build.graph.arena`.
@@ -134,7 +131,6 @@ pub const State = enum {
     /// file system inputs have been modified, meaning that the step needs to
     /// be re-evaluated.
     precheck_done,
-    running,
     dependency_failure,
     success,
     failure,
@@ -247,6 +243,7 @@ pub fn init(options: StepOptions) Step {
         .dependants = .empty,
         .inputs = Inputs.init,
         .state = .precheck_unstarted,
+        .pending_deps = undefined, // initialized by build runner
         .max_rss = options.max_rss,
         .debug_stack_trace = blk: {
             const addr_buf = arena.alloc(usize, options.owner.debug_stack_frames_count) catch @panic("OOM");
@@ -985,14 +982,17 @@ pub fn reset(step: *Step, gpa: Allocator) void {
 }
 
 /// Implementation detail of file watching. Prepares the step for being re-evaluated.
-pub fn recursiveReset(step: *Step, gpa: Allocator) void {
-    assert(step.state != .precheck_done);
+/// Returns `true` if the step was newly invalidated, `false` if it was already invalidated.
+pub fn invalidateResult(step: *Step, gpa: Allocator) bool {
+    if (step.state == .precheck_done) return false;
+    assert(step.pending_deps == 0);
     step.state = .precheck_done;
     step.reset(gpa);
-    for (step.dependants.items) |dep| {
-        if (dep.state == .precheck_done) continue;
-        dep.recursiveReset(gpa);
+    for (step.dependants.items) |dependant| {
+        _ = dependant.invalidateResult(gpa);
+        dependant.pending_deps += 1;
     }
+    return true;
 }
 
 test {

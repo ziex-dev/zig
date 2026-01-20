@@ -33,26 +33,16 @@ test "check WASI CWD" {
     }
 }
 
-test "getrandom" {
-    var buf_a: [50]u8 = undefined;
-    var buf_b: [50]u8 = undefined;
-    try posix.getrandom(&buf_a);
-    try posix.getrandom(&buf_b);
-    // If this test fails the chance is significantly higher that there is a bug than
-    // that two sets of 50 bytes were equal.
-    try expect(!mem.eql(u8, &buf_a, &buf_b));
-}
-
 test "getuid" {
     if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
-    _ = posix.getuid();
-    _ = posix.geteuid();
+    _ = posix.system.getuid();
+    _ = posix.system.geteuid();
 }
 
 test "getgid" {
     if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
-    _ = posix.getgid();
-    _ = posix.getegid();
+    _ = posix.system.getgid();
+    _ = posix.system.getegid();
 }
 
 test "sigaltstack" {
@@ -131,13 +121,18 @@ test "pipe" {
     if (native_os == .windows or native_os == .wasi)
         return error.SkipZigTest;
 
+    const io = testing.io;
+
     const fds = try std.Io.Threaded.pipe2(.{});
-    try expect((try posix.write(fds[1], "hello")) == 5);
+    const out: Io.File = .{ .handle = fds[0] };
+    const in: Io.File = .{ .handle = fds[1] };
+    try in.writeStreamingAll(io, "hello");
     var buf: [16]u8 = undefined;
-    try expect((try posix.read(fds[0], buf[0..])) == 5);
+    try expect((try out.readStreaming(io, &.{&buf})) == 5);
+
     try expectEqualSlices(u8, buf[0..5], "hello");
-    posix.close(fds[1]);
-    posix.close(fds[0]);
+    out.close(io);
+    in.close(io);
 }
 
 test "memfd_create" {
@@ -177,7 +172,7 @@ test "mmap" {
         const data = try posix.mmap(
             null,
             1234,
-            posix.PROT.READ | posix.PROT.WRITE,
+            .{ .READ = true, .WRITE = true },
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
@@ -219,7 +214,7 @@ test "mmap" {
         const data = try posix.mmap(
             null,
             alloc_size,
-            posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .PRIVATE },
             file.handle,
             0,
@@ -244,7 +239,7 @@ test "mmap" {
         const data = try posix.mmap(
             null,
             alloc_size / 2,
-            posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .PRIVATE },
             file.handle,
             alloc_size / 2,
@@ -468,8 +463,12 @@ test "rename smoke test" {
         // Create some file using `open`.
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
         defer gpa.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true }, mode);
-        posix.close(fd);
+        const file = try Io.Dir.cwd().createFile(io, file_path, .{
+            .read = true,
+            .exclusive = true,
+            .permissions = .fromMode(mode),
+        });
+        file.close(io);
 
         // Rename the file
         const new_file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
@@ -481,15 +480,15 @@ test "rename smoke test" {
         // Try opening renamed file
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_file" });
         defer gpa.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDWR }, mode);
-        posix.close(fd);
+        const file = try Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_write });
+        file.close(io);
     }
 
     {
         // Try opening original file - should fail with error.FileNotFound
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_file" });
         defer gpa.free(file_path);
-        try expectError(error.FileNotFound, posix.open(file_path, .{ .ACCMODE = .RDWR }, mode));
+        try expectError(error.FileNotFound, Io.Dir.cwd().openFile(io, file_path, .{ .mode = .read_write }));
     }
 
     {
@@ -508,15 +507,15 @@ test "rename smoke test" {
         // Try opening renamed directory
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_other_dir" });
         defer gpa.free(file_path);
-        const fd = try posix.open(file_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, mode);
-        posix.close(fd);
+        const dir = try Io.Dir.cwd().openDir(io, file_path, .{});
+        dir.close(io);
     }
 
     {
         // Try opening original directory - should fail with error.FileNotFound
         const file_path = try Dir.path.join(gpa, &.{ base_path, "some_dir" });
         defer gpa.free(file_path);
-        try expectError(error.FileNotFound, posix.open(file_path, .{ .ACCMODE = .RDONLY, .DIRECTORY = true }, mode));
+        try expectError(error.FileNotFound, Io.Dir.cwd().openDir(io, file_path, .{}));
     }
 }
 

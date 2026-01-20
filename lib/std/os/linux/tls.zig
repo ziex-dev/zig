@@ -531,13 +531,11 @@ pub fn prepareArea(area: []u8) usize {
     };
 }
 
-/// The main motivation for the size chosen here is that this is how much ends up being requested for
-/// the thread-local variables of the `std.crypto.random` implementation. I'm not sure why it ends up
-/// being so much; the struct itself is only 64 bytes. I think it has to do with being page-aligned
-/// and LLVM or LLD is not smart enough to lay out the TLS data in a space-conserving way. Anyway, I
-/// think it's fine because it's less than 3 pages of memory, and putting it in the ELF like this is
-/// equivalent to moving the `mmap` call below into the kernel, avoiding syscall overhead.
-var main_thread_area_buffer: [0x2100]u8 align(page_size_min) = undefined;
+/// The main motivation for the size chosen here is to be larger than total
+/// amount of thread-local variables for most programs. Putting this allocation
+/// in the ELF like this is equivalent to moving the `mmap` call below into the
+/// kernel, avoiding syscall overhead.
+var main_thread_area_buffer: [0x1000]u8 align(page_size_min) = undefined;
 
 /// Computes the layout of the static TLS area, allocates the area, initializes all of its fields,
 /// and assigns the architecture-specific value to the TP register.
@@ -570,7 +568,7 @@ pub fn initStatic(phdrs: []elf.Phdr) void {
 }
 
 inline fn mmap_tls(length: usize) usize {
-    const prot = linux.PROT.READ | linux.PROT.WRITE;
+    const prot: linux.PROT = .{ .READ = true, .WRITE = true };
     const flags: linux.MAP = .{ .TYPE = .PRIVATE, .ANONYMOUS = true };
 
     if (@hasField(linux.SYS, "mmap2")) {
@@ -578,7 +576,7 @@ inline fn mmap_tls(length: usize) usize {
             .mmap2,
             0,
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @as(usize, @bitCast(@as(isize, -1))),
             0,
@@ -591,7 +589,7 @@ inline fn mmap_tls(length: usize) usize {
             @intFromPtr(&[_]usize{
                 0,
                 length,
-                prot,
+                @as(u32, @bitCast(prot)),
                 @as(u32, @bitCast(flags)),
                 @as(usize, @bitCast(@as(isize, -1))),
                 0,
@@ -600,7 +598,7 @@ inline fn mmap_tls(length: usize) usize {
             .mmap,
             0,
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @as(usize, @bitCast(@as(isize, -1))),
             0,

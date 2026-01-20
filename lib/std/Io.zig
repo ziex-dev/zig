@@ -1,3 +1,19 @@
+//! A cross-platform interface that abstracts all I/O operations and
+//! concurrency. It includes:
+//! * file system
+//! * networking
+//! * processes
+//! * time and sleeping
+//! * randomness
+//! * async, await, concurrent, and cancel
+//! * concurrent queues
+//! * wait groups and select
+//! * mutexes, futexes, events, and conditions
+//! * memory mapped files
+//! This interface allows programmers to write optimal, reusable code while
+//! participating in these operations.
+const Io = @This();
+
 const builtin = @import("builtin");
 const is_windows = builtin.os.tag == .windows;
 
@@ -8,79 +24,6 @@ const math = std.math;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
-
-pub const Limit = enum(usize) {
-    nothing = 0,
-    unlimited = std.math.maxInt(usize),
-    _,
-
-    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
-    pub fn limited(n: usize) Limit {
-        return @enumFromInt(n);
-    }
-
-    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
-    /// `.unlimited`.
-    pub fn limited64(n: u64) Limit {
-        return @enumFromInt(@min(n, std.math.maxInt(usize)));
-    }
-
-    pub fn countVec(data: []const []const u8) Limit {
-        var total: usize = 0;
-        for (data) |d| total += d.len;
-        return .limited(total);
-    }
-
-    pub fn min(a: Limit, b: Limit) Limit {
-        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
-    }
-
-    pub fn minInt(l: Limit, n: usize) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn minInt64(l: Limit, n: u64) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn slice(l: Limit, s: []u8) []u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn toInt(l: Limit) ?usize {
-        return switch (l) {
-            else => @intFromEnum(l),
-            .unlimited => null,
-        };
-    }
-
-    /// Reduces a slice to account for the limit, leaving room for one extra
-    /// byte above the limit, allowing for the use case of differentiating
-    /// between end-of-stream and reaching the limit.
-    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
-        assert(non_empty_buffer.len >= 1);
-        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
-    }
-
-    pub fn nonzero(l: Limit) bool {
-        return @intFromEnum(l) > 0;
-    }
-
-    /// Return a new limit reduced by `amount` or return `null` indicating
-    /// limit would be exceeded.
-    pub fn subtract(l: Limit, amount: usize) ?Limit {
-        if (l == .unlimited) return .unlimited;
-        if (amount > @intFromEnum(l)) return null;
-        return @enumFromInt(@intFromEnum(l) - amount);
-    }
-};
-
-pub const Reader = @import("Io/Reader.zig");
-pub const Writer = @import("Io/Writer.zig");
 
 pub fn poll(
     gpa: Allocator,
@@ -529,33 +472,30 @@ pub fn PollFiles(comptime StreamEnum: type) type {
     return @Struct(.auto, null, std.meta.fieldNames(StreamEnum), &@splat(Io.File), &@splat(.{}));
 }
 
-test {
-    _ = net;
-    _ = Reader;
-    _ = Writer;
-    _ = Evented;
-    _ = Threaded;
-    _ = @import("Io/test.zig");
-}
+userdata: ?*anyopaque,
+vtable: *const VTable,
 
-const Io = @This();
-
+pub const Threaded = @import("Io/Threaded.zig");
 pub const Evented = switch (builtin.os.tag) {
     .linux => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/IoUring.zig"),
+        .x86_64, .aarch64 => IoUring,
         else => void, // context-switching code not implemented yet
     },
     .dragonfly, .freebsd, .netbsd, .openbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/Kqueue.zig"),
+        .x86_64, .aarch64 => Kqueue,
         else => void, // context-switching code not implemented yet
     },
     else => void,
 };
-pub const Threaded = @import("Io/Threaded.zig");
-pub const net = @import("Io/net.zig");
+pub const Kqueue = @import("Io/Kqueue.zig");
+pub const IoUring = @import("Io/IoUring.zig");
 
-userdata: ?*anyopaque,
-vtable: *const VTable,
+pub const Reader = @import("Io/Reader.zig");
+pub const Writer = @import("Io/Writer.zig");
+pub const net = @import("Io/net.zig");
+pub const Dir = @import("Io/Dir.zig");
+pub const File = @import("Io/File.zig");
+pub const Terminal = @import("Io/Terminal.zig");
 
 pub const VTable = struct {
     /// If it returns `null` it means `result` has been already populated and
@@ -667,6 +607,7 @@ pub const VTable = struct {
     dirStatFile: *const fn (?*anyopaque, Dir, []const u8, Dir.StatFileOptions) Dir.StatFileError!File.Stat,
     dirAccess: *const fn (?*anyopaque, Dir, []const u8, Dir.AccessOptions) Dir.AccessError!void,
     dirCreateFile: *const fn (?*anyopaque, Dir, []const u8, File.CreateFlags) File.OpenError!File,
+    dirCreateFileAtomic: *const fn (?*anyopaque, Dir, []const u8, Dir.CreateFileAtomicOptions) Dir.CreateFileAtomicError!File.Atomic,
     dirOpenFile: *const fn (?*anyopaque, Dir, []const u8, File.OpenFlags) File.OpenError!File,
     dirClose: *const fn (?*anyopaque, []const Dir) void,
     dirRead: *const fn (?*anyopaque, *Dir.Reader, []Dir.Entry) Dir.Reader.Error!usize,
@@ -675,6 +616,7 @@ pub const VTable = struct {
     dirDeleteFile: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteFileError!void,
     dirDeleteDir: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteDirError!void,
     dirRename: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenameError!void,
+    dirRenamePreserve: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenamePreserveError!void,
     dirSymLink: *const fn (?*anyopaque, Dir, target_path: []const u8, sym_link_path: []const u8, Dir.SymLinkFlags) Dir.SymLinkError!void,
     dirReadLink: *const fn (?*anyopaque, Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize,
     dirSetOwner: *const fn (?*anyopaque, Dir, ?File.Uid, ?File.Gid) Dir.SetOwnerError!void,
@@ -710,6 +652,13 @@ pub const VTable = struct {
     fileUnlock: *const fn (?*anyopaque, File) void,
     fileDowngradeLock: *const fn (?*anyopaque, File) File.DowngradeLockError!void,
     fileRealPath: *const fn (?*anyopaque, File, out_buffer: []u8) File.RealPathError!usize,
+    fileHardLink: *const fn (?*anyopaque, File, Dir, []const u8, File.HardLinkOptions) File.HardLinkError!void,
+
+    fileMemoryMapCreate: *const fn (?*anyopaque, File, File.MemoryMap.CreateOptions) File.MemoryMap.CreateError!File.MemoryMap,
+    fileMemoryMapDestroy: *const fn (?*anyopaque, *File.MemoryMap) void,
+    fileMemoryMapSetLength: *const fn (?*anyopaque, *File.MemoryMap, File.MemoryMap.CreateOptions) File.MemoryMap.SetLengthError!void,
+    fileMemoryMapRead: *const fn (?*anyopaque, *File.MemoryMap) File.ReadPositionalError!void,
+    fileMemoryMapWrite: *const fn (?*anyopaque, *File.MemoryMap) File.WritePositionalError!void,
 
     processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
     processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
@@ -728,6 +677,9 @@ pub const VTable = struct {
 
     now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
     sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
+
+    random: *const fn (?*anyopaque, buffer: []u8) void,
+    randomSecure: *const fn (?*anyopaque, buffer: []u8) RandomSecureError!void,
 
     netListenIp: *const fn (?*anyopaque, address: net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Server,
     netAccept: *const fn (?*anyopaque, server: net.Socket.Handle) net.Server.AcceptError!net.Stream,
@@ -748,6 +700,76 @@ pub const VTable = struct {
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
 };
 
+pub const Limit = enum(usize) {
+    nothing = 0,
+    unlimited = std.math.maxInt(usize),
+    _,
+
+    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
+    pub fn limited(n: usize) Limit {
+        return @enumFromInt(n);
+    }
+
+    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
+    /// `.unlimited`.
+    pub fn limited64(n: u64) Limit {
+        return @enumFromInt(@min(n, std.math.maxInt(usize)));
+    }
+
+    pub fn countVec(data: []const []const u8) Limit {
+        var total: usize = 0;
+        for (data) |d| total += d.len;
+        return .limited(total);
+    }
+
+    pub fn min(a: Limit, b: Limit) Limit {
+        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
+    }
+
+    pub fn minInt(l: Limit, n: usize) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn minInt64(l: Limit, n: u64) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn slice(l: Limit, s: []u8) []u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn toInt(l: Limit) ?usize {
+        return switch (l) {
+            else => @intFromEnum(l),
+            .unlimited => null,
+        };
+    }
+
+    /// Reduces a slice to account for the limit, leaving room for one extra
+    /// byte above the limit, allowing for the use case of differentiating
+    /// between end-of-stream and reaching the limit.
+    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
+        assert(non_empty_buffer.len >= 1);
+        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
+    }
+
+    pub fn nonzero(l: Limit) bool {
+        return @intFromEnum(l) > 0;
+    }
+
+    /// Return a new limit reduced by `amount` or return `null` indicating
+    /// limit would be exceeded.
+    pub fn subtract(l: Limit, amount: usize) ?Limit {
+        if (l == .unlimited) return .unlimited;
+        if (amount > @intFromEnum(l)) return null;
+        return @enumFromInt(@intFromEnum(l) - amount);
+    }
+};
+
 pub const Cancelable = error{
     /// Caller has requested the async operation to stop.
     Canceled,
@@ -764,10 +786,6 @@ pub const UnexpectedError = error{
     /// the respective function.
     Unexpected,
 };
-
-pub const Dir = @import("Io/Dir.zig");
-pub const File = @import("Io/File.zig");
-pub const Terminal = @import("Io/Terminal.zig");
 
 pub const Clock = enum {
     /// A settable system-wide clock that measures real (i.e. wall-clock)
@@ -1350,7 +1368,7 @@ pub const Mutex = extern struct {
 
     pub const init: Mutex = .{ .state = .init(.unlocked) };
 
-    const State = enum(u32) {
+    pub const State = enum(u32) {
         unlocked,
         locked_once,
         contended,
@@ -2239,4 +2257,48 @@ pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancel
 
 pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
+}
+
+/// Obtains entropy from a cryptographically secure pseudo-random number
+/// generator.
+///
+/// The implementation *may* store RNG state in process memory and use it to
+/// fill `buffer`.
+///
+/// The randomness is seeded by `randomSecure`, or a less secure mechanism upon
+/// failure.
+///
+/// Threadsafe.
+///
+/// See also `randomSecure`.
+pub fn random(io: Io, buffer: []u8) void {
+    return io.vtable.random(io.userdata, buffer);
+}
+
+pub const RandomSecureError = error{EntropyUnavailable} || Cancelable;
+
+/// Obtains cryptographically secure entropy from outside the process.
+///
+/// Always makes a syscall, or otherwise avoids dependency on process memory,
+/// in order to obtain fresh randomness. Does not rely on stored RNG state.
+///
+/// Does not have any fallback mechanisms; returns `error.EntropyUnavailable`
+/// if any problems occur.
+///
+/// Threadsafe.
+///
+/// See also `random`.
+pub fn randomSecure(io: Io, buffer: []u8) RandomSecureError!void {
+    return io.vtable.randomSecure(io.userdata, buffer);
+}
+
+test {
+    _ = net;
+    _ = File;
+    _ = Dir;
+    _ = Reader;
+    _ = Writer;
+    _ = Evented;
+    _ = Threaded;
+    _ = @import("Io/test.zig");
 }

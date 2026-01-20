@@ -115,6 +115,16 @@ pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
+    /// If set, `std.start` and `std.Thread` will configure an per-thread alternative signal stack
+    /// of this size. Importantly, if `enable_segfault_handler` is set, the segfault handler will
+    /// use this alternative stack, meaning it can still print stack traces even if a segmentation
+    /// fault is caused by a stack overflow.
+    ///
+    /// On POSIX targets, the signal stack is configured using 'sigaltstack(2)'.
+    ///
+    /// On Windows, this value is currently ignored.
+    signal_stack_size: ?u64 = 1 << 18, // 1<<17 observed to be sufficient for stack tracing with self-hosted x86_64 backend
+
     /// The current log level.
     log_level: log.Level = log.default_level,
 
@@ -137,12 +147,6 @@ pub const Options = struct {
     queryPageSize: fn () usize = heap.defaultQueryPageSize,
 
     fmt_max_depth: usize = fmt.default_max_depth,
-
-    cryptoRandomSeed: fn (buffer: []u8) void = @import("crypto/tlcsprng.zig").defaultRandomSeed,
-
-    crypto_always_getrandom: bool = false,
-
-    crypto_fork_safety: bool = true,
 
     /// By default, std.http.Client will support HTTPS connections.  Set this option to `true` to
     /// disable TLS support.

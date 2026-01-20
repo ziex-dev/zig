@@ -55,11 +55,11 @@ pub const std_options_cwd = if (native_os == .wasi) wasi_cwd else null;
 pub const panic = crash_report.panic;
 pub const debug = crash_report.debug;
 
-var wasi_preopens: fs.wasi.Preopens = undefined;
+var preopens: std.process.Preopens = .empty;
 pub fn wasi_cwd() Io.Dir {
     // Expect the first preopen to be current working directory.
     const cwd_fd: std.posix.fd_t = 3;
-    assert(mem.eql(u8, wasi_preopens.names[cwd_fd], "."));
+    assert(mem.eql(u8, preopens.map.keys()[cwd_fd], "."));
     return .{ .handle = cwd_fd };
 }
 
@@ -210,7 +210,7 @@ pub fn main(init: std.process.Init.Minimal) anyerror!void {
     }
 
     if (native_os == .wasi) {
-        wasi_preopens = try fs.wasi.preopensAlloc(arena);
+        preopens = try .init(arena);
     }
 
     return mainArgs(gpa, arena, io, args, &environ_map);
@@ -360,7 +360,7 @@ fn mainArgs(
             io,
             &stdout_writer.interface,
             args,
-            if (native_os == .wasi) wasi_preopens,
+            preopens,
             &host,
             environ_map,
         );
@@ -672,6 +672,7 @@ const usage_build_generic =
     \\  --test-cmd-bin                 Appends test binary path to test cmd args
     \\  --test-no-exec                 Compiles test binary without running it
     \\  --test-runner [path]           Specify a custom test runner
+    \\  --test-execve                  Runs the test binary with execve if available instead of as a child process
     \\
     \\Debug Options (Zig Compiler Development):
     \\  -fopt-bisect-limit=[limit]   Only run [limit] first LLVM optimization passes
@@ -888,6 +889,7 @@ fn buildOutputType(
     var linker_optimization: ?[]const u8 = null;
     var linker_module_definition_file: ?[]const u8 = null;
     var test_no_exec = false;
+    var test_execve = false;
     var entry: Compilation.CreateOptions.Entry = .default;
     var force_undefined_symbols: std.StringArrayHashMapUnmanaged(void) = .empty;
     var stack_size: ?u64 = null;
@@ -1393,6 +1395,8 @@ fn buildOutputType(
                         test_no_exec = true;
                     } else if (mem.eql(u8, arg, "--time-report")) {
                         time_report = true;
+                    } else if (mem.eql(u8, arg, "--test-execve")) {
+                        test_execve = true;
                     } else if (mem.eql(u8, arg, "-fstack-report")) {
                         stack_report = true;
                     } else if (mem.eql(u8, arg, "-fPIC")) {
@@ -2498,6 +2502,9 @@ fn buildOutputType(
                     // this ignores plain --sort-common
                 } else if (mem.eql(u8, arg, "-rpath") or mem.eql(u8, arg, "--rpath") or mem.eql(u8, arg, "-R")) {
                     try create_module.rpath_list.append(arena, linker_args_it.nextOrFatal());
+                } else if (mem.eql(u8, arg, "-rpath-link") or mem.eql(u8, arg, "--rpath-link")) {
+                    _ = linker_args_it.nextOrFatal();
+                    warn("rpath-link option is unimplemented and ignored", .{});
                 } else if (mem.eql(u8, arg, "--subsystem")) {
                     subsystem = try parseSubsystem(linker_args_it.nextOrFatal());
                 } else if (mem.eql(u8, arg, "-I") or
@@ -2605,6 +2612,16 @@ fn buildOutputType(
                     };
                 } else if (mem.eql(u8, arg, "--export")) {
                     try linker_export_symbol_names.append(arena, linker_args_it.nextOrFatal());
+                } else if (mem.eql(u8, arg, "-exported_symbols_list")) {
+                    const exported_symbols_list = linker_args_it.nextOrFatal();
+                    const content = Io.Dir.cwd().readFileAlloc(io, exported_symbols_list, arena, .limited(10 * 1024 * 1024)) catch |err| {
+                        fatal("unable to read exported symbols list '{s}': {s}", .{ exported_symbols_list, @errorName(err) });
+                    };
+                    var symbols_it = mem.splitScalar(u8, content, '\n');
+                    while (symbols_it.next()) |line| {
+                        if (line.len == 0) continue;
+                        try linker_export_symbol_names.append(arena, line);
+                    }
                 } else if (mem.eql(u8, arg, "--compress-debug-sections")) {
                     const arg1 = linker_args_it.nextOrFatal();
                     linker_compress_debug_sections = std.meta.stringToEnum(std.zig.CompressDebugSections, arg1) orelse {
@@ -3104,7 +3121,7 @@ fn buildOutputType(
                 else => .search,
             };
         },
-        if (native_os == .wasi) wasi_preopens,
+        preopens,
         self_exe_path,
         environ_map,
     );
@@ -3392,7 +3409,7 @@ fn buildOutputType(
         // "-" is stdin. Dump it to a real file.
         const sep = fs.path.sep_str;
         const dump_path = try std.fmt.allocPrint(arena, "tmp" ++ sep ++ "{x}-dump-stdin{s}", .{
-            std.crypto.random.int(u64), ext.canonicalName(target),
+            randInt(io, u64), ext.canonicalName(target),
         });
         try dirs.local_cache.handle.createDirPath(io, "tmp");
 
@@ -3767,6 +3784,7 @@ fn buildOutputType(
             all_args,
             runtime_args_start,
             create_module.resolved_options.link_libc,
+            test_execve,
             environ_map,
         );
     }
@@ -4078,7 +4096,6 @@ fn createModule(
             error.SanitizeThreadRequiresLibCpp => fatal("thread sanitization is (for now) implemented in C++, so it requires linking libc++", .{}),
             error.LibCRequiresLibUnwind => fatal("libc of the specified target requires linking libunwind", .{}),
             error.LibCppRequiresLibUnwind => fatal("libc++ requires linking libunwind", .{}),
-            error.OsRequiresLibC => fatal("the target OS requires using libc as the stable syscall interface", .{}),
             error.LibCppRequiresLibC => fatal("libc++ requires linking libc", .{}),
             error.LibUnwindRequiresLibC => fatal("libunwind requires linking libc", .{}),
             error.TargetCannotDynamicLink => fatal("dynamic linking unavailable on the specified target", .{}),
@@ -4405,6 +4422,7 @@ fn runOrTest(
     all_args: []const []const u8,
     runtime_args_start: ?usize,
     link_libc: bool,
+    test_execve: bool,
     environ_map: *process.Environ.Map,
 ) !void {
     const raw_emit_bin = comp.emit_bin orelse return;
@@ -4431,7 +4449,7 @@ fn runOrTest(
         try argv.append(exe_path);
         if (arg_mode == .zig_test) {
             try argv.append(
-                try std.fmt.allocPrint(arena, "--seed=0x{x}", .{std.crypto.random.int(u32)}),
+                try std.fmt.allocPrint(arena, "--seed=0x{x}", .{randInt(io, u32)}),
             );
         }
     } else {
@@ -4446,7 +4464,7 @@ fn runOrTest(
 
     // We do not execve for tests because if the test fails we want to print
     // the error message and invocation below.
-    if (process.can_replace and arg_mode == .run) {
+    if (process.can_replace and (arg_mode == .run or (arg_mode == .zig_test and test_execve))) {
         // process replacement releases the locks; no need to destroy the Compilation here.
         _ = try io.lockStderr(&.{}, .no_color);
         const err = process.replace(io, .{ .argv = argv.items, .environ_map = environ_map });
@@ -4761,7 +4779,8 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
     const cwd_basename = fs.path.basename(cwd_path);
     const sanitized_root_name = try sanitizeExampleName(arena, cwd_basename);
 
-    const fingerprint: Package.Fingerprint = .generate(sanitized_root_name);
+    const rng: std.Random.IoSource = .{ .io = io };
+    const fingerprint: Package.Fingerprint = .generate(rng.interface(), sanitized_root_name);
 
     switch (template) {
         .example => {
@@ -4917,7 +4936,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
 
     try child_argv.appendSlice(&.{
         "--seed",
-        try std.fmt.allocPrint(arena, "0x{x}", .{std.crypto.random.int(u32)}),
+        try std.fmt.allocPrint(arena, "0x{x}", .{randInt(io, u32)}),
     });
     const argv_index_seed = child_argv.items.len - 1;
 
@@ -4935,7 +4954,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
     // the strategy is to choose a temporary file name ahead of time, and then
     // read this file in the parent to obtain the results, in the case the child
     // exits with code 3.
-    const results_tmp_file_nonce = std.fmt.hex(std.crypto.random.int(u64));
+    const results_tmp_file_nonce = std.fmt.hex(randInt(io, u64));
     try child_argv.append("-Z" ++ results_tmp_file_nonce);
 
     var color: Color = .auto;
@@ -5138,7 +5157,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
             if (override_local_cache_dir) |d| break :path d;
             break :path try build_root.directory.join(arena, &.{introspect.default_local_zig_cache_basename});
         } },
-        {},
+        .empty,
         self_exe_path,
         environ_map,
     );
@@ -5553,7 +5572,7 @@ fn jitCmd(
         override_lib_dir,
         override_global_cache_dir,
         .global,
-        if (native_os == .wasi) wasi_preopens,
+        preopens,
         self_exe_path,
         environ_map,
     );
@@ -7221,7 +7240,7 @@ fn createDependenciesModule(
 ) !*Package.Module {
     // Atomically create the file in a directory named after the hash of its contents.
     const basename = "dependencies.zig";
-    const rand_int = std.crypto.random.int(u64);
+    const rand_int = randInt(io, u64);
     const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(rand_int);
     {
         var tmp_dir = try dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{});
@@ -7337,6 +7356,8 @@ fn loadManifest(
     io: Io,
     options: LoadManifestOptions,
 ) !struct { Package.Manifest, Ast } {
+    const rng: std.Random.IoSource = .{ .io = io };
+
     const manifest_bytes = while (true) {
         break options.dir.readFileAllocOptions(
             io,
@@ -7358,15 +7379,13 @@ fn loadManifest(
                 , .{
                     options.root_name,
                     build_options.version,
-                    Package.Fingerprint.generate(options.root_name).int(),
+                    Package.Fingerprint.generate(rng.interface(), options.root_name).int(),
                 }) catch |e| {
-                    fatal("unable to write {s}: {s}", .{ Package.Manifest.basename, @errorName(e) });
+                    fatal("unable to write {s}: {t}", .{ Package.Manifest.basename, e });
                 };
                 continue;
             },
-            else => |e| fatal("unable to load {s}: {s}", .{
-                Package.Manifest.basename, @errorName(e),
-            }),
+            else => |e| fatal("unable to load {s}: {t}", .{ Package.Manifest.basename, e }),
         };
     };
     var ast = try Ast.parse(gpa, manifest_bytes, .zon);
@@ -7377,7 +7396,7 @@ fn loadManifest(
         process.exit(2);
     }
 
-    var manifest = try Package.Manifest.parse(gpa, ast, .{});
+    var manifest = try Package.Manifest.parse(gpa, ast, rng.interface(), .{});
     errdefer manifest.deinit(gpa);
 
     if (manifest.errors.len > 0) {
@@ -7629,4 +7648,10 @@ fn setThreadLimit(n: usize) void {
     const limit: Io.Limit = .limited(n - 1);
     threaded_impl_ptr.setAsyncLimit(limit);
     threaded_impl_ptr.concurrent_limit = limit;
+}
+
+fn randInt(io: Io, comptime T: type) T {
+    var x: T = undefined;
+    io.random(@ptrCast(&x));
+    return x;
 }

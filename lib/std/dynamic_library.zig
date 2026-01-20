@@ -148,7 +148,7 @@ const ElfDynLibError = error{
     ElfHashTableNotFound,
     Canceled,
     Streaming,
-} || posix.OpenError || posix.MMapError;
+} || Io.File.OpenError || posix.MMapError;
 
 pub const ElfDynLib = struct {
     strings: [*:0]u8,
@@ -177,27 +177,20 @@ pub const ElfDynLib = struct {
         return parent;
     }
 
-    fn resolveFromSearchPath(io: Io, search_path: []const u8, file_name: []const u8, delim: u8) ?posix.fd_t {
+    fn resolveFromSearchPath(io: Io, search_path: []const u8, file_name: []const u8, delim: u8) ?Io.File {
         var paths = std.mem.tokenizeScalar(u8, search_path, delim);
         while (paths.next()) |p| {
             var dir = openPath(io, p) catch continue;
             defer dir.close(io);
-            const fd = posix.openat(dir.handle, file_name, .{
-                .ACCMODE = .RDONLY,
-                .CLOEXEC = true,
-            }, 0) catch continue;
-            return fd;
+            return dir.openFile(io, file_name, .{}) catch continue;
         }
         return null;
     }
 
-    fn resolveFromParent(io: Io, dir_path: []const u8, file_name: []const u8) ?posix.fd_t {
+    fn resolveFromParent(io: Io, dir_path: []const u8, file_name: []const u8) ?Io.File {
         var dir = Io.Dir.cwd().openDir(io, dir_path, .{}) catch return null;
         defer dir.close(io);
-        return posix.openat(dir.handle, file_name, .{
-            .ACCMODE = .RDONLY,
-            .CLOEXEC = true,
-        }, 0) catch null;
+        return dir.openFile(io, file_name, .{}) catch null;
     }
 
     // This implements enough to be able to load system libraries in general
@@ -205,10 +198,10 @@ pub const ElfDynLib = struct {
     // - DT_RPATH of the calling binary is not used as a search path
     // - DT_RUNPATH of the calling binary is not used as a search path
     // - /etc/ld.so.cache is not read
-    fn resolveFromName(io: Io, path_or_name: []const u8, LD_LIBRARY_PATH: ?[]const u8) !posix.fd_t {
+    fn resolveFromName(io: Io, path_or_name: []const u8, LD_LIBRARY_PATH: ?[]const u8) !Io.File {
         // If filename contains a slash ("/"), then it is interpreted as a (relative or absolute) pathname
         if (std.mem.findScalarPos(u8, path_or_name, 0, '/')) |_| {
-            return posix.open(path_or_name, .{ .ACCMODE = .RDONLY, .CLOEXEC = true }, 0);
+            return Io.Dir.cwd().openFile(io, path_or_name, .{});
         }
 
         // Only read LD_LIBRARY_PATH if the binary is not setuid/setgid
@@ -216,15 +209,15 @@ pub const ElfDynLib = struct {
             std.os.linux.getegid() == std.os.linux.getgid())
         {
             if (LD_LIBRARY_PATH) |ld_library_path| {
-                if (resolveFromSearchPath(io, ld_library_path, path_or_name, ':')) |fd| {
-                    return fd;
+                if (resolveFromSearchPath(io, ld_library_path, path_or_name, ':')) |file| {
+                    return file;
                 }
             }
         }
 
         // Lastly the directories /lib and /usr/lib are searched (in this exact order)
-        if (resolveFromParent(io, "/lib", path_or_name)) |fd| return fd;
-        if (resolveFromParent(io, "/usr/lib", path_or_name)) |fd| return fd;
+        if (resolveFromParent(io, "/lib", path_or_name)) |file| return file;
+        if (resolveFromParent(io, "/usr/lib", path_or_name)) |file| return file;
         return error.FileNotFound;
     }
 
@@ -232,10 +225,9 @@ pub const ElfDynLib = struct {
     pub fn open(path: []const u8, LD_LIBRARY_PATH: ?[]const u8) Error!ElfDynLib {
         const io = std.Options.debug_io;
 
-        const fd = try resolveFromName(io, path, LD_LIBRARY_PATH);
-        defer posix.close(fd);
+        const file = try resolveFromName(io, path, LD_LIBRARY_PATH);
+        defer file.close(io);
 
-        const file: Io.File = .{ .handle = fd };
         const stat = try file.stat(io);
         const size = std.math.cast(usize, stat.size) orelse return error.FileTooBig;
 
@@ -246,9 +238,9 @@ pub const ElfDynLib = struct {
         const file_bytes = try posix.mmap(
             null,
             mem.alignForward(usize, size, page_size),
-            posix.PROT.READ,
+            .{ .READ = true },
             .{ .TYPE = .PRIVATE },
-            fd,
+            file.handle,
             0,
         );
         defer posix.munmap(file_bytes);
@@ -284,7 +276,7 @@ pub const ElfDynLib = struct {
         const all_loaded_mem = try posix.mmap(
             null,
             virt_addr_end,
-            posix.PROT.NONE,
+            .{},
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
@@ -310,7 +302,7 @@ pub const ElfDynLib = struct {
                         const extra_bytes = (base + ph.p_vaddr) - aligned_addr;
                         const extended_memsz = mem.alignForward(usize, ph.p_memsz + extra_bytes, page_size);
                         const ptr = @as([*]align(std.heap.page_size_min) u8, @ptrFromInt(aligned_addr));
-                        const prot = elfToMmapProt(ph.p_flags);
+                        const prot = elfToProt(ph.p_flags);
                         if ((ph.p_flags & elf.PF_W) == 0) {
                             // If it does not need write access, it can be mapped from the fd.
                             _ = try posix.mmap(
@@ -318,7 +310,7 @@ pub const ElfDynLib = struct {
                                 extended_memsz,
                                 prot,
                                 .{ .TYPE = .PRIVATE, .FIXED = true },
-                                fd,
+                                file.handle,
                                 ph.p_offset - extra_bytes,
                             );
                         } else {
@@ -539,12 +531,12 @@ pub const ElfDynLib = struct {
         return null;
     }
 
-    fn elfToMmapProt(elf_prot: u64) u32 {
-        var result: u32 = posix.PROT.NONE;
-        if ((elf_prot & elf.PF_R) != 0) result |= posix.PROT.READ;
-        if ((elf_prot & elf.PF_W) != 0) result |= posix.PROT.WRITE;
-        if ((elf_prot & elf.PF_X) != 0) result |= posix.PROT.EXEC;
-        return result;
+    fn elfToProt(elf_prot: u64) posix.PROT {
+        return .{
+            .READ = (elf_prot & elf.PF_R) != 0,
+            .WRITE = (elf_prot & elf.PF_W) != 0,
+            .EXEC = (elf_prot & elf.PF_X) != 0,
+        };
     }
 };
 

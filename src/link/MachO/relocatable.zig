@@ -289,7 +289,9 @@ fn initOutputSections(macho_file: *MachO) !void {
     } else false;
     if (needs_eh_frame) {
         assert(needs_unwind_info);
-        macho_file.eh_frame_sect_index = try macho_file.addSection("__TEXT", "__eh_frame", .{});
+        macho_file.eh_frame_sect_index = try macho_file.addSection("__TEXT", "__eh_frame", .{
+            .flags = std.macho.S_COALESCED | std.macho.S_ATTR_NO_TOC | std.macho.S_ATTR_STRIP_STATIC_SYMS | std.macho.S_ATTR_LIVE_SUPPORT,
+        });
     }
 }
 
@@ -539,7 +541,7 @@ fn createSegment(macho_file: *MachO) !void {
     const gpa = macho_file.base.comp.gpa;
 
     // For relocatable, we only ever need a single segment so create it now.
-    const prot: macho.vm_prot_t = macho.PROT.READ | macho.PROT.WRITE | macho.PROT.EXEC;
+    const prot: macho.vm_prot_t = .{ .READ = true, .WRITE = true, .EXEC = true };
     try macho_file.segments.append(gpa, .{
         .cmdsize = @sizeOf(macho.segment_command_64),
         .segname = MachO.makeStaticString(""),

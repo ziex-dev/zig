@@ -1,4 +1,3 @@
-/// TODO add a mapped file abstraction to std.Io
 const MappedFile = @This();
 
 const builtin = @import("builtin");
@@ -1049,7 +1048,7 @@ pub fn ensureTotalCapacityPrecise(mf: *MappedFile, new_capacity: usize) !void {
     } else mf.contents = try std.posix.mmap(
         null,
         aligned_capacity,
-        std.posix.PROT.READ | std.posix.PROT.WRITE,
+        .{ .READ = true, .WRITE = true },
         .{ .TYPE = if (is_linux) .SHARED_VALIDATE else .SHARED },
         mf.file.handle,
         0,

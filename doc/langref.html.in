@@ -2461,7 +2461,8 @@ or
       {#header_open|Tagged union#}
       <p>Unions can be declared with an enum tag type.
       This turns the union into a <em>tagged</em> union, which makes it eligible
-      to use with {#link|switch#} expressions.
+      to use with {#link|switch#} expressions. When switching on tagged unions,
+      the tag value can be obtained using an additional capture. 
       Tagged unions coerce to their tag type: {#link|Type Coercion: Unions and Enums#}.
       </p>
       {#code|test_tagged_union.zig#}
@@ -2594,6 +2595,13 @@ or
 
       {#header_close#}
 
+      {#header_open|Switching on Errors#}
+      <p>
+      When switching on errors, some special cases are allowed to simplify generic programming patterns:
+      </p>
+      {#code|test_switch_on_errors.zig#}
+      {#header_close#}
+
       {#header_open|Labeled switch#}
       <p>
       When a switch statement is labeled, it can be referenced from a
@@ -2659,12 +2667,13 @@ or
       {#code|test_inline_else.zig#}
 
       <p>
-      When using an inline prong switching on an union an additional
-      capture can be used to obtain the union's enum tag value.
+      When using an inline prong switching on an union an additional capture
+      can be used to obtain the union's enum tag value at comptime, even though
+      its payload might only be known at runtime.
       </p>
       {#code|test_inline_switch_union_tag.zig#}
 
-      {#see_also|inline while|inline for#}
+      {#see_also|inline while|inline for|Tagged union#}
       {#header_close#}
       {#header_close#}
 
@@ -3448,6 +3457,16 @@ void do_a_thing(struct Foo *foo) {
       {#link|Floats#} coerce to float types which can represent every value of the old type.
       </p>
       {#code|test_integer_widening.zig#}
+
+      {#header_close#}
+      {#header_open|Type Coercion: Int to Float#}
+      <p>
+      {#link|Integers#} coerce to {#link|Floats#} if every possible integer value can be stored in the float
+      without rounding (i.e. the integer's precision does not exceed the float's significand precision).
+      Larger integer types that cannot be safely coerced must be explicitly casted with {#link|@floatFromInt#}.
+      </p>
+      {#code|test_int_to_float_coercion.zig#}
+      {#code|test_failed_int_to_float_coercion.zig#}
 
       {#header_close#}
       {#header_open|Type Coercion: Float to Int#}

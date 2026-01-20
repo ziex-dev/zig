@@ -27,6 +27,7 @@ const glibc = @import("libs/glibc.zig");
 const musl = @import("libs/musl.zig");
 const freebsd = @import("libs/freebsd.zig");
 const netbsd = @import("libs/netbsd.zig");
+const openbsd = @import("libs/openbsd.zig");
 const mingw = @import("libs/mingw.zig");
 const libunwind = @import("libs/libunwind.zig");
 const libcxx = @import("libs/libcxx.zig");
@@ -243,6 +244,7 @@ fuzzer_lib: ?CrtFile = null,
 glibc_so_files: ?glibc.BuiltSharedObjects = null,
 freebsd_so_files: ?freebsd.BuiltSharedObjects = null,
 netbsd_so_files: ?netbsd.BuiltSharedObjects = null,
+openbsd_so_files: ?openbsd.BuiltSharedObjects = null,
 
 /// For example `Scrt1.o` and `libc_nonshared.a`. These are populated after building libc from source,
 /// The set of needed CRT (C runtime) files differs depending on the target and compilation settings.
@@ -307,6 +309,7 @@ const QueuedJobs = struct {
     glibc_crt_file: [@typeInfo(glibc.CrtFile).@"enum".fields.len]bool = @splat(false),
     freebsd_crt_file: [@typeInfo(freebsd.CrtFile).@"enum".fields.len]bool = @splat(false),
     netbsd_crt_file: [@typeInfo(netbsd.CrtFile).@"enum".fields.len]bool = @splat(false),
+    openbsd_crt_file: [@typeInfo(openbsd.CrtFile).@"enum".fields.len]bool = @splat(false),
     /// one of WASI libc static objects
     wasi_libc_crt_file: [@typeInfo(wasi_libc.CrtFile).@"enum".fields.len]bool = @splat(false),
     /// one of the mingw-w64 static objects
@@ -315,6 +318,7 @@ const QueuedJobs = struct {
     glibc_shared_objects: bool = false,
     freebsd_shared_objects: bool = false,
     netbsd_shared_objects: bool = false,
+    openbsd_shared_objects: bool = false,
     /// libunwind.a, usually needed when linking libc
     libunwind: bool = false,
     libcxx: bool = false,
@@ -754,10 +758,7 @@ pub const Directories = struct {
             search,
             global,
         },
-        wasi_preopens: switch (builtin.target.os.tag) {
-            .wasi => fs.wasi.Preopens,
-            else => void,
-        },
+        preopens: std.process.Preopens,
         self_exe_path: switch (builtin.target.os.tag) {
             .wasi => void,
             else => []const u8,
@@ -772,7 +773,7 @@ pub const Directories = struct {
 
         const zig_lib: Cache.Directory = d: {
             if (override_zig_lib) |path| break :d openUnresolved(arena, io, cwd, path, .@"zig lib");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/lib");
+            if (wasi) break :d getPreopen(preopens, "/lib");
             break :d introspect.findZigLibDirFromSelfExe(arena, io, cwd, self_exe_path) catch |err| {
                 fatal("unable to find zig installation directory '{s}': {t}", .{ self_exe_path, err });
             };
@@ -780,7 +781,7 @@ pub const Directories = struct {
 
         const global_cache: Cache.Directory = d: {
             if (override_global_cache) |path| break :d openUnresolved(arena, io, cwd, path, .@"global cache");
-            if (wasi) break :d openWasiPreopen(wasi_preopens, "/cache");
+            if (wasi) break :d getPreopen(preopens, "/cache");
             const path = introspect.resolveGlobalCacheDir(arena, environ_map) catch |err| {
                 fatal("unable to resolve zig cache directory: {t}", .{err});
             };
@@ -813,11 +814,12 @@ pub const Directories = struct {
             .local_cache = local_cache,
         };
     }
-    fn openWasiPreopen(preopens: fs.wasi.Preopens, name: []const u8) Cache.Directory {
+    fn getPreopen(preopens: std.process.Preopens, name: []const u8) Cache.Directory {
         return .{
             .path = if (std.mem.eql(u8, name, ".")) null else name,
-            .handle = .{
-                .handle = preopens.find(name) orelse fatal("WASI preopen not found: '{s}'", .{name}),
+            .handle = switch (preopens.get(name) orelse fatal("preopen not found: '{s}'", .{name})) {
+                .file => fatal("preopen {s} is not a directory", .{name}),
+                .dir => |d| d,
             },
         };
     }
@@ -1400,6 +1402,8 @@ pub const MiscTask = enum {
     freebsd_shared_objects,
     netbsd_crt_file,
     netbsd_shared_objects,
+    openbsd_crt_file,
+    openbsd_shared_objects,
     mingw_crt_file,
     windows_import_lib,
     libunwind,
@@ -1435,6 +1439,9 @@ pub const MiscTask = enum {
 
     @"netbsd libc Scrt0.o",
     @"netbsd libc shared object",
+
+    @"openbsd libc Scrt0.o",
+    @"openbsd libc shared object",
 
     @"mingw-w64 crt2.o",
     @"mingw-w64 dllcrt2.o",
@@ -2620,6 +2627,14 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                     }
 
                     comp.queued_jobs.netbsd_shared_objects = true;
+                } else if (target.isOpenBSDLibC()) {
+                    if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
+
+                    if (openbsd.needsCrt0(comp.config.output_mode)) |f| {
+                        comp.queued_jobs.openbsd_crt_file[@intFromEnum(f)] = true;
+                    }
+
+                    comp.queued_jobs.openbsd_shared_objects = true;
                 } else if (target.isWasiLibC()) {
                     if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
 
@@ -2768,6 +2783,10 @@ pub fn destroy(comp: *Compilation) void {
 
     if (comp.netbsd_so_files) |*netbsd_file| {
         netbsd_file.deinit(gpa, io);
+    }
+
+    if (comp.openbsd_so_files) |*openbsd_file| {
+        openbsd_file.deinit(gpa, io);
     }
 
     for (comp.c_object_table.keys()) |key| {
@@ -2921,7 +2940,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         .none => |none| {
             assert(none.tmp_artifact_directory == null);
             none.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -3002,7 +3021,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
 
             // Compile the artifacts to a temporary directory.
             whole.tmp_artifact_directory = d: {
-                tmp_dir_rand_int = std.crypto.random.int(u64);
+                io.random(@ptrCast(&tmp_dir_rand_int));
                 const tmp_dir_sub_path = "tmp" ++ fs.path.sep_str ++ std.fmt.hex(tmp_dir_rand_int);
                 const path = try comp.dirs.local_cache.join(arena, &.{tmp_dir_sub_path});
                 const handle = comp.dirs.local_cache.handle.createDirPathOpen(io, tmp_dir_sub_path, .{}) catch |err| {
@@ -3439,7 +3458,7 @@ fn renameTmpIntoCache(
                 },
                 else => return error.AccessDenied,
             },
-            error.PathAlreadyExists => {
+            error.DirNotEmpty => {
                 try cache_directory.handle.deleteTree(io, o_sub_path);
                 continue;
             },
@@ -3736,7 +3755,7 @@ pub fn saveState(comp: *Compilation) !void {
             },
         });
 
-        try bufs.ensureTotalCapacityPrecise(14 + 8 * pt_headers.items.len);
+        try bufs.ensureTotalCapacityPrecise(22 + 9 * pt_headers.items.len);
         addBuf(&bufs, mem.asBytes(&header));
         addBuf(&bufs, @ptrCast(pt_headers.items));
 
@@ -3916,11 +3935,14 @@ pub fn saveState(comp: *Compilation) !void {
 
     // Using an atomic file prevents a crash or power failure from corrupting
     // the previous incremental compilation state.
+    var af = try lf.emit.root_dir.handle.createFileAtomic(io, basename, .{ .replace = true });
+    defer af.deinit(io);
+
     var write_buffer: [1024]u8 = undefined;
-    var af = try lf.emit.root_dir.handle.atomicFile(io, basename, .{ .write_buffer = &write_buffer });
-    defer af.deinit();
-    try af.file_writer.interface.writeVecAll(bufs.items);
-    try af.finish();
+    var file_writer = af.file.writer(io, &write_buffer);
+    try file_writer.interface.writeVecAll(bufs.items);
+    try file_writer.interface.flush();
+    try af.replace(io);
 }
 
 fn addBuf(list: *std.array_list.Managed([]const u8), buf: []const u8) void {
@@ -4992,6 +5014,10 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         prelink_group.async(io, buildNetBSDSharedObjects, .{ comp, main_progress_node });
     }
 
+    if (comp.queued_jobs.openbsd_shared_objects) {
+        prelink_group.async(io, buildOpenBSDSharedObjects, .{ comp, main_progress_node });
+    }
+
     if (comp.queued_jobs.libunwind) {
         prelink_group.async(io, buildLibUnwind, .{ comp, main_progress_node });
     }
@@ -5037,6 +5063,13 @@ fn dispatchPrelinkWork(comp: *Compilation, main_progress_node: std.Progress.Node
         if (comp.queued_jobs.netbsd_crt_file[i]) {
             const tag: netbsd.CrtFile = @enumFromInt(i);
             prelink_group.async(io, buildNetBSDCrtFile, .{ comp, tag, main_progress_node });
+        }
+    }
+
+    for (0..@typeInfo(openbsd.CrtFile).@"enum".fields.len) |i| {
+        if (comp.queued_jobs.openbsd_crt_file[i]) {
+            const tag: openbsd.CrtFile = @enumFromInt(i);
+            prelink_group.async(io, buildOpenBSDCrtFile, .{ comp, tag, main_progress_node });
         }
     }
 
@@ -5244,26 +5277,31 @@ fn processOneJob(
     }
 }
 
-fn createDepFile(comp: *Compilation, depfile: []const u8, binfile: Cache.Path) anyerror!void {
+fn createDepFile(comp: *Compilation, dep_file: []const u8, bin_file: Cache.Path) anyerror!void {
     const io = comp.io;
+
+    var af = try Io.Dir.cwd().createFileAtomic(io, dep_file, .{ .replace = true });
+    defer af.deinit(io);
+
     var buf: [4096]u8 = undefined;
-    var af = try Io.Dir.cwd().atomicFile(io, depfile, .{ .write_buffer = &buf });
-    defer af.deinit();
+    var file_writer = af.file.writer(io, &buf);
 
-    comp.writeDepFile(binfile, &af.file_writer.interface) catch return af.file_writer.err.?;
-
-    try af.finish();
+    comp.writeDepFile(bin_file, &file_writer.interface) catch |err| switch (err) {
+        error.WriteFailed => return file_writer.err.?,
+    };
+    try file_writer.flush();
+    try af.replace(io);
 }
 
 fn writeDepFile(
     comp: *Compilation,
-    binfile: Cache.Path,
+    bin_file: Cache.Path,
     w: *std.Io.Writer,
 ) std.Io.Writer.Error!void {
     const prefixes = comp.cache_parent.prefixes();
     const fsi = comp.file_system_inputs.?.items;
 
-    try w.print("{f}:", .{binfile});
+    try w.print("{f}:", .{bin_file});
 
     {
         var it = std.mem.splitScalar(u8, fsi, 0);
@@ -5719,7 +5757,11 @@ pub fn translateC(
 
     const gpa = comp.gpa;
     const io = comp.io;
-    const tmp_basename = std.fmt.hex(std.crypto.random.int(u64));
+    const tmp_basename = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r std.fmt.hex(x);
+    };
     const tmp_sub_path = "tmp" ++ fs.path.sep_str ++ tmp_basename;
     const cache_dir = comp.dirs.local_cache.handle;
     var cache_tmp_dir = try cache_dir.createDirPathOpen(io, tmp_sub_path, .{});
@@ -6036,6 +6078,29 @@ fn buildNetBSDSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) vo
     } else |err| switch (err) {
         error.AlreadyReported => return,
         else => comp.lockAndSetMiscFailure(.netbsd_shared_objects, "unable to build NetBSD libc shared objects: {s}", .{
+            @errorName(err),
+        }),
+    }
+}
+
+fn buildOpenBSDCrtFile(comp: *Compilation, crt_file: openbsd.CrtFile, prog_node: std.Progress.Node) void {
+    if (openbsd.buildCrtFile(comp, crt_file, prog_node)) |_| {
+        comp.queued_jobs.openbsd_crt_file[@intFromEnum(crt_file)] = false;
+    } else |err| switch (err) {
+        error.AlreadyReported => return,
+        else => comp.lockAndSetMiscFailure(.openbsd_crt_file, "unable to build OpenBSD {s}: {s}", .{
+            @tagName(crt_file), @errorName(err),
+        }),
+    }
+}
+
+fn buildOpenBSDSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) void {
+    if (openbsd.buildSharedObjects(comp, prog_node)) |_| {
+        // The job should no longer be queued up since it succeeded.
+        comp.queued_jobs.openbsd_shared_objects = false;
+    } else |err| switch (err) {
+        error.AlreadyReported => return,
+        else => comp.lockAndSetMiscFailure(.openbsd_shared_objects, "unable to build OpenBSD libc shared objects: {s}", .{
             @errorName(err),
         }),
     }
@@ -6826,8 +6891,13 @@ fn spawnZigRc(
 }
 
 pub fn tmpFilePath(comp: Compilation, ally: Allocator, suffix: []const u8) error{OutOfMemory}![]const u8 {
+    const io = comp.io;
+    const rand_int = r: {
+        var x: u64 = undefined;
+        io.random(@ptrCast(&x));
+        break :r x;
+    };
     const s = fs.path.sep_str;
-    const rand_int = std.crypto.random.int(u64);
     if (comp.dirs.local_cache.path) |p| {
         return std.fmt.allocPrint(ally, "{s}" ++ s ++ "tmp" ++ s ++ "{x}-{s}", .{ p, rand_int, suffix });
     } else {
@@ -6977,6 +7047,21 @@ fn addCommonCCArgs(
                         // our abilists file only tracks major and minor NetBSD releases, so the link-time stub symbols
                         // would be inconsistent with header declarations.
                         (min_ver.major * 100_000_000) + (min_ver.minor * 1_000_000),
+                    }));
+                } else if (target.isOpenBSDLibC()) {
+                    const min_ver = target.os.version_range.semver.min;
+                    // The macro in sys/param.h doesn't have the leading underscores, but we don't want to pollute the
+                    // global namespace in all compilation units. So we use leading underscores and modify sys/param.h
+                    // to just alias this one.
+                    try argv.append(try std.fmt.allocPrint(arena, "-D___OpenBSD={d}", .{
+                        // Brilliantly, OpenBSD defines this macro to the year and month of the release, so we need to
+                        // maintain a manual mapping here whenever we update the headers.
+                        202510,
+                    }));
+                    // We can't avoid pollution for this one...
+                    try argv.append(try std.fmt.allocPrint(arena, "-DOpenBSD{d}_{d}", .{
+                        min_ver.major,
+                        min_ver.minor,
                     }));
                 }
             }
@@ -8006,8 +8091,8 @@ fn buildOutputFromZig(
 }
 
 pub const CrtFileOptions = struct {
-    function_sections: ?bool = null,
-    data_sections: ?bool = null,
+    function_sections: bool = true,
+    data_sections: bool = true,
     omit_frame_pointer: ?bool = null,
     unwind_tables: ?std.builtin.UnwindTables = null,
     pic: ?bool = null,
@@ -8110,8 +8195,8 @@ pub fn build_crt_file(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = options.function_sections orelse false,
-        .data_sections = options.data_sections orelse false,
+        .function_sections = options.function_sections,
+        .data_sections = options.data_sections,
         .c_source_files = c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,

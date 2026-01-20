@@ -28,6 +28,8 @@ pub const ws2_32 = @import("windows/ws2_32.zig");
 pub const crypt32 = @import("windows/crypt32.zig");
 pub const nls = @import("windows/nls.zig");
 
+pub const current_process: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
+
 pub const FILE = struct {
     // ref: km/ntddk.h
 
@@ -265,9 +267,13 @@ pub const FILE = struct {
             return ri.FileName[0..@divExact(ri.FileNameLength, @sizeOf(WCHAR))];
         }
 
-        pub fn toBuffer(fri: *const RENAME_INFORMATION) []const u8 {
-            const start: [*]const u8 = @ptrCast(fri);
-            return start[0 .. @offsetOf(RENAME_INFORMATION, "FileName") + fri.FileNameLength];
+        pub fn toBuffer(fri: *RENAME_INFORMATION) []u8 {
+            const start: [*]u8 = @ptrCast(fri);
+            // The ABI size of the documented struct is 24 bytes, and attempting to use any size
+            // less than that will trigger INFO_LENGTH_MISMATCH, so enforce a minimum in cases where,
+            // for example, FileNameLength is 1 so only 22 bytes are technically needed.
+            const size = @max(24, @offsetOf(RENAME_INFORMATION, "FileName") + fri.FileNameLength);
+            return start[0..size];
         }
     };
 
@@ -1080,6 +1086,9 @@ pub const CTL_CODE = packed struct(ULONG) {
 };
 
 pub const IOCTL = struct {
+    pub const KSEC = struct {
+        pub const GEN_RANDOM: CTL_CODE = .{ .DeviceType = .KSEC, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
+    };
     pub const MOUNTMGR = struct {
         pub const QUERY_POINTS: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 2, .Method = .BUFFERED, .Access = .ANY };
         pub const QUERY_DOS_VOLUME_PATH: CTL_CODE = .{ .DeviceType = .MOUNTMGRCONTROLTYPE, .Function = 12, .Method = .BUFFERED, .Access = .ANY };
@@ -2117,6 +2126,20 @@ pub const PAGE = packed struct(ULONG) {
     Reserved19: u12 = 0,
 
     REVERT_TO_FILE_MAP: bool = false,
+
+    pub fn fromProtection(protection: std.process.MemoryProtection) ?PAGE {
+        // TODO https://github.com/ziglang/zig/issues/22214
+        return switch (@as(u3, @bitCast(protection))) {
+            0b000 => .{ .NOACCESS = true },
+            0b001 => .{ .READONLY = true },
+            0b010 => null,
+            0b011 => .{ .READWRITE = true },
+            0b100 => .{ .EXECUTE = true },
+            0b101 => .{ .EXECUTE_READ = true },
+            0b110 => null,
+            0b111 => .{ .EXECUTE_READWRITE = true },
+        };
+    }
 };
 
 pub const MEM = struct {
@@ -2644,33 +2667,6 @@ pub fn SetHandleInformation(h: HANDLE, mask: DWORD, flags: DWORD) SetHandleInfor
     }
 }
 
-pub const RtlGenRandomError = error{
-    /// `RtlGenRandom` has been known to fail in situations where the system is under heavy load.
-    /// Unfortunately, it does not call `SetLastError`, so it is not possible to get more specific
-    /// error information; it could actually be due to an out-of-memory condition, for example.
-    SystemResources,
-};
-
-/// Call RtlGenRandom() instead of CryptGetRandom() on Windows
-/// https://github.com/rust-lang-nursery/rand/issues/111
-/// https://bugzilla.mozilla.org/show_bug.cgi?id=504270
-pub fn RtlGenRandom(output: []u8) RtlGenRandomError!void {
-    var total_read: usize = 0;
-    var buff: []u8 = output[0..];
-    const max_read_size: ULONG = maxInt(ULONG);
-
-    while (total_read < output.len) {
-        const to_read: ULONG = @min(buff.len, max_read_size);
-
-        if (advapi32.RtlGenRandom(buff.ptr, to_read) == 0) {
-            return error.SystemResources;
-        }
-
-        total_read += to_read;
-        buff = buff[to_read..];
-    }
-}
-
 pub const WaitForSingleObjectError = error{
     WaitAbandoned,
     WaitTimeOut,
@@ -3154,7 +3150,7 @@ pub fn DeleteFile(sub_path_w: []const u16, options: DeleteFileOptions) DeleteFil
     // FileDispositionInformation if the return value lets us know that some aspect of it is not supported.
     const need_fallback = need_fallback: {
         // Deletion with posix semantics if the filesystem supports it.
-        const info: FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
+        var info: FILE.DISPOSITION.INFORMATION.EX = .{ .Flags = .{
             .DELETE = true,
             .POSIX_SEMANTICS = true,
             .IGNORE_READONLY_ATTRIBUTE = true,
@@ -3183,7 +3179,7 @@ pub fn DeleteFile(sub_path_w: []const u16, options: DeleteFileOptions) DeleteFil
     if (need_fallback) {
         // Deletion with file pending semantics, which requires waiting or moving
         // files to get them removed (from here).
-        const file_dispo: FILE.DISPOSITION.INFORMATION = .{
+        var file_dispo: FILE.DISPOSITION.INFORMATION = .{
             .DeleteFile = TRUE,
         };
         rc = ntdll.NtSetInformationFile(
@@ -3218,7 +3214,7 @@ pub const RenameError = error{
     NetworkNotFound,
     AntivirusInterference,
     BadPathName,
-    RenameAcrossMountPoints,
+    CrossDevice,
 } || UnexpectedError;
 
 pub fn RenameFile(
@@ -3262,7 +3258,7 @@ pub fn RenameFile(
     // The strategy here is just to try using FileRenameInformationEx and fall back to
     // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
     const need_fallback = need_fallback: {
-        const rename_info: FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{
                 .REPLACE_IF_EXISTS = replace_if_exists,
                 .POSIX_SEMANTICS = true,
@@ -3295,7 +3291,7 @@ pub fn RenameFile(
     };
 
     if (need_fallback) {
-        const rename_info: FILE.RENAME_INFORMATION = .init(.{
+        var rename_info: FILE.RENAME_INFORMATION = .init(.{
             .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
             .RootDirectory = if (std.fs.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir_fd,
             .FileName = new_path_w,
@@ -3319,7 +3315,7 @@ pub fn RenameFile(
         .ACCESS_DENIED => return error.AccessDenied,
         .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
         .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_SAME_DEVICE => return error.RenameAcrossMountPoints,
+        .NOT_SAME_DEVICE => return error.CrossDevice,
         .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
         .DIRECTORY_NOT_EMPTY => return error.PathAlreadyExists,
         .FILE_IS_A_DIRECTORY => return error.IsDir,
@@ -3787,40 +3783,6 @@ pub fn NtFreeVirtualMemory(hProcess: HANDLE, addr: ?*PVOID, size: *SIZE_T, free_
         .INVALID_PARAMETER => NtFreeVirtualMemoryError.InvalidParameter,
         else => NtFreeVirtualMemoryError.Unexpected,
     };
-}
-
-pub const VirtualProtectError = error{
-    InvalidAddress,
-    Unexpected,
-};
-
-pub fn VirtualProtect(lpAddress: ?LPVOID, dwSize: SIZE_T, flNewProtect: DWORD, lpflOldProtect: *DWORD) VirtualProtectError!void {
-    // ntdll takes an extra level of indirection here
-    var addr = lpAddress;
-    var size = dwSize;
-    switch (ntdll.NtProtectVirtualMemory(GetCurrentProcess(), &addr, &size, flNewProtect, lpflOldProtect)) {
-        .SUCCESS => {},
-        .INVALID_ADDRESS => return error.InvalidAddress,
-        else => |st| return unexpectedStatus(st),
-    }
-}
-
-pub fn VirtualProtectEx(handle: HANDLE, addr: ?LPVOID, size: SIZE_T, new_prot: DWORD) VirtualProtectError!DWORD {
-    var old_prot: DWORD = undefined;
-    var out_addr = addr;
-    var out_size = size;
-    switch (ntdll.NtProtectVirtualMemory(
-        handle,
-        &out_addr,
-        &out_size,
-        new_prot,
-        &old_prot,
-    )) {
-        .SUCCESS => return old_prot,
-        .INVALID_ADDRESS => return error.InvalidAddress,
-        // TODO: map errors
-        else => |rc| return unexpectedStatus(rc),
-    }
 }
 
 pub const SetConsoleTextAttributeError = error{Unexpected};

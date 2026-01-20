@@ -324,6 +324,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -346,6 +347,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -368,6 +370,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -393,6 +396,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _27: u6 = 0,
     },
@@ -417,6 +421,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         _20: u1 = 0,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -439,6 +444,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -459,13 +465,16 @@ pub const O = switch (native_arch) {
         NOFOLLOW: bool = false,
         NOATIME: bool = false,
         CLOEXEC: bool = false,
-        _20: u1 = 0,
+        /// This is typically invalid without also setting `TMPFILE1` and `DIRECTORY`.
+        TMPFILE0: bool = false,
         PATH: bool = false,
-        _22: u10 = 0,
+        _22: u4 = 0,
+        /// This is typically invalid without also setting `TMPFILE0` and `DIRECTORY`.
+        TMPFILE1: bool = false,
+        _27: u5 = 0,
 
         // #define O_RSYNC    04010000
         // #define O_SYNC     04010000
-        // #define O_TMPFILE 020200000
         // #define O_NDELAY O_NONBLOCK
     },
     .m68k => packed struct(u32) {
@@ -490,6 +499,15 @@ pub const O = switch (native_arch) {
         _22: u10 = 0,
     },
     else => @compileError("missing std.os.linux.O constants for this architecture"),
+};
+
+pub const RENAME = packed struct(u32) {
+    /// Cannot be set together with `EXCHANGE`.
+    NOREPLACE: bool = false,
+    /// Cannot be set together with `NOREPLACE`.
+    EXCHANGE: bool = false,
+    WHITEOUT: bool = false,
+    _: u29 = 0,
 };
 
 /// Set by startup code, used by `getauxval`.
@@ -968,13 +986,13 @@ pub fn pivot_root(new_root: [*:0]const u8, put_old: [*:0]const u8) usize {
     return syscall2(.pivot_root, @intFromPtr(new_root), @intFromPtr(put_old));
 }
 
-pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, offset: i64) usize {
+pub fn mmap(address: ?[*]u8, length: usize, prot: PROT, flags: MAP, fd: i32, offset: i64) usize {
     if (@hasField(SYS, "mmap2")) {
         return syscall6(
             .mmap2,
             @intFromPtr(address),
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
             @truncate(@as(u64, @bitCast(offset)) / std.heap.pageSize()),
@@ -987,7 +1005,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
             @intFromPtr(&[_]usize{
                 @intFromPtr(address),
                 length,
-                prot,
+                @as(u32, @bitCast(prot)),
                 @as(u32, @bitCast(flags)),
                 @bitCast(@as(isize, fd)),
                 @as(u64, @bitCast(offset)),
@@ -996,7 +1014,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
             .mmap,
             @intFromPtr(address),
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
             @as(u64, @bitCast(offset)),
@@ -1004,8 +1022,8 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
     }
 }
 
-pub fn mprotect(address: [*]const u8, length: usize, protection: usize) usize {
-    return syscall3(.mprotect, @intFromPtr(address), length, protection);
+pub fn mprotect(address: [*]const u8, length: usize, protection: PROT) usize {
+    return syscall3(.mprotect, @intFromPtr(address), length, @as(u32, @bitCast(protection)));
 }
 
 pub fn mremap(old_addr: ?[*]const u8, old_len: usize, new_len: usize, flags: MREMAP, new_addr: ?[*]const u8) usize {
@@ -1337,9 +1355,22 @@ pub fn rename(old: [*:0]const u8, new: [*:0]const u8) usize {
     if (@hasField(SYS, "rename")) {
         return syscall2(.rename, @intFromPtr(old), @intFromPtr(new));
     } else if (@hasField(SYS, "renameat")) {
-        return syscall4(.renameat, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new));
+        return syscall4(
+            .renameat,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+        );
     } else {
-        return syscall5(.renameat2, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new), 0);
+        return syscall5(
+            .renameat2,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+            0,
+        );
     }
 }
 
@@ -1364,14 +1395,14 @@ pub fn renameat(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]co
     }
 }
 
-pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: u32) usize {
+pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: RENAME) usize {
     return syscall5(
         .renameat2,
         @as(usize, @bitCast(@as(isize, oldfd))),
         @intFromPtr(oldpath),
         @as(usize, @bitCast(@as(isize, newfd))),
         @intFromPtr(newpath),
-        flags,
+        @as(u32, @bitCast(flags)),
     );
 }
 
@@ -2457,7 +2488,7 @@ pub fn capset(hdrp: *cap_user_header_t, datap: *const cap_user_data_t) usize {
     return syscall2(.capset, @intFromPtr(hdrp), @intFromPtr(datap));
 }
 
-pub fn sigaltstack(ss: ?*stack_t, old_ss: ?*stack_t) usize {
+pub fn sigaltstack(ss: ?*const stack_t, old_ss: ?*stack_t) usize {
     return syscall2(.sigaltstack, @intFromPtr(ss), @intFromPtr(old_ss));
 }
 
@@ -3585,24 +3616,30 @@ pub const FUTEX2_FLAGS = packed struct(u32) {
     _undefined: u24 = 0,
 };
 
-pub const PROT = struct {
-    /// page can not be accessed
-    pub const NONE = 0x0;
-    /// page can be read
-    pub const READ = 0x1;
-    /// page can be written
-    pub const WRITE = 0x2;
-    /// page can be executed
-    pub const EXEC = 0x4;
-    /// page may be used for atomic ops
-    pub const SEM = switch (native_arch) {
-        .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => 0x10,
-        else => 0x8,
-    };
-    /// mprotect flag: extend change to start of growsdown vma
-    pub const GROWSDOWN = 0x01000000;
-    /// mprotect flag: extend change to end of growsup vma
-    pub const GROWSUP = 0x02000000;
+pub const PROT = switch (native_arch) {
+    .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => packed struct(u32) {
+        READ: bool = false,
+        WRITE: bool = false,
+        EXEC: bool = false,
+        _: u1 = 0,
+        /// Page may be used for atomic ops.
+        SEM: bool = false,
+        __: u19 = 0,
+        GROWSDOWN: bool = false,
+        GROWSUP: bool = false,
+        ___: u6 = 0,
+    },
+    else => packed struct(u32) {
+        READ: bool = false,
+        WRITE: bool = false,
+        EXEC: bool = false,
+        /// Page may be used for atomic ops.
+        SEM: bool = false,
+        __: u20 = 0,
+        GROWSDOWN: bool = false,
+        GROWSUP: bool = false,
+        ___: u6 = 0,
+    },
 };
 
 pub const FD_CLOEXEC = 1;

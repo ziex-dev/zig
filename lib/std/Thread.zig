@@ -175,7 +175,7 @@ pub const SetNameError = error{
     Unsupported,
     Unexpected,
     InvalidWtf8,
-} || posix.PrctlError || posix.WriteError || Io.File.OpenError || std.fmt.BufPrintError;
+} || posix.PrctlError || Io.File.Writer.Error || Io.File.OpenError || std.fmt.BufPrintError;
 
 pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
     if (name.len > max_name_len) return error.NameTooLong;
@@ -540,13 +540,16 @@ const Completion = std.atomic.Value(enum(if (builtin.zig_backend == .stage2_risc
     completed,
 });
 
-/// Used by the Thread implementations to call the spawned function with the arguments.
+/// Performs implementation-agnostic thread setup (`maybeAttachSignalStack`), then calls the given
+/// thread entry point `f` with `args` and handles the result.
 fn callFn(comptime f: anytype, args: anytype) switch (Impl) {
     WindowsThreadImpl => windows.DWORD,
     LinuxThreadImpl => u8,
     PosixThreadImpl => ?*anyopaque,
     else => unreachable,
 } {
+    maybeAttachSignalStack();
+
     const default_value = if (Impl == PosixThreadImpl) null else 0;
     const bad_fn_ret = "expected return type of startFn to be 'u8', 'noreturn', '!noreturn', 'void', or '!void'";
 
@@ -1224,6 +1227,10 @@ const LinuxThreadImpl = struct {
         /// Ported over from musl libc's pthread detached implementation:
         /// https://github.com/ifduyue/musl/search?q=__unmapself
         fn freeAndExit(self: *ThreadCompletion) noreturn {
+            // If a signal were delivered between SYS_munmap and SYS_exit, any installed signal
+            // handler would immediately segfault due to the stack being unmapped. To avoid this,
+            // we need to mask all signals before entering the inline asm.
+            posix.sigprocmask(std.posix.SIG.BLOCK, &std.os.linux.sigfillset(), null);
             switch (target.cpu.arch) {
                 .x86 => asm volatile (
                     \\  movl $91, %%eax # SYS_munmap
@@ -1531,7 +1538,7 @@ const LinuxThreadImpl = struct {
         const mapped = posix.mmap(
             null,
             map_bytes,
-            posix.PROT.NONE,
+            .{},
             .{ .TYPE = .PRIVATE, .ANONYMOUS = true },
             -1,
             0,
@@ -1547,14 +1554,14 @@ const LinuxThreadImpl = struct {
         assert(mapped.len >= map_bytes);
         errdefer posix.munmap(mapped);
 
-        // map everything but the guard page as read/write
-        posix.mprotect(
-            @alignCast(mapped[guard_offset..]),
-            posix.PROT.READ | posix.PROT.WRITE,
-        ) catch |err| switch (err) {
-            error.AccessDenied => unreachable,
-            else => |e| return e,
-        };
+        // Map everything but the guard page as read/write.
+        const guarded: []align(std.heap.page_size_min) u8 = @alignCast(mapped[guard_offset..]);
+        const protection: posix.PROT = .{ .READ = true, .WRITE = true };
+        switch (posix.errno(posix.system.mprotect(guarded.ptr, guarded.len, protection))) {
+            .SUCCESS => {},
+            .NOMEM => return error.OutOfMemory,
+            else => |err| return posix.unexpectedErrno(err),
+        }
 
         // Prepare the TLS segment and prepare a user_desc struct when needed on x86
         var tls_ptr = linux.tls.prepareArea(mapped[tls_offset..]);
@@ -1912,4 +1919,28 @@ test "ResetEvent broadcast" {
     defer for (threads) |t| t.join();
 
     ctx.run();
+}
+
+/// Configures the per-thread alternative signal stack requested by `std.options.signal_stack_size`.
+pub fn maybeAttachSignalStack() void {
+    const size = std.options.signal_stack_size orelse return;
+    switch (builtin.target.os.tag) {
+        // TODO: Windows vectored exception handlers always run on the main stack, but we could use
+        // some target-specific inline assembly to swap the stack pointer.
+        .windows => return,
+        .wasi => return,
+        else => {},
+    }
+    const global = struct {
+        threadlocal var signal_stack: [size]u8 = undefined;
+    };
+    std.posix.sigaltstack(&.{
+        .sp = &global.signal_stack,
+        .flags = 0,
+        .size = size,
+    }, null) catch |err| switch (err) {
+        error.SizeTooSmall => unreachable, // `std.options.signal_stack_size` must be sufficient for the target
+        error.PermissionDenied => unreachable, // called `maybeAttachSignalStack` from a signal handler
+        error.Unexpected => @panic("unexpected error attaching signal stack"),
+    };
 }

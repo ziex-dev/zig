@@ -1210,6 +1210,13 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
                         });
                         try argv.append(lib_path);
                     }
+                } else if (target.isOpenBSDLibC()) {
+                    for (openbsd.libs) |lib| {
+                        const lib_path = try std.fmt.allocPrint(arena, "{f}{c}lib{s}.so", .{
+                            comp.openbsd_so_files.?.dir_path, fs.path.sep, lib.name,
+                        });
+                        try argv.append(lib_path);
+                    }
                 } else {
                     diags.flags.missing_libc = true;
                 }
@@ -1629,7 +1636,11 @@ fn spawnLld(comp: *Compilation, arena: Allocator, argv: []const []const u8) !voi
         const err = switch (first_err) {
             error.NameTooLong => err: {
                 const s = fs.path.sep_str;
-                const rand_int = std.crypto.random.int(u64);
+                const rand_int = r: {
+                    var x: u64 = undefined;
+                    io.random(@ptrCast(&x));
+                    break :r x;
+                };
                 const rsp_path = "tmp" ++ s ++ std.fmt.hex(rand_int) ++ ".rsp";
 
                 const rsp_file = try comp.dirs.local_cache.handle.createFile(io, rsp_path, .{});
@@ -1713,6 +1724,7 @@ const dev = @import("../dev.zig");
 const freebsd = @import("../libs/freebsd.zig");
 const glibc = @import("../libs/glibc.zig");
 const netbsd = @import("../libs/netbsd.zig");
+const openbsd = @import("../libs/openbsd.zig");
 const wasi_libc = @import("../libs/wasi_libc.zig");
 const link = @import("../link.zig");
 const lldMain = @import("../main.zig").lldMain;

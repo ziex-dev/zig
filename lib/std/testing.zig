@@ -618,7 +618,7 @@ pub const TmpDir = struct {
     sub_path: [sub_path_len]u8,
 
     const random_bytes_count = 12;
-    const sub_path_len = std.fs.base64_encoder.calcSize(random_bytes_count);
+    const sub_path_len = std.base64.url_safe.Encoder.calcSize(random_bytes_count);
 
     pub fn cleanup(self: *TmpDir) void {
         self.dir.close(io);
@@ -631,9 +631,9 @@ pub const TmpDir = struct {
 pub fn tmpDir(opts: Io.Dir.OpenOptions) TmpDir {
     comptime assert(builtin.is_test);
     var random_bytes: [TmpDir.random_bytes_count]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
     var sub_path: [TmpDir.sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+    _ = std.base64.url_safe.Encoder.encode(&sub_path, &random_bytes);
 
     const cwd = Io.Dir.cwd();
     var cache_dir = cwd.createDirPathOpen(io, ".zig-cache", .{}) catch
@@ -813,7 +813,7 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
             }
         },
 
-        .array => |_| {
+        .array => {
             if (expected.len != actual.len) {
                 print("Array len not the same, expected {d}, found {d}\n", .{ expected.len, actual.len });
                 return error.TestExpectedEqual;
@@ -1187,7 +1187,7 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
                     return error.MemoryLeakDetected;
                 }
             },
-            else => return err,
+            else => |e| return e,
         }
     }
 }
