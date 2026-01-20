@@ -85,6 +85,7 @@ pub const PositionalInfo = struct {
 ///             value: [:0]const u8,
 ///             pub const info: std.cli.NamedInfo = .{
 ///                 .description = "path to output file",
+///                 .short = 'o',
 ///             };
 ///         },
 ///     },
@@ -107,13 +108,13 @@ pub const PositionalInfo = struct {
 /// this program does a thing
 ///
 /// Arguments:
-///   input                [string. required] path to input file
-///   args                 [string]
+///   input                   [string. required] path to input file
+///   args                    [string]
 ///
 /// Options:
-///   --help               Print this help text and exit.
-///   --verbose            [default: no]
-///   --output=string      [required] path to output file
+///   --help                  Print this help text and exit.
+///   --verbose               [default: no]
+///   -o, --output=string     [required] path to output file
 /// ```
 ///
 /// Either or both of `named` and `positional` may be omitted, which is effectively equivalent to declaring them as `struct {}`.
@@ -468,9 +469,34 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
             }
 
             if (arg.len >= 2 and arg[0] == '-' and std.ascii.isAlphabetic(arg[1])) {
-                // Always invalid.
-                // Examples: -h, -flag, -I/path
-                try usageError(Args, options, "unrecognized argument: {s}", .{arg});
+                shorts: for (arg[1..], 1..) |short, short_i| {
+                    if (short == 'h') try innerParseHelp(Args, options);
+
+                    inline for (named_fields, 0..) |field, i| {
+                        if (field.info.named.short == short) {
+                            named_fields_seen[i] = true;
+                            if (field.type == .bool) {
+                                @field(result.named, field.name).value = true;
+                                continue :shorts;
+                            }
+
+                            if (short_i != arg.len - 1) try usageError(Args, options, "expected argument after -{s}", .{&[_]u8{short}});
+
+                            const arg_value = iter.next() orelse try usageError(Args, options, "expected argument after -{s}", .{&[_]u8{short}});
+                            const value = try parseValue(Args, gpa, options, field, arg_value);
+                            if (field.type == .list) {
+                                try @field(named_array_lists, field.name).append(gpa, value);
+                            } else {
+                                @field(result.named, field.name).value = value;
+                            }
+                            continue :argparse;
+                        }
+                    }
+
+                    try usageError(Args, options, "unexpected argument: -{s}", .{&[_]u8{short}});
+                }
+
+                continue :argparse;
             }
         }
 
@@ -749,10 +775,18 @@ fn reflectArgs(comptime Args: type) struct { Info, []const ArgField, []const Arg
 
     const named_fields = if (has_named) @typeInfo(@FieldType(Args, "named")).@"struct".fields else &.{};
     var named_args: [named_fields.len]ArgField = undefined;
+    var all_shorts: []const u8 = "";
     inline for (named_fields, 0..) |sf, i| {
         var arg: ArgField = .of(sf);
         switch (arg.info) {
-            .named => {},
+            .named => |named| {
+                if (named.short) |short| {
+                    // mostly just to make sure that the flag isn't numeric ie `-1` which is common, but will probably get parsed as a float instead
+                    if (!std.ascii.isAlphabetic(short)) @compileError("Unsupported short flag '" ++ &[_]u8{short} ++ "': Args.named." ++ sf.name);
+                    if (mem.indexOfScalar(u8, all_shorts, short)) |_| @compileError("Short flag '" ++ &[_]u8{short} ++ "' already used: Args.named." ++ sf.name);
+                    all_shorts = all_shorts ++ &[_]u8{short};
+                }
+            },
             .positional => @compileError("Expected `pub const info: std.cli.NamedInfo`, but got PositionalInfo: Args.named." ++ sf.name),
             .absent => arg.info = .{ .named = .{} },
         }
@@ -767,21 +801,21 @@ fn reflectArgs(comptime Args: type) struct { Info, []const ArgField, []const Arg
         switch (arg.type) {
             .bool => @compileError("Args.positional cannot have bool fields: " ++ arg.name),
             .list => {
-                if (i != positional_fields.len - 1) @compileError("Args.positional may only have a variadic argument as its last argument: " ++ arg.name);
+                if (i != positional_fields.len - 1) @compileError("Args.positional may only have a variadic argument as its last argument: Args.positional." ++ arg.name);
             },
             else => {},
         }
 
         if (arg.defaultValue()) |default| {
             has_optionals = true;
-            if (arg.type == .optional and default != null) @compileError("Optional Args.positional with optional type must have `null` as default, if present: " ++ arg.name ++ ": " ++ @typeName(arg.type.toType()) ++ " = " ++ switch (arg.type.flatten()) {
+            if (arg.type == .optional and default != null) @compileError("Positional with optional type must have `null` as default, if present: Args.positional." ++ arg.name ++ ": " ++ @typeName(arg.type.toType()) ++ " = " ++ switch (arg.type.flatten()) {
                 .@"enum" => @tagName(default),
                 .bool => if (default) "true" else "false",
                 .float, .int => comptimePrint("{d}", .{default}),
                 .cstring, .string => if (default.len == 0) "''" else default,
                 .list, .optional => unreachable,
             });
-        } else if (has_optionals and arg.type != .list and arg.type != .optional) @compileError("Args.positional cannot have required arguments after optional arguments: " ++ arg.name);
+        } else if (has_optionals and arg.type != .list and arg.type != .optional) @compileError("Positional cannot have required arguments after optional arguments: Args.positional." ++ arg.name);
 
         switch (arg.info) {
             .named => @compileError("Expected `pub const info: std.cli.PositionalInfo`, but got NamedInfo: Args.positional." ++ sf.name),
@@ -860,6 +894,7 @@ test printUsage {
                 value: [:0]const u8,
                 pub const info: NamedInfo = .{
                     .description = "does a foo thing",
+                    .short = 'f',
                 };
             },
             bar: struct { value: bool = false },
@@ -919,6 +954,7 @@ test printUsageArg0 {
                 value: [:0]const u8,
                 pub const info: NamedInfo = .{
                     .description = "does a foo thing",
+                    .short = 'f',
                 };
             },
             bar: struct { value: bool = false },
@@ -1106,6 +1142,7 @@ test printHelp {
                 value: [:0]const u8 = "",
                 pub const info: NamedInfo = .{
                     .description = "does a foo thing",
+                    .short = 'f',
                 };
             },
             bar: struct {
@@ -1155,20 +1192,20 @@ test printHelp {
         \\my special description
         \\
         \\Arguments:
-        \\  foo                 [string. required] a special foo thing
-        \\  bar                 [string. default: '']
-        \\  baz...              [string] not-so-special baz thing
+        \\  foo                  [string. required] a special foo thing
+        \\  bar                  [string. default: '']
+        \\  baz...               [string] not-so-special baz thing
         \\
         \\Options:
-        \\  --help              Print this help text and exit.
-        \\  --foo=string        [default: ''] does a foo thing
-        \\  --bar=string        [required] does a bar thing
-        \\  --baz=int           [default: 10]
-        \\  --quux=int          [default: -1]
-        \\  --quuz=float        [default: -420] Nice.
-        \\  --[no-]foobar       [default: no]
-        \\  --[no-]barfoo       [required]
-        \\  --foobaz=string     [multiple]
+        \\  --help               Print this help text and exit.
+        \\  -f, --foo=string     [default: ''] does a foo thing
+        \\  --bar=string         [required] does a bar thing
+        \\  --baz=int            [default: 10]
+        \\  --quux=int           [default: -1]
+        \\  --quuz=float         [default: -420] Nice.
+        \\  --[no-]foobar        [default: no]
+        \\  --[no-]barfoo        [required]
+        \\  --foobaz=string      [multiple]
         \\
     , aw.written());
 }
@@ -1196,6 +1233,7 @@ test printHelpArg0 {
                 value: ?[:0]const u8 = null,
                 pub const info: NamedInfo = .{
                     .description = "does a foo thing",
+                    .short = 'f',
                 };
             },
             bar: struct {
@@ -1246,20 +1284,20 @@ test printHelpArg0 {
         \\my special description
         \\
         \\Arguments:
-        \\  foo                        [string. required] a special foo thing
-        \\  bar                        [string]
-        \\  baz...                     [string] not-so-special baz thing
+        \\  foo                         [string. required] a special foo thing
+        \\  bar                         [string]
+        \\  baz...                      [string] not-so-special baz thing
         \\
         \\Options:
-        \\  --help                     Print this help text and exit.
-        \\  --[no-]foo=[string]        does a foo thing
-        \\  --[no-]bar=[string]        [required] does a bar thing
-        \\  --baz=int                  [default: 10]
-        \\  --quux=int                 [default: -1]
-        \\  --quuz=float               [default: -420] Nice.
-        \\  --[no-]foobar              [default: no]
-        \\  --[no-]barfoo              [required]
-        \\  --foobaz=string            [multiple]
+        \\  --help                      Print this help text and exit.
+        \\  -f, --[no-]foo=[string]     does a foo thing
+        \\  --[no-]bar=[string]         [required] does a bar thing
+        \\  --baz=int                   [default: 10]
+        \\  --quux=int                  [default: -1]
+        \\  --quuz=float                [default: -420] Nice.
+        \\  --[no-]foobar               [default: no]
+        \\  --[no-]barfoo               [required]
+        \\  --foobaz=string             [multiple]
         \\  --[no-]bazfoo=[string]
         \\
         \\my special epilogue
@@ -1341,7 +1379,11 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         lhs_max_width = @max(lhs_max_width, "--help".len);
 
         for (named_fields, 1..) |field, i| {
-            const lhs: []const u8 = field.namedFlagUsage();
+            var lhs: []const u8 = if (field.info.named.short) |short|
+                ("-" ++ &[_]u8{short} ++ ", ")
+            else
+                "";
+            lhs = lhs ++ field.namedFlagUsage();
             var rhs: []const u8 = switch (field.type) {
                 .bool => if (field.defaultValue()) |default| comptimePrint("[default: {s}] ", .{if (default) "yes" else "no"}) else "[required] ",
                 .@"enum" => if (field.defaultValue()) |default| comptimePrint("[default: {t}] ", .{default}) else "[required] ",
@@ -1771,7 +1813,7 @@ test "usage errors" {
     // Error should suggest the set of options.
     try testing.expect(mem.indexOf(u8, aw.written(), "always") != null);
 
-    // reject single-letter alias-looking arguments
+    // single-letter argument doesn't apply to similarly-named named argument
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
@@ -2085,4 +2127,61 @@ test "optionals" {
             .splat = .{ .value = &.{} },
         },
     }, args);
+}
+
+test "shorts" {
+    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var aw: Writer.Allocating = .init(allocator);
+    const term: Io.Terminal = .{ .mode = .no_color, .writer = &aw.writer };
+    const options: Options = .{ .arg0 = "unused-prog", .terminal = term, .exit = false };
+    errdefer std.debug.print("{s}", .{aw.written()});
+
+    const Args = struct {
+        named: struct {
+            foo: struct {
+                value: ?[]const u8 = null,
+                pub const info: NamedInfo = .{
+                    .short = 'f',
+                };
+            },
+            bar: struct {
+                value: bool = false,
+                pub const info: NamedInfo = .{
+                    .short = 'b',
+                };
+            },
+            quux: struct {
+                value: bool = true,
+                pub const info: NamedInfo = .{
+                    .short = 'Q',
+                };
+            },
+        },
+    };
+
+    const args1 = try parseSlice(Args, allocator, &[_][]const u8{
+        "-f",  "foo",
+        "-Qb",
+    }, options);
+    try testing.expectEqualDeep(Args{
+        .named = .{
+            .foo = .{ .value = "foo" },
+            .bar = .{ .value = true },
+            .quux = .{},
+        },
+    }, args1);
+
+    const args2 = try parseSlice(Args, allocator, &[_][]const u8{
+        "-Qf", "bar",
+    }, options);
+    try testing.expectEqualDeep(Args{
+        .named = .{
+            .foo = .{ .value = "bar" },
+            .bar = .{},
+            .quux = .{},
+        },
+    }, args2);
 }

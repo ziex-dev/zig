@@ -27,12 +27,14 @@ const Args = struct {
             value: []const u8,
             pub const info: std.cli.NamedInfo = .{
                 .description = "Source code file path",
+                .short = 'i',
             };
         },
         output: struct {
             value: []const u8,
             pub const info: std.cli.NamedInfo = .{
                 .description = "Where to write output HTML docs to",
+                .short = 'o',
             };
         },
         zig: struct {
