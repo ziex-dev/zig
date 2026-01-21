@@ -40,9 +40,9 @@ pub fn detectNativeCpuAndFeatures(
 
     setFeature(&cpu, std.Target.loongarch.Feature.ual, bit(cfg1, 20));
 
-    const hasFpu = bit(cfg2, 0);
-    setFeature(&cpu, std.Target.loongarch.Feature.f, hasFpu and bit(cfg2, 1));
-    setFeature(&cpu, std.Target.loongarch.Feature.d, hasFpu and bit(cfg2, 2));
+    const has_fpu = bit(cfg2, 0);
+    setFeature(&cpu, std.Target.loongarch.Feature.f, has_fpu and bit(cfg2, 1));
+    setFeature(&cpu, std.Target.loongarch.Feature.d, has_fpu and bit(cfg2, 2));
 
     setFeature(&cpu, std.Target.loongarch.Feature.lsx, bit(cfg2, 6));
     setFeature(&cpu, std.Target.loongarch.Feature.lasx, bit(cfg2, 7));
