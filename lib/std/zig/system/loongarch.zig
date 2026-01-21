@@ -48,6 +48,8 @@ pub fn detectNativeCpuAndFeatures(
     setFeature(&cpu, .lasx, bit(cfg2, 7));
     setFeature(&cpu, .lvz, bit(cfg2, 10));
 
+    setFeature(&cpu, .lbt, bit(cfg2, 18) and bit(cfg2, 19) and bit(cfg2, 20));
+
     setFeature(&cpu, .frecipe, bit(cfg2, 25));
     setFeature(&cpu, .div32, bit(cfg2, 26));
     setFeature(&cpu, .lam_bh, bit(cfg2, 27));
