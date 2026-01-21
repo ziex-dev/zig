@@ -1,12 +1,14 @@
 const builtin = @import("builtin");
 const std = @import("std");
 
-inline fn testBit(cfg: u32, bitToTest: i32) bool {
-    return cfg & (1 << bitToTest) != 0;
+inline fn bit(input: u32, offset: u5) bool {
+    return (input >> offset) & 1 != 0;
 }
 
-inline fn addFeature(cpu: *std.Target.Cpu, feature: std.Target.loongarch.Feature) void {
-    cpu.features.addFeature(@intFromEnum(feature));
+fn setFeature(cpu: *std.Target.Cpu, feature: std.Target.loongarch.Feature, enabled: bool) void {
+    const idx = @as(std.Target.Cpu.Feature.Set.Index, @intFromEnum(feature));
+
+    if (enabled) cpu.features.addFeature(idx) else cpu.features.removeFeature(idx);
 }
 
 pub fn detectNativeCpuAndFeatures(
@@ -31,31 +33,30 @@ pub fn detectNativeCpuAndFeatures(
     };
 
     cpu.features.addFeatureSet(cpu.model.features);
-    cpu.features.populateDependencies(cpu.arch.allFeaturesList());
 
     const cfg1 = cpucfg(1);
     const cfg2 = cpucfg(2);
     const cfg3 = cpucfg(3);
 
-    if (testBit(cfg1, 20)) addFeature(&cpu, std.Target.loongarch.Feature.ual);
+    setFeature(&cpu, std.Target.loongarch.Feature.ual, bit(cfg1, 20));
 
-    const hasFpu = testBit(cfg2, 0);
-    if (hasFpu) {
-        if (testBit(cfg2,1)) addFeature(&cpu, std.Target.loongarch.Feature.f);
-        if (testBit(cfg2,2)) addFeature(&cpu, std.Target.loongarch.Feature.d);
-    }
+    const hasFpu = bit(cfg2, 0);
+    setFeature(&cpu, std.Target.loongarch.Feature.f, hasFpu and bit(cfg2, 1));
+    setFeature(&cpu, std.Target.loongarch.Feature.d, hasFpu and bit(cfg2, 2));
 
-    if (testBit(cfg2, 6)) addFeature(&cpu, std.Target.loongarch.Feature.lsx);
-    if (testBit(cfg2, 7)) addFeature(&cpu, std.Target.loongarch.Feature.lasx);
-    if (testBit(cfg2, 10)) addFeature(&cpu, std.Target.loongarch.Feature.lvz);
+    setFeature(&cpu, std.Target.loongarch.Feature.lsx, bit(cfg2, 6));
+    setFeature(&cpu, std.Target.loongarch.Feature.lasx, bit(cfg2, 7));
+    setFeature(&cpu, std.Target.loongarch.Feature.lvz, bit(cfg2, 10));
 
-    if (testBit(cfg2, 25)) addFeature(&cpu, std.Target.loongarch.Feature.frecipe);
-    if (testBit(cfg2, 26)) addFeature(&cpu, std.Target.loongarch.Feature.div32);
-    if (testBit(cfg2, 27)) addFeature(&cpu, std.Target.loongarch.Feature.lam_bh);
-    if (testBit(cfg2, 28)) addFeature(&cpu, std.Target.loongarch.Feature.lamcas);
-    if (testBit(cfg2, 30)) addFeature(&cpu, std.Target.loongarch.Feature.scq);
+    setFeature(&cpu, std.Target.loongarch.Feature.frecipe, bit(cfg2, 25));
+    setFeature(&cpu, std.Target.loongarch.Feature.div32, bit(cfg2, 26));
+    setFeature(&cpu, std.Target.loongarch.Feature.lam_bh, bit(cfg2, 27));
+    setFeature(&cpu, std.Target.loongarch.Feature.lamcas, bit(cfg2, 28));
+    setFeature(&cpu, std.Target.loongarch.Feature.scq, bit(cfg2, 30));
 
-    if (testBit(cfg3, 23)) addFeature(&cpu, std.Target.loongarch.Feature.ld_seq_sa);
+    setFeature(&cpu, std.Target.loongarch.Feature.ld_seq_sa, bit(cfg3, 23));
+
+    cpu.features.populateDependencies(cpu.arch.allFeaturesList());
 
     return cpu;
 }
