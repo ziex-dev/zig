@@ -38,23 +38,23 @@ pub fn detectNativeCpuAndFeatures(
     const cfg2 = cpucfg(2);
     const cfg3 = cpucfg(3);
 
-    setFeature(&cpu, std.Target.loongarch.Feature.ual, bit(cfg1, 20));
+    setFeature(&cpu, .ual, bit(cfg1, 20));
 
     const has_fpu = bit(cfg2, 0);
-    setFeature(&cpu, std.Target.loongarch.Feature.f, has_fpu and bit(cfg2, 1));
-    setFeature(&cpu, std.Target.loongarch.Feature.d, has_fpu and bit(cfg2, 2));
+    setFeature(&cpu, .f, has_fpu and bit(cfg2, 1));
+    setFeature(&cpu, .d, has_fpu and bit(cfg2, 2));
 
-    setFeature(&cpu, std.Target.loongarch.Feature.lsx, bit(cfg2, 6));
-    setFeature(&cpu, std.Target.loongarch.Feature.lasx, bit(cfg2, 7));
-    setFeature(&cpu, std.Target.loongarch.Feature.lvz, bit(cfg2, 10));
+    setFeature(&cpu, .lsx, bit(cfg2, 6));
+    setFeature(&cpu, .lasx, bit(cfg2, 7));
+    setFeature(&cpu, .lvz, bit(cfg2, 10));
 
-    setFeature(&cpu, std.Target.loongarch.Feature.frecipe, bit(cfg2, 25));
-    setFeature(&cpu, std.Target.loongarch.Feature.div32, bit(cfg2, 26));
-    setFeature(&cpu, std.Target.loongarch.Feature.lam_bh, bit(cfg2, 27));
-    setFeature(&cpu, std.Target.loongarch.Feature.lamcas, bit(cfg2, 28));
-    setFeature(&cpu, std.Target.loongarch.Feature.scq, bit(cfg2, 30));
+    setFeature(&cpu, .frecipe, bit(cfg2, 25));
+    setFeature(&cpu, .div32, bit(cfg2, 26));
+    setFeature(&cpu, .lam_bh, bit(cfg2, 27));
+    setFeature(&cpu, .lamcas, bit(cfg2, 28));
+    setFeature(&cpu, .scq, bit(cfg2, 30));
 
-    setFeature(&cpu, std.Target.loongarch.Feature.ld_seq_sa, bit(cfg3, 23));
+    setFeature(&cpu, .ld_seq_sa, bit(cfg3, 23));
 
     cpu.features.populateDependencies(cpu.arch.allFeaturesList());
 
