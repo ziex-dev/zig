@@ -1,4 +1,5 @@
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 const Dir = std.Io.Dir;
 
@@ -7,8 +8,12 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const zig_src_lib_path = args[1];
-    const mingw_src_path = args[2];
+    const zig_src_lib_path, const mingw_src_path = try cli.parse(
+        struct { []const u8, []const u8 },
+        .default,
+        args,
+        arena,
+    );
 
     const dest_mingw_crt_path = try Dir.path.join(arena, &.{
         zig_src_lib_path, "libc", "mingw",
