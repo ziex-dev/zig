@@ -7,6 +7,7 @@
 //! target.
 
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 
 fn cName(ty: std.Target.CType) []const u8 {
@@ -29,15 +30,21 @@ fn cName(ty: std.Target.CType) []const u8 {
 var general_purpose_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub fn main(init: std.process.Init) !void {
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
     const io = init.io;
+    const allocator = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(allocator);
 
-    if (args.len != 2) {
+    const target_triple = cli.parse(
+        []const u8,
+        .default,
+        args,
+        allocator,
+    ) catch {
         std.debug.print("Usage: {s} [target_triple]\n", .{args[0]});
         std.process.exit(1);
-    }
+    };
 
-    const query = try std.Target.Query.parse(.{ .arch_os_abi = args[1] });
+    const query = try std.Target.Query.parse(.{ .arch_os_abi = target_triple });
     const target = try std.zig.system.resolveTargetQuery(io, query);
 
     var buffer: [2000]u8 = undefined;
