@@ -59,6 +59,7 @@ const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();
 
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 const mem = std.mem;
 const log = std.log;
@@ -284,8 +285,12 @@ const Parse = struct {
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
-    const build_all_path = args[1];
+    const build_all_path = try cli.parse(
+        []const u8,
+        .default,
+        try init.minimal.args.toSlice(arena),
+        arena,
+    );
 
     var build_all_dir = try Io.Dir.cwd().openDir(io, build_all_path, .{});
 
