@@ -62,24 +62,29 @@ const usage =
     \\-h, --help                    Print this help and exit
 ;
 
+const Args = struct {
+    struct {
+        h: ?void = null,
+        help: ?void = null,
+        sysroot: ?[]const u8 = null,
+    },
+    []const []const u8,
+};
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
 
-    var argv = std.array_list.Managed([]const u8).init(arena);
-    var sysroot: ?[]const u8 = null;
+    const named, const argv = std.cli.parse(Args, .sorted, args, arena) catch {
+        return info(usage, .{});
+    };
 
-    var args_iter = ArgsIterator{ .args = args[1..] };
-    while (args_iter.next()) |arg| {
-        if (mem.eql(u8, arg, "--help") or mem.eql(u8, arg, "-h")) {
-            return info(usage, .{});
-        } else if (mem.eql(u8, arg, "--sysroot")) {
-            sysroot = args_iter.nextOrFatal();
-        } else try argv.append(arg);
+    if (named.h != null or named.help != null) {
+        return info(usage, .{});
     }
 
-    const sysroot_path = sysroot orelse blk: {
+    const sysroot_path = named.sysroot orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
         break :blk std.zig.system.darwin.getSdk(arena, io, &target) orelse
             fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
@@ -107,7 +112,7 @@ pub fn main(init: std.process.Init) !void {
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(arena, io, argv.items, sysroot_path, target, version, tmp_dir);
+        try fetchTarget(arena, io, argv, sysroot_path, target, version, tmp_dir);
     }
 }
 
