@@ -2762,12 +2762,7 @@ fn dirCreateDirPathOpenWasi(
 
 fn dirStat(userdata: ?*anyopaque, dir: Dir) Dir.StatError!Dir.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    const file: File = if (is_windows) .{
-        .handle = dir.handle,
-        .flags = .{ .nonblocking = false },
-    } else .{
-        .handle = dir.handle,
-    };
+    const file: File = .{ .handle = dir.handle };
     return fileStat(t, file);
 }
 
@@ -3690,10 +3685,7 @@ fn dirCreateFileWindows(
     errdefer windows.CloseHandle(handle);
 
     const exclusive = switch (flags.lock) {
-        .none => return .{
-            .handle = handle,
-            .flags = .{ .nonblocking = false },
-        },
+        .none => return .{ .handle = handle },
         .shared => false,
         .exclusive => true,
     };
@@ -3713,10 +3705,7 @@ fn dirCreateFileWindows(
     )) {
         .SUCCESS => {
             syscall.finish();
-            return .{
-                .handle = handle,
-                .flags = .{ .nonblocking = false },
-            };
+            return .{ .handle = handle };
         },
         .INSUFFICIENT_RESOURCES => return syscall.fail(error.SystemResources),
         .LOCK_NOT_GRANTED => return syscall.fail(error.WouldBlock),
@@ -4287,10 +4276,7 @@ pub fn dirOpenFileWtf16(
     errdefer w.CloseHandle(handle);
 
     const exclusive = switch (flags.lock) {
-        .none => return .{
-            .handle = handle,
-            .flags = .{ .nonblocking = false },
-        },
+        .none => return .{ .handle = handle },
         .shared => false,
         .exclusive => true,
     };
@@ -4313,10 +4299,7 @@ pub fn dirOpenFileWtf16(
         .ACCESS_VIOLATION => |err| return syscall.ntstatusBug(err), // bad io_status_block pointer
         else => |status| return syscall.unexpectedNtstatus(status),
     };
-    return .{
-        .handle = handle,
-        .flags = .{ .nonblocking = false },
-    };
+    return .{ .handle = handle };
 }
 
 fn dirOpenFileWasi(
@@ -8412,7 +8395,7 @@ fn fileReadStreamingWindows(file: File, data: []const []u8) File.Reader.Error!us
                     try syscall.checkCancel();
                     continue;
                 },
-                .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err), // wrong value for flags.nonblocking
+                .INVALID_PARAMETER => |err| return syscall.ntstatusBug(err), // streaming read of async mode file
                 else => |status| return syscall.unexpectedNtstatus(status),
             }
         }
@@ -14550,9 +14533,9 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
     return .{
         .id = piProcInfo.hProcess,
         .thread_handle = piProcInfo.hThread,
-        .stdin = if (g_hChildStd_IN_Wr) |h| .{ .handle = h, .flags = .{ .nonblocking = true } } else null,
-        .stdout = if (g_hChildStd_OUT_Rd) |h| .{ .handle = h, .flags = .{ .nonblocking = true } } else null,
-        .stderr = if (g_hChildStd_ERR_Rd) |h| .{ .handle = h, .flags = .{ .nonblocking = true } } else null,
+        .stdin = if (g_hChildStd_IN_Wr) |h| .{ .handle = h } else null,
+        .stdout = if (g_hChildStd_OUT_Rd) |h| .{ .handle = h } else null,
+        .stderr = if (g_hChildStd_ERR_Rd) |h| .{ .handle = h } else null,
         .request_resource_usage_statistics = options.request_resource_usage_statistics,
     };
 }
@@ -15686,7 +15669,6 @@ fn progressParentFile(userdata: ?*anyopaque) std.Progress.ParentFileError!File {
             .pointer => @ptrFromInt(int),
             else => return error.UnsupportedOperation,
         },
-        .flags = if (is_windows) .{ .nonblocking = true } else .{},
     };
 }
 
