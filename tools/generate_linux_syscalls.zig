@@ -172,18 +172,35 @@ const architectures: []const Arch = &.{
     // .{ .@"var" = "Microblaze", .table = .{ .specific = "arch/microblaze/kernel/syscalls/syscall.tbl" } },
 };
 
+const Args = struct {
+    struct {
+        help: ?void = null,
+    },
+    ?[]const u8,
+};
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
+    const arena = init.arena.allocator();
 
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
-    if (args.len < 2 or mem.eql(u8, args[1], "--help")) {
+    const args = try init.minimal.args.toSlice(arena);
+
+    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+        const stderr = std.debug.lockStderr(&.{});
+        const w = &stderr.file_writer.interface;
+        usage(w, args[0]) catch std.process.exit(2);
+        std.process.exit(1);
+    };
+
+    if (named.help != null or positional == null) {
         const stderr = std.debug.lockStderr(&.{});
         const w = &stderr.file_writer.interface;
         usage(w, args[0]) catch std.process.exit(2);
         std.process.exit(1);
     }
-    const linux_path = args[1];
+
+    const linux_path = positional.?;
 
     var stdout_buffer: [2048]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
