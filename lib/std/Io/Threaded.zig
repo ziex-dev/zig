@@ -12385,6 +12385,12 @@ pub const PosixAddress = extern union {
     any: posix.sockaddr,
     in: posix.sockaddr.in,
     in6: posix.sockaddr.in6,
+un: posix.sockaddr.un, // AF_UNIX
+
+    /// Linux-only address types
+    ll: if (@hasDecl(posix.sockaddr, "ll")) posix.sockaddr.ll else void, // AF_PACKET (Linux only)
+    nl: if (@hasDecl(posix.sockaddr, "nl")) posix.sockaddr.nl else void, // AF_NETLINK (Linux only)
+    vm: if (@hasDecl(posix.sockaddr, "vm")) posix.sockaddr.vm else void, // AF_VSOCK (Linux only)
 };
 
 const UnixAddress = extern union {
