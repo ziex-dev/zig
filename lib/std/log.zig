@@ -100,9 +100,9 @@ pub fn defaultLog(
     args: anytype,
 ) void {
     var buffer: [64]u8 = undefined;
-    const stderr = std.debug.lockStderr(&buffer).terminal();
-    defer std.debug.unlockStderr();
-    return defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
+    const stderr = std.debug.lockStderrUncancelable(&buffer);
+    defer std.debug.unlockStderrUncancelable(stderr);
+    return defaultLogFileTerminal(level, scope, format, args, stderr.terminal()) catch {};
 }
 
 pub fn defaultLogFileTerminal(

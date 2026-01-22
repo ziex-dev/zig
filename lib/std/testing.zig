@@ -372,8 +372,8 @@ pub fn expectEqualSlices(comptime T: type, expected: []const T, actual: []const 
     };
     if (!backend_can_print) return error.TestExpectedEqual;
     // Intentionally using the debug Io instance rather than the testing Io instance.
-    const stderr = std.debug.lockStderr(&.{});
-    defer std.debug.unlockStderr();
+    const stderr = std.debug.lockStderrUncancelable(&.{});
+    defer std.debug.unlockStderrUncancelable(stderr);
     const w = &stderr.file_writer.interface;
     failEqualSlices(T, expected, actual, diff_index, w, stderr.terminal_mode) catch {};
     return error.TestExpectedEqual;

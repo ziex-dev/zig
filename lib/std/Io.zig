@@ -2240,8 +2240,16 @@ pub const LockedStderr = struct {
 /// and implementations. When this returns, `std.process.stderr_thread_mutex`
 /// will be locked.
 ///
+/// Note that when writing to stderr from an async task, it is generally the
+/// responsibility of the caller to extract and propagate `error.Canceled` from
+/// `LockedStderr.file_writer.err` when observing `error.WriteFailed`.  If you
+/// would rather merely `try` or `catch {}` such errors, you must either
+/// disable cancellation temporarily for yourself, or use the alternative
+/// `lockStderrUncancelable`.
+///
 /// See also:
 /// * `tryLockStderr`
+/// * `lockStderrUncancelable`
 pub fn lockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!LockedStderr {
     const ls = try io.vtable.lockStderr(io.userdata, terminal_mode);
     try ls.clear(buffer);
@@ -2257,6 +2265,71 @@ pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancel
 
 pub fn unlockStderr(io: Io) void {
     return io.vtable.unlockStderr(io.userdata);
+}
+
+pub const LockedStderrUncancelable = struct {
+    file_writer: *File.Writer,
+    terminal_mode: Terminal.Mode,
+    prev_cancel_prot: CancelProtection,
+
+    pub fn terminal(lsu: LockedStderrUncancelable) Terminal {
+        return .{
+            .writer = &lsu.file_writer.interface,
+            .mode = lsu.terminal_mode,
+        };
+    }
+
+    pub fn clear(lsu: LockedStderrUncancelable, buffer: []u8) void {
+        LockedStderr.clear(.{
+            .file_writer = lsu.file_writer,
+            .terminal_mode = lsu.terminal_mode,
+        }, buffer) catch |err| switch (err) {
+            error.Canceled => unreachable,
+        };
+    }
+};
+
+/// Similar to `lockSdterr`, but also disables cancelation until the (usually,
+/// deferred) matching call to `unlockStderrUncancelable`, allowing the caller
+/// to handle stderr writing errors in a trivial way.  Note that unlike the
+/// `lockStderr` case, the matching unlock call requires the return value from
+/// this function as an argument.
+///
+/// See also:
+/// * `LockStderr`
+/// * `tryLockStderr`
+pub fn lockStderrUncancelable(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) LockedStderrUncancelable {
+    const prev_cancel_prot = io.vtable.swapCancelProtection(io.userdata, .blocked);
+    const ls = io.vtable.lockStderr(io.userdata, terminal_mode) catch |err| switch (err) {
+        error.Canceled => unreachable,
+    };
+    const lsu: LockedStderrUncancelable = .{
+        .file_writer = ls.file_writer,
+        .terminal_mode = ls.terminal_mode,
+        .prev_cancel_prot = prev_cancel_prot,
+    };
+    lsu.clear(buffer);
+    return lsu;
+}
+
+/// Same as `lockStderrUncancelable` but non-blocking.
+pub fn tryLockStderrUncancelable(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) ?LockedStderrUncancelable {
+    const prev_cancel_prot = io.vtable.swapCancelProtection(io.userdata, .blocked);
+    const ls = io.vtable.tryLockStderr(io.userdata, buffer, terminal_mode) catch |err| switch (err) {
+        error.Canceled => unreachable,
+    } orelse return null;
+    const lsu: LockedStderrUncancelable = .{
+        .file_writer = ls.file_writer,
+        .terminal_mode = ls.terminal_mode,
+        .prev_cancel_prot = prev_cancel_prot,
+    };
+    lsu.clear(buffer);
+    return lsu;
+}
+
+pub fn unlockStderrUncancelable(io: Io, lsu: LockedStderrUncancelable) void {
+    io.vtable.unlockStderr(io.userdata);
+    _ = io.vtable.swapCancelProtection(io.userdata, lsu.prev_cancel_prot);
 }
 
 /// Obtains entropy from a cryptographically secure pseudo-random number

@@ -2289,8 +2289,9 @@ pub const GeneratedFile = struct {
         return gen.path orelse {
             const graph = gen.step.owner.graph;
             const io = graph.io;
-            const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+            const stderr = io.lockStderrUncancelable(&.{}, graph.stderr_mode);
             dumpBadGetPathHelp(gen.step, stderr.terminal(), src_builder, asking_step) catch {};
+            io.unlockStderrUncancelable(stderr);
             @panic("misconfigured build script");
         };
     }
@@ -2509,9 +2510,9 @@ pub const LazyPath = union(enum) {
                     .root_dir = Cache.Directory.cwd(),
                     .sub_path = gen.file.path orelse {
                         const io = graph.io;
-                        const stderr = try io.lockStderr(&.{}, graph.stderr_mode);
+                        const stderr = io.lockStderrUncancelable(&.{}, graph.stderr_mode);
                         dumpBadGetPathHelp(gen.file.step, stderr.terminal(), src_builder, asking_step) catch {};
-                        io.unlockStderr();
+                        io.unlockStderrUncancelable(stderr);
                         @panic("misconfigured build script");
                     },
                 };
@@ -2601,31 +2602,32 @@ fn dumpBadDirnameHelp(
     comptime msg: []const u8,
     args: anytype,
 ) anyerror!void {
-    const stderr = std.debug.lockStderr(&.{}).terminal();
-    defer std.debug.unlockStderr();
-    const w = stderr.writer;
+    const stderr = std.debug.lockStderrUncancelable(&.{});
+    defer std.debug.unlockStderrUncancelable(stderr);
+    const term = stderr.terminal();
+    const w = term.writer;
 
     try w.print(msg, args);
 
     if (fail_step) |s| {
-        stderr.setColor(.red) catch {};
+        term.setColor(.red) catch {};
         try w.writeAll("    The step was created by this stack trace:\n");
-        stderr.setColor(.reset) catch {};
+        term.setColor(.reset) catch {};
 
-        s.dump(stderr);
+        s.dump(term);
     }
 
     if (asking_step) |as| {
-        stderr.setColor(.red) catch {};
+        term.setColor(.red) catch {};
         try w.print("    The step '{s}' that is missing a dependency on the above step was created by this stack trace:\n", .{as.name});
-        stderr.setColor(.reset) catch {};
+        term.setColor(.reset) catch {};
 
-        as.dump(stderr);
+        as.dump(term);
     }
 
-    stderr.setColor(.red) catch {};
+    term.setColor(.red) catch {};
     try w.writeAll("    Proceeding to panic.\n");
-    stderr.setColor(.reset) catch {};
+    term.setColor(.reset) catch {};
 }
 
 /// In this function the stderr mutex has already been locked.

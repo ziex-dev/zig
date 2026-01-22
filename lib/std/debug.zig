@@ -293,6 +293,18 @@ pub fn unlockStderr() void {
     io.unlockStderr();
 }
 
+/// Much like `lockStderr()`, but blocks cancelation for the caller until the
+/// matching `unlockStderrUncancelable()` is called (usually via defer).  This
+/// allows safely ignoring all errors from writing to stderr within an async
+/// task, which is often preferable for debug or log outputs.
+pub fn lockStderrUncancelable(buffer: []u8) Io.LockedStderrUncancelable {
+    return std.Options.debug_io.lockStderrUncancelable(buffer, null);
+}
+
+pub fn unlockStderrUncancelable(lsu: Io.LockedStderrUncancelable) void {
+    return std.Options.debug_io.unlockStderrUncancelable(lsu);
+}
+
 /// Writes to stderr, ignoring errors.
 ///
 /// This is a low-level debugging primitive that bypasses the `Io` interface,
@@ -306,8 +318,8 @@ pub fn unlockStderr() void {
 /// integrate with the application's chosen `Io` implementation.
 pub fn print(comptime fmt: []const u8, args: anytype) void {
     var buffer: [64]u8 = undefined;
-    const stderr = lockStderr(&buffer);
-    defer unlockStderr();
+    const stderr = lockStderrUncancelable(&buffer);
+    defer unlockStderrUncancelable(stderr);
     stderr.file_writer.interface.print(fmt, args) catch return;
 }
 
@@ -323,9 +335,9 @@ pub inline fn getSelfDebugInfo() !*SelfInfo {
 /// Tries to print a hexadecimal view of the bytes, unbuffered, and ignores any error returned.
 /// Obtains the stderr mutex while dumping.
 pub fn dumpHex(bytes: []const u8) void {
-    const stderr = lockStderr(&.{}).terminal();
-    defer unlockStderr();
-    dumpHexFallible(stderr, bytes) catch {};
+    const stderr = lockStderrUncancelable(&.{});
+    defer unlockStderrUncancelable(stderr);
+    dumpHexFallible(stderr.terminal(), bytes) catch {};
 }
 
 /// Prints a hexadecimal view of the bytes, returning any error that occurs.
@@ -749,8 +761,8 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Termin
 }
 /// A thin wrapper around `writeCurrentStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
-    const stderr = lockStderr(&.{}).terminal();
-    defer unlockStderr();
+    const stderr = lockStderrUncancelable(&.{});
+    defer unlockStderrUncancelable(stderr);
     writeCurrentStackTrace(.{
         .first_address = a: {
             if (options.first_address) |a| break :a a;
@@ -759,7 +771,7 @@ pub fn dumpCurrentStackTrace(options: StackUnwindOptions) void {
         },
         .context = options.context,
         .allow_unsafe_unwind = options.allow_unsafe_unwind,
-    }, stderr) catch |err| switch (err) {
+    }, stderr.terminal()) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
@@ -812,9 +824,9 @@ pub fn writeStackTrace(st: *const StackTrace, t: Io.Terminal) Writer.Error!void 
 }
 /// A thin wrapper around `writeStackTrace` which writes to stderr and ignores write errors.
 pub fn dumpStackTrace(st: *const StackTrace) void {
-    const stderr = lockStderr(&.{}).terminal();
-    defer unlockStderr();
-    writeStackTrace(st, stderr) catch |err| switch (err) {
+    const stderr = lockStderrUncancelable(&.{});
+    defer unlockStderrUncancelable(stderr);
+    writeStackTrace(st, stderr.terminal()) catch |err| switch (err) {
         error.WriteFailed => {},
     };
 }
@@ -1673,21 +1685,22 @@ pub fn ConfigurableTrace(comptime size: usize, comptime stack_frame_count: usize
         pub fn dump(t: @This()) void {
             if (!enabled) return;
 
-            const stderr = lockStderr(&.{}).terminal();
-            defer unlockStderr();
+            const stderr = lockStderrUncancelable(&.{});
+            defer unlockStderrUncancelable(stderr);
+            const term = stderr.terminal();
             const end = @min(t.index, size);
             for (t.addrs[0..end], 0..) |frames_array, i| {
-                stderr.writer.print("{s}:\n", .{t.notes[i]}) catch return;
+                term.writer.print("{s}:\n", .{t.notes[i]}) catch return;
                 var frames_array_mutable = frames_array;
                 const frames = mem.sliceTo(frames_array_mutable[0..], 0);
                 const stack_trace: StackTrace = .{
                     .index = frames.len,
                     .instruction_addresses = frames,
                 };
-                writeStackTrace(&stack_trace, stderr) catch return;
+                writeStackTrace(&stack_trace, term) catch return;
             }
             if (t.index > end) {
-                stderr.writer.print("{d} more traces not shown; consider increasing trace size\n", .{
+                term.writer.print("{d} more traces not shown; consider increasing trace size\n", .{
                     t.index - end,
                 }) catch return;
             }
