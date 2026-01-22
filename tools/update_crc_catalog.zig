@@ -1,4 +1,5 @@
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 const Dir = std.Io.Dir;
 const mem = std.mem;
@@ -10,15 +11,24 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
-    return @"i like cheese"(arena, io, args);
+
+    const zig_src_root = cli.parse(
+        []const u8,
+        .default,
+        args,
+        arena,
+    ) catch |err| switch (err) {
+        error.UnknownFlag, error.InvalidValue, error.MissingValue => printUsageAndExit(args[0]),
+        else => return err,
+    };
+
+    if (mem.startsWith(u8, zig_src_root, "-"))
+        printUsageAndExit(args[0]);
+
+    return @"i like cheese"(arena, io, zig_src_root);
 }
 
-fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) !void {
-    if (args.len <= 1) printUsageAndExit(args[0]);
-
-    const zig_src_root = args[1];
-    if (mem.startsWith(u8, zig_src_root, "-")) printUsageAndExit(args[0]);
-
+fn @"i like cheese"(arena: std.mem.Allocator, io: Io, zig_src_root: []const u8) !void {
     var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
     defer zig_src_dir.close(io);
 
