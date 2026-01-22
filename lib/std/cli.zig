@@ -1,3 +1,16 @@
+//! Type-driven command-line argument parser.
+//!
+//! Structs map to named flags, tuples to positionals, unions to subcommands.
+//! Use `.sorted` config to allow flags anywhere; `.default` requires flags first.
+//!
+//! ```
+//! const Args = struct {
+//!     struct { verbose: bool = false, output: ?[]const u8 = null },  // flags
+//!     []const u8,                                                    // positional
+//! };
+//! const flags, const input = try std.cli.parse(Args, .sorted, args, allocator);
+//! ```
+
 const std = @import("std");
 const mem = std.mem;
 const meta = std.meta;
@@ -7,15 +20,34 @@ const Allocator = mem.Allocator;
 const Args = std.process.Args;
 const EnumSet = std.EnumSet;
 
-pub const Error = error{ MissingValue, InvalidValue, UnknownFlag };
+/// Parsing errors returned by `parse`.
+pub const Error = error{
+    /// Required argument not provided.
+    MissingValue,
+    /// Argument couldn't be parsed as expected type.
+    InvalidValue,
+    /// Flag name not found in struct fields.
+    UnknownFlag,
+};
 
+/// Parser configuration presets.
 pub const Config = struct {
+    /// Reorders args so flags come before positionals. Allows `<program> file.txt --verbose`.
     pub const sorted: @This() = .{ .sort = true };
+    /// Expects flags before positionals. Requires strictly `<program> --verbose file.txt`.
     pub const default: @This() = .{ .sort = false };
 
     sort: bool = false,
 };
 
+/// Parse command-line arguments into type `T`. Skips first arg (program name).
+///
+/// - `T`: struct for flags, tuple for positionals, union for subcommands
+/// - `config`: `.sorted` allows flags after positionals, `.default` requires flags first
+/// - `args`: Argument slice. see `std.process.Args.toSlice`
+/// - `allocator`: for string/slice allocations
+///
+/// Returns parsed `T` or `Error`.
 pub fn parse(
     comptime T: type,
     comptime config: Config,
