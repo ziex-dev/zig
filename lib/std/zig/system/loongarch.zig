@@ -19,9 +19,6 @@ pub fn detectNativeCpuAndFeatures(
     _ = os;
     _ = query;
 
-    // Clearly this code could do better in the future by actually querying specific CPU features
-    // with the cpucfg instruction like on x86. But with the small number of well-known LoongArch
-    // models that exist at the moment, simply checking the PRID is plenty.
     var cpu: std.Target.Cpu = .{
         .arch = arch,
         .model = switch (cpucfg(0) & 0xf000) {
