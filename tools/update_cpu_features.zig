@@ -1897,42 +1897,32 @@ const targets = [_]ArchTarget{
     },
 };
 
+const Args = struct {
+    struct {
+        help: ?void = null,
+    },
+    []const []const u8,
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    var args = try init.minimal.args.iterateAllocator(arena);
-    const args0 = args.next().?;
+    const args = try init.minimal.args.toSlice(arena);
 
-    const llvm_tblgen_exe = args.next() orelse
-        usageAndExit(args0, 1);
+    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+        usageAndExit(args[0], 1);
+    };
 
-    if (std.mem.eql(u8, llvm_tblgen_exe, "--help")) {
-        usageAndExit(args0, 0);
-    }
-    if (std.mem.startsWith(u8, llvm_tblgen_exe, "-")) {
-        usageAndExit(args0, 1);
-    }
+    if (named.help != null) usageAndExit(args[0], 0);
 
-    const llvm_src_root = args.next() orelse
-        usageAndExit(args0, 1);
+    if (positional.len < 3) usageAndExit(args[0], 1);
+    if (positional.len > 4) usageAndExit(args[0], 1);
 
-    if (std.mem.startsWith(u8, llvm_src_root, "-")) {
-        usageAndExit(args0, 1);
-    }
-
-    const zig_src_root = args.next() orelse
-        usageAndExit(args0, 1);
-
-    if (std.mem.startsWith(u8, zig_src_root, "-")) {
-        usageAndExit(args0, 1);
-    }
-
-    var filter: ?[]const u8 = null;
-    if (args.next()) |arg| filter = arg;
-
-    // there shouldn't be any more argument after the optional filter
-    if (args.skip()) usageAndExit(args0, 1);
+    const llvm_tblgen_exe = positional[0];
+    const llvm_src_root = positional[1];
+    const zig_src_root = positional[2];
+    const filter: ?[]const u8 = if (positional.len > 3) positional[3] else null;
 
     var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
     defer zig_src_dir.close(io);
