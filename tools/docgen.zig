@@ -28,42 +28,41 @@ const usage =
     \\
 ;
 
+const Args = struct {
+    struct {
+        @"code-dir": ?[]const u8 = null,
+        h: ?void = null,
+        help: ?void = null,
+    },
+    struct {
+        ?[]const u8, // Input file path
+        ?[]const u8, // Output file path
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
-    var args_it = try init.minimal.args.iterateAllocator(arena);
-    if (!args_it.skip()) @panic("expected self arg");
+    const named, const positionals = std.cli.parse(
+        Args,
+        .sorted,
+        args,
+        arena,
+    ) catch {
+        try Io.File.stdout().writeStreamingAll(io, usage);
+        process.exit(1);
+    };
 
-    var opt_code_dir: ?[]const u8 = null;
-    var opt_input: ?[]const u8 = null;
-    var opt_output: ?[]const u8 = null;
-
-    while (args_it.next()) |arg| {
-        if (mem.startsWith(u8, arg, "-")) {
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try Io.File.stdout().writeStreamingAll(io, usage);
-                process.exit(0);
-            } else if (mem.eql(u8, arg, "--code-dir")) {
-                if (args_it.next()) |param| {
-                    opt_code_dir = param;
-                } else {
-                    fatal("expected parameter after --code-dir", .{});
-                }
-            } else {
-                fatal("unrecognized option: '{s}'", .{arg});
-            }
-        } else if (opt_input == null) {
-            opt_input = arg;
-        } else if (opt_output == null) {
-            opt_output = arg;
-        } else {
-            fatal("unexpected positional argument: '{s}'", .{arg});
-        }
+    if (named.h != null or named.help != null) {
+        try Io.File.stdout().writeStreamingAll(io, usage);
+        process.exit(0);
     }
-    const input_path = opt_input orelse fatal("missing input file", .{});
-    const output_path = opt_output orelse fatal("missing output file", .{});
-    const code_dir_path = opt_code_dir orelse fatal("missing --code-dir argument", .{});
+
+    const input_path = positionals[0] orelse fatal("missing input file", .{});
+    const output_path = positionals[1] orelse fatal("missing output file", .{});
+    const code_dir_path = named.@"code-dir" orelse fatal("missing --code-dir argument", .{});
 
     var in_file = try Dir.cwd().openFile(io, input_path, .{});
     defer in_file.close(io);
