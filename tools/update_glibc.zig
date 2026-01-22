@@ -7,6 +7,7 @@
 //! `zig run ../tools/update_glibc.zig -- ~/Downloads/glibc ..`
 
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 const Dir = std.Io.Dir;
 const mem = std.mem;
@@ -43,8 +44,12 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const glibc_src_path = args[1];
-    const zig_src_path = args[2];
+    const glibc_src_path, const zig_src_path = try cli.parse(
+        struct { []const u8, []const u8 },
+        .default,
+        args,
+        arena,
+    );
 
     const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/glibc", .{zig_src_path});
 
