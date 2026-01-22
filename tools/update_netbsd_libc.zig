@@ -5,6 +5,7 @@
 //! `zig run tools/update_netbsd_libc.zig -- ~/Downloads/netbsd-src .`
 
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 
 const exempt_files = [_][]const u8{
@@ -17,8 +18,12 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const netbsd_src_path = args[1];
-    const zig_src_path = args[2];
+    const netbsd_src_path, const zig_src_path = try cli.parse(
+        struct { []const u8, []const u8 },
+        .default,
+        args,
+        arena,
+    );
 
     const dest_dir_path = try std.fmt.allocPrint(arena, "{s}/lib/libc/netbsd", .{zig_src_path});
 
