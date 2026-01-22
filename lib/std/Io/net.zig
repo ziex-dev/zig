@@ -821,6 +821,135 @@ pub const Ip6Address = struct {
     };
 };
 
+/// Raw packet socket address (Linux AF_PACKET)
+pub const PacketAddress = struct {
+    /// Ethernet protocol number
+    /// ex) ETH_P_ALL = 0x0003, ETH_P_IP = 0x0800
+    protocol: u16,
+
+    ifindx: i32,
+
+    hatype: u16 = 0,
+
+    pkttype: u8 = 0,
+
+    halen: u8 = 0,
+
+    addr: [8]u8 = [_]u8{0} ** 8,
+
+    pub const BindError = error{
+        AddressFamilyNotSupported,
+        PermissionDenied,
+        InterfaceNotFound,
+        SystemResources,
+        NetworkDown,
+    } || std.Io.UnexpectedError;
+};
+
+/// Netlink socket address (Linux AF_NETLINK)
+pub const NetlinkAddress = struct {
+    pid: u32 = 0,
+
+    groups: u32 = 0,
+
+    pub const BindOptions = struct {
+        protocol: u32 = 0,
+    };
+
+    pub const BindError = error{
+        AddressFamilyNotSupported,
+        PermissionDenied,
+        SystemResources,
+    } || std.Io.UnexpectedError;
+};
+
+/// Virtual socket address (Linux AF_VSOCK)
+pub const VsockAddress = struct {
+    port: u32,
+
+    /// ContextID
+    /// VMADDR_CID_HYPERVISOR = 0
+    /// VMADDR_CID_LOCAL = 1
+    /// VMADDR_CID_HOST = 2
+    /// VMADDR_CID_ANY = 1
+    cid: u32,
+
+    flags: u8 = 0,
+
+    pub const ConnectOptions = struct {
+        timeout: std.Io.Timeout = .none,
+    };
+
+    pub const ListenOptions = struct {
+        kernel_backlog: u31 = default_kernel_backlog,
+    };
+
+    pub const ConnectError = error{
+        AddressFamilyNotSupported,
+        ConnectionRefused,
+        ConnectionTimedOut,
+        SystemResources,
+        NetworkDown,
+    } || std.Io.UnexpectedError;
+
+    pub const ListenError = error{
+        AddressFamilyNotSupported,
+        AddressInUse,
+        SystemResources,
+        NetworkDown,
+    } || std.Io.UnexpectedError;
+
+    pub const BindError = error{
+        AddressFamilyNotSupported,
+        AddressInUse,
+        SystemResources,
+    } || std.Io.UnexpectedError;
+};
+
+/// Superset of IpAddress which wraps all socket address types
+pub const SocketAddress = union(enum) {
+    ip4: Ip4Address,
+    ip6: Ip6Address,
+    unix: UnixAddress,
+    packet: PacketAddress,
+    netlink: NetlinkAddress,
+    vsock: VsockAddress,
+
+    pub const Family = @typeInfo(SocketAddress).@"union".tag_type.?;
+
+    /// Convert to IpAddress if ip address
+    pub fn toIpAddress(self: SocketAddress) ?IpAddress {
+        return switch (self) {
+            .ip4 => |ip4| .{ .ip4 = ip4 },
+            .ip6 => |ip6| .{ .ip6 = ip6 },
+            else => null,
+        };
+    }
+
+    /// Convert IpAddress to SocketAddress
+    pub fn fromIpAddress(self: IpAddress) ?SocketAddress {
+        return switch (self) {
+            .ip4, .ip6 => true,
+            else => false,
+        };
+    }
+
+    /// Check if Unix Domain Socket or not
+    pub fn isUnix(self: SocketAddress) bool {
+        return self == .unix;
+    }
+
+    /// Check if address family is supported in current OS
+    pub fn isSupported(self: SocketAddress) bool {
+        return switch (self) {
+            .ip4, .ip6 => true,
+            .unix => has_unix_sockets,
+            .packet, .netlink => native_os == .linux,
+            .vsock => native_os == .linux,
+        };
+    }
+};
+
 pub const UnixAddress = struct {
     path: []const u8,
 
