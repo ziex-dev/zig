@@ -476,7 +476,7 @@ pub const ToSliceError = Iterator.Windows.InitError || Iterator.Wasi.InitError;
 /// See also:
 /// * `iterate`
 /// * `iterateAllocator`
-pub fn toSlice(a: Args, arena: Allocator) ToSliceError![]const [:0]const u8 {
+pub fn toSlice(a: Args, arena: Allocator) ToSliceError![][:0]const u8 {
     if (native_os == .windows) {
         var it = try a.iterateAllocator(arena);
         var contents: std.ArrayList(u8) = .empty;
