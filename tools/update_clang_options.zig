@@ -633,6 +633,16 @@ const cpu_targets = struct {
     pub const xtensa = std.Target.xtensa;
 };
 
+const Args = struct {
+    struct {
+        help: ?void = null,
+    },
+    struct {
+        ?[]const u8, // llvm_tblgen_exe
+        ?[]const u8, // llvm_src_root
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
@@ -642,21 +652,18 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    if (args.len <= 1) printUsageAndExit(args[0]);
+    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+        printUsageAndExit(args[0]);
+    };
 
-    if (std.mem.eql(u8, args[1], "--help")) {
+    if (named.help != null) {
         printUsage(stdout, args[0]) catch std.process.exit(2);
         stdout.flush() catch std.process.exit(2);
         std.process.exit(0);
     }
 
-    if (args.len < 3) printUsageAndExit(args[0]);
-
-    const llvm_tblgen_exe = args[1];
-    if (std.mem.startsWith(u8, llvm_tblgen_exe, "-")) printUsageAndExit(args[0]);
-
-    const llvm_src_root = args[2];
-    if (std.mem.startsWith(u8, llvm_src_root, "-")) printUsageAndExit(args[0]);
+    const llvm_tblgen_exe = positional[0] orelse printUsageAndExit(args[0]);
+    const llvm_src_root = positional[1] orelse printUsageAndExit(args[0]);
 
     var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(arena);
 
