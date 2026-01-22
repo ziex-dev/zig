@@ -1,4 +1,5 @@
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -58,13 +59,16 @@ const set_names = std.StaticStringMap(struct { []const u8, []const u8 }).initCom
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
-    if (args.len != 3) {
-        usageAndExit(args[0], 1);
-    }
+    const spirv_headers_path, const ext_grammar_path = cli.parse(
+        struct { []const u8, []const u8 },
+        .default,
+        args,
+        arena,
+    ) catch usageAndExit(args[0], 1);
 
     const io = init.io;
 
-    const json_path = try Io.Dir.path.join(arena, &.{ args[1], "include/spirv/unified1/" });
+    const json_path = try Io.Dir.path.join(arena, &.{ spirv_headers_path, "include/spirv/unified1/" });
     const dir = try Io.Dir.cwd().openDir(io, json_path, .{ .iterate = true });
 
     const core_spec = try readRegistry(io, arena, CoreRegistry, dir, "spirv.core.grammar.json");
@@ -81,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
         try readExtRegistry(io, arena, &exts, dir, entry.name);
     }
 
-    try readExtRegistry(io, arena, &exts, Io.Dir.cwd(), args[2]);
+    try readExtRegistry(io, arena, &exts, Io.Dir.cwd(), ext_grammar_path);
 
     var allocating: std.Io.Writer.Allocating = .init(arena);
     defer allocating.deinit();
