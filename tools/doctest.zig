@@ -29,6 +29,16 @@ const usage =
     \\
 ;
 
+const Args = struct {
+    i: ?[]const u8 = null,
+    o: ?[]const u8 = null,
+    zig: ?[]const u8 = null,
+    @"zig-lib-dir": ?[]const u8 = null,
+    @"cache-root": ?[]const u8 = null,
+    h: ?void = null,
+    help: ?void = null,
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
@@ -37,42 +47,22 @@ pub fn main(init: std.process.Init) !void {
 
     try environ_map.put("CLICOLOR_FORCE", "1");
 
-    var args_it = try init.minimal.args.iterateAllocator(arena);
-    if (!args_it.skip()) fatal("missing argv[0]", .{});
+    const args = try init.minimal.args.toSlice(arena);
 
-    var opt_input: ?[]const u8 = null;
-    var opt_output: ?[]const u8 = null;
-    var opt_zig: ?[]const u8 = null;
-    var opt_zig_lib_dir: ?[]const u8 = null;
-    var opt_cache_root: ?[]const u8 = null;
+    const named = std.cli.parse(Args, .default, args, arena) catch {
+        try Io.File.stdout().writeStreamingAll(io, usage);
+        process.exit(1);
+    };
 
-    while (args_it.next()) |arg| {
-        if (mem.startsWith(u8, arg, "-")) {
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try Io.File.stdout().writeStreamingAll(io, usage);
-                process.exit(0);
-            } else if (mem.eql(u8, arg, "-i")) {
-                opt_input = args_it.next() orelse fatal("expected parameter after -i", .{});
-            } else if (mem.eql(u8, arg, "-o")) {
-                opt_output = args_it.next() orelse fatal("expected parameter after -o", .{});
-            } else if (mem.eql(u8, arg, "--zig")) {
-                opt_zig = args_it.next() orelse fatal("expected parameter after --zig", .{});
-            } else if (mem.eql(u8, arg, "--zig-lib-dir")) {
-                opt_zig_lib_dir = args_it.next() orelse fatal("expected parameter after --zig-lib-dir", .{});
-            } else if (mem.eql(u8, arg, "--cache-root")) {
-                opt_cache_root = args_it.next() orelse fatal("expected parameter after --cache-root", .{});
-            } else {
-                fatal("unrecognized option: '{s}'", .{arg});
-            }
-        } else {
-            fatal("unexpected positional argument: '{s}'", .{arg});
-        }
+    if (named.h != null or named.help != null) {
+        try Io.File.stdout().writeStreamingAll(io, usage);
+        process.exit(0);
     }
 
-    const input_path = opt_input orelse fatal("missing input file (-i)", .{});
-    const output_path = opt_output orelse fatal("missing output file (-o)", .{});
-    const zig_path = opt_zig orelse fatal("missing zig compiler path (--zig)", .{});
-    const cache_root = opt_cache_root orelse fatal("missing cache root path (--cache-root)", .{});
+    const input_path = named.i orelse fatal("missing input file (-i)", .{});
+    const output_path = named.o orelse fatal("missing output file (-o)", .{});
+    const zig_path = named.zig orelse fatal("missing zig compiler path (--zig)", .{});
+    const cache_root = named.@"cache-root" orelse fatal("missing cache root path (--cache-root)", .{});
 
     const source_bytes = try Dir.cwd().readFileAlloc(io, input_path, arena, .limited(std.math.maxInt(u32)));
     const code = try parseManifest(arena, source_bytes);
@@ -104,7 +94,7 @@ pub fn main(init: std.process.Init) !void {
         tmp_dir_path,
         try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, zig_path),
         try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, input_path),
-        if (opt_zig_lib_dir) |zig_lib_dir|
+        if (named.@"zig-lib-dir") |zig_lib_dir|
             try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, zig_lib_dir)
         else
             null,
