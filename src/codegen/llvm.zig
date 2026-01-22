@@ -5315,8 +5315,16 @@ pub const FuncGen = struct {
             .byval => {
                 const arg = args[it.zig_index - 1];
                 const param_ty = self.typeOf(arg);
-                const llvm_arg = try self.resolveInst(arg);
+                const val_is_undef = if (try self.air.value(arg, pt)) |val| val.isUndef(zcu) else false;
                 const llvm_param_ty = try o.lowerType(pt, param_ty);
+                const llvm_arg = if (val_is_undef and llvm_param_ty.tag(&o.builder) == .integer) val: {
+                    const bits_size = param_ty.bitSize(zcu);
+                    if (1 < bits_size and bits_size <= 64) {
+                        const mask = if (bits_size == 64) @as(i64, 0) else @as(i64, -1) << @intCast(bits_size);
+                        const val: i64 = @as(i64, @bitCast(mask)) | @as(i64, @bitCast(@as(u64, 0xaaaa_aaaa_aaaa_aaaa)));
+                        break :val try o.builder.intValue(llvm_param_ty, val);
+                    } else break :val try self.resolveInst(arg);
+                } else try self.resolveInst(arg);
                 if (isByRef(param_ty, zcu)) {
                     const alignment = param_ty.abiAlignment(zcu).toLlvm();
                     const loaded = try self.wip.load(.normal, llvm_param_ty, llvm_arg, alignment, "");
