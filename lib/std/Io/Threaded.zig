@@ -12441,6 +12441,105 @@ pub fn addressToPosix(a: *const IpAddress, storage: *PosixAddress) posix.socklen
     };
 }
 
+pub fn socketAddressFamily(a: *const net.SocketAddress) posix.sa_family_t {
+    return switch (a.*) {
+        .ip4 => posix.AF.INET,
+        .ip6 => posix.AF.INET6,
+        .unix => posix.AF.UNIX,
+        .packet => if (@hasDecl(posix.AF, "PACKET")) posix.AF.PACKET else 0,
+        .netlink => if (@hasDecl(posix.AF, "NETLINK")) posix.AF.NETLINK else 0,
+        .vsock => if (@hasDecl(posix.AF, "VSOCK")) posix.AF.VSOCK else 0,
+    };
+}
+
+pub fn socketAddressToPosix(a: *const net.SocketAddress, storage: *PosixAddress) posix.socklen_t {
+    return switch (a.*) {
+        .ip4 => |ip4| {
+            storage.in = address4ToPosix(ip4);
+            return @sizeOf(posix.sockaddr.in);
+        },
+        .ip6 => |*ip6| {
+            storage.in6 = address6ToPosix(ip6);
+            return @sizeOf(posix.sockaddr.in6);
+        },
+        .unix => |*unix| {
+            return addressUnixToPosix(unix, @ptrCast(storage));
+        },
+        .packet => |packet| {
+            storage.ll = packet(packet);
+            return @sizeOf(posix.sockaddr.ll);
+        },
+    };
+}
+
+pub fn socketAddressFromPosix(posix_address: *const PosixAddress) net.SocketAddress {
+    return switch (posix_address.any.family) {
+        posix.AF.INET => .{ .ip4 = address4FromPosix(&posix_address.in) },
+        posix.AF.INET6 => .{ .ip6 = address4FromPosix(&posix_address.in6) },
+        posix.AF.UNIX => .{ .unix = unixAddressFromPosix(&posix_address.un) },
+        else => blk: {
+            if (@hasDecl(posix.AF, "PACKET") and posix_address.any.family == posix.AF.PACKET) {
+                break :blk .{ .packet = packetAddressFromPosix(&posix_address.ll) };
+            }
+            if (@hasDecl(posix.AF, "NETLINK") and posix_address.any.family == posix.AF.NETLINK) {
+                break :blk .{ .netlink = netlinkAddressFromPosix(&posix_address.nl) };
+            }
+            if (@hasDecl(posix.AF, "VSOCK") and posix_address.any.family == posix.AF.VSOCK) {
+                break :blk .{ .vsock = vsockAddressFromPosix(&posix_address.vm) };
+            }
+            break :blk .{ .ip4 = .loopback(0) };
+        },
+    };
+}
+
+fn packetAddressFromPosix(ll: *const posix.sockaddr.ll) net.PacketAddress {
+    return .{
+        .protocol = ll.protocol,
+        .ifindx = ll.ifindex,
+        .hatype = ll.hatype,
+        .pkttype = ll.pkttype,
+        .halen = ll.halen,
+        .addr = ll.addr,
+    };
+}
+
+fn netlinkAddressFromPosix(nl: *const posix.sockaddr.nl) net.NetlinkAddress {
+    return .{
+        .pid = nl.pid,
+        .groups = nl.groups,
+    };
+}
+
+fn netlinkAddressToPosix(a: net.NetlinkAddress) posix.sockaddr.nl {
+    return .{
+        .family = posix.AF.NETLINK,
+        .pid = a.pid,
+        .groups = a.groups,
+    };
+}
+
+fn vsockAddressFromPosix(vm: *const posix.sockaddr.vm) net.VsockAddress {
+    return .{
+        .port = vm.port,
+        .cid = vm.cid,
+        .flags = vm.flags,
+    };
+}
+
+fn vsockAddressToPosix(a: net.VsockAddress) posix.sockaddr.vm {
+    return .{
+        .family = posix.AF.VSOCK,
+        .port = a.port,
+        .cid = a.cid,
+        .flags = a.flags,
+    };
+}
+
+fn unixAddressFromPosix(un: *const posix.sockaddr.un) net.UnixAddress {
+    const path_len = std.mem.indexOfScalar(u8, &un.path, 0) orelse un.path.len;
+    return .{ .path = un.path[0..path_len] };
+}
+
 fn addressToWsa(a: *const IpAddress, storage: *WsaAddress) i32 {
     return switch (a.*) {
         .ip4 => |ip4| {
