@@ -4,7 +4,24 @@ const Dir = std.Io.Dir;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 
-const usage = "usage: incr-check <zig binary path> <input file> [--zig-lib-dir lib] [--debug-log foo] [--preserve-tmp] [--zig-cc-binary /path/to/zig]";
+const usage = "usage: incr-check <zig binary path> <input file> [--zig-lib-dir lib] [--debug-log foo...] [--preserve-tmp] [--zig-cc-binary /path/to/zig]";
+
+const Args = struct {
+    struct {
+        @"zig-lib-dir": ?[]const u8 = null,
+        @"debug-log": []const []const u8 = &.{},
+        @"preserve-tmp": ?void = null,
+        fqemu: ?void = null,
+        fwine: ?void = null,
+        fwasmtime: ?void = null,
+        fdarling: ?void = null,
+        @"zig-cc-binary": ?[]const u8 = null,
+    },
+    struct {
+        ?[]const u8, // zig_exe
+        ?[]const u8, // input_file_name
+    },
+};
 
 pub const std_options: std.Options = .{
     .logFn = logImpl,
@@ -35,56 +52,22 @@ pub fn main(init: std.process.Init) !void {
     const environ_map = init.environ_map;
     const cwd_path = try std.process.currentPathAlloc(io, arena);
 
-    var opt_zig_exe: ?[]const u8 = null;
-    var opt_input_file_name: ?[]const u8 = null;
-    var opt_lib_dir: ?[]const u8 = null;
-    var opt_cc_zig: ?[]const u8 = null;
-    var preserve_tmp = false;
-    var enable_qemu: bool = false;
-    var enable_wine: bool = false;
-    var enable_wasmtime: bool = false;
-    var enable_darling: bool = false;
+    const args = try init.minimal.args.toSlice(arena);
 
-    var debug_log_args: std.ArrayList([]const u8) = .empty;
+    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+        fatal("{s}", .{usage});
+    };
 
-    var arg_it = try init.minimal.args.iterateAllocator(arena);
-    _ = arg_it.skip();
-    while (arg_it.next()) |arg| {
-        if (arg.len > 0 and arg[0] == '-') {
-            if (std.mem.eql(u8, arg, "--zig-lib-dir")) {
-                opt_lib_dir = arg_it.next() orelse fatal("expected arg after --zig-lib-dir\n{s}", .{usage});
-            } else if (std.mem.eql(u8, arg, "--debug-log")) {
-                try debug_log_args.append(
-                    arena,
-                    arg_it.next() orelse fatal("expected arg after --debug-log\n{s}", .{usage}),
-                );
-            } else if (std.mem.eql(u8, arg, "--preserve-tmp")) {
-                preserve_tmp = true;
-            } else if (std.mem.eql(u8, arg, "-fqemu")) {
-                enable_qemu = true;
-            } else if (std.mem.eql(u8, arg, "-fwine")) {
-                enable_wine = true;
-            } else if (std.mem.eql(u8, arg, "-fwasmtime")) {
-                enable_wasmtime = true;
-            } else if (std.mem.eql(u8, arg, "-fdarling")) {
-                enable_darling = true;
-            } else if (std.mem.eql(u8, arg, "--zig-cc-binary")) {
-                opt_cc_zig = arg_it.next() orelse fatal("expected arg after --zig-cc-binary\n{s}", .{usage});
-            } else {
-                fatal("unknown option '{s}'\n{s}", .{ arg, usage });
-            }
-            continue;
-        }
-        if (opt_zig_exe == null) {
-            opt_zig_exe = arg;
-        } else if (opt_input_file_name == null) {
-            opt_input_file_name = arg;
-        } else {
-            fatal("unknown argument '{s}'\n{s}", .{ arg, usage });
-        }
-    }
-    const zig_exe = opt_zig_exe orelse fatal("missing path to zig\n{s}", .{usage});
-    const input_file_name = opt_input_file_name orelse fatal("missing input file\n{s}", .{usage});
+    const zig_exe = positional[0] orelse fatal("missing path to zig\n{s}", .{usage});
+    const input_file_name = positional[1] orelse fatal("missing input file\n{s}", .{usage});
+    const opt_lib_dir = named.@"zig-lib-dir";
+    const opt_cc_zig = named.@"zig-cc-binary";
+    const preserve_tmp = named.@"preserve-tmp" != null;
+    const enable_qemu = named.fqemu != null;
+    const enable_wine = named.fwine != null;
+    const enable_wasmtime = named.fwasmtime != null;
+    const enable_darling = named.fdarling != null;
+    const debug_log_args = named.@"debug-log";
 
     const input_file_bytes = try Dir.cwd().readFileAlloc(io, input_file_name, arena, .limited(std.math.maxInt(u32)));
     const case = try Case.parse(arena, io, input_file_bytes);
@@ -122,7 +105,7 @@ pub fn main(init: std.process.Init) !void {
 
     const host = try std.zig.system.resolveTargetQuery(io, .{});
 
-    const debug_log_verbose = debug_log_args.items.len != 0;
+    const debug_log_verbose = debug_log_args.len != 0;
 
     for (case.targets) |target| {
         const target_prog_node = node: {
@@ -159,7 +142,7 @@ pub fn main(init: std.process.Init) !void {
             .llvm => try child_args.appendSlice(arena, &.{ "-fllvm", "-flld" }),
             .cbe => try child_args.appendSlice(arena, &.{ "-ofmt=c", "-lc" }),
         }
-        for (debug_log_args.items) |arg| {
+        for (debug_log_args) |arg| {
             try child_args.appendSlice(arena, &.{ "--debug-log", arg });
         }
         for (case.modules) |mod| {
