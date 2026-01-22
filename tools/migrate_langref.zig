@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 
 const std = @import("std");
+const cli = std.cli;
 const Io = std.Io;
 const Dir = std.Io.Dir;
 const print = std.debug.print;
@@ -15,9 +16,12 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
-
-    const input_file = args[1];
-    const output_file = args[2];
+    const input_file, const output_file = try cli.parse(
+        struct { []const u8, []const u8 },
+        .default,
+        args,
+        arena,
+    );
 
     var in_file = try Dir.cwd().openFile(io, input_file, .{ .mode = .read_only });
     defer in_file.close(io);
