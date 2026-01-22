@@ -13,24 +13,30 @@ const usage =
     \\-h, --help                    Print this help and exit
 ;
 
+const Args = struct {
+    struct {
+        h: ?void = null,
+        help: ?void = null,
+    },
+    struct { ?[]const u8 },
+};
+
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    if (args.len == 1) fatal("no command or option specified", .{});
+    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+        fatal("invalid arguments", .{});
+    };
 
-    var positionals = std.array_list.Managed([]const u8).init(arena);
-
-    for (args[1..]) |arg| {
-        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            return info(usage, .{});
-        } else try positionals.append(arg);
+    if (named.h != null or named.help != null) {
+        return info(usage, .{});
     }
 
-    if (positionals.items.len != 1) fatal("expected one positional argument: [dir]", .{});
+    const dir_path = positional[0] orelse fatal("expected one positional argument: [dir]", .{});
 
-    var dir = try Io.Dir.cwd().openDir(io, positionals.items[0], .{ .follow_symlinks = false });
+    var dir = try Io.Dir.cwd().openDir(io, dir_path, .{ .follow_symlinks = false });
     defer dir.close(io);
     var paths = std.array_list.Managed([]const u8).init(arena);
     try findHeaders(arena, io, dir, "", &paths);
