@@ -78,7 +78,7 @@
 //! - any integer such as `i32`
 //! - any float such as `f64`
 //! - any `enum` with at least 1 member
-//! - a string type (`[:0]const u8`, `[:0]u8`, `[]const u8`, or `[]u8`)
+//! - a string type `[:0]const u8` or `[]const u8`
 //! - a slice type `[]C` or `[]const C`, where `C` is one of:
 //!     - any integer
 //!     - any float
@@ -115,7 +115,7 @@
 //! - any integer such as `i32`
 //! - any float such as `f32`,
 //! - any `enum` with at least 1 member
-//! - a string type, namely `[]const u8`, `[]u8`, `[:0]const u8`, and `[:0]u8`
+//! - a string type, namely `[]const u8` or `[:0]const u8`
 //!
 //! Optional positional arguments may be declared using a default value _or_ as any type `?T`, where `T` is described above.
 //! If the optional positional argument's type is `?T`, then the declared default value _must_ be `null`, though the absence of a default `null` value will use `null` as the default value anyways.
