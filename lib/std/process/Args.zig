@@ -503,7 +503,7 @@ pub fn toSlice(a: Args, arena: Allocator) ToSliceError![][:0]const u8 {
             contents_index = new_index + 1;
         }
 
-        return result_slice_list;
+        return @ptrCast(result_slice_list);
     } else if (native_os == .wasi and !builtin.link_libc) {
         var count: usize = undefined;
         var buf_size: usize = undefined;
