@@ -78,7 +78,7 @@ pub fn main(init: std.process.Init) !void {
     const sysroot_path = args.named.sysroot.value orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
         if (std.zig.system.darwin.getSdk(arena, io, &target)) |sdk| break :blk sdk;
-        try std.cli.usageError(Args, .{}, "no SDK found; you can provide one explicitly with '--sysroot' flag", .{}) catch unreachable;
+        try std.cli.usageError(Args, .{}, "no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
     };
 
     var sdk_dir = try Dir.cwd().openDir(io, sysroot_path, .{});
