@@ -42,7 +42,7 @@
 //!   args...                 [string]
 //!
 //! Options:
-//!   --help                  Print this help text and exit.
+//!   -h, --help              Print this help text and exit.
 //!   --[no-]verbose          [default: no]
 //!   -o, --output=string     [required] path to output file
 //!
@@ -1117,7 +1117,7 @@ test printHelp {
         \\  baz...                      [string] not-so-special baz thing
         \\
         \\Options:
-        \\  --help                      Print this help text and exit.
+        \\  -h, --help                  Print this help text and exit.
         \\  -f, --[no-]foo=[string]     does a foo thing
         \\  --[no-]bar=[string]         [required] does a bar thing
         \\  --baz=int                   [default: 10]
@@ -1205,7 +1205,7 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         }
 
         var options_table: [named_fields.len + 1]struct { []const u8, []const u8 } = undefined;
-        options_table[0] = .{ "--help", "Print this help text and exit." };
+        options_table[0] = .{ "-h, --help", "Print this help text and exit." };
         lhs_max_width = @max(lhs_max_width, "--help".len);
 
         for (named_fields, 1..) |field, i| {
@@ -2102,7 +2102,7 @@ test "module documentation example" {
         \\  args...                 [string]
         \\
         \\Options:
-        \\  --help                  Print this help text and exit.
+        \\  -h, --help              Print this help text and exit.
         \\  --[no-]verbose          [default: no]
         \\  -o, --output=string     [required] path to output file
         \\
