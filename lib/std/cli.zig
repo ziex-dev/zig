@@ -1,3 +1,132 @@
+//! For parsing a type `Args` from the command line.
+//!
+//! `Args` is a struct that you define looking like this:
+//! ```zig
+//! const Args = struct {
+//!     pub const info: std.cli.Info = .{
+//!         .arg0 = "myprog",
+//!         .description = "this program does a thing",
+//!         .epilogue = "example: myprog --output o.txt hello.txt",
+//!     };
+//!
+//!     named: struct {
+//!         verbose: struct { value: bool = false },
+//!         output: struct {
+//!             value: [:0]const u8,
+//!             pub const info: std.cli.NamedInfo = .{
+//!                 .description = "path to output file",
+//!                 .short = 'o',
+//!             };
+//!         },
+//!     },
+//!     positional: struct {
+//!         input: struct {
+//!             value: []const u8,
+//!             pub const info: std.cli.PositionalInfo = .{
+//!                 .description = "path to input file",
+//!             };
+//!         },
+//!         args: struct { value: []const []const u8 = &.{} },
+//!     },
+//! };
+//! ```
+//!
+//! Which results in this generated `--help` output:
+//! ```
+//! Usage: myprog --output=string [options...] <input> [args...]
+//!
+//! this program does a thing
+//!
+//! Arguments:
+//!   input                   [string. required] path to input file
+//!   args...                 [string]
+//!
+//! Options:
+//!   --help                  Print this help text and exit.
+//!   --[no-]verbose          [default: no]
+//!   -o, --output=string     [required] path to output file
+//!
+//! example: myprog --output o.txt hello.txt
+//! ```
+//!
+//! Either or both of `named` and `positional` may be omitted, which is equivalent to declaring them as `struct {}`.
+//!
+//! Each arg must be defined as a struct with one field, `value`.
+//! Named args' types may also declare an `info: NamedInfo`, and positional args' types may also declare an `info: PositionalInfo`.
+//! See those types' documentation for more information.
+//!
+//! Each arg string takes one of these forms:
+//! ```
+//! --<name>          (1)
+//! --no-<name>       (2)
+//! --<name>=<value>  (3)
+//! --help            (4)
+//! -<alpha>+         (5)
+//! --                (6)
+//! <other>           (7)
+//! ```
+//!
+//! Forms (1), (2), and (3) must correspond to a field `Args.named.<name>`; see below for named argument handling.
+//! Form (4) immediately prints the long help documentation and exits or returns `error.Help` depending on options.exit.
+//! Form (5) must be a string of letters corresponding to short aliases specified in named args' `info` declaration; see below for short flag handling.
+//! Form (6) signals that all following arg strings are positional.
+//! Form (7) following form (1) may be a value to a field `Args.named.<name>`, or is otherwise a positional argument; discussed below.
+//!
+//! For forms (1), (2), (3), and (5), let `T` be the type of `Args.named.<name>.value`.
+//! `T` may be any of the following:
+//! - `bool`
+//! - any integer such as `i32`
+//! - any float such as `f64`
+//! - any `enum` with at least 1 member
+//! - a string type (`[:0]const u8`, `[:0]u8`, `[]const u8`, or `[]u8`)
+//! - a slice type `[]C` or `[]const C`, where `C` is one of:
+//!     - any integer
+//!     - any float
+//!     - any `enum` with at least one member
+//!     - a string type
+//! - an optional type `?O`, where `O` is one of:
+//!     - any integer
+//!     - any float
+//!     - any `enum` with at least one member
+//!     - a string type
+//!
+//! If `T` is `bool`, then forms (1) and (5) set it to `true`, form (2) sets it to `false`, form (3) is not allowed, and the following form is parsed separately.
+//! If `T` is an optional type, then form (2) sets it to `null`, form (3) specifies the `<value>`, or a form (1) or (5) must be followed by a form (7) specifying the `<value>`.
+//! Otherwise, form (2) is not allowed, and form (3) specifies the `<value>`, or forms (1) and (5) must be followed by a form (7) specifying the `<value>`.
+//!
+//! Form (5) may be a chain of short flags.
+//! Each letter in the chain must correspond to a `NamedInfo.short`.
+//! A short flag may only be followed by another short flag in the chain if its type is `bool`.
+//! If a short flag corresponds to a named argument with a non-`bool` type, then the chain must immediately end, and the `<value>` must be specified in a following form (7).
+//!
+//! The `<value>` in forms (3) and (7) is parsed from its string representation:
+//! - integers use `std.fmt.parseInt` with base `0`
+//! - floats use `std.fmt.parseFloat`
+//! - enums use `std.meta.stringToEnum`
+//! - strings use the raw value of the string without modification
+//!
+//! Each `Args.named.<name>` may have a default value, which makes the forms (1), (2), (3), (5), and (7) optional.
+//!
+//! Each positional arg string corresponds to a field in `Args.positional` in declaration order.
+//! Each positional arg may have a default value, making the corresponding argument optional.
+//! Fields for required positional arguments must precede fields for optional arguments.
+//! For each field, let `T` be its type.
+//! `T` may be any of the following:
+//! - any integer such as `i32`
+//! - any float such as `f32`,
+//! - any `enum` with at least 1 member
+//! - a string type, namely `[]const u8`, `[]u8`, `[:0]const u8`, and `[:0]u8`
+//!
+//! Optional positional arguments may be declared using a default value _or_ as any type `?T`, where `T` is described above.
+//! If the optional positional argument's type is `?T`, then the declared default value _must_ be `null`, though the absence of a default `null` value will use `null` as the default value anyways.
+//! If the argument is not parsed, then the value will be the declared default value.
+//! Optional positional arguments _must_ be declared after all required positional arguments; required positional arguments may _not_ be declared after optional positional arguments.
+//!
+//! The final positional argument may also be a slice type `[]T` or `[]const T` (where `T` is described above).
+//! (This documentation refers to such an argument as the "splat positional".)
+//! The splat positional is always assumed to be optional, and is only parsed after all other (required _and_ optional) arguments have been parsed.
+//! If no splat positional arguments are parsed, the value is the default value specified, or the empty list if no default is specified.
+
 const std = @import("std.zig");
 const debug = std.debug;
 const assert = debug.assert;
@@ -5,7 +134,6 @@ const testing = std.testing;
 const comptimePrint = std.fmt.comptimePrint;
 const Io = std.Io;
 const Writer = Io.Writer;
-const StdArgs = std.process.Args;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const StructField = std.builtin.Type.StructField;
 const mem = std.mem;
@@ -29,9 +157,8 @@ pub const Options = struct {
 pub const Error = error{
     /// Caused by unrecognized option names, values that cannot be parsed into the appropriate field type,
     /// missing arguments for fields with no default value, and other similar parsing errors.
-    /// See also `options.exit`, which can supersede this error.
     Usage,
-    /// The --help argument was given (and `options.exit` resolved to `false`).
+    /// The -h or --help argument was given.
     Help,
 } || Allocator.Error;
 
@@ -41,16 +168,19 @@ pub const Info = struct {
     /// Only necessary when using the generated usage documentation (when `.usage = null`).
     arg0: ?[]const u8 = null,
     /// Use this to override the generated usage string.
-    /// May contain a single `{s}` fmt template which will contain the arg0 of the program.
+    /// May contain a single `{s}` or multiple `{0s}` fmt templates which will contain the arg0 of the program.
     usage: ?[]const u8 = null,
     /// Use this to override the generated help text.
     /// Prepended with the usage string of the program.
+    /// May contain a single `{s}` or multiple `{0s}` fmt templates which will contain the arg0 of the program.
     help: ?[]const u8 = null,
     /// Use this to add a helpful description of your program before arguments/options info in the generated long help text.
     /// Ignored if `.help` is not null.
+    /// May contain a single `{s}` or multiple `{0s}` fmt templates which will contain the arg0 of the program.
     description: ?[]const u8 = null,
     /// Use this to add helpful information of your program after arguments/options info in the generated long help text.
     /// Ignore if `.help` is not null.
+    /// May contain a single `{s}` or multiple `{0s}` fmt templates which will contain the arg0 of the program.
     epilogue: ?[]const u8 = null,
 };
 
@@ -59,6 +189,11 @@ pub const NamedInfo = struct {
     /// Use this to add a helpful description of this argument for use in the generated long help text.
     /// Ignored if `Args.info.help` is not null.
     description: ?[]const u8 = null,
+    /// Short flag for this named argument.
+    /// Must be unique amongst `NamedInfo`s of this `Args` object.
+    ///
+    /// If `value: bool`, the short flag will only set the value to `true`.
+    /// For all other types, the short flag must be immediately followed by another arg containing this arg's value.
     short: ?u8 = null,
 };
 
@@ -69,183 +204,27 @@ pub const PositionalInfo = struct {
     description: ?[]const u8 = null,
 };
 
-/// Parses CLI args from a `std.process.ArgIterator` according to the configuration in `Args`.
-/// `Args` is a struct that you define looking like this:
-/// ```zig
-/// const Args = struct {
-///     pub const info: std.cli.Info = .{
-///         .arg0 = "myprog",
-///         .description = "this program does a thing",
-///         .epilogue = "example: myprog --output o.txt hello.txt",
-///     };
+/// Parse an `Args` type from the given `std.process.Args`. See this module's
+/// documentation for more information on the `Args` type.
 ///
-///     named: struct {
-///         verbose: struct { value: bool = false },
-///         output: struct {
-///             value: [:0]const u8,
-///             pub const info: std.cli.NamedInfo = .{
-///                 .description = "path to output file",
-///                 .short = 'o',
-///             };
-///         },
-///     },
-///     positional: struct {
-///         input: struct {
-///             value: []const u8,
-///             pub const info: std.cli.PositionalInfo = .{
-///                 .description = "path to input file",
-///             };
-///         },
-///         args: struct { value: []const []const u8 = &.{} },
-///     },
-/// };
-/// ```
+/// If a parsing/validation error occurs or the `--help` arg is given, this
+/// function calls `std.process.exit` with `1` and `0` respectively, unless
+/// `options.exit` is set to `false`, in which case parsing/validation errors
+/// return `error.Usage` and `--help` returns `error.Help`. Allocator errors are
+/// always returned.
 ///
-/// Which results in this generated `--help` output:
-/// ```
-/// Usage: myprog --output=string [options] input [args...]
-///
-/// this program does a thing
-///
-/// Arguments:
-///   input                   [string. required] path to input file
-///   args                    [string]
-///
-/// Options:
-///   --help                  Print this help text and exit.
-///   --verbose               [default: no]
-///   -o, --output=string     [required] path to output file
-/// ```
-///
-/// Either or both of `named` and `positional` may be omitted, which is effectively equivalent to declaring them as `struct {}`.
-/// If `description` is declared, it is concatenated into the help output after the usage line.
-/// If `named` or `positional` has a `help` declaration, each field accompanies the appropriate argument in the help text.
-///
-/// The sequence of arg strings from the `ArgIterator` is parsed to determine named and positional arguments.
-///
-/// Each arg string takes one of these forms:
-/// ```
-/// --<name>          (1)
-/// --no-<name>       (2)
-/// --<name>=<value>  (3)
-/// --help            (4)
-/// -<alpha><any>     (5) always an error
-/// --                (6)
-/// <other>           (7)
-/// ```
-/// Forms (1), (2), and (3) must correspond to a field `Args.named.<name>`; see below for named argument handling.
-/// Form (4) immediately prints the long help documentation and exits or returns `error.Help` depending on options.exit.
-/// Form (6) signals that all following arg strings are positional.
-/// Form (7) following form (1) may be a value to a field `Args.named.<name>`, or is otherwise a positional argument; discussed below.
-///
-/// Form (5) is always an error.
-/// This API does not support single letter aliases like `-v` or `-lA` or named arguments prefixed by only a single hyphen like `-flag`.
-/// Form (5) is defined by any arg string where the first byte is '-' and the second byte is `'A'...'Z', 'a'...'z'`
-/// (and any following bytes are ignored).
-/// A `-9` or other second byte outside the ascii-alpha range is Form (7).
-///
-/// For forms (1), (2), and (3), let `T` be the type of `Args.named.<name>.value`.
-/// `T` may be any of the following:
-/// - `bool`
-/// - any integer such as `i32`
-/// - any float such as `f64`
-/// - any `enum` with at least 1 member
-/// - a string type, namely `[:0]const u8` or `[]const u8`
-/// - a slice type that type `[]C` can coerce into, such as `[]const C`, where `C` is one of:
-///     - any integer
-///     - any float
-///     - any `enum` with at least one member
-///     - a string type
-/// - an optional type `?O`, where `O` is one of:
-///     - any integer
-///     - any float
-///     - any `enum` with at least one member
-///     - a string type
-///
-/// If `T` is `bool`, then form (1) sets it to `true`, form (2) sets it to `false`, and form (3) is not allowed, and a following form (7) is parsed as a positional argument.
-/// If `T` is an optional type, then form (2) sets it to `null`, form (3) specifies the `<value>`, or a form (1) must be followed by a form (7) specifying the `<value>`.
-/// Otherwise, form (2) is not allowed, and form (3) specifies the `<value>` or form (1) must be followed by a form (8) specifying the `<value>`.
-///
-/// The `<value>` in forms (3) and (7) is parsed from its string representation:
-/// - integers use `std.fmt.parseInt` with base `0`
-/// - floats use `std.fmt.parseFloat`
-/// - enums use `std.meta.stringToEnum`
-/// - strings use the raw value of the string without modification
-///
-/// Each `Args.named.<name>` may have a default value, which makes the forms (1), (2), (3), and (7) optional.
-/// Slice arguments `[]const C` (where `C` is not `u8`) are always considered optional, and the default value will be used if no values were parsed.
-/// If a bool argument has no default value, then either form (1) or (2) must be given.
-///
-/// Each positional arg string corresponds to a field in `Args.positional` in declaration order.
-/// Each field in `Args.positional` may have a default value, making the corresponding argument optional.
-/// Fields for required positional arguments must precede fields for optional arguments.
-/// For each field, let `T` be its type.
-/// Similar to `Args.named` described above, `T` may be any of the following:
-/// - any integer
-/// - any float
-/// - any `enum` with at least 1 member
-/// - a string type, namely `[]const u8`, `[]u8`, `[:0]const u8` and `[:0]u8`
-///
-/// Optional positional arguments may be declared using a default value _or_ as any type `?T`, where `T` is described above.
-/// If the optional positional argument's type is `?T`, then the declared default value _must_ be `null`, though the absence of a default `null` value will use `null` as the default value anyways.
-/// If the argument is not parsed, then the value will be the declared default value.
-/// Optional positional arguments _must_ be declared after all required positional arguments; required positional arguments may _not_ be declared after optional positional arguments.
-///
-/// The final positional argument may also be a slice type that type `[]T` can coerce into (where `T` is described above).
-/// Such a positional argument is described as the "variadic positional" for future reference.
-/// (Note that the variadic positional may _not_ be `?[]T`).
-/// The variadic positional is always assumed to be optional, and is only parsed after all other (required _and_ optional) arguments have been parsed.
-/// If no variadic positional arguments are parsed, the value is the default value declared, or the empty list if no default is declared.
-///
-/// This module may generate a usage string and help text for the given program, and will use an appropriate value as the arg 0 in such documentation.
-/// This can be influenced by optionally declaring `pub const info: std.cli.Info` on `Args` for program-level information,
-/// `pub const info: std.cli.NamedInfo` on each field value type in `Args.named`,
-/// and `pub const info: std.cli.PositionalInfo` on each field value type in `Args.positional`.
-///
-/// This arg 0 value is selected according to priority:
-/// - The value of `Args.info.arg0`, if `info` exists and `arg0` is non-null
-/// - The value of `Options.arg0` if non-null
-/// - The first value of the `argv` if not using `parseSlice`
-/// - The string "<prog>". This is the least-descriptive value, and it's recommended that one of the above options are used
-///
-/// It's possible to override the automatically-generated usage string by declaring `Args.info.usage`.
-/// This API assumes the presence of any string templates `{s}` represents `arg0` as described above.
-///
-/// It's also possible to override the automatically-generated long help documentation by declaring `Args.info.help`.
-/// This API automatically prepends help text with a usage string as described above for consistency.
-///
-/// ```zig
-/// const Args = struct {
-///     pub const info: std.cli.Info = .{
-///         .arg0 = "your-command",
-///         .usage = "usage: {s} --your-usage goes-here",
-///         .help =
-///             \\options:
-///             \\  --help     Print this help text and exit.
-///             \\  [...]
-///             \\
-///         ,
-///     };
-///
-///     named: struct {
-///         // [...]
-///     },
-///     positional: struct {
-///         // [...]
-///     },
-/// };
-/// ```
-///
-/// If a parsing/validation error occurs or the `--help` arg is given, this function calls `std.process.exit` with `1` (exported as `usage_exit_code`) and `0` (exported as `help_exit_code`) respectively, unless `options.exit` is set to `false`, in which case parsing/validation errors return `error.Usage` and `--help` returns `error.Help`.
-/// Allocator errors are always returned from the function.
+/// When printing usage or long help text, `arg0` is selected using:
+/// - `Args.info.arg0` if non-null
+/// - `options.arg0` if non-null
+/// - the first value of `args`
 ///
 /// It is not possible to precisely deallocate the memory allocated by this function.
 /// An `ArenaAllocator` is recommended to prevent memory leaks.
-pub fn parse(comptime Args: type, arena: Allocator, args: StdArgs, options: Options) Error!Args {
-    var iter = try args.iterateAllocator(arena);
-    const argv0 = iter.next();
+pub fn parse(comptime Args: type, arena: Allocator, argv: std.process.Args, options: Options) Error!Args {
+    var iter = try argv.iterateAllocator(arena);
+    const arg0 = iter.next().?;
     var opts = options;
-    opts.arg0 = opts.arg0 orelse argv0 orelse "<prog>";
+    opts.arg0 = opts.arg0 orelse arg0;
     return innerParse(Args, arena, [:0]const u8, &iter, opts);
 }
 
@@ -256,20 +235,25 @@ pub fn parse(comptime Args: type, arena: Allocator, args: StdArgs, options: Opti
 /// ```
 /// Where `String` is `[]const u8` or `[:0]const u8`.
 ///
-/// If `Args.info.arg0` and `options.arg0` are `null`, then the first result of `argv.next()` is used by default; otherwise, this value is ignored.
+/// If a parsing/validation error occurs or the `--help` arg is given, this
+/// function calls `std.process.exit` with `1` and `0` respectively, unless
+/// `options.exit` is set to `false`, in which case parsing/validation errors
+/// return `error.Usage` and `--help` returns `error.Help`. Allocator errors are
+/// always returned.
 ///
-/// If a parsing/validation error occurs or the `--help` arg is given,
-/// this function returns `error.Usage` or `error.Help` respectively,
-/// unless `options.exit` is set to `true`, in which case `std.process.exit` is called with `usage_exit_code` (`1`) or `help_exit_code` (`0`) respectively.
-/// Allocator errors are always returned from the function.
+/// When printing usage or long help text, `arg0` is selected using:
+/// - `Args.info.arg0` if non-null
+/// - `options.arg0` if non-null
+/// - the first value of `argv.next()`
 ///
-/// An `ArenaAllocator` is recommended to cleanup the memory allocated from this function.
+/// It is not possible to precisely deallocate the memory allocated by this function.
+/// An `ArenaAllocator` is recommended to prevent memory leaks.
 pub fn parseIter(comptime Args: type, arena: Allocator, argv: anytype, options: Options) Error!Args {
-    const NextFn = @FieldType(@typeInfo(@TypeOf(argv)).pointer.child, "next");
-    const String = @typeInfo(@typeInfo(NextFn).@"fn".return_type.?).optional.child;
-    const argv0: String = argv.next().?;
+    const arg0 = argv.next().?;
+    const String = @TypeOf(arg0);
+    comptime assert(String == []const u8 or [:0]const u8);
     var opts = options;
-    opts.arg0 = opts.arg0 orelse argv0 orelse "<prog>";
+    opts.arg0 = opts.arg0 orelse arg0;
     return innerParse(Args, arena, String, argv, opts);
 }
 
@@ -291,19 +275,26 @@ fn ArgIteratorSlice(comptime String: type) type {
     };
 }
 
-/// Like `parse`, but takes a slice of strings in place of using an `ArgIterator`.
-/// `argv` must be either be a slice of `String` or a single-item pointer to an array of `String`,
-/// where `String` is `[]const u8` or `[:0]const u8`.
+/// Like `parse`, but takes a slice of strings in place of using an iterator.
+/// `argv` must be either be a slice of `String` or a single-item pointer to an
+/// array of `String`, where `String` is `[]const u8` or `[:0]const u8`.
 ///
-/// Unlike `parse` and `parseIter`, this function does not use the first item of `argv` as `arg0`.
-/// Use `Args.info.arg0` or `options.arg0` instead.
+/// If a parsing/validation error occurs or the `--help` arg is given, this
+/// function calls `std.process.exit` with `1` and `0` respectively, unless
+/// `options.exit` is set to `false`, in which case parsing/validation errors
+/// return `error.Usage` and `--help` returns `error.Help`. Allocator errors are
+/// always returned.
 ///
-/// If a parsing/validation error occurs or the `--help` arg is given,
-/// this function returns `error.Usage` or `error.Help` respectively,
-/// unless `options.exit` is set to `true`, in which case `std.process.exit` is called with `usage_exit_code` (`1`) or `help_exit_code` (`0`) respectively.
-/// Allocator errors are always returned from the function.
+/// When printing usage or long help text, `arg0` is selected using:
+/// - `Args.info.arg0` if non-null
+/// - `options.arg0` if non-null
+/// - `"<prog>"`
 ///
-/// An `ArenaAllocator` is recommended to cleanup the memory allocated from this function.
+/// Note that, unlike `parse` and `parseIter`, the first value of `argv` is _not_
+/// used as a potential `arg0`.
+///
+/// It is not possible to precisely deallocate the memory allocated by this function.
+/// An `ArenaAllocator` is recommended to prevent memory leaks.
 pub fn parseSlice(comptime Args: type, arena: Allocator, argv: anytype, options: Options) Error!Args {
     const String = std.meta.Elem(@TypeOf(argv));
     switch (String) {
@@ -366,12 +357,16 @@ fn innerParseHelp(comptime Args: type, options: Options) error{Help}!noreturn {
     const terminal = options.terminal orelse std.debug.lockStderr(&.{}).terminal();
     defer if (options.terminal == null) std.debug.unlockStderr();
     // Note: arg0 should always be set by public API
-    printHelpArg0(Args, terminal.writer, options.arg0.?) catch {};
+    printHelp(Args, terminal.writer, options.arg0.?) catch {};
     if (options.exit) std.process.exit(help_exit_code);
     return error.Help;
 }
 
-/// Prints a usage error, and follows the behavior according to `options`.
+/// Prints a usage error followed by a usage line.
+/// See `getUsageFmt` for more details on the usage line.
+/// Unlike `printUsageAndExit`, silently ignores `error.WriteFailed`.
+///
+/// If `options.exit == false`, returns `error.Usage` instead of exiting.
 pub fn usageError(comptime Args: type, options: Options, comptime fmt: []const u8, args: anytype) error{Usage}!noreturn {
     const term = options.terminal orelse std.debug.lockStderr(&.{}).terminal();
     defer if (options.terminal == null) std.debug.unlockStderr();
@@ -380,7 +375,7 @@ pub fn usageError(comptime Args: type, options: Options, comptime fmt: []const u
         term.writer.writeAll("error") catch break :print;
         term.setColor(.reset) catch break :print;
         term.writer.print(": " ++ fmt ++ "\n", args) catch break :print;
-        printUsageArg0(Args, term.writer, options.arg0.?) catch break :print;
+        printUsage(Args, term.writer, options.arg0) catch break :print;
     }
     if (options.exit) std.process.exit(usage_exit_code);
     return error.Usage;
@@ -863,86 +858,18 @@ fn enumValuesString(comptime Enum: type) []const u8 {
 /// Standard exit code for usage errors.
 pub const usage_exit_code = 1;
 
-/// Print the program's usage string to the given writer and exit.
-/// If `always_exit` is false and `writer` returns an error, returns the error instead.
-pub inline fn printUsageAndExit(comptime Args: type, writer: *Io.Writer, always_exit: bool) !noreturn {
-    printUsage(Args, writer) catch |err| if (!always_exit) return err;
-    std.process.exit(usage_exit_code);
-}
-
-/// Print the program's usage string using the given fallback `arg0` to the given writer and exit.
-/// If `Args.arg0` is defined, it is used instead.
-/// If `always_exit` is false and `writer` returns an error, returns the error instead.
-pub fn printUsageArg0AndExit(comptime Args: type, writer: *Io.Writer, arg0: []const u8, always_exit: bool) !noreturn {
-    printUsageArg0(Args, writer, arg0) catch |err| if (!always_exit) return err;
-    std.process.exit(usage_exit_code);
-}
-
-/// Print the program's usage string to the given writer.
-pub fn printUsage(comptime Args: type, writer: *Io.Writer) Io.Writer.Error!void {
-    try printUsageArg0(Args, writer, "<prog>");
-}
-
-test printUsage {
-    const Args1 = struct {
-        pub const info: Info = .{
-            .description = "my description",
-        };
-
-        named: struct {
-            foo: struct {
-                value: [:0]const u8,
-                pub const info: NamedInfo = .{
-                    .description = "does a foo thing",
-                    .short = 'f',
-                };
-            },
-            bar: struct { value: bool = false },
-            baz: struct { value: u8 = 0 },
-            quux: struct { value: f32 = -1 },
-            quuz: struct { value: i32 },
-        },
-        positional: struct {
-            foo: struct { value: [:0]const u8 },
-            bar: struct { value: u32 },
-            baz: struct { value: [:0]const u8 = "baz thing" },
-            quux: struct { value: []const []const u8 },
-        },
-    };
-
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const gpa = arena.allocator();
-
-    var aw: Writer.Allocating = .init(gpa);
-    try printUsage(Args1, &aw.writer);
-    try testing.expectEqualStrings("Usage: <prog> --foo=string --quuz=int [options...] <foo> <bar> [baz] [quux...]\n", aw.written());
-
-    const Args2 = struct {
-        pub const info: Info = .{
-            .usage = "my custom usage",
-        };
-        named: @FieldType(Args1, "named"),
-        positional: @FieldType(Args1, "positional"),
-    };
-
-    aw.clearRetainingCapacity();
-    try printUsage(Args2, &aw.writer);
-    try testing.expectEqualStrings("my custom usage\n", aw.written());
-}
-
 /// Print the program's usage string to the given writer with the given fallback `arg0` value.
 /// If `Args.arg0` is defined, it is used instead.
-pub fn printUsageArg0(comptime Args: type, writer: *Io.Writer, arg0: []const u8) Io.Writer.Error!void {
+pub fn printUsage(comptime Args: type, writer: *Io.Writer, arg0: ?[]const u8) Io.Writer.Error!void {
     const usage, const has_arg0_fmt = comptime getUsageFmt(Args);
     if (has_arg0_fmt) {
-        try writer.print(usage, .{arg0});
+        try writer.print(usage, .{arg0 orelse "<prog>"});
     } else {
         try writer.writeAll(usage);
     }
 }
 
-test printUsageArg0 {
+test printUsage {
     const Args1 = struct {
         pub const info: Info = .{
             .arg0 = "fooprog",
@@ -975,13 +902,14 @@ test printUsageArg0 {
     const gpa = arena.allocator();
 
     var aw: Writer.Allocating = .init(gpa);
-    try printUsageArg0(Args1, &aw.writer, "myprog");
+    try printUsage(Args1, &aw.writer, "myprog");
     try testing.expectEqualStrings("Usage: fooprog --foo=string --quuz=int [options...] <foo> <bar> [baz] [quux...]\n", aw.written());
 }
 
-/// Returns a generated usage fmt string for the given Args type, and whether a string template for `arg0` is present.
+/// Returns a generated usage fmt string for the given Args type, and whether a
+/// string template for `arg0` is present.
 ///
-/// A string template for `arg0` is only present when `Args.arg0` is not defined.
+/// A string template for `arg0` is only present when `Args.info.arg0` is null.
 pub fn getUsageFmt(comptime Args: type) struct { []const u8, bool } {
     return comptime fmt: {
         const info, const named_fields, const positional_fields = reflectArgs(Args);
@@ -1082,8 +1010,8 @@ fn hasAtLeastOneStringLiteral(comptime fmt: []const u8) bool {
 test hasAtLeastOneStringLiteral {
     try testing.expect(hasAtLeastOneStringLiteral("{s}"));
     try testing.expect(hasAtLeastOneStringLiteral(". {s}. "));
-    try testing.expect(hasAtLeastOneStringLiteral(" {s}{{}}{s}.  {s}"));
-    try testing.expect(hasAtLeastOneStringLiteral("{s}}")); // Note: this follows Io.Writer.print's behavior, but results in a compile error
+    try testing.expect(hasAtLeastOneStringLiteral(" {s}{{}}{0s}.  {s}"));
+    try testing.expect(hasAtLeastOneStringLiteral("{s}}")); // Note: `print` will throw a compile error for this
 
     try testing.expect(!hasAtLeastOneStringLiteral(""));
     try testing.expect(!hasAtLeastOneStringLiteral("s"));
@@ -1091,7 +1019,7 @@ test hasAtLeastOneStringLiteral {
     try testing.expect(!hasAtLeastOneStringLiteral("{{s}"));
 }
 
-inline fn escapeFmt(comptime s: []const u8) []const u8 {
+fn escapeFmt(comptime s: []const u8) []const u8 {
     var result: []const u8 = "";
     comptime var cursor = 0;
     for (s, 0..) |c, i| {
@@ -1110,117 +1038,17 @@ inline fn escapeFmt(comptime s: []const u8) []const u8 {
 /// Standard exit code when `--help` is provided on the command line.
 pub const help_exit_code = 0;
 
-/// Print the program's help text to the given writer and exit.
-/// If there's a write error and `always_exit` is false, returns the error instead.
-pub fn printHelpAndExit(comptime Args: type, writer: *Io.Writer, always_exit: bool) Io.Writer.Error!noreturn {
-    printHelp(Args, writer) catch |err| if (!always_exit) return err;
-    std.process.exit(help_exit_code);
-}
-
-/// Print the program's help text using the given arg0 fallback and exit.
-/// The given arg0 is only used if `Args.arg0` is not defined.
-/// If there's a write error and `always_exit` is false, returns the error instead.
-pub fn printHelpArg0AndExit(comptime Args: type, writer: *Io.Writer, arg0: []const u8, always_exit: bool) Io.Writer.Error!noreturn {
-    printHelpArg0(Args, writer, arg0) catch |err| if (!always_exit) return err;
-    std.process.exit(help_exit_code);
-}
-
-/// Print the program's help text to the given writer.
-pub fn printHelp(comptime Args: type, writer: *Io.Writer) Io.Writer.Error!void {
-    try printHelpArg0(Args, writer, "<prog>");
-}
-
-test printHelp {
-    const Args = struct {
-        pub const info: Info = .{
-            .arg0 = "hello",
-            .description = "my special description",
-        };
-
-        named: struct {
-            foo: struct {
-                value: [:0]const u8 = "",
-                pub const info: NamedInfo = .{
-                    .description = "does a foo thing",
-                    .short = 'f',
-                };
-            },
-            bar: struct {
-                value: []const u8,
-                pub const info: NamedInfo = .{
-                    .description = "does a bar thing",
-                };
-            },
-            baz: struct { value: u32 = 10 },
-            quux: struct { value: i8 = -1 },
-            quuz: struct {
-                value: f32 = -420,
-                pub const info: NamedInfo = .{
-                    .description = "Nice.",
-                };
-            },
-            foobar: struct { value: bool = false },
-            barfoo: struct { value: bool },
-            foobaz: struct { value: []const []const u8 },
-        },
-        positional: struct {
-            foo: struct {
-                value: []const u8,
-                pub const info: PositionalInfo = .{
-                    .description = "a special foo thing",
-                };
-            },
-            bar: struct { value: []const u8 = "" },
-            baz: struct {
-                value: []const []const u8,
-                pub const info: PositionalInfo = .{
-                    .description = "not-so-special baz thing",
-                };
-            },
-        },
-    };
-
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const gpa = arena.allocator();
-
-    var aw: Writer.Allocating = .init(gpa);
-    try printHelp(Args, &aw.writer);
-    try testing.expectEqualStrings(
-        \\Usage: hello --bar=string --[no-]barfoo [options...] <foo> [bar] [baz...]
-        \\
-        \\my special description
-        \\
-        \\Arguments:
-        \\  foo                  [string. required] a special foo thing
-        \\  bar                  [string. default: '']
-        \\  baz...               [string] not-so-special baz thing
-        \\
-        \\Options:
-        \\  --help               Print this help text and exit.
-        \\  -f, --foo=string     [default: ''] does a foo thing
-        \\  --bar=string         [required] does a bar thing
-        \\  --baz=int            [default: 10]
-        \\  --quux=int           [default: -1]
-        \\  --quuz=float         [default: -420] Nice.
-        \\  --[no-]foobar        [default: no]
-        \\  --[no-]barfoo        [required]
-        \\  --foobaz=string      [multiple]
-        \\
-    , aw.written());
-}
-
 /// Print the program's help text using the given arg0 fallback.
 /// The given arg0 is only used if `Args.arg0` is not defined.
-pub fn printHelpArg0(comptime Args: type, writer: *Io.Writer, arg0: []const u8) Io.Writer.Error!void {
+pub fn printHelp(comptime Args: type, writer: *Io.Writer, arg0: ?[]const u8) Io.Writer.Error!void {
     const help, const has_arg0_fmt = comptime getHelpFmt(Args);
     if (has_arg0_fmt)
-        try writer.print(help, .{arg0})
+        try writer.print(help, .{arg0 orelse "<prog>"})
     else
         try writer.writeAll(help);
 }
 
-test printHelpArg0 {
+test printHelp {
     const Args = struct {
         pub const info: Info = .{
             .arg0 = "hello",
@@ -1277,7 +1105,7 @@ test printHelpArg0 {
     const gpa = arena.allocator();
 
     var aw: Writer.Allocating = .init(gpa);
-    try printHelpArg0(Args, &aw.writer, "myprog");
+    try printHelp(Args, &aw.writer, "myprog");
     try testing.expectEqualStrings(
         \\Usage: hello --[no-]bar=[string] --[no-]barfoo [options...] <foo> [bar] [baz...]
         \\
@@ -1334,10 +1162,12 @@ test printHelpArg0 {
 /// - If a named arg is a boolean, `{argname}` is `--[no-]{argname}`, otherwise it's `--{argname}={type}`.
 /// - If `Args.named.<argname>.info` is omitted, or if `description` field is null, then `{description}` is omitted
 /// - `{epilogue}` is `Args.epilogue` if present. Otherwise, this is omitted.
+///
+/// Note that string templates in `Args.info.description` and `Args.epilogue` will be assumed to be `arg0`.
 pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
     return comptime fmt: {
         const info, const named_fields, const positional_fields = reflectArgs(Args);
-        const usage, const has_arg0_fmt = getUsageFmt(Args);
+        const usage, var has_arg0_fmt = getUsageFmt(Args);
         if (info.help) |user_help| {
             const help: []const u8 = usage ++ "\n" ++ user_help;
             return .{ help, has_arg0_fmt };
@@ -1417,7 +1247,18 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
 
         var help: []const u8 = usage;
         if (info.description) |description| {
-            help = help ++ "\n" ++ description ++ "\n";
+            help = help ++ "\n";
+            if (hasAtLeastOneStringLiteral(description)) {
+                if (info.arg0) |arg0| {
+                    help = help ++ comptimePrint(description, .{arg0});
+                } else {
+                    has_arg0_fmt = true;
+                    help = help ++ description;
+                }
+            } else {
+                help = help ++ description;
+            }
+            help = help ++ "\n";
         }
 
         lhs_max_width += 5; // minimum spacing
@@ -1443,7 +1284,18 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         }
 
         if (info.epilogue) |epilogue| {
-            help = help ++ "\n" ++ epilogue ++ "\n";
+            help = help ++ "\n";
+            if (hasAtLeastOneStringLiteral(epilogue)) {
+                if (info.arg0) |arg0| {
+                    help = help ++ comptimePrint(epilogue, .{arg0});
+                } else {
+                    has_arg0_fmt = true;
+                    help = help ++ epilogue;
+                }
+            } else {
+                help = help ++ epilogue;
+            }
+            help = help ++ "\n";
         }
 
         break :fmt .{ help, has_arg0_fmt };
@@ -2184,4 +2036,77 @@ test "shorts" {
             .quux = .{},
         },
     }, args2);
+}
+
+test "module documentation example" {
+    const Args = struct {
+        pub const info: std.cli.Info = .{
+            .arg0 = "myprog",
+            .description = "this program does a thing",
+            .epilogue = "example: myprog --output o.txt hello.txt",
+        };
+
+        named: struct {
+            verbose: struct { value: bool = false },
+            output: struct {
+                value: [:0]const u8,
+                pub const info: std.cli.NamedInfo = .{
+                    .description = "path to output file",
+                    .short = 'o',
+                };
+            },
+        },
+        positional: struct {
+            input: struct {
+                value: []const u8,
+                pub const info: std.cli.PositionalInfo = .{
+                    .description = "path to input file",
+                };
+            },
+            args: struct { value: []const []const u8 = &.{} },
+        },
+    };
+
+    var arena_allocator: ArenaAllocator = .init(std.testing.allocator);
+    defer arena_allocator.deinit();
+    const arena = arena_allocator.allocator();
+
+    const options: Options = .{ .exit = false };
+
+    const args = try parseSlice(
+        Args,
+        arena,
+        &[_][]const u8{ "--output", "o.txt", "hello.txt" },
+        options,
+    );
+    try std.testing.expectEqualDeep(Args{
+        .named = .{
+            .verbose = .{},
+            .output = .{ .value = "o.txt" },
+        },
+        .positional = .{
+            .input = .{ .value = "hello.txt" },
+            .args = .{},
+        },
+    }, args);
+
+    var aw: Writer.Allocating = .init(arena);
+    try printHelp(Args, &aw.writer, null);
+    try std.testing.expectEqualStrings(
+        \\Usage: myprog --output=string [options...] <input> [args...]
+        \\
+        \\this program does a thing
+        \\
+        \\Arguments:
+        \\  input                   [string. required] path to input file
+        \\  args...                 [string]
+        \\
+        \\Options:
+        \\  --help                  Print this help text and exit.
+        \\  --[no-]verbose          [default: no]
+        \\  -o, --output=string     [required] path to output file
+        \\
+        \\example: myprog --output o.txt hello.txt
+        \\
+    , aw.written());
 }
