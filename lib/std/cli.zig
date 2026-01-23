@@ -251,7 +251,6 @@ inline fn flagName(arg: []const u8) ?[]const u8 {
     if (mem.startsWith(u8, arg, "--")) return arg[2..];
 
     if (mem.startsWith(u8, arg, "-") or
-        mem.startsWith(u8, arg, "/") or
         mem.startsWith(u8, arg, "+")) return arg[1..];
 
     return null;
