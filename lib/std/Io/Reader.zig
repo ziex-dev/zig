@@ -1141,9 +1141,23 @@ pub fn takeByte(r: *Reader) Error!u8 {
     return result;
 }
 
+/// Reads 1 byte from the stream or returns `error.EndOfStream`.
+///
+/// Does not fill the buffer.
+pub fn readByte(r: *Reader) Error!u8 {
+    var result: [1]u8 = undefined;
+    try r.readSliceAll(&result);
+    return result[0];
+}
+
 /// Same as `takeByte` except the returned byte is signed.
 pub fn takeByteSigned(r: *Reader) Error!i8 {
     return @bitCast(try r.takeByte());
+}
+
+/// Same as `readByte` except the returned byte is signed.
+pub fn readByteSigned(r: *Reader) Error!i8 {
+    return @bitCast(try r.readByte());
 }
 
 /// Asserts the buffer was initialized with a capacity at least `@bitSizeOf(T) / 8`.
@@ -1158,10 +1172,26 @@ pub inline fn peekInt(r: *Reader, comptime T: type, endian: std.builtin.Endian) 
     return std.mem.readInt(T, try r.peekArray(n), endian);
 }
 
+/// Reads the integer without filling the buffer.
+pub inline fn readInt(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+    const n = @divExact(@typeInfo(T).int.bits, 8);
+    var bytes: [n]u8 = undefined;
+    try r.readSliceAll(&bytes);
+    return std.mem.readInt(T, &bytes, endian);
+}
+
 /// Asserts the buffer was initialized with a capacity at least `n`.
 pub fn takeVarInt(r: *Reader, comptime Int: type, endian: std.builtin.Endian, n: usize) Error!Int {
     assert(n <= @sizeOf(Int));
     return std.mem.readVarInt(Int, try r.take(n), endian);
+}
+
+/// Does not fill the buffer.
+pub fn readVarInt(r: *Reader, comptime Int: type, endian: std.builtin.Endian, n: usize) Error!Int {
+    assert(n <= @sizeOf(Int));
+    var bytes: [@sizeOf(Int)]u8 = undefined;
+    try r.readSliceAll(bytes[0..n]);
+    return std.mem.readVarInt(Int, bytes[0..n], endian);
 }
 
 /// Obtains an unaligned pointer to the beginning of the stream, reinterpreted
@@ -1242,6 +1272,33 @@ pub inline fn peekStruct(r: *Reader, comptime T: type, endian: std.builtin.Endia
     }
 }
 
+/// Reads a struct type without filling the buffer.
+///
+/// This function is inline to avoid referencing `std.mem.byteSwapAllFields`
+/// when `endian` is comptime-known and matches the host endianness.
+///
+/// See also:
+/// * `takeStructPointer`
+/// * `peekStruct`
+/// * `takeStruct`
+pub inline fn readStruct(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+    switch (@typeInfo(T)) {
+        .@"struct" => |info| switch (info.layout) {
+            .auto => @compileError("ill-defined memory layout"),
+            .@"extern" => {
+                var res: T = undefined;
+                try r.readSliceAll(std.mem.asBytes(&res));
+                if (native_endian != endian) std.mem.byteSwapAllFields(T, &res);
+                return res;
+            },
+            .@"packed" => {
+                return @bitCast(try readInt(r, info.backing_integer.?, endian));
+            },
+        },
+        else => @compileError("not a struct"),
+    }
+}
+
 pub const TakeEnumError = Error || error{InvalidEnumTag};
 
 /// Reads an integer with the same size as the given enum's tag type. If the
@@ -1268,9 +1325,37 @@ pub fn takeEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builti
     };
 }
 
+pub const ReadEnumError = Error || error{InvalidEnumTag};
+
+/// Reads an integer with the same size as the given enum's tag type. If the
+/// integer matches an enum tag, casts the integer to the enum tag and returns
+/// it. Otherwise, returns `error.InvalidEnumTag`.
+///
+/// Does not fill the buffer.
+pub fn readEnum(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) ReadEnumError!Enum {
+    const Tag = @typeInfo(Enum).@"enum".tag_type;
+    const int = try r.readInt(Tag, endian);
+    return std.enums.fromInt(Enum, int) orelse return error.InvalidEnumTag;
+}
+
+/// Reads an integer with the same size as the given nonexhaustive enum's tag type.
+///
+/// Does not fill the buffer.
+pub fn readEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Error!Enum {
+    const info = @typeInfo(Enum).@"enum";
+    comptime assert(!info.is_exhaustive);
+    comptime assert(@bitSizeOf(info.tag_type) == @sizeOf(info.tag_type) * 8);
+    return readEnum(r, Enum, endian) catch |err| switch (err) {
+        error.InvalidEnumTag => unreachable,
+        else => |e| return e,
+    };
+}
+
 pub const TakeLeb128Error = Error || error{Overflow};
 
 /// Read a single LEB128 value as type T, or `error.Overflow` if the value cannot fit.
+///
+/// Asserts the buffer was initialized with a nonzero capacity.
 pub fn takeLeb128(r: *Reader, comptime T: type) TakeLeb128Error!T {
     const info = switch (@typeInfo(T)) {
         .int => |info| info,
@@ -1359,6 +1444,122 @@ pub fn takeLeb128(r: *Reader, comptime T: type) TakeLeb128Error!T {
 
             while (byte.more) {
                 byte = @bitCast(try r.takeByte());
+                if (byte.bits != allowed_bits) fits = false;
+            }
+
+            return if (fits) blk: {
+                @branchHint(.likely);
+                break :blk std.math.cast(T, @as(Int, @bitCast(val))) orelse error.Overflow;
+            } else error.Overflow;
+        }
+
+        comptime assert(bits_written < info.bits);
+        if (!byte.more) {
+            if (info.signedness == .signed and // can be negative
+                byte.bits & 0x40 != 0) // is negative
+            {
+                const sign_extend_mask = @as(UInt, std.math.maxInt(UInt)) << bits_written;
+                val |= sign_extend_mask;
+            }
+            return std.math.cast(T, @as(Int, @bitCast(val))) orelse error.Overflow;
+        }
+    }
+}
+
+pub const ReadLeb128Error = Error || error{Overflow};
+
+/// Read a single LEB128 value as type T, or `error.Overflow` if the value cannot fit.
+///
+/// Does not fill the buffer. Since LEB128 values are dynamically sized, it's
+/// recommended to use `takeLeb128` instead.
+pub fn readLeb128(r: *Reader, comptime T: type) ReadLeb128Error!T {
+    const info = switch (@typeInfo(T)) {
+        .int => |info| info,
+        else => @compileError(@typeName(T) ++ " not supported"),
+    };
+    const Byte = packed struct { bits: u7, more: bool };
+
+    if (info.bits <= 7) {
+        var byte: Byte = undefined;
+        const Bits = @Int(info.signedness, 7);
+
+        byte = @bitCast(try r.readByte());
+        const val = std.math.cast(T, @as(Bits, @bitCast(byte.bits))) orelse error.Overflow;
+
+        const allowed_bits: u7 = switch (info.signedness) {
+            .unsigned => 0,
+            .signed => @bitCast(@as(i7, @bitCast(byte.bits)) >> 6),
+        };
+
+        var fits = true;
+        while (byte.more) {
+            byte = @bitCast(try r.readByte());
+
+            if (byte.bits != allowed_bits) fits = false;
+        }
+
+        return if (fits) blk: {
+            @branchHint(.likely);
+            break :blk val;
+        } else error.Overflow;
+    }
+
+    const Unsigned = @Int(.unsigned, info.bits);
+    const UInt = std.math.ByteAlignedInt(Unsigned);
+    const Int = std.math.ByteAlignedInt(T);
+
+    const uint_bits = @typeInfo(UInt).int.bits;
+
+    var byte: Byte = undefined;
+    var val: UInt = 0;
+    const max_bytes = @divFloor(info.bits - 1, 7) + 1;
+    inline for (0..max_bytes) |iteration| {
+        const shift = iteration * 7;
+
+        byte = @bitCast(try r.readByte());
+
+        const extended: UInt = byte.bits;
+        val |= extended << shift;
+
+        const bits_written = shift + 7;
+
+        if (bits_written >= info.bits) {
+            const bits_overflowed = bits_written - info.bits;
+            const bits_remaining = @mod(info.bits, 7);
+
+            const allowed_bits: u7, var fits: bool = switch (info.signedness) {
+                .unsigned => blk: {
+                    const fits = bits_remaining == 0 or byte.bits >> bits_remaining == 0;
+
+                    break :blk .{ 0, fits };
+                },
+                .signed => blk: {
+                    const bits: i7 = @bitCast(byte.bits);
+
+                    // Move the sign bit into the MSB
+                    const shifted_bits: i7 = bits << bits_overflowed;
+
+                    const value_sign: i7 = shifted_bits >> 6; // sign extends
+                    const bits_sign: i7 = bits >> bits_remaining; // sign extends
+
+                    const fits = bits_remaining == 0 or bits_sign == value_sign;
+
+                    if (uint_bits != info.bits and value_sign != 0) {
+                        const sign_extend_mask = @as(UInt, std.math.maxInt(UInt)) << info.bits;
+                        val |= sign_extend_mask;
+                    }
+
+                    break :blk .{ @bitCast(value_sign), fits };
+                },
+            };
+
+            switch (info.signedness) {
+                .signed => assert(allowed_bits == 0 or allowed_bits == 0x7F),
+                .unsigned => comptime assert(allowed_bits == 0),
+            }
+
+            while (byte.more) {
+                byte = @bitCast(try r.readByte());
                 if (byte.bits != allowed_bits) fits = false;
             }
 
@@ -1619,11 +1820,25 @@ test takeByte {
     try testing.expectError(error.EndOfStream, r.takeByte());
 }
 
+test readByte {
+    var r: Reader = .fixed("ab");
+    try testing.expectEqual('a', try r.readByte());
+    try testing.expectEqual('b', try r.readByte());
+    try testing.expectError(error.EndOfStream, r.readByte());
+}
+
 test takeByteSigned {
     var r: Reader = .fixed(&.{ 255, 5 });
     try testing.expectEqual(-1, try r.takeByteSigned());
     try testing.expectEqual(5, try r.takeByteSigned());
     try testing.expectError(error.EndOfStream, r.takeByteSigned());
+}
+
+test readByteSigned {
+    var r: Reader = .fixed("ab");
+    try testing.expectEqual('a', try r.readByteSigned());
+    try testing.expectEqual('b', try r.readByteSigned());
+    try testing.expectError(error.EndOfStream, r.readByteSigned());
 }
 
 test takeInt {
@@ -1632,10 +1847,22 @@ test takeInt {
     try testing.expectError(error.EndOfStream, r.takeInt(u16, .little));
 }
 
+test readInt {
+    var r: Reader = .fixed(&.{ 0x12, 0x34, 0x56 });
+    try testing.expectEqual(0x1234, try r.readInt(u16, .big));
+    try testing.expectError(error.EndOfStream, r.readInt(u16, .little));
+}
+
 test takeVarInt {
     var r: Reader = .fixed(&.{ 0x12, 0x34, 0x56 });
     try testing.expectEqual(0x123456, try r.takeVarInt(u64, .big, 3));
     try testing.expectError(error.EndOfStream, r.takeVarInt(u16, .little, 1));
+}
+
+test readVarInt {
+    var r: Reader = .fixed(&.{ 0x12, 0x34, 0x56 });
+    try testing.expectEqual(0x123456, try r.readVarInt(u64, .big, 3));
+    try testing.expectError(error.EndOfStream, r.readVarInt(u16, .little, 1));
 }
 
 test takeStructPointer {
@@ -1677,12 +1904,27 @@ test peekStruct {
     try testing.expectEqual(@as(S, .{ .a = 0x12, .b = 0x5634 }), try r.peekStruct(S, .little));
 }
 
+test readStruct {
+    var r: Reader = .fixed(&.{ 0x12, 0x00, 0x34, 0x56 });
+    const S = extern struct { a: u8, b: u16 };
+    try testing.expectEqual(@as(S, .{ .a = 0x12, .b = 0x3456 }), try r.readStruct(S, .big));
+    try testing.expectError(error.EndOfStream, r.readStruct(S, .little));
+}
+
 test takeEnum {
     var r: Reader = .fixed(&.{ 2, 0, 1 });
     const E1 = enum(u8) { a, b, c };
     const E2 = enum(u16) { _ };
     try testing.expectEqual(E1.c, try r.takeEnum(E1, .little));
     try testing.expectEqual(@as(E2, @enumFromInt(0x0001)), try r.takeEnum(E2, .big));
+}
+
+test readEnum {
+    var r: Reader = .fixed(&.{ 2, 0, 1 });
+    const E1 = enum(u8) { a, b, c };
+    const E2 = enum(u16) { _ };
+    try testing.expectEqual(E1.c, try r.readEnum(E1, .little));
+    try testing.expectEqual(@as(E2, @enumFromInt(0x0001)), try r.readEnum(E2, .big));
 }
 
 test readSliceShort {
