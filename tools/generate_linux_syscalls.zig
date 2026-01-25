@@ -171,10 +171,12 @@ const architectures: []const Arch = &.{
 };
 
 const Args = struct {
-    pub const description =
+    pub const info: std.cli.Info = .{
+        .description =
         \\Generates the list of Linux syscalls for each supported cpu arch, using the Linux development tree.
         \\Prints to stdout Zig code which you can use to replace the file lib/std/os/linux/syscalls.zig.
-    ;
+        ,
+    };
     positional: struct {
         @"/path/to/linux": struct { value: [:0]const u8 },
     },

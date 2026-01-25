@@ -143,24 +143,28 @@ const LibCVendor = enum {
 
 const Args = struct {
     named: struct {
-        @"search-path": struct { value: []const []const u8 = &.{} },
-        out: struct { value: []const u8 },
+        @"search-path": struct {
+            value: []const []const u8 = &.{},
+            pub const info: std.cli.NamedInfo = .{
+                .description = "subdirectories of search paths look like, e.g. x86_64-linux-gnu",
+            };
+        },
+        out: struct {
+            value: []const u8,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "a dir that will be created, and populated with the results",
+            };
+        },
         abi: struct { value: LibCVendor },
-
-        pub const help = .{
-            .@"search-path" = "subdirectories of search paths look like, e.g. x86_64-linux-gnu",
-            .out = "a dir that will be created, and populated with the results",
-        };
     },
 };
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
     const cwd_path = try std.process.getCwdAlloc(arena);
     const environ_map = init.environ_map;
-
-    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
     const search_paths = args.named.@"search-path".value;
     const out_dir = args.named.out.value;

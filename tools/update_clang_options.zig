@@ -639,13 +639,12 @@ const Args = struct {
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
     const io = init.io;
 
     var stdout_buffer: [4000]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
-
-    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
     const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen".value;
     const llvm_src_root = args.positional.@"/path/to/git/llvm/llvm-project".value;
