@@ -2591,6 +2591,7 @@ pub const _SC = if (builtin.abi.isAndroid()) enum(c_int) {
         NPROCESSORS_ONLN = 15,
         SIGRT_MIN = 40,
         SIGRT_MAX = 41,
+        PHYS_PAGES = 500,
     },
     // https://github.com/SerenityOS/serenity/blob/1dfc9e2df39dd23f1de92530677c845aae4345f2/Kernel/API/POSIX/unistd.h#L36-L52
     .serenity => enum(c_int) {

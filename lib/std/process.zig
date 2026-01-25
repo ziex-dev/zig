@@ -588,6 +588,12 @@ pub fn totalSystemMemory() TotalSystemMemoryError!u64 {
                 else => return error.UnknownTotalSystemMemory,
             }
         },
+        .illumos => {
+            const pagesize = std.c.sysconf(@intFromEnum(std.c._SC.PAGESIZE));
+            const npages = std.c.sysconf(@intFromEnum(std.c._SC.PHYS_PAGES));
+            if (pagesize == -1 or npages == -1) return error.UnknownTotalSystemMemory;
+            return @intCast(pagesize * npages);
+        },
         .openbsd => {
             const mib: [2]c_int = [_]c_int{
                 posix.CTL.HW,
