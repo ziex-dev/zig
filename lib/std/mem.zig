@@ -1823,12 +1823,12 @@ test containsAtLeastScalar2 {
 }
 
 /// Reads an integer from memory with size equal to bytes.len.
-/// T specifies the return type, which must be large enough to store
+/// ReturnType specifies the return type, which must be large enough to store
 /// the result.
-pub fn readVarInt(comptime T: type, bytes: []const u8, endian: Endian) T {
-    assert(@typeInfo(T).int.bits >= bytes.len * 8);
-    const bits = @typeInfo(T).int.bits;
-    const signedness = @typeInfo(T).int.signedness;
+pub fn readVarInt(comptime ReturnType: type, bytes: []const u8, endian: Endian) ReturnType {
+    assert(@typeInfo(ReturnType).int.bits >= bytes.len * 8);
+    const bits = @typeInfo(ReturnType).int.bits;
+    const signedness = @typeInfo(ReturnType).int.signedness;
     const WorkType = std.meta.Int(signedness, @max(16, bits));
     var result: WorkType = 0;
     switch (endian) {
@@ -1860,7 +1860,7 @@ test readVarInt {
     try testing.expect(readVarInt(i16, &[_]u8{ 0xff, 0xfd }, .big) == -3);
     try testing.expect(readVarInt(i16, &[_]u8{ 0xfc, 0xff }, .little) == -4);
 
-    // Return type can be oversized (bytes.len * 8 < @typeInfo(T).int.bits)
+    // Return type can be oversized (bytes.len * 8 < @typeInfo(ReturnType).int.bits)
     try testing.expect(readVarInt(u9, &[_]u8{0x12}, .little) == 0x12);
     try testing.expect(readVarInt(u9, &[_]u8{0xde}, .big) == 0xde);
     try testing.expect(readVarInt(u80, &[_]u8{ 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0, 0x24 }, .big) == 0x123456789abcdef024);
