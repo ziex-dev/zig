@@ -10,7 +10,7 @@ on:
 # This cancels older workflow runs on pull requests while ensuring that there
 # are no concurrency limits on pushes and manual workflow dispatches.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -111,7 +111,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/riscv64-linux-debug.sh
-        timeout-minutes: 600
+        timeout-minutes: 660
   riscv64-linux-release:
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, riscv64-linux]
@@ -122,7 +122,7 @@ jobs:
           fetch-depth: 0
       - name: Build and Test
         run: sh ci/riscv64-linux-release.sh
-        timeout-minutes: 480
+        timeout-minutes: 540
 
   s390x-linux-debug:
     runs-on: [self-hosted, s390x-linux]
@@ -196,6 +196,27 @@ jobs:
       - name: Build and Test
         run: sh ci/x86_64-linux-release.sh
         timeout-minutes: 360
+
+  #x86_64-netbsd-debug:
+  #  runs-on: [self-hosted, x86_64-netbsd]
+  #  steps:
+  #    - name: Checkout
+  #      uses: https://codeberg.org/ziglang/checkout@19af6bac491e2534a4687a50ee84fa7f13258d28
+  #      with:
+  #        fetch-depth: 0
+  #    - name: Build and Test
+  #      run: sh ci/x86_64-netbsd-debug.sh
+  #      timeout-minutes: 120
+  #x86_64-netbsd-release:
+  #  runs-on: [self-hosted, x86_64-netbsd]
+  #  steps:
+  #    - name: Checkout
+  #      uses: https://codeberg.org/ziglang/checkout@19af6bac491e2534a4687a50ee84fa7f13258d28
+  #      with:
+  #        fetch-depth: 0
+  #    - name: Build and Test
+  #      run: sh ci/x86_64-netbsd-release.sh
+  #      timeout-minutes: 120
 
   x86_64-openbsd-debug:
     runs-on: [self-hosted, x86_64-openbsd]

@@ -28,6 +28,8 @@ const TestTarget = struct {
     use_lld: ?bool = null,
     pic: ?bool = null,
     strip: ?bool = null,
+    function_sections: ?bool = null,
+    data_sections: ?bool = null,
     skip_modules: []const []const u8 = &.{},
 
     // This is intended for targets that, for any reason, shouldn't be run as part of a normal test
@@ -40,7 +42,7 @@ const test_targets = blk: {
     // getBaselineCpuFeatures calls populateDependencies which has a O(N ^ 2) algorithm
     // (where N is roughly 160, which technically makes it O(1), but it adds up to a
     // lot of branches)
-    @setEvalBranchQuota(60000);
+    @setEvalBranchQuota(80_000);
     break :blk [_]TestTarget{
         // Native Targets
 
@@ -1526,36 +1528,43 @@ const test_targets = blk: {
         },
 
         .{
-            .target = .{
-                .cpu_arch = .thumb,
-                .os_tag = .windows,
-                .abi = .msvc,
-            },
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-msvc",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
         },
         .{
-            .target = .{
-                .cpu_arch = .thumb,
-                .os_tag = .windows,
-                .abi = .msvc,
-            },
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-msvc",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
             .link_libc = true,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
         },
-        // https://github.com/ziglang/zig/issues/24016
-        // .{
-        //     .target = .{
-        //         .cpu_arch = .thumb,
-        //         .os_tag = .windows,
-        //         .abi = .gnu,
-        //     },
-        // },
-        // .{
-        //     .target = .{
-        //         .cpu_arch = .thumb,
-        //         .os_tag = .windows,
-        //         .abi = .gnu,
-        //     },
-        //     .link_libc = true,
-        // },
+        .{
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-gnu",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
+        },
+        .{
+            .target = std.Target.Query.parse(.{
+                .arch_os_abi = "thumb-windows-gnu",
+                .cpu_features = "baseline+long_calls",
+            }) catch unreachable,
+            .link_libc = true,
+            .pic = false, // Long calls don't work with PIC.
+            .function_sections = true,
+            .data_sections = true,
+        },
 
         .{
             .target = .{
@@ -2345,27 +2354,39 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
             }
         }
 
+        const resolved_target = b.resolveTargetQuery(test_target.target);
+        const target = &resolved_target.result;
+
+        if (test_target.link_libc == false and target.requiresLibC()) continue;
+        // If the target requires libc, there's no point building the cases that
+        // don't explicitly link libc as they'll just end up actually linking
+        // libc anyway, thus creating duplicate work and making -Dskip-libc not
+        // work as expected.
+        if (test_target.link_libc == null and target.requiresLibC()) continue;
+        // These targets don't strictly require libc, but we don't yet have a
+        // syscall layer for them, so the compiler links libc by default. They
+        // therefore get the same treatment here.
+        if (test_target.link_libc == null and (target.os.tag == .freebsd or target.os.tag == .netbsd)) continue;
+
         if (!options.test_extra_targets and test_target.extra_target) continue;
 
         if (options.skip_non_native and !test_target.target.isNative())
             continue;
 
-        if (options.skip_spirv and test_target.target.cpu_arch != null and test_target.target.cpu_arch.?.isSpirV()) continue;
-        if (options.skip_wasm and test_target.target.cpu_arch != null and test_target.target.cpu_arch.?.isWasm()) continue;
+        if (options.skip_spirv and target.cpu.arch.isSpirV()) continue;
+        if (options.skip_wasm and target.cpu.arch.isWasm()) continue;
 
-        if (options.skip_freebsd and test_target.target.os_tag == .freebsd) continue;
-        if (options.skip_netbsd and test_target.target.os_tag == .netbsd) continue;
-        if (options.skip_openbsd and test_target.target.os_tag == .openbsd) continue;
-        if (options.skip_windows and test_target.target.os_tag == .windows) continue;
-        if (options.skip_darwin and test_target.target.os_tag != null and test_target.target.os_tag.?.isDarwin()) continue;
-        if (options.skip_linux and test_target.target.os_tag == .linux) continue;
+        if (options.skip_freebsd and target.os.tag == .freebsd) continue;
+        if (options.skip_netbsd and target.os.tag == .netbsd) continue;
+        if (options.skip_openbsd and target.os.tag == .openbsd) continue;
+        if (options.skip_windows and target.os.tag == .windows) continue;
+        if (options.skip_darwin and target.os.tag.isDarwin()) continue;
+        if (options.skip_linux and target.os.tag == .linux) continue;
 
         const would_use_llvm = wouldUseLlvm(test_target.use_llvm, test_target.target, test_target.optimize_mode);
         if (options.skip_llvm and would_use_llvm) continue;
 
-        const resolved_target = b.resolveTargetQuery(test_target.target);
         const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
-        const target = &resolved_target.result;
 
         if (options.test_target_filters.len > 0) {
             for (options.test_target_filters) |filter| {
@@ -2442,6 +2463,8 @@ fn addOneModuleTest(
     if (options.build_options) |build_options| {
         these_tests.root_module.addOptions("build_options", build_options);
     }
+    if (test_target.function_sections) |fs| these_tests.link_function_sections = fs;
+    if (test_target.data_sections) |ds| these_tests.link_data_sections = ds;
     const single_threaded_suffix = if (test_target.single_threaded == true) "-single" else "";
     const backend_suffix = if (test_target.use_llvm == true)
         "-llvm"
@@ -2873,12 +2896,11 @@ const libc_targets: []const std.Target.Query = &.{
         .os_tag = .linux,
         .abi = .musl,
     },
-    // Macros like FE_INVALID are defined by musl, but they shouldn't.
-    // .{
-    //     .cpu_arch = .loongarch64,
-    //     .os_tag = .linux,
-    //     .abi = .muslsf,
-    // },
+    .{
+        .cpu_arch = .loongarch64,
+        .os_tag = .linux,
+        .abi = .muslsf,
+    },
     // .{
     //     .cpu_arch = .mips,
     //     .os_tag = .linux,
