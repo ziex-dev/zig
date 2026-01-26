@@ -703,12 +703,16 @@ pub const BootServices = extern struct {
             null,
         )) {
             // If len is zero, it should return not_found, otherwise buffer_too_small.
-            // This is because it can only return success when a valid buffer is passed with
-            // a non zero size, which is not the case, thus this error is unreachable.
-            .success => unreachable,
+            // This is because it can/should only return success when a valid buffer is
+            // passed with a non zero size, which is not the case.
+            // Thus this error is considered unreachable/unexpected.
+            // .success => unreachable,
             .buffer_too_small => return @divExact(len, @sizeOf(uefi.Handle)),
             .not_found => return 0,
-            .invalid_parameter => return error.InvalidParameter,
+            // This function accounts for all possible causes of this error code
+            // as per the most recent UEFI spec 2.10A, therefore this branch is
+            // considered unreachable and will return error.Unexpected instead
+            // .invalid_parameter => unreachable
             else => |status| return uefi.unexpectedStatus(status),
         }
     }
