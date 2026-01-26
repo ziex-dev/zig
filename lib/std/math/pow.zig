@@ -31,7 +31,7 @@ const expect = std.testing.expect;
 ///  - pow(-inf, y)   = pow(-0, -y)
 ///  - pow(x, y)      = nan for finite x < 0 and finite non-integer y
 pub fn pow(comptime T: type, x: T, y: T) T {
-    if (@typeInfo(T) == .int) {
+    if (@typeInfo(T) == .int or @typeInfo(T) == .comptime_int) {
         return math.powi(T, x, y) catch unreachable;
     }
 
