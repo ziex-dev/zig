@@ -1,20 +1,26 @@
 const std = @import("../std.zig");
 const builtin = @import("builtin");
+const assert = std.debug.assert;
 const math = std.math;
 const meta = std.meta;
 const expect = std.testing.expect;
 
 pub fn isNan(x: anytype) bool {
-    return x != x;
+    const is_nan = x != x;
+    if (@TypeOf(x) == comptime_float and is_nan) unreachable;
+    return is_nan;
 }
 
 /// TODO: LLVM is known to miscompile on some architectures to quiet NaN -
 ///       this is tracked by https://github.com/ziglang/zig/issues/14366
 pub fn isSignalNan(x: anytype) bool {
     const T = @TypeOf(x);
+    if (!isNan(x)) return false;
+
+    comptime assert(@typeInfo(T) == .float); // comptime_float cannot be nan
     const U = meta.Int(.unsigned, @bitSizeOf(T));
     const quiet_signal_bit_mask = 1 << (math.floatFractionalBits(T) - 1);
-    return isNan(x) and (@as(U, @bitCast(x)) & quiet_signal_bit_mask == 0);
+    return @as(U, @bitCast(x)) & quiet_signal_bit_mask == 0;
 }
 
 test isNan {
