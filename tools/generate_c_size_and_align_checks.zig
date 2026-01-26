@@ -34,12 +34,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const args = try init.minimal.args.toSlice(allocator);
 
-    const target_triple = cli.parse(
-        []const u8,
-        .default,
-        args,
-        allocator,
-    ) catch {
+    const target_triple = cli.parse([]const u8, args, allocator) catch {
         std.debug.print("Usage: {s} [target_triple]\n", .{args[0]});
         std.process.exit(1);
     };

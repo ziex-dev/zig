@@ -186,7 +186,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(arena);
 
-    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+    const named, const positional = std.cli.parse(Args, args, arena) catch {
         const stderr = std.debug.lockStderr(&.{});
         const w = &stderr.file_writer.interface;
         usage(w, args[0]) catch std.process.exit(2);

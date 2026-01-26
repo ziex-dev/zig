@@ -18,7 +18,6 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
     const input_file, const output_file = try cli.parse(
         struct { []const u8, []const u8 },
-        .default,
         args,
         arena,
     );

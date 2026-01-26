@@ -61,7 +61,6 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
     const spirv_headers_path, const ext_grammar_path = cli.parse(
         struct { []const u8, []const u8 },
-        .default,
         args,
         arena,
     ) catch usageAndExit(args[0], 1);

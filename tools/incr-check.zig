@@ -54,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
 
     const args = try init.minimal.args.toSlice(arena);
 
-    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+    const named, const positional = std.cli.parse(Args, args, arena) catch {
         fatal("{s}", .{usage});
     };
 

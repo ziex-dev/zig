@@ -285,12 +285,7 @@ const Parse = struct {
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
-    const build_all_path = try cli.parse(
-        []const u8,
-        .default,
-        try init.minimal.args.toSlice(arena),
-        arena,
-    );
+    const build_all_path = try cli.parse([]const u8, try init.minimal.args.toSlice(arena), arena);
 
     var build_all_dir = try Io.Dir.cwd().openDir(io, build_all_path, .{});
 

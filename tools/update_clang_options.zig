@@ -652,7 +652,7 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    const named, const positional = std.cli.parse(Args, .sorted, args, arena) catch {
+    const named, const positional = std.cli.parse(Args, args, arena) catch {
         printUsageAndExit(args[0]);
     };
 

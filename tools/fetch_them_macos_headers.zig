@@ -76,7 +76,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const args = try init.minimal.args.toSlice(arena);
 
-    const named, const argv = std.cli.parse(Args, .sorted, args, arena) catch {
+    const named, const argv = std.cli.parse(Args, args, arena) catch {
         return info(usage, .{});
     };
 

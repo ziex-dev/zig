@@ -12,12 +12,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const zig_src_root = cli.parse(
-        []const u8,
-        .default,
-        args,
-        arena,
-    ) catch |err| switch (err) {
+    const zig_src_root = cli.parse([]const u8, args, arena) catch |err| switch (err) {
         error.UnknownFlag, error.InvalidValue, error.MissingValue => printUsageAndExit(args[0]),
         else => return err,
     };

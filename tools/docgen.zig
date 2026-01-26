@@ -45,12 +45,7 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const args = try init.minimal.args.toSlice(arena);
 
-    const named, const positionals = std.cli.parse(
-        Args,
-        .sorted,
-        args,
-        arena,
-    ) catch {
+    const named, const positionals = std.cli.parse(Args, args, arena) catch {
         try Io.File.stdout().writeStreamingAll(io, usage);
         process.exit(1);
     };

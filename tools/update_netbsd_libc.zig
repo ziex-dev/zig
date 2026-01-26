@@ -20,7 +20,6 @@ pub fn main(init: std.process.Init) !void {
 
     const netbsd_src_path, const zig_src_path = try cli.parse(
         struct { []const u8, []const u8 },
-        .default,
         args,
         arena,
     );
