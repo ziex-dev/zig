@@ -14,10 +14,10 @@ pub fn FloatRepr(comptime Float: type) type {
         exponent: BiasedExponent,
         sign: std.math.Sign,
 
-        pub const StoredMantissa = @Int(.unsigned, floatMantissaBits(Float));
-        pub const Mantissa = @Int(.unsigned, 1 + fractional_bits);
-        pub const Exponent = @Int(.signed, exponent_bits);
-        pub const BiasedExponent = enum(@Int(.unsigned, exponent_bits)) {
+        pub const StoredMantissa = std.meta.Int(.unsigned, floatMantissaBits(Float));
+        pub const Mantissa = std.meta.Int(.unsigned, 1 + fractional_bits);
+        pub const Exponent = std.meta.Int(.signed, exponent_bits);
+        pub const BiasedExponent = enum(std.meta.Int(.unsigned, exponent_bits)) {
             denormal = 0,
             min_normal = 1,
             zero = (1 << (exponent_bits - 1)) - 1,
@@ -44,8 +44,8 @@ pub fn FloatRepr(comptime Float: type) type {
             fraction: Fraction,
             exponent: Normalized.Exponent,
 
-            pub const Fraction = @Int(.unsigned, fractional_bits);
-            pub const Exponent = @Int(.signed, 1 + exponent_bits);
+            pub const Fraction = std.meta.Int(.unsigned, fractional_bits);
+            pub const Exponent = std.meta.Int(.signed, 1 + exponent_bits);
 
             /// This currently truncates denormal values, which needs to be fixed before this can be used to
             /// produce a rounded value.
@@ -99,21 +99,29 @@ pub fn FloatRepr(comptime Float: type) type {
 
 /// Creates a raw "1.0" mantissa for floating point type T. Used to dedupe f80 logic.
 inline fn mantissaOne(comptime T: type) comptime_int {
+    if (T == comptime_float) return 0;
     return if (@typeInfo(T).float.bits == 80) 1 << floatFractionalBits(T) else 0;
 }
 
 /// Creates floating point type T from an unbiased exponent and raw mantissa.
 inline fn reconstructFloat(comptime T: type, comptime exponent: comptime_int, comptime mantissa: comptime_int) T {
-    const TBits = @Int(.unsigned, @bitSizeOf(T));
+    const TBits, const F = switch (@typeInfo(T)) {
+        .float => |float| .{ std.meta.Int(.unsigned, float.bits), T },
+        .comptime_float => .{ std.meta.Int(.unsigned, 128), f128 },
+        else => unreachable,
+    };
     const biased_exponent = @as(TBits, exponent + floatExponentMax(T));
-    return @as(T, @bitCast((biased_exponent << floatMantissaBits(T)) | @as(TBits, mantissa)));
+    const result: F = @bitCast((biased_exponent << floatMantissaBits(T)) | @as(TBits, mantissa));
+    return @as(T, result);
 }
 
 /// Returns the number of bits in the exponent of floating point type T.
 pub inline fn floatExponentBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .float);
+    const info = @typeInfo(T);
+    comptime assert(info == .float or info == .comptime_float);
 
-    return switch (@typeInfo(T).float.bits) {
+    if (info == .comptime_float) return 15;
+    return switch (info.float.bits) {
         16 => 5,
         32 => 8,
         64 => 11,
@@ -125,9 +133,11 @@ pub inline fn floatExponentBits(comptime T: type) comptime_int {
 
 /// Returns the number of bits in the mantissa of floating point type T.
 pub inline fn floatMantissaBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .float);
+    const info = @typeInfo(T);
+    comptime assert(info == .float or info == .comptime_float);
 
-    return switch (@typeInfo(T).float.bits) {
+    if (info == .comptime_float) return 112;
+    return switch (info.float.bits) {
         16 => 10,
         32 => 23,
         64 => 52,
@@ -139,12 +149,14 @@ pub inline fn floatMantissaBits(comptime T: type) comptime_int {
 
 /// Returns the number of fractional bits in the mantissa of floating point type T.
 pub inline fn floatFractionalBits(comptime T: type) comptime_int {
-    comptime assert(@typeInfo(T) == .float);
+    const info = @typeInfo(T);
+    comptime assert(info == .float or info == .comptime_float);
 
     // standard IEEE floats have an implicit 0.m or 1.m integer part
     // f80 is special and has an explicitly stored bit in the MSB
     // this function corresponds to `MANT_DIG - 1' from C
-    return switch (@typeInfo(T).float.bits) {
+    if (info == .comptime_float) return 112;
+    return switch (info.float.bits) {
         16 => 10,
         32 => 23,
         64 => 52,
@@ -190,11 +202,16 @@ pub inline fn floatEps(comptime T: type) T {
 /// Returns the local epsilon of floating point type T.
 pub inline fn floatEpsAt(comptime T: type, x: T) T {
     switch (@typeInfo(T)) {
-        .float => |F| {
-            const U: type = @Int(.unsigned, F.bits);
+        .float => |float| {
+            const U = std.meta.Int(.unsigned, float.bits);
             const u: U = @bitCast(x);
             const y: T = @bitCast(u ^ 1);
             return @abs(x - y);
+        },
+        .comptime_float => {
+            const u: u128 = @bitCast(@as(f128, x));
+            const y: f128 = @bitCast(u ^ 1);
+            return @as(comptime_float, @abs(x - y));
         },
         else => @compileError("floatEpsAt only supports floats"),
     }
@@ -202,24 +219,20 @@ pub inline fn floatEpsAt(comptime T: type, x: T) T {
 
 /// Returns the inf value for a floating point `Type`.
 pub inline fn inf(comptime Type: type) Type {
-    const RuntimeType = switch (Type) {
-        else => Type,
-        comptime_float => f128, // any float type will do
+    return switch (@typeInfo(Type)) {
+        .float => reconstructFloat(Type, floatExponentMax(Type) + 1, mantissaOne(Type)),
+        .comptime_float => @compileError("comptime_float cannot be infinity"),
+        else => @compileError("unknown floating point type " ++ @typeName(Type)),
     };
-    return reconstructFloat(RuntimeType, floatExponentMax(RuntimeType) + 1, mantissaOne(RuntimeType));
 }
 
 /// Returns the canonical quiet NaN representation for a floating point `Type`.
 pub inline fn nan(comptime Type: type) Type {
-    const RuntimeType = switch (Type) {
-        else => Type,
-        comptime_float => f128, // any float type will do
+    return switch (@typeInfo(Type)) {
+        .float => reconstructFloat(Type, floatExponentMax(Type) + 1, mantissaOne(Type) | 1 << (floatFractionalBits(Type) - 1)),
+        .comptime_float => @compileError("comptime_float cannot be NaN"),
+        else => @compileError("unknown floating point type " ++ @typeName(Type)),
     };
-    return reconstructFloat(
-        RuntimeType,
-        floatExponentMax(RuntimeType) + 1,
-        mantissaOne(RuntimeType) | 1 << (floatFractionalBits(RuntimeType) - 1),
-    );
 }
 
 /// Returns a signalling NaN representation for a floating point `Type`.
@@ -227,21 +240,21 @@ pub inline fn nan(comptime Type: type) Type {
 /// TODO: LLVM is known to miscompile on some architectures to quiet NaN -
 ///       this is tracked by https://github.com/ziglang/zig/issues/14366
 pub inline fn snan(comptime Type: type) Type {
-    const RuntimeType = switch (Type) {
-        else => Type,
-        comptime_float => f128, // any float type will do
+    return switch (@typeInfo(Type)) {
+        .float => reconstructFloat(Type, floatExponentMax(Type) + 1, mantissaOne(Type) | 1 << (floatFractionalBits(Type) - 2)),
+        .comptime_float => @compileError("comptime_float cannot be NaN"),
+        else => @compileError("unknown floating point type " ++ @typeName(Type)),
     };
-    return reconstructFloat(
-        RuntimeType,
-        floatExponentMax(RuntimeType) + 1,
-        mantissaOne(RuntimeType) | 1 << (floatFractionalBits(RuntimeType) - 2),
-    );
 }
 
 fn floatBits(comptime Type: type) !void {
     // (1 +) for the sign bit, since it is separate from the other bits
     const size = 1 + floatExponentBits(Type) + floatMantissaBits(Type);
-    try expect(@bitSizeOf(Type) == size);
+    if (@typeInfo(Type) == .float)
+        try expect(@bitSizeOf(Type) == size)
+    else
+        try expect(128 == size);
+
     try expect(floatFractionalBits(Type) <= floatMantissaBits(Type));
 
     // for machine epsilon, assert expmin <= -prec <= expmax
@@ -255,6 +268,8 @@ test floatBits {
     try floatBits(f80);
     try floatBits(f128);
     try floatBits(c_longdouble);
+    try floatBits(comptime_float);
+    try comptime floatBits(comptime_float);
 }
 
 test inf {
