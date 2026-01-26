@@ -702,6 +702,10 @@ pub const BootServices = extern struct {
             &len,
             null,
         )) {
+            // If len is zero, it should return not_found, otherwise buffer_too_small.
+            // This is because it can only return success when a valid buffer is passed with
+            // a non zero size, which is not the case, thus this error is unreachable.
+            .success => unreachable,
             .buffer_too_small => return @divExact(len, @sizeOf(uefi.Handle)),
             .not_found => return 0,
             .invalid_parameter => return error.InvalidParameter,
