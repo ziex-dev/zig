@@ -235,9 +235,7 @@ pub const BootServices = extern struct {
         InvalidParameter,
     };
 
-    pub const NumHandlesError = uefi.UnexpectedError || error{
-        InvalidParameter,
-    };
+    pub const NumHandlesError = uefi.UnexpectedError;
 
     pub const LocateHandleError = uefi.UnexpectedError || error{
         BufferTooSmall,
