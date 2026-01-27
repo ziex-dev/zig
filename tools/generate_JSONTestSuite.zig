@@ -7,6 +7,8 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
 
+    _ = try std.cli.parse(struct {}, init.arena.allocator(), init.minimal.args, .{});
+
     var stdout_buffer: [2000]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const output = &stdout_writer.interface;

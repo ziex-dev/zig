@@ -13,21 +13,50 @@ const getExternalExecutor = std.zig.system.getExternalExecutor;
 
 const max_doc_file_size = 10 * 1024 * 1024;
 
-const usage =
-    \\Usage: doctest [options] -i input -o output
-    \\
-    \\   Compiles and possibly runs a code example, capturing output and rendering
-    \\   it to HTML documentation.
-    \\
-    \\Options:
-    \\   -h, --help             Print this help and exit
-    \\   -i input               Source code file path
-    \\   -o output              Where to write output HTML docs to
-    \\   --zig zig              Path to the zig compiler
-    \\   --zig-lib-dir dir      Override the zig compiler library path
-    \\   --cache-root dir       Path to local .zig-cache/
-    \\
-;
+const Args = struct {
+    pub const info: std.cli.Info = .{
+        .arg0 = "doctest",
+        .description =
+        \\Compiles and possibly runs a code example, capturing output and rendering
+        \\it to HTML documentation.
+        ,
+    };
+
+    named: struct {
+        input: struct {
+            value: []const u8,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Source code file path",
+                .short = 'i',
+            };
+        },
+        output: struct {
+            value: []const u8,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Where to write output HTML docs to",
+                .short = 'o',
+            };
+        },
+        zig: struct {
+            value: []const u8,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to the zig compiler",
+            };
+        },
+        @"zig-lib-dir": struct {
+            value: ?[]const u8 = null,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Override the zig compiler library path",
+            };
+        },
+        @"cache-root": struct {
+            value: []const u8,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to local .zig-cache/",
+            };
+        },
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
@@ -37,42 +66,12 @@ pub fn main(init: std.process.Init) !void {
 
     try environ_map.put("CLICOLOR_FORCE", "1");
 
-    var args_it = try init.minimal.args.iterateAllocator(arena);
-    if (!args_it.skip()) fatal("missing argv[0]", .{});
-
-    var opt_input: ?[]const u8 = null;
-    var opt_output: ?[]const u8 = null;
-    var opt_zig: ?[]const u8 = null;
-    var opt_zig_lib_dir: ?[]const u8 = null;
-    var opt_cache_root: ?[]const u8 = null;
-
-    while (args_it.next()) |arg| {
-        if (mem.startsWith(u8, arg, "-")) {
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try Io.File.stdout().writeStreamingAll(io, usage);
-                process.exit(0);
-            } else if (mem.eql(u8, arg, "-i")) {
-                opt_input = args_it.next() orelse fatal("expected parameter after -i", .{});
-            } else if (mem.eql(u8, arg, "-o")) {
-                opt_output = args_it.next() orelse fatal("expected parameter after -o", .{});
-            } else if (mem.eql(u8, arg, "--zig")) {
-                opt_zig = args_it.next() orelse fatal("expected parameter after --zig", .{});
-            } else if (mem.eql(u8, arg, "--zig-lib-dir")) {
-                opt_zig_lib_dir = args_it.next() orelse fatal("expected parameter after --zig-lib-dir", .{});
-            } else if (mem.eql(u8, arg, "--cache-root")) {
-                opt_cache_root = args_it.next() orelse fatal("expected parameter after --cache-root", .{});
-            } else {
-                fatal("unrecognized option: '{s}'", .{arg});
-            }
-        } else {
-            fatal("unexpected positional argument: '{s}'", .{arg});
-        }
-    }
-
-    const input_path = opt_input orelse fatal("missing input file (-i)", .{});
-    const output_path = opt_output orelse fatal("missing output file (-o)", .{});
-    const zig_path = opt_zig orelse fatal("missing zig compiler path (--zig)", .{});
-    const cache_root = opt_cache_root orelse fatal("missing cache root path (--cache-root)", .{});
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
+    const input_path = args.named.input.value;
+    const output_path = args.named.output.value;
+    const zig_path = args.named.zig.value;
+    const opt_zig_lib_dir = args.named.@"zig-lib-dir".value;
+    const cache_root = args.named.@"cache-root".value;
 
     const source_bytes = try Dir.cwd().readFileAlloc(io, input_path, arena, .limited(std.math.maxInt(u32)));
     const code = try parseManifest(arena, source_bytes);
@@ -1524,7 +1523,7 @@ test "printShell" {
         // intentional space after "--build-option1 \"
         const shell_out =
             \\$ zig build test.zig \
-            \\ --build-option1 \ 
+            \\ --build-option1 \
             \\ --build-option2
             \\$ ./test
         ;

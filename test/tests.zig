@@ -2805,10 +2805,10 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
         run.addFileArg(b.path("test/incremental/").path(b, entry.path));
         run.addArgs(&.{ "--zig-lib-dir", b.fmt("{f}", .{b.graph.zig_lib_directory}) });
 
-        if (b.enable_qemu) run.addArg("-fqemu");
-        if (b.enable_wine) run.addArg("-fwine");
-        if (b.enable_wasmtime) run.addArg("-fwasmtime");
-        if (b.enable_darling) run.addArg("-fdarling");
+        if (b.enable_qemu) run.addArg("--qemu");
+        if (b.enable_wine) run.addArg("--wine");
+        if (b.enable_wasmtime) run.addArg("--wasmtime");
+        if (b.enable_darling) run.addArg("--darling");
 
         run.addCheck(.{ .expect_term = .{ .exited = 0 } });
 

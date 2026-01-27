@@ -8,28 +8,31 @@ const Path = std.Build.Cache.Path;
 const assert = std.debug.assert;
 const SeenPcsHeader = std.Build.abi.fuzz.SeenPcsHeader;
 
+const Args = struct {
+    pub const info: std.cli.Info = .{
+        .epilogue = "example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux",
+    };
+
+    positional: struct {
+        @"path/to/exe": struct { value: [:0]const u8 },
+        @"path/to/coverage": struct { value: [:0]const u8 },
+        target: struct { value: [:0]const u8 = "native" },
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
-    const args = try init.minimal.args.toSlice(arena);
 
-    const target_query_str = switch (args.len) {
-        3 => "native",
-        4 => args[3],
-        else => return fatal(
-            \\usage: {0s} path/to/exe path/to/coverage [target]
-            \\  if omitted, 'target' defaults to 'native'
-            \\  example: {0s} zig-out/test .zig-cache/v/xxxxxxxx x86_64-linux
-        , .{if (args.len == 0) "dump-cov" else args[0]}),
-    };
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
+
+    const exe_file_name = args.positional.@"path/to/exe".value;
+    const cov_file_name = args.positional.@"path/to/coverage".value;
 
     const target = std.zig.resolveTargetQueryOrFatal(io, try .parse(.{
-        .arch_os_abi = target_query_str,
+        .arch_os_abi = args.positional.target.value,
     }));
-
-    const exe_file_name = args[1];
-    const cov_file_name = args[2];
 
     const exe_path: Path = .{
         .root_dir = .cwd(),

@@ -17,53 +17,35 @@ const max_doc_file_size = 10 * 1024 * 1024;
 
 const obj_ext = builtin.object_format.fileExt(builtin.cpu.arch);
 
-const usage =
-    \\Usage: docgen [options] input output
-    \\
-    \\   Generates an HTML document from a docgen template.
-    \\
-    \\Options:
-    \\   --code-dir dir         Path to directory containing code example outputs
-    \\   -h, --help             Print this help and exit
-    \\
-;
+const Args = struct {
+    pub const info: std.cli.Info = .{
+        .arg0 = "docgen",
+        .description = "Generates an HTML document from a docgen template.",
+    };
+
+    named: struct {
+        @"code-dir": struct {
+            value: [:0]const u8,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to directory containing code example outputs",
+            };
+        },
+    },
+    positional: struct {
+        input: struct { value: [:0]const u8 },
+        output: struct { value: [:0]const u8 },
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    var args_it = try init.minimal.args.iterateAllocator(arena);
-    if (!args_it.skip()) @panic("expected self arg");
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    var opt_code_dir: ?[]const u8 = null;
-    var opt_input: ?[]const u8 = null;
-    var opt_output: ?[]const u8 = null;
-
-    while (args_it.next()) |arg| {
-        if (mem.startsWith(u8, arg, "-")) {
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try Io.File.stdout().writeStreamingAll(io, usage);
-                process.exit(0);
-            } else if (mem.eql(u8, arg, "--code-dir")) {
-                if (args_it.next()) |param| {
-                    opt_code_dir = param;
-                } else {
-                    fatal("expected parameter after --code-dir", .{});
-                }
-            } else {
-                fatal("unrecognized option: '{s}'", .{arg});
-            }
-        } else if (opt_input == null) {
-            opt_input = arg;
-        } else if (opt_output == null) {
-            opt_output = arg;
-        } else {
-            fatal("unexpected positional argument: '{s}'", .{arg});
-        }
-    }
-    const input_path = opt_input orelse fatal("missing input file", .{});
-    const output_path = opt_output orelse fatal("missing output file", .{});
-    const code_dir_path = opt_code_dir orelse fatal("missing --code-dir argument", .{});
+    const input_path = args.positional.input.value;
+    const output_path = args.positional.output.value;
+    const code_dir_path = args.named.@"code-dir".value;
 
     var in_file = try Dir.cwd().openFile(io, input_path, .{});
     defer in_file.close(io);

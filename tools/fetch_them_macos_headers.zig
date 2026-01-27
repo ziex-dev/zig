@@ -52,37 +52,33 @@ const Target = struct {
 
 const headers_source_prefix: []const u8 = "headers";
 
-const usage =
-    \\fetch_them_macos_headers [options] [cc args]
-    \\
-    \\Options:
-    \\  --sysroot     Path to macOS SDK
-    \\
-    \\General Options:
-    \\-h, --help                    Print this help and exit
-;
+const Args = struct {
+    pub const info: std.cli.Info = .{
+        .arg0 = "fetch_them_macos_headers",
+    };
+    named: struct {
+        sysroot: struct {
+            value: ?[]const u8 = null,
+            pub const info: std.cli.NamedInfo = .{
+                .description = "Path to macOS SDK",
+            };
+        },
+    },
+    positional: struct {
+        @"cc args": struct { value: []const [:0]const u8 },
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     const arena = init.arena.allocator();
-    const args = try init.minimal.args.toSlice(arena);
 
-    var argv = std.array_list.Managed([]const u8).init(arena);
-    var sysroot: ?[]const u8 = null;
+    const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
 
-    var args_iter = ArgsIterator{ .args = args[1..] };
-    while (args_iter.next()) |arg| {
-        if (mem.eql(u8, arg, "--help") or mem.eql(u8, arg, "-h")) {
-            return info(usage, .{});
-        } else if (mem.eql(u8, arg, "--sysroot")) {
-            sysroot = args_iter.nextOrFatal();
-        } else try argv.append(arg);
-    }
-
-    const sysroot_path = sysroot orelse blk: {
+    const sysroot_path = args.named.sysroot.value orelse blk: {
         const target = try std.zig.system.resolveTargetQuery(io, .{});
-        break :blk std.zig.system.darwin.getSdk(arena, io, &target) orelse
-            fatal("no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
+        if (std.zig.system.darwin.getSdk(arena, io, &target)) |sdk| break :blk sdk;
+        try std.cli.usageError(Args, .{}, "no SDK found; you can provide one explicitly with '--sysroot' flag", .{});
     };
 
     var sdk_dir = try Dir.cwd().openDir(io, sysroot_path, .{});
@@ -107,7 +103,7 @@ pub fn main(init: std.process.Init) !void {
             .arch = arch,
             .os_ver = os_ver,
         };
-        try fetchTarget(arena, io, argv.items, sysroot_path, target, version, tmp_dir);
+        try fetchTarget(arena, io, args.positional.@"cc args".value, sysroot_path, target, version, tmp_dir);
     }
 }
 
