@@ -1121,7 +1121,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: PROT, flags: MAP, fd: i32, off
             @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
-            @truncate(@as(u64, @bitCast(offset)) / std.heap.pageSize()),
+            @truncate(@as(u64, @bitCast(offset)) / 4096),
         );
     } else {
         // The s390x mmap() syscall existed before Linux supported syscalls with 5+ parameters, so
