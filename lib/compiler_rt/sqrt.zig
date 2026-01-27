@@ -11,6 +11,10 @@ const arch = builtin.cpu.arch;
 const math = std.math;
 const common = @import("common.zig");
 
+// Import architecture-specific logic
+const avr = @import("avr.zig");
+const is_avr = (arch == .avr);
+
 comptime {
     @export(&__sqrth, .{ .name = "__sqrth", .linkage = common.linkage, .visibility = common.visibility });
     @export(&sqrtf, .{ .name = "sqrtf", .linkage = common.linkage, .visibility = common.visibility });
@@ -26,6 +30,8 @@ comptime {
 }
 
 pub fn __sqrth(x: f16) callconv(.c) f16 {
+    if (is_avr) return @floatCast(avr.sqrtf(@floatCast(x)));
+
     var ix: u16 = @bitCast(x);
     var top = ix >> 10;
 
@@ -91,6 +97,8 @@ pub fn __sqrth(x: f16) callconv(.c) f16 {
 }
 
 pub fn sqrtf(x: f32) callconv(.c) f32 {
+    if (is_avr) return avr.sqrtf(x);
+
     var ix: u32 = @bitCast(x);
 
     if (ix < @as(u32, @bitCast(@as(f32, 0x1p-126))) or @as(u32, @bitCast(std.math.inf(f32))) <= ix) {
@@ -145,6 +153,8 @@ pub fn sqrtf(x: f32) callconv(.c) f32 {
 }
 
 pub fn sqrt(x: f64) callconv(.c) f64 {
+    if (is_avr) return @floatCast(avr.sqrtf(@floatCast(x)));
+
     var ix: u64 = @bitCast(x);
     var top = ix >> 52;
 
@@ -282,6 +292,8 @@ pub fn sqrt(x: f64) callconv(.c) f64 {
 }
 
 pub fn __sqrtx(x: f80) callconv(.c) f80 {
+    if (is_avr) return @floatCast(avr.sqrtf(@floatCast(x)));
+
     var ix: u80 = @bitCast(x);
     var top = ix >> 64;
 
@@ -379,6 +391,8 @@ pub fn __sqrtx(x: f80) callconv(.c) f80 {
 }
 
 pub fn sqrtq(x: f128) callconv(.c) f128 {
+    if (is_avr) return @floatCast(avr.sqrtf(@floatCast(x)));
+
     var ix: u128 = @bitCast(x);
     var top = ix >> 112;
 
@@ -545,6 +559,7 @@ inline fn mul80_tail(a: u80, b: u80) u80 {
 }
 
 test "__sqrth" {
+    if (is_avr) return;
     // sqrt(±0) is ±0
     try std.testing.expectEqual(__sqrth(0x0.0p0), 0x0.0p0);
     try std.testing.expectEqual(__sqrth(-0x0.0p0), -0x0.0p0);
@@ -582,6 +597,7 @@ test "__sqrth" {
 }
 
 test "sqrtf" {
+    if (is_avr) return;
     // sqrt(±0) is ±0
     try std.testing.expectEqual(sqrtf(0x0.0p0), 0x0.0p0);
     try std.testing.expectEqual(sqrtf(-0x0.0p0), -0x0.0p0);
@@ -619,6 +635,7 @@ test "sqrtf" {
 }
 
 test "sqrt" {
+    if (is_avr) return;
     // sqrt(±0) is ±0
     try std.testing.expectEqual(sqrt(0x0.0p0), 0x0.0p0);
     try std.testing.expectEqual(sqrt(-0x0.0p0), -0x0.0p0);
@@ -656,6 +673,7 @@ test "sqrt" {
 }
 
 test "__sqrtx" {
+    if (is_avr) return;
     // sqrt(±0) is ±0
     try std.testing.expectEqual(__sqrtx(0x0.0p0), 0x0.0p0);
     try std.testing.expectEqual(__sqrtx(-0x0.0p0), -0x0.0p0);
@@ -693,6 +711,7 @@ test "__sqrtx" {
 }
 
 test "sqrtq" {
+    if (is_avr) return;
     // sqrt(±0) is ±0
     try std.testing.expectEqual(sqrtq(0x0.0p0), 0x0.0p0);
     try std.testing.expectEqual(sqrtq(-0x0.0p0), -0x0.0p0);
