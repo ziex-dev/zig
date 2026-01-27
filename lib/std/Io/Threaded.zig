@@ -2455,7 +2455,6 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
 
 fn operate(userdata: ?*anyopaque, op: *Io.Operation) Io.Cancelable!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
     switch (op.*) {
         .noop => |*o| {
             _ = o.status.unstarted;
@@ -2463,7 +2462,7 @@ fn operate(userdata: ?*anyopaque, op: *Io.Operation) Io.Cancelable!void {
         },
         .file_read_streaming => |*o| {
             _ = o.status.unstarted;
-            o.status = .{ .result = fileReadStreaming(o.file, o.data) catch |err| switch (err) {
+            o.status = .{ .result = fileReadStreaming(t, o.file, o.data) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 else => |e| e,
             } };
