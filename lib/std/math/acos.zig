@@ -27,7 +27,7 @@ pub fn acos(x: anytype) @TypeOf(x) {
     };
 }
 
-inline fn approxBinary16(z: f32) f32 {
+fn approxBinary16(z: f32) f32 {
     const S0: f32 = 1.0000001e0;
     const S1: f32 = 1.6664918e-1;
     const S2: f32 = 7.55022e-2;
@@ -39,14 +39,8 @@ inline fn approxBinary16(z: f32) f32 {
 fn acosBinary16(x: f16) f16 {
     const pio2: f32 = math.pi / 2.0;
 
-    var z: f32 = undefined;
-    var w: f32 = undefined;
-    var s: f32 = undefined;
-    var hx: u16 = undefined;
-    var ix: u16 = undefined;
-
-    hx = @bitCast(x);
-    ix = hx & 0x7fff;
+    const hx: u16 = @bitCast(x);
+    const ix: u16 = hx & 0x7fff;
 
     // |x| >= 1 or nan
     if (ix >= 0x3c00) {
@@ -68,29 +62,27 @@ fn acosBinary16(x: f16) f16 {
 
     // x < -0.5
     if (hx >> 15 != 0) {
-        z = (1.0 + xf) * 0.5;
-        s = @sqrt(z);
-        w = approxBinary16(z) * s;
+        const z = (1.0 + xf) * 0.5;
+        const s = @sqrt(z);
+        const w = approxBinary16(z) * s;
         return @floatCast(2.0 * (pio2 - w));
     }
 
     // x > 0.5
-    z = (1.0 - xf) * 0.5;
-    s = @sqrt(z);
-    w = approxBinary16(z) * s;
+    const z = (1.0 - xf) * 0.5;
+    const s = @sqrt(z);
+    const w = approxBinary16(z) * s;
     return @floatCast(2.0 * w);
 }
 
-inline fn rationalApproxBinary32(z: f32) f32 {
+fn rationalApproxBinary32(z: f32) f32 {
     const pS0: f32 = 1.6666586697e-01;
     const pS1: f32 = -4.2743422091e-02;
     const pS2: f32 = -8.6563630030e-03;
     const qS1: f32 = -7.0662963390e-01;
 
-    var p: f32 = undefined;
-    var q: f32 = undefined;
-    p = z * (pS0 + z * (pS1 + z * pS2));
-    q = 1.0 + z * qS1;
+    const p = z * (pS0 + z * (pS1 + z * pS2));
+    const q = 1.0 + z * qS1;
     return p / q;
 }
 
@@ -98,16 +90,8 @@ fn acosBinary32(x: f32) f32 {
     const pio2_hi: f32 = 1.5707962513e+00;
     const pio2_lo: f32 = 7.5497894159e-08;
 
-    var z: f32 = undefined;
-    var w: f32 = undefined;
-    var s: f32 = undefined;
-    var c: f32 = undefined;
-    var df: f32 = undefined;
-    var hx: u32 = undefined;
-    var ix: u32 = undefined;
-
-    hx = @bitCast(x);
-    ix = hx & 0x7FFFFFFF;
+    var hx: u32 = @bitCast(x);
+    const ix: u32 = hx & 0x7FFFFFFF;
 
     // |x| >= 1 or nan
     if (ix >= 0x3f800000) {
@@ -131,23 +115,23 @@ fn acosBinary32(x: f32) f32 {
 
     // x < -0.5
     if (hx >> 31 != 0) {
-        z = (1 + x) * 0.5;
-        s = @sqrt(z);
-        w = rationalApproxBinary32(z) * s - pio2_lo;
+        const z = (1 + x) * 0.5;
+        const s = @sqrt(z);
+        const w = rationalApproxBinary32(z) * s - pio2_lo;
         return 2.0 * (pio2_hi - (s + w));
     }
 
     // x > 0.5
-    z = (1.0 - x) * 0.5;
-    s = @sqrt(z);
+    const z = (1.0 - x) * 0.5;
+    const s = @sqrt(z);
     hx = @bitCast(s);
-    df = @bitCast(hx & 0xfffff000);
-    c = (z - df * df) / (s + df);
-    w = rationalApproxBinary32(z) * s + c;
+    const df: f32 = @bitCast(hx & 0xfffff000);
+    const c = (z - df * df) / (s + df);
+    const w = rationalApproxBinary32(z) * s + c;
     return 2.0 * (df + w);
 }
 
-inline fn rationalApproxBinary64(z: f64) f64 {
+fn rationalApproxBinary64(z: f64) f64 {
     const pS0: f64 = 1.66666666666666657415e-01;
     const pS1: f64 = -3.25565818622400915405e-01;
     const pS2: f64 = 2.01212532134862925881e-01;
@@ -159,11 +143,8 @@ inline fn rationalApproxBinary64(z: f64) f64 {
     const qS3: f64 = -6.88283971605453293030e-01;
     const qS4: f64 = 7.70381505559019352791e-02;
 
-    var p: f64 = undefined;
-    var q: f64 = undefined;
-
-    p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
-    q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * qS4)));
+    const p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
+    const q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * qS4)));
     return p / q;
 }
 
@@ -171,21 +152,12 @@ fn acosBinary64(x: f64) f64 {
     const pio2_hi: f64 = 1.57079632679489655800e+00;
     const pio2_lo: f64 = 6.12323399573676603587e-17;
 
-    var z: f64 = undefined;
-    var w: f64 = undefined;
-    var s: f64 = undefined;
-    var c: f64 = undefined;
-    var df: f64 = undefined;
-    var hx: u32 = undefined;
-    var ix: u32 = undefined;
-
-    hx = @intCast(@as(u64, @bitCast(x)) >> 32);
-    ix = hx & 0x7fffffff;
+    const hx: u32 = @intCast(@as(u64, @bitCast(x)) >> 32);
+    const ix: u32 = hx & 0x7fffffff;
 
     // |x| >= 1 or nan
     if (ix >= 0x3ff00000) {
-        var lx: u32 = undefined;
-        lx = @truncate(@as(u64, @bitCast(x)));
+        const lx: u32 = @truncate(@as(u64, @bitCast(x)));
         if ((ix - 0x3ff00000 | lx) == 0) {
             if (hx >> 31 != 0) {
                 return 2.0 * pio2_hi + 0x1.0p-120;
@@ -206,22 +178,22 @@ fn acosBinary64(x: f64) f64 {
 
     // x < -0.5
     if (hx >> 31 != 0) {
-        z = (1.0 + x) * 0.5;
-        s = @sqrt(z);
-        w = rationalApproxBinary64(z) * s - pio2_lo;
+        const z = (1.0 + x) * 0.5;
+        const s = @sqrt(z);
+        const w = rationalApproxBinary64(z) * s - pio2_lo;
         return 2 * (pio2_hi - (s + w));
     }
 
     // x > 0.5
-    z = (1.0 - x) * 0.5;
-    s = @sqrt(z);
-    df = @bitCast(@as(u64, @bitCast(s)) & 0xFFFFFFFF00000000);
-    c = (z - df * df) / (s + df);
-    w = rationalApproxBinary64(z) * s + c;
+    const z = (1.0 - x) * 0.5;
+    const s = @sqrt(z);
+    const df: f64 = @bitCast(@as(u64, @bitCast(s)) & 0xFFFFFFFF00000000);
+    const c = (z - df * df) / (s + df);
+    const w = rationalApproxBinary64(z) * s + c;
     return 2.0 * (df + w);
 }
 
-inline fn rationalApproxExtended80(z: f80) f80 {
+fn rationalApproxExtended80(z: f80) f80 {
     const pS0: f80 = 1.66666666666666666631e-01;
     const pS1: f80 = -4.16313987993683104320e-01;
     const pS2: f80 = 3.69068046323246813704e-01;
@@ -235,11 +207,8 @@ inline fn rationalApproxExtended80(z: f80) f80 {
     const qS4: f80 = 3.90699412641738801874e-01;
     const qS5: f80 = -3.14365703596053263322e-02;
 
-    var p: f80 = undefined;
-    var q: f80 = undefined;
-
-    p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * pS6))))));
-    q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * qS5))));
+    const p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * pS6))))));
+    const q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * qS5))));
     return p / q;
 }
 
@@ -258,10 +227,6 @@ fn acosExtended80(x: f80) f80 {
             m: u64,
         },
     } = .{ .f = x };
-    var z: f80 = undefined;
-    var s: f80 = undefined;
-    var c: f80 = undefined;
-    var f: f80 = undefined;
     const e = u.i.se & 0x7fff;
 
     // |x| >= 1 or nan
@@ -283,21 +248,21 @@ fn acosExtended80(x: f80) f80 {
     }
     // x < -0.5
     if (u.i.se >> 15 != 0) {
-        z = (1 + x) * 0.5;
-        s = @sqrt(z);
+        const z = (1 + x) * 0.5;
+        const s = @sqrt(z);
         return 2.0 * (pio2_hi - (rationalApproxExtended80(z) * s - pio2_lo + s));
     }
     // x > 0.5
-    z = (1.0 - x) * 0.5;
-    s = @sqrt(z);
+    const z = (1.0 - x) * 0.5;
+    const s = @sqrt(z);
     u.f = s;
     u.i.m &= 0xFFFFFFFF00000000;
-    f = u.f;
-    c = (z - f * f) / (s + f);
+    const f = u.f;
+    const c = (z - f * f) / (s + f);
     return 2.0 * (rationalApproxExtended80(z) * s + c + f);
 }
 
-inline fn rationalApproxBinary128(z: f128) f128 {
+fn rationalApproxBinary128(z: f128) f128 {
     const pS0: f128 = 1.66666666666666666666666666666700314e-01;
     const pS1: f128 = -7.32816946414566252574527475428622708e-01;
     const pS2: f128 = 1.34215708714992334609030036562143589e+00;
@@ -318,11 +283,8 @@ inline fn rationalApproxBinary128(z: f128) f128 {
     const qS8: f128 = 8.32600764660522313269101537926539470e-03;
     const qS9: f128 = -1.99407384882605586705979504567947007e-04;
 
-    var p: f128 = undefined;
-    var q: f128 = undefined;
-
-    p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * (pS6 + z * (pS7 + z * (pS8 + z * pS9)))))))));
-    q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * (qS5 + z * (qS6 + z * (qS7 + z * (qS8 + z * qS9))))))));
+    const p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * (pS6 + z * (pS7 + z * (pS8 + z * pS9)))))))));
+    const q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * (qS5 + z * (qS6 + z * (qS7 + z * (qS8 + z * qS9))))))));
     return p / q;
 }
 
@@ -351,10 +313,6 @@ fn acosBinary128(x: f128) f128 {
             lo: u64,
         },
     } = .{ .f = x };
-    var z: f128 = undefined;
-    var s: f128 = undefined;
-    var c: f128 = undefined;
-    var f: f128 = undefined;
     const e = u.i.se & 0x7fff;
 
     // |x| >= 1 or nan
@@ -376,17 +334,17 @@ fn acosBinary128(x: f128) f128 {
     }
     // x < -0.5
     if (u.i.se >> 15 != 0) {
-        z = (1 + x) * 0.5;
-        s = @sqrt(z);
+        const z = (1 + x) * 0.5;
+        const s = @sqrt(z);
         return 2 * (pio2_hi - (rationalApproxBinary128(z) * s - pio2_lo + s));
     }
     // x > 0.5
-    z = (1.0 - x) * 0.5;
-    s = @sqrt(z);
+    const z = (1.0 - x) * 0.5;
+    const s = @sqrt(z);
     u.f = s;
     u.i.lo = 0;
-    f = u.f;
-    c = (z - f * f) / (s + f);
+    const f = u.f;
+    const c = (z - f * f) / (s + f);
     return 2.0 * (rationalApproxBinary128(z) * s + c + f);
 }
 

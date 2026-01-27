@@ -28,7 +28,7 @@ pub fn asin(x: anytype) @TypeOf(x) {
     };
 }
 
-inline fn approxBinary16(z: f32) f32 {
+fn approxBinary16(z: f32) f32 {
     const S0: f32 = 1.0000001e0;
     const S1: f32 = 1.6664918e-1;
     const S2: f32 = 7.55022e-2;
@@ -40,13 +40,8 @@ inline fn approxBinary16(z: f32) f32 {
 fn asinBinary16(x: f16) f16 {
     const pio2: f32 = math.pi / 2.0;
 
-    var z: f32 = undefined;
-    var s: f32 = undefined;
-    var hx: u16 = undefined;
-    var ix: u16 = undefined;
-
-    hx = @bitCast(x);
-    ix = hx & 0x7fff;
+    const hx: u16 = @bitCast(x);
+    const ix = hx & 0x7fff;
 
     // |x| >= 1
     if (ix >= 0x3c00) {
@@ -65,8 +60,8 @@ fn asinBinary16(x: f16) f16 {
     }
 
     // 1 > |x| >= 0.5
-    z = (1.0 - @abs(x)) * 0.5;
-    s = @sqrt(z);
+    const z = (1.0 - @abs(x)) * 0.5;
+    const s = @sqrt(z);
     const x_local = pio2 - 2.0 * s * approxBinary16(z);
     if (hx >> 15 != 0) {
         return @floatCast(-x_local);
@@ -74,29 +69,22 @@ fn asinBinary16(x: f16) f16 {
     return @floatCast(x_local);
 }
 
-inline fn rationalApproxBinary32(z: f32) f32 {
+fn rationalApproxBinary32(z: f32) f32 {
     const pS0: f32 = 1.6666586697e-01;
     const pS1: f32 = -4.2743422091e-02;
     const pS2: f32 = -8.6563630030e-03;
     const qS1: f32 = -7.0662963390e-01;
 
-    var p: f32 = undefined;
-    var q: f32 = undefined;
-    p = z * (pS0 + z * (pS1 + z * pS2));
-    q = 1.0 + z * qS1;
+    const p = z * (pS0 + z * (pS1 + z * pS2));
+    const q = 1.0 + z * qS1;
     return p / q;
 }
 
 fn asinBinary32(x: f32) f32 {
     const pio2: f32 = 1.570796326794896558e+00;
 
-    var s: f64 = undefined;
-    var z: f32 = undefined;
-    var hx: u32 = undefined;
-    var ix: u32 = undefined;
-
-    hx = @bitCast(x);
-    ix = hx & 0x7fffffff;
+    const hx: u32 = @bitCast(x);
+    const ix = hx & 0x7fffffff;
 
     // |x| >= 1
     if (ix >= 0x3F800000) {
@@ -119,13 +107,13 @@ fn asinBinary32(x: f32) f32 {
     }
 
     // 1 > |x| >= 0.5
-    z = (1.0 - @abs(x)) * 0.5;
-    s = @floatCast(@sqrt(z));
+    const z = (1.0 - @abs(x)) * 0.5;
+    const s: f64 = @floatCast(@sqrt(z));
     const x_local: f32 = @floatCast(pio2 - 2.0 * (s + s * @as(f64, @floatCast(rationalApproxBinary32(z)))));
     return if (hx >> 31 != 0) -x_local else x_local;
 }
 
-inline fn rationalApproxBinary64(z: f64) f64 {
+fn rationalApproxBinary64(z: f64) f64 {
     const pS0: f64 = 1.66666666666666657415e-01;
     const pS1: f64 = -3.25565818622400915405e-01;
     const pS2: f64 = 2.01212532134862925881e-01;
@@ -137,11 +125,8 @@ inline fn rationalApproxBinary64(z: f64) f64 {
     const qS3: f64 = -6.88283971605453293030e-01;
     const qS4: f64 = 7.70381505559019352791e-02;
 
-    var p: f64 = undefined;
-    var q: f64 = undefined;
-
-    p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
-    q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * qS4)));
+    const p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
+    const q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * qS4)));
     return p / q;
 }
 
@@ -149,14 +134,8 @@ fn asinBinary64(x: f64) f64 {
     const pio2_hi: f64 = 1.57079632679489655800e+00;
     const pio2_lo: f64 = 6.12323399573676603587e-17;
 
-    var z: f64 = undefined;
-    var r: f64 = undefined;
-    var s: f64 = undefined;
-    var hx: u32 = undefined;
-    var ix: u32 = undefined;
-
-    hx = @intCast(@as(u64, @bitCast(x)) >> 32);
-    ix = hx & 0x7fffffff;
+    const hx: u32 = @intCast(@as(u64, @bitCast(x)) >> 32);
+    const ix = hx & 0x7fffffff;
 
     // |x| >= 1 or nan
     if (ix >= 0x3ff00000) {
@@ -178,23 +157,22 @@ fn asinBinary64(x: f64) f64 {
     }
 
     // 1 > |x| >= 0.5
-    z = (1.0 - @abs(x)) * 0.5;
-    s = @sqrt(z);
-    r = rationalApproxBinary64(z);
-    var x_local: f64 = undefined;
+    const z = (1.0 - @abs(x)) * 0.5;
+    const s = @sqrt(z);
+    const r = rationalApproxBinary64(z);
     // |x| > 0.975
     if (ix >= 0x3fef3333) {
-        x_local = pio2_hi - (2 * (s + s * r) - pio2_lo);
-    } else {
-        // f+c = sqrt(z)
-        const f: f64 = @bitCast(@as(u64, @bitCast(s)) & 0xFFFFFFFF00000000);
-        const c: f64 = (z - f * f) / (s + f);
-        x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
+        const x_local = pio2_hi - (2 * (s + s * r) - pio2_lo);
+        return if (hx >> 31 != 0) -x_local else x_local;
     }
+    // f+c = sqrt(z)
+    const f: f64 = @bitCast(@as(u64, @bitCast(s)) & 0xFFFFFFFF00000000);
+    const c: f64 = (z - f * f) / (s + f);
+    const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (hx >> 31 != 0) -x_local else x_local;
 }
 
-inline fn rationalApproxExtended80(z: f80) f80 {
+fn rationalApproxExtended80(z: f80) f80 {
     const pS0: f80 = 1.66666666666666666631e-01;
     const pS1: f80 = -4.16313987993683104320e-01;
     const pS2: f80 = 3.69068046323246813704e-01;
@@ -208,11 +186,8 @@ inline fn rationalApproxExtended80(z: f80) f80 {
     const qS4: f80 = 3.90699412641738801874e-01;
     const qS5: f80 = -3.14365703596053263322e-02;
 
-    var p: f80 = undefined;
-    var q: f80 = undefined;
-
-    p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * pS6))))));
-    q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * qS5))));
+    const p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * pS6))))));
+    const q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * qS5))));
     return p / q;
 }
 
@@ -231,9 +206,6 @@ fn asinExtended80(x: f80) f80 {
             m: u64,
         },
     } = .{ .f = x };
-    var z: f80 = undefined;
-    var r: f80 = undefined;
-    var s: f80 = undefined;
     const e = u.i.se & 0x7fff;
     const sign = u.i.se >> 15 != 0;
 
@@ -257,23 +229,24 @@ fn asinExtended80(x: f80) f80 {
     }
 
     // 1 > |x| >= 0.5
-    z = (1.0 - @abs(x)) * 0.5;
-    s = @sqrt(z);
-    r = rationalApproxExtended80(z);
-    var x_local: f80 = undefined;
+    const z = (1.0 - @abs(x)) * 0.5;
+    const s = @sqrt(z);
+    const r = rationalApproxExtended80(z);
+
     if ((u.i.m >> 56) >= 0xf7) {
-        x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
-    } else {
-        u.f = s;
-        u.i.m &= 0xFFFFFFFF00000000;
-        const f = u.f;
-        const c = (z - f * f) / (s + f);
-        x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
+        const x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
+        return if (sign) -x_local else x_local;
     }
+
+    u.f = s;
+    u.i.m &= 0xFFFFFFFF00000000;
+    const f = u.f;
+    const c = (z - f * f) / (s + f);
+    const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (sign) -x_local else x_local;
 }
 
-inline fn rationalApproxBinary128(z: f128) f128 {
+fn rationalApproxBinary128(z: f128) f128 {
     const pS0: f128 = 1.66666666666666666666666666666700314e-01;
     const pS1: f128 = -7.32816946414566252574527475428622708e-01;
     const pS2: f128 = 1.34215708714992334609030036562143589e+00;
@@ -294,11 +267,8 @@ inline fn rationalApproxBinary128(z: f128) f128 {
     const qS8: f128 = 8.32600764660522313269101537926539470e-03;
     const qS9: f128 = -1.99407384882605586705979504567947007e-04;
 
-    var p: f128 = undefined;
-    var q: f128 = undefined;
-
-    p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * (pS6 + z * (pS7 + z * (pS8 + z * pS9)))))))));
-    q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * (qS5 + z * (qS6 + z * (qS7 + z * (qS8 + z * qS9))))))));
+    const p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * (pS5 + z * (pS6 + z * (pS7 + z * (pS8 + z * pS9)))))))));
+    const q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * (qS4 + z * (qS5 + z * (qS6 + z * (qS7 + z * (qS8 + z * qS9))))))));
     return p / q;
 }
 
@@ -327,9 +297,6 @@ fn asinBinary128(x: f128) f128 {
             lo: u64,
         },
     } = .{ .f = x };
-    var z: f128 = undefined;
-    var r: f128 = undefined;
-    var s: f128 = undefined;
     const e = u.i.se & 0x7fff;
     const sign = u.i.se >> 15 != 0;
 
@@ -353,19 +320,20 @@ fn asinBinary128(x: f128) f128 {
     }
 
     // 1 > |x| >= 0.5
-    z = (1.0 - @abs(x)) * 0.5;
-    s = @sqrt(z);
-    r = rationalApproxBinary128(z);
-    var x_local: f128 = undefined;
+    const z = (1.0 - @abs(x)) * 0.5;
+    const s = @sqrt(z);
+    const r = rationalApproxBinary128(z);
+
     if (u.i.top >= 0xee00) {
-        x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
-    } else {
-        u.f = s;
-        u.i.lo = 0;
-        const f = u.f;
-        const c = (z - f * f) / (s + f);
-        x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
+        const x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
+        return if (sign) -x_local else x_local;
     }
+
+    u.f = s;
+    u.i.lo = 0;
+    const f = u.f;
+    const c = (z - f * f) / (s + f);
+    const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (sign) -x_local else x_local;
 }
 
