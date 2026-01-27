@@ -8687,7 +8687,6 @@ fn fileReadStreamingWindows(file: File, data: []const []u8) File.Reader.Error!us
                     return e;
                 },
             };
-            defer alertable_syscall.finish();
             waitForApcOrAlert();
             while (@atomicLoad(windows.NTSTATUS, &io_status_block.u.Status, .acquire) == .PENDING) {
                 alertable_syscall.checkCancel() catch |err| switch (err) {
@@ -8698,6 +8697,7 @@ fn fileReadStreamingWindows(file: File, data: []const []u8) File.Reader.Error!us
                 };
                 waitForApcOrAlert();
             }
+            alertable_syscall.finish();
         },
     } else |err| return err;
     return ntReadFileResult(&io_status_block);
