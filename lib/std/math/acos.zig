@@ -90,8 +90,8 @@ fn acosBinary32(x: f32) f32 {
     const pio2_hi: f32 = 1.5707962513e+00;
     const pio2_lo: f32 = 7.5497894159e-08;
 
-    var hx: u32 = @bitCast(x);
-    const ix: u32 = hx & 0x7FFFFFFF;
+    const hx: u32 = @bitCast(x);
+    const ix: u32 = hx & 0x7fff_ffff;
 
     // |x| >= 1 or nan
     if (ix >= 0x3f800000) {
@@ -105,9 +105,9 @@ fn acosBinary32(x: f32) f32 {
     }
 
     // |x| < 0.5
-    if (ix < 0x3f000000) {
+    if (ix < 0x3f00_0000) {
         // |x| < 2^(-26)
-        if (ix <= 0x32800000) {
+        if (ix <= 0x3280_0000) {
             return pio2_hi + 0x1.0p-120;
         }
         return pio2_hi - (x - (pio2_lo - x * rationalApproxBinary32(x * x)));
@@ -124,8 +124,8 @@ fn acosBinary32(x: f32) f32 {
     // x > 0.5
     const z = (1.0 - x) * 0.5;
     const s = @sqrt(z);
-    hx = @bitCast(s);
-    const df: f32 = @bitCast(hx & 0xfffff000);
+    const hs: u32 = @bitCast(s);
+    const df: f32 = @bitCast(hs & 0xffff_f000);
     const c = (z - df * df) / (s + df);
     const w = rationalApproxBinary32(z) * s + c;
     return 2.0 * (df + w);
@@ -153,12 +153,12 @@ fn acosBinary64(x: f64) f64 {
     const pio2_lo: f64 = 6.12323399573676603587e-17;
 
     const hx: u32 = @intCast(@as(u64, @bitCast(x)) >> 32);
-    const ix: u32 = hx & 0x7fffffff;
+    const ix: u32 = hx & 0x7fff_ffff;
 
     // |x| >= 1 or nan
-    if (ix >= 0x3ff00000) {
+    if (ix >= 0x3ff0_0000) {
         const lx: u32 = @truncate(@as(u64, @bitCast(x)));
-        if ((ix - 0x3ff00000 | lx) == 0) {
+        if ((ix - 0x3ff0_0000 | lx) == 0) {
             if (hx >> 31 != 0) {
                 return 2.0 * pio2_hi + 0x1.0p-120;
             }
@@ -168,9 +168,9 @@ fn acosBinary64(x: f64) f64 {
     }
 
     // |x| < 0.5
-    if (ix < 0x3fe00000) {
+    if (ix < 0x3fe0_0000) {
         // |x| < 2^(-57)
-        if (ix <= 0x3C600000) {
+        if (ix <= 0x3c60_0000) {
             return pio2_hi + 0x1.0p-120;
         }
         return pio2_hi - (x - (pio2_lo - x * rationalApproxBinary64(x * x)));
@@ -187,7 +187,7 @@ fn acosBinary64(x: f64) f64 {
     // x > 0.5
     const z = (1.0 - x) * 0.5;
     const s = @sqrt(z);
-    const df: f64 = @bitCast(@as(u64, @bitCast(s)) & 0xFFFFFFFF00000000);
+    const df: f64 = @bitCast(@as(u64, @bitCast(s)) & 0xffff_ffff_0000_0000);
     const c = (z - df * df) / (s + df);
     const w = rationalApproxBinary64(z) * s + c;
     return 2.0 * (df + w);
@@ -216,8 +216,8 @@ fn acosExtended80(x: f80) f80 {
     const pio2_hi: f80 = 1.57079632679489661926;
     const pio2_lo: f80 = -2.50827880633416601173e-20;
 
-    var u: u80 = @bitCast(x);
-    const se: u16 = @truncate(u >> 64);
+    const hx: u80 = @bitCast(x);
+    const se: u16 = @truncate(hx >> 64);
     const e = se & 0x7fff;
 
     // |x| >= 1 or nan
@@ -246,9 +246,8 @@ fn acosExtended80(x: f80) f80 {
     // x > 0.5
     const z = (1.0 - x) * 0.5;
     const s = @sqrt(z);
-    u = @bitCast(s);
-    u &= 0xffff_ffff_ffff_0000_0000;
-    const f: f80 = @bitCast(u);
+    const hs: u80 = @bitCast(s);
+    const f: f80 = @bitCast(hs & 0xffff_ffff_ffff_0000_0000);
     const c = (z - f * f) / (s + f);
     return 2.0 * (rationalApproxExtended80(z) * s + c + f);
 }
@@ -283,8 +282,8 @@ fn acosBinary128(x: f128) f128 {
     const pio2_hi: f128 = 1.57079632679489661923132169163975140;
     const pio2_lo: f128 = 4.33590506506189051239852201302167613e-35;
 
-    var u: u128 = @bitCast(x);
-    const se: u16 = @truncate(u >> 112);
+    const hx: u128 = @bitCast(x);
+    const se: u16 = @truncate(hx >> 112);
     const e = se & 0x7fff;
 
     // |x| >= 1 or nan
@@ -313,9 +312,8 @@ fn acosBinary128(x: f128) f128 {
     // x > 0.5
     const z = (1.0 - x) * 0.5;
     const s = @sqrt(z);
-    u = @bitCast(s);
-    u &= 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
-    const f: f128 = @bitCast(u);
+    const hs: u128 = @bitCast(s);
+    const f: f128 = @bitCast(hs & 0xffff_ffff_ffff_ffff_0000_0000_0000_0000);
     const c = (z - f * f) / (s + f);
     return 2.0 * (rationalApproxBinary128(z) * s + c + f);
 }

@@ -85,12 +85,12 @@ fn asinBinary32(x: f32) f32 {
     const pio2: f64 = 1.570796326794896558e+00;
 
     const hx: u32 = @bitCast(x);
-    const ix = hx & 0x7fffffff;
+    const ix = hx & 0x7fff_ffff;
 
     // |x| >= 1
-    if (ix >= 0x3F800000) {
+    if (ix >= 0x3f80_0000) {
         // |x| == 1
-        if (ix == 0x3f800000) {
+        if (ix == 0x3f80_0000) {
             // asin(+-1) = +-pi/2 with inexact
             return @floatCast(@as(f64, @floatCast(x)) * pio2 + 0x1.0p-120);
         }
@@ -99,9 +99,9 @@ fn asinBinary32(x: f32) f32 {
     }
 
     // |x| < 0.5
-    if (ix < 0x3f000000) {
+    if (ix < 0x3f00_0000) {
         // 0x1p-126 <= |x| < 0x1p-12
-        if (ix < 0x39800000 and ix >= 0x00800000) {
+        if (ix < 0x3980_0000 and ix >= 0x0080_0000) {
             return x;
         }
         return x + x * rationalApproxBinary32(x * x);
@@ -139,19 +139,19 @@ fn asinBinary64(x: f64) f64 {
     const ix = hx & 0x7fffffff;
 
     // |x| >= 1 or nan
-    if (ix >= 0x3ff00000) {
+    if (ix >= 0x3ff0_0000) {
         const lx: u32 = @truncate(@as(u64, @bitCast(x)));
         // asin(1) = +-pi/2 with inexact
-        if ((ix - 0x3FF00000 | lx) == 0) {
+        if ((ix - 0x3ff0_0000 | lx) == 0) {
             return x * pio2_hi + 0x1.0p-120;
         }
         return 0.0 / (x - x);
     }
 
     // |x| < 0.5
-    if (ix < 0x3fe00000) {
+    if (ix < 0x3fe0_0000) {
         // if 0x1p-1022 <= |x| < 0x1p-26 avoid raising overflow
-        if (ix < 0x3e500000 and ix >= 0x00100000) {
+        if (ix < 0x3e50_0000 and ix >= 0x0010_0000) {
             return x;
         }
         return x + x * rationalApproxBinary64(x * x);
@@ -162,12 +162,13 @@ fn asinBinary64(x: f64) f64 {
     const s = @sqrt(z);
     const r = rationalApproxBinary64(z);
     // |x| > 0.975
-    if (ix >= 0x3fef3333) {
+    if (ix >= 0x3fef_3333) {
         const x_local = pio2_hi - (2 * (s + s * r) - pio2_lo);
         return if (hx >> 31 != 0) -x_local else x_local;
     }
     // f+c = sqrt(z)
-    const f: f64 = @bitCast(@as(u64, @bitCast(s)) & 0xFFFFFFFF00000000);
+    const hs: u64 = @bitCast(s);
+    const f: f64 = @bitCast(hs & 0xffff_ffff_0000_0000);
     const c: f64 = (z - f * f) / (s + f);
     const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (hx >> 31 != 0) -x_local else x_local;
@@ -196,8 +197,8 @@ fn asinExtended80(x: f80) f80 {
     const pio2_hi: f80 = 1.57079632679489661926;
     const pio2_lo: f80 = -2.50827880633416601173e-20;
 
-    var u: u80 = @bitCast(x);
-    const se: u16 = @truncate(u >> 64);
+    const hx: u80 = @bitCast(x);
+    const se: u16 = @truncate(hx >> 64);
     const e = se & 0x7fff;
     const sign = se >> 15 != 0;
 
@@ -225,15 +226,14 @@ fn asinExtended80(x: f80) f80 {
     const s = @sqrt(z);
     const r = rationalApproxExtended80(z);
 
-    const m: u64 = @truncate(u & 0x0000_ffff_ffff_ffff_ffff);
+    const m: u64 = @truncate(hx & 0x0000_ffff_ffff_ffff_ffff);
     if ((m >> 56) >= 0xf7) {
         const x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
         return if (sign) -x_local else x_local;
     }
 
-    u = @bitCast(s);
-    u &= 0xffff_ffff_ffff_0000_0000;
-    const f: f80 = @bitCast(u);
+    const hs: u80 = @bitCast(s);
+    const f: f80 = @bitCast(hs & 0xffff_ffff_ffff_0000_0000);
     const c = (z - f * f) / (s + f);
     const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (sign) -x_local else x_local;
@@ -269,8 +269,8 @@ fn asinBinary128(x: f128) f128 {
     const pio2_hi: f128 = 1.57079632679489661923132169163975140;
     const pio2_lo: f128 = 4.33590506506189051239852201302167613e-35;
 
-    var u: u128 = @bitCast(x);
-    const se: u16 = @truncate(u >> 112);
+    const hx: u128 = @bitCast(x);
+    const se: u16 = @truncate(hx >> 112);
     const e = se & 0x7fff;
     const sign = se >> 15 != 0;
 
@@ -298,15 +298,14 @@ fn asinBinary128(x: f128) f128 {
     const s = @sqrt(z);
     const r = rationalApproxBinary128(z);
 
-    const top: u16 = @truncate((u >> 96) & 0x0000_ffff);
+    const top: u16 = @truncate((hx >> 96) & 0x0000_ffff);
     if (top >= 0xee00) {
         const x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
         return if (sign) -x_local else x_local;
     }
 
-    u = @bitCast(s);
-    u &= 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
-    const f: f128 = @bitCast(u);
+    const hs: u128 = @bitCast(s);
+    const f: f128 = @bitCast(hs & 0xffff_ffff_ffff_ffff_0000_0000_0000_0000);
     const c = (z - f * f) / (s + f);
     const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (sign) -x_local else x_local;
