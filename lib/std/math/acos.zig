@@ -216,18 +216,9 @@ fn acosExtended80(x: f80) f80 {
     const pio2_hi: f80 = 1.57079632679489661926;
     const pio2_lo: f80 = -2.50827880633416601173e-20;
 
-    var u: extern union {
-        f: f80,
-        i: if (native_endian == .little) extern struct {
-            m: u64,
-            se: u16,
-        } else extern struct {
-            se: u16,
-            pad: u16,
-            m: u64,
-        },
-    } = .{ .f = x };
-    const e = u.i.se & 0x7fff;
+    var u: u80 = @bitCast(x);
+    const se: u16 = @truncate(u >> 64);
+    const e = se & 0x7fff;
 
     // |x| >= 1 or nan
     if (e >= 0x3fff) {
@@ -241,13 +232,13 @@ fn acosExtended80(x: f80) f80 {
     }
     // |x| < 0.5
     if (e < 0x3fff - 1) {
-        if (e < 0x3fff - std.math.floatFractionalBits(f80)) {
+        if (e < 0x3fff - math.floatFractionalBits(f80)) {
             return pio2_hi + 0x1p-120;
         }
         return pio2_hi - (rationalApproxExtended80(x * x) * x - pio2_lo + x);
     }
     // x < -0.5
-    if (u.i.se >> 15 != 0) {
+    if (se >> 15 != 0) {
         const z = (1 + x) * 0.5;
         const s = @sqrt(z);
         return 2.0 * (pio2_hi - (rationalApproxExtended80(z) * s - pio2_lo + s));
@@ -255,9 +246,9 @@ fn acosExtended80(x: f80) f80 {
     // x > 0.5
     const z = (1.0 - x) * 0.5;
     const s = @sqrt(z);
-    u.f = s;
-    u.i.m &= 0xFFFFFFFF00000000;
-    const f = u.f;
+    u = @bitCast(s);
+    u &= 0xffff_ffff_ffff_0000_0000;
+    const f: f80 = @bitCast(u);
     const c = (z - f * f) / (s + f);
     return 2.0 * (rationalApproxExtended80(z) * s + c + f);
 }
@@ -292,28 +283,9 @@ fn acosBinary128(x: f128) f128 {
     const pio2_hi: f128 = 1.57079632679489661923132169163975140;
     const pio2_lo: f128 = 4.33590506506189051239852201302167613e-35;
 
-    var u: extern union {
-        f: f128,
-        i: if (native_endian == .little) extern struct {
-            lo: u64,
-            mid: u32,
-            top: u16,
-            se: u16,
-        } else extern struct {
-            se: u16,
-            top: u16,
-            mid: u32,
-            lo: u64,
-        },
-        i2: if (native_endian == .little) extern struct {
-            lo: u64,
-            hi: u64,
-        } else extern struct {
-            hi: u64,
-            lo: u64,
-        },
-    } = .{ .f = x };
-    const e = u.i.se & 0x7fff;
+    var u: u128 = @bitCast(x);
+    const se: u16 = @truncate(u >> 112);
+    const e = se & 0x7fff;
 
     // |x| >= 1 or nan
     if (e >= 0x3fff) {
@@ -327,13 +299,13 @@ fn acosBinary128(x: f128) f128 {
     }
     // |x| < 0.5
     if (e < 0x3fff - 1) {
-        if (e < 0x3fff - std.math.floatFractionalBits(f128)) {
+        if (e < 0x3fff - math.floatFractionalBits(f128)) {
             return pio2_hi + 0x1p-120;
         }
         return pio2_hi - (rationalApproxBinary128(x * x) * x - pio2_lo + x);
     }
     // x < -0.5
-    if (u.i.se >> 15 != 0) {
+    if (se >> 15 != 0) {
         const z = (1 + x) * 0.5;
         const s = @sqrt(z);
         return 2 * (pio2_hi - (rationalApproxBinary128(z) * s - pio2_lo + s));
@@ -341,9 +313,9 @@ fn acosBinary128(x: f128) f128 {
     // x > 0.5
     const z = (1.0 - x) * 0.5;
     const s = @sqrt(z);
-    u.f = s;
-    u.i.lo = 0;
-    const f = u.f;
+    u = @bitCast(s);
+    u &= 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
+    const f: f128 = @bitCast(u);
     const c = (z - f * f) / (s + f);
     return 2.0 * (rationalApproxBinary128(z) * s + c + f);
 }

@@ -7,6 +7,7 @@
 
 const std = @import("../std.zig");
 const math = std.math;
+const mem = std.mem;
 const testing = std.testing;
 const builtin = @import("builtin");
 const native_endian = builtin.cpu.arch.endian();
@@ -81,7 +82,7 @@ fn rationalApproxBinary32(z: f32) f32 {
 }
 
 fn asinBinary32(x: f32) f32 {
-    const pio2: f32 = 1.570796326794896558e+00;
+    const pio2: f64 = 1.570796326794896558e+00;
 
     const hx: u32 = @bitCast(x);
     const ix = hx & 0x7fffffff;
@@ -91,7 +92,7 @@ fn asinBinary32(x: f32) f32 {
         // |x| == 1
         if (ix == 0x3f800000) {
             // asin(+-1) = +-pi/2 with inexact
-            return x * pio2 + 0x1.0p-120;
+            return @floatCast(@as(f64, @floatCast(x)) * pio2 + 0x1.0p-120);
         }
         // asin(|x| > 1) is nan
         return 0.0 / (x - x);
@@ -195,19 +196,10 @@ fn asinExtended80(x: f80) f80 {
     const pio2_hi: f80 = 1.57079632679489661926;
     const pio2_lo: f80 = -2.50827880633416601173e-20;
 
-    var u: extern union {
-        f: f80,
-        i: if (native_endian == .little) extern struct {
-            m: u64,
-            se: u16,
-        } else extern struct {
-            se: u16,
-            pad: u16,
-            m: u64,
-        },
-    } = .{ .f = x };
-    const e = u.i.se & 0x7fff;
-    const sign = u.i.se >> 15 != 0;
+    var u: u80 = @bitCast(x);
+    const se: u16 = @truncate(u >> 64);
+    const e = se & 0x7fff;
+    const sign = se >> 15 != 0;
 
     // |x| >= 1 or nan
     if (e >= 0x3fff) {
@@ -222,7 +214,7 @@ fn asinExtended80(x: f80) f80 {
     if (e < 0x3fff - 1) {
         if (e < 0x3fff - (math.floatMantissaBits(f80) + 1) / 2) {
             // return x with inexact if x!=0
-            std.mem.doNotOptimizeAway(x + 0x1p120);
+            mem.doNotOptimizeAway(x + 0x1p120);
             return x;
         }
         return x + x * rationalApproxExtended80(x * x);
@@ -233,14 +225,15 @@ fn asinExtended80(x: f80) f80 {
     const s = @sqrt(z);
     const r = rationalApproxExtended80(z);
 
-    if ((u.i.m >> 56) >= 0xf7) {
+    const m: u64 = @truncate(u & 0x0000_ffff_ffff_ffff_ffff);
+    if ((m >> 56) >= 0xf7) {
         const x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
         return if (sign) -x_local else x_local;
     }
 
-    u.f = s;
-    u.i.m &= 0xFFFFFFFF00000000;
-    const f = u.f;
+    u = @bitCast(s);
+    u &= 0xffff_ffff_ffff_0000_0000;
+    const f: f80 = @bitCast(u);
     const c = (z - f * f) / (s + f);
     const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (sign) -x_local else x_local;
@@ -276,29 +269,10 @@ fn asinBinary128(x: f128) f128 {
     const pio2_hi: f128 = 1.57079632679489661923132169163975140;
     const pio2_lo: f128 = 4.33590506506189051239852201302167613e-35;
 
-    var u: extern union {
-        f: f128,
-        i: if (native_endian == .little) extern struct {
-            lo: u64,
-            mid: u32,
-            top: u16,
-            se: u16,
-        } else extern struct {
-            se: u16,
-            top: u16,
-            mid: u32,
-            lo: u64,
-        },
-        i2: if (native_endian == .little) extern struct {
-            lo: u64,
-            hi: u64,
-        } else extern struct {
-            hi: u64,
-            lo: u64,
-        },
-    } = .{ .f = x };
-    const e = u.i.se & 0x7fff;
-    const sign = u.i.se >> 15 != 0;
+    var u: u128 = @bitCast(x);
+    const se: u16 = @truncate(u >> 112);
+    const e = se & 0x7fff;
+    const sign = se >> 15 != 0;
 
     // |x| >= 1 or nan
     if (e >= 0x3fff) {
@@ -313,7 +287,7 @@ fn asinBinary128(x: f128) f128 {
     if (e < 0x3fff - 1) {
         if (e < 0x3fff - (math.floatMantissaBits(f128) + 2) / 2) {
             // return x with inexact if x!=0
-            std.mem.doNotOptimizeAway(x + 0x1p120);
+            mem.doNotOptimizeAway(x + 0x1p120);
             return x;
         }
         return x + x * rationalApproxBinary128(x * x);
@@ -324,14 +298,15 @@ fn asinBinary128(x: f128) f128 {
     const s = @sqrt(z);
     const r = rationalApproxBinary128(z);
 
-    if (u.i.top >= 0xee00) {
+    const top: u16 = @truncate((u >> 96) & 0x0000_ffff);
+    if (top >= 0xee00) {
         const x_local = pio2_hi - (2.0 * (s + s * r) - pio2_lo);
         return if (sign) -x_local else x_local;
     }
 
-    u.f = s;
-    u.i.lo = 0;
-    const f = u.f;
+    u = @bitCast(s);
+    u &= 0xffff_ffff_ffff_ffff_0000_0000_0000_0000;
+    const f: f128 = @bitCast(u);
     const c = (z - f * f) / (s + f);
     const x_local = 0.5 * pio2_hi - (2.0 * s * r - (pio2_lo - 2.0 * c) - (0.5 * pio2_hi - 2.0 * f));
     return if (sign) -x_local else x_local;
