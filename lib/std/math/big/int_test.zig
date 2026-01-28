@@ -288,6 +288,8 @@ test setFloat {
 }
 
 fn toFloat(comptime Float: type) !void {
+    @setEvalBranchQuota(1_100);
+
     const Result = struct { Float, std.math.big.int.Exactness };
     const fractional_bits = std.math.floatFractionalBits(Float);
 
