@@ -127,6 +127,8 @@
 //! The splat positional is always assumed to be optional, and is only parsed after all other (required _and_ optional) arguments have been parsed.
 //! If no splat positional arguments are parsed, the value is the default value specified, or the empty list if no default is specified.
 
+const builtin = @import("builtin");
+
 const std = @import("std.zig");
 const debug = std.debug;
 const assert = debug.assert;
@@ -1351,6 +1353,8 @@ test "string" {
 }
 
 test "ints and floats" {
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/31036
+
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
