@@ -2675,6 +2675,8 @@ fn batchWaitWindows(t: *Threaded, b: *Io.Batch, timeout: Io.Timeout) Io.Batch.Wa
         b.user.complete_tail = complete_tail;
     }
 
+    var any_done = false;
+
     while (submit_head != submit_tail) : (submit_head = submit_head.next(len)) {
         const op = ring[submit_head.index(len)];
         const operation = &operations[op];
@@ -2684,6 +2686,7 @@ fn batchWaitWindows(t: *Threaded, b: *Io.Batch, timeout: Io.Timeout) Io.Batch.Wa
             .noop => |*o| {
                 _ = o.status.unstarted;
                 o.status = .{ .result = {} };
+                any_done = true;
                 submitComplete(ring, &complete_tail, op);
             },
             .file_read_streaming => |*o| {
@@ -2691,6 +2694,7 @@ fn batchWaitWindows(t: *Threaded, b: *Io.Batch, timeout: Io.Timeout) Io.Batch.Wa
                 switch (try ntReadFile(o.file.handle, o.data, &metadata.iosb)) {
                     .status => {
                         o.status = .{ .result = ntReadFileResult(&metadata.iosb) };
+                        any_done = true;
                         submitComplete(ring, &complete_tail, op);
                     },
                     .pending => {
@@ -2705,7 +2709,6 @@ fn batchWaitWindows(t: *Threaded, b: *Io.Batch, timeout: Io.Timeout) Io.Batch.Wa
     var delay_interval: windows.LARGE_INTEGER = timeoutToWindowsInterval(timeout);
 
     while (true) {
-        var any_done = false;
         var any_pending = false;
         for (metadatas, 0..) |*metadata, op_usize| {
             if (!metadata.pending) continue;
