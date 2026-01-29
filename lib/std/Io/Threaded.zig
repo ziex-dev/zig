@@ -9669,10 +9669,12 @@ fn fileWriteFileStreaming(
             file_reader.interface.toss(n -| header.len);
             return n;
         }
+        var len: usize = @intFromEnum(limit);
         var off_in: i64 = undefined;
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
             .positional_simple, .streaming_simple => return error.Unimplemented,
             .positional => p: {
+                len = @min(len, std.math.maxInt(usize) - file_reader.pos);
                 off_in = @intCast(file_reader.pos);
                 break :p &off_in;
             },
@@ -9683,7 +9685,7 @@ fn fileWriteFileStreaming(
             .linux => n: {
                 const syscall: Syscall = try .start();
                 while (true) {
-                    const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, null, @intFromEnum(limit), 0);
+                    const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, null, len, 0);
                     switch (linux_copy_file_range_sys.errno(rc)) {
                         .SUCCESS => {
                             syscall.finish();
@@ -9843,10 +9845,12 @@ fn fileWriteFilePositional(
             file_reader.interface.toss(n -| header.len);
             return n;
         }
+        var len: usize = @min(@intFromEnum(limit), std.math.maxInt(usize) - offset);
         var off_in: i64 = undefined;
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
             .positional_simple, .streaming_simple => return error.Unimplemented,
             .positional => p: {
+                len = @min(len, std.math.maxInt(usize) - file_reader.pos);
                 off_in = @intCast(file_reader.pos);
                 break :p &off_in;
             },
@@ -9858,7 +9862,7 @@ fn fileWriteFilePositional(
             .linux => n: {
                 const syscall: Syscall = try .start();
                 while (true) {
-                    const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, @intFromEnum(limit), 0);
+                    const rc = linux_copy_file_range_sys.copy_file_range(in_fd, off_in_ptr, out_fd, &off_out, len, 0);
                     switch (linux_copy_file_range_sys.errno(rc)) {
                         .SUCCESS => {
                             syscall.finish();
@@ -9882,7 +9886,7 @@ fn fileWriteFilePositional(
                                 .IO => return error.InputOutput,
                                 .NOMEM => return error.SystemResources,
                                 .NOSPC => return error.NoSpaceLeft,
-                                .OVERFLOW => return error.Unseekable,
+                                .OVERFLOW => |err| errnoBug(err), // We avoid passing too large a count.
                                 .NXIO => return error.Unseekable,
                                 .SPIPE => return error.Unseekable,
                                 .PERM => return error.PermissionDenied,
