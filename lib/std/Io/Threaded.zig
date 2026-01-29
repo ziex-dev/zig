@@ -2621,6 +2621,7 @@ fn batchCancel(userdata: ?*anyopaque, b: *Io.Batch) void {
             const metadatas_ptr: [*]WinOpMetadata = @ptrCast(@alignCast(reserved));
             const metadatas = metadatas_ptr[0..b.operations.len];
             for (metadatas, 0..) |*metadata, op| {
+                if (!metadata.pending) continue;
                 const done = @atomicLoad(windows.NTSTATUS, &metadata.iosb.u.Status, .acquire) != .PENDING;
                 if (done) continue;
                 switch (operations[op]) {
@@ -2631,6 +2632,7 @@ fn batchCancel(userdata: ?*anyopaque, b: *Io.Batch) void {
                 }
             }
             for (metadatas) |*metadata| {
+                if (!metadata.pending) continue;
                 while (@atomicLoad(windows.NTSTATUS, &metadata.iosb.u.Status, .acquire) == .PENDING) {
                     waitForApcOrAlert();
                 }
