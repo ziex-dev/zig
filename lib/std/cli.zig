@@ -60,19 +60,18 @@
 //! --<name>          (1)
 //! --no-<name>       (2)
 //! --<name>=<value>  (3)
-//! --help            (4)
-//! -<alpha>+         (5)
+//! -<alpha>          (4)
+//! -<alpha><value>   (5)
 //! --                (6)
 //! <other>           (7)
 //! ```
 //!
 //! Forms (1), (2), and (3) must correspond to a field `Args.named.<name>`; see below for named argument handling.
-//! Form (4) immediately prints the long help documentation and exits or returns `error.Help` depending on options.exit.
-//! Form (5) must be a string of letters corresponding to short aliases specified in named args' `info` declaration; see below for short flag handling.
+//! Forms (4) and (5) must correspond to a short flag declared for a field `Args.named.<name>`; their behavior is identical to forms (1) and (3), respectively.
 //! Form (6) signals that all following arg strings are positional.
 //! Form (7) following form (1) may be a value to a field `Args.named.<name>`, or is otherwise a positional argument; discussed below.
 //!
-//! For forms (1), (2), (3), and (5), let `T` be the type of `Args.named.<name>.value`.
+//! For forms (1), (2), (3), (4), and (5), let `T` be the type of `Args.named.<name>.value`.
 //! `T` may be any of the following:
 //! - `bool`
 //! - any integer such as `i32`
@@ -90,22 +89,17 @@
 //!     - any `enum` with at least one member
 //!     - a string type
 //!
-//! If `T` is `bool`, then forms (1) and (5) set it to `true`, form (2) sets it to `false`, form (3) is not allowed, and the following form is parsed separately.
-//! If `T` is an optional type, then form (2) sets it to `null`, form (3) specifies the `<value>`, or a form (1) or (5) must be followed by a form (7) specifying the `<value>`.
-//! Otherwise, form (2) is not allowed, and form (3) specifies the `<value>`, or forms (1) and (5) must be followed by a form (7) specifying the `<value>`.
+//! If `T` is `bool`, then forms (1) and (4) set it to `true`, form (2) sets it to `false`, forms (3) and (5) are not allowed, and the following form is parsed separately.
+//! If `T` is not `bool`, forms (1) and (4) must be followed by a form (7) specifying the value, and forms (3) and (5) specify the `<value>`.
+//! If `T` is an optional type, then form (2) additionally sets the value to null, otherwise it is not permitted.
 //!
-//! Form (5) may be a chain of short flags.
-//! Each letter in the chain must correspond to a `NamedInfo.short`.
-//! A short flag may only be followed by another short flag in the chain if its type is `bool`.
-//! If a short flag corresponds to a named argument with a non-`bool` type, then the chain must immediately end, and the `<value>` must be specified in a following form (7).
-//!
-//! The `<value>` in forms (3) and (7) is parsed from its string representation:
+//! The `<value>` in forms (3), (5), and (7) is parsed from its string representation:
 //! - integers use `std.fmt.parseInt` with base `0`
 //! - floats use `std.fmt.parseFloat`
 //! - enums use `std.meta.stringToEnum`
 //! - strings use the raw value of the string without modification
 //!
-//! Each `Args.named.<name>` may have a default value, which makes the forms (1), (2), (3), (5), and (7) optional.
+//! Each `Args.named.<name>` may have a default value, which makes the forms (1), (2), (3), (4), (5), and (7) optional.
 //!
 //! Each positional arg string corresponds to a field in `Args.positional` in declaration order.
 //! Each positional arg may have a default value, making the corresponding argument optional.
@@ -467,34 +461,31 @@ fn innerParse(comptime Args: type, gpa: Allocator, comptime String: type, iter: 
             }
 
             if (arg.len >= 2 and arg[0] == '-' and std.ascii.isAlphabetic(arg[1])) {
-                shorts: for (arg[1..], 1..) |short, short_i| {
-                    if (short == 'h') try innerParseHelp(Args, options);
+                const short = arg[1];
+                if (short == 'h') try innerParseHelp(Args, options);
 
-                    inline for (named_fields, 0..) |field, i| {
-                        if (field.info.named.short == short) {
-                            named_fields_seen[i] = true;
-                            if (field.type == .bool) {
-                                @field(result.named, field.name).value = true;
-                                continue :shorts;
-                            }
-
-                            if (short_i != arg.len - 1) try usageError(Args, options, "expected argument after -{s}", .{&[_]u8{short}});
-
-                            const arg_value = iter.next() orelse try usageError(Args, options, "expected argument after -{s}", .{&[_]u8{short}});
-                            const value = try parseValue(Args, gpa, options, field, arg_value);
-                            if (field.type == .list) {
-                                try @field(named_array_lists, field.name).append(gpa, value);
-                            } else {
-                                @field(result.named, field.name).value = value;
-                            }
+                const imm_value: ?String = if (arg.len == 2) null else if (string_has_sentinel) arg[2.. :0] else arg[2..];
+                inline for (named_fields, 0..) |field, i| {
+                    if (field.info.named.short == short) {
+                        named_fields_seen[i] = true;
+                        if (field.type == .bool) {
+                            if (imm_value) |v| try usageError(Args, options, "unexpected value for -{c}: {s}", .{ short, v });
+                            @field(result.named, field.name).value = true;
                             continue :argparse;
                         }
-                    }
 
-                    try usageError(Args, options, "unexpected argument: -{s}", .{&[_]u8{short}});
+                        const arg_value = imm_value orelse iter.next() orelse try usageError(Args, options, "expected argument after -{c}", .{short});
+                        const value = try parseValue(Args, gpa, options, field, arg_value);
+                        if (field.type == .list) {
+                            try @field(named_array_lists, field.name).append(gpa, value);
+                        } else {
+                            @field(result.named, field.name).value = value;
+                        }
+                        continue :argparse;
+                    }
                 }
 
-                continue :argparse;
+                try usageError(Args, options, "unexpected argument: -{c}", .{short});
             }
         }
 
@@ -781,6 +772,7 @@ fn reflectArgs(comptime Args: type) struct { Info, []const ArgField, []const Arg
                 if (named.short) |short| {
                     // mostly just to make sure that the flag isn't numeric ie `-1` which is common, but will probably get parsed as a float instead
                     if (!std.ascii.isAlphabetic(short)) @compileError("Unsupported short flag '" ++ &[_]u8{short} ++ "': Args.named." ++ sf.name);
+                    if (short == 'h') @compileError("Short flag 'h' reserved for '--help': Args.named." ++ sf.name);
                     if (mem.indexOfScalar(u8, all_shorts, short)) |_| @compileError("Short flag '" ++ &[_]u8{short} ++ "' already used: Args.named." ++ sf.name);
                     all_shorts = all_shorts ++ &[_]u8{short};
                 }
@@ -1359,6 +1351,8 @@ test "usage errors" {
     const term: Io.Terminal = .{ .mode = .no_color, .writer = &aw.writer };
     const options = Options{ .arg0 = "test-prog", .terminal = term, .exit = false };
 
+    errdefer std.debug.print("parse output: {s}\n", .{aw.written()});
+
     // unrecognized argument
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
@@ -1790,7 +1784,7 @@ test "shorts" {
     };
 
     const args1 = try parseSlice(Args, allocator, &[_][]const u8{
-        "myprog", "-f", "foo", "-Qb",
+        "myprog", "-ffoo", "-Q", "-b",
     }, options);
     try testing.expectEqualDeep(Args{
         .named = .{
@@ -1801,7 +1795,7 @@ test "shorts" {
     }, args1);
 
     const args2 = try parseSlice(Args, allocator, &[_][]const u8{
-        "myprog", "-Qf", "bar",
+        "myprog", "-Q", "-fbar",
     }, options);
     try testing.expectEqualDeep(Args{
         .named = .{

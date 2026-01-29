@@ -25,6 +25,7 @@ fn logImpl(
     );
 }
 
+const ZigIntegration = enum { qemu, wine, wasmtime, darling };
 const Args = struct {
     pub const info: std.cli.Info = .{
         .arg0 = "incr-check",
@@ -38,10 +39,9 @@ const Args = struct {
         @"zig-lib-dir": struct { value: ?[]const u8 = null },
         @"debug-log": struct { value: []const []const u8 = &.{} },
         @"preserve-tmp": struct { value: bool = false },
-        qemu: struct { value: bool = false },
-        wine: struct { value: bool = false },
-        wasmtime: struct { value: bool = false },
-        darling: struct { value: bool = false },
+        @"zig-integration": struct {
+            value: []const ZigIntegration = &.{},
+        },
         @"zig-cc-binary": struct { value: ?[]const u8 = null },
     },
 };
@@ -58,10 +58,10 @@ pub fn main(init: std.process.Init) !void {
     const opt_lib_dir: ?[]const u8 = args.named.@"zig-lib-dir".value;
     const opt_cc_zig: ?[]const u8 = args.named.@"zig-cc-binary".value;
     const preserve_tmp = args.named.@"preserve-tmp".value;
-    const enable_qemu = args.named.qemu.value;
-    const enable_wine = args.named.wine.value;
-    const enable_wasmtime = args.named.wasmtime.value;
-    const enable_darling = args.named.darling.value;
+    const enable_qemu = std.mem.findScalar(ZigIntegration, args.named.@"zig-integration".value, .qemu) != null;
+    const enable_wine = std.mem.findScalar(ZigIntegration, args.named.@"zig-integration".value, .wine) != null;
+    const enable_wasmtime = std.mem.findScalar(ZigIntegration, args.named.@"zig-integration".value, .wasmtime) != null;
+    const enable_darling = std.mem.findScalar(ZigIntegration, args.named.@"zig-integration".value, .darling) != null;
     const debug_log_args = args.named.@"debug-log".value;
     const zig_exe = args.positional.@"zig-binary-path".value;
     const input_file_name = args.positional.@"input-file".value;
