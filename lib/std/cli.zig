@@ -42,9 +42,9 @@
 //!   args...                 [string]
 //!
 //! Options:
-//!   -h, --help              Print this help text and exit.
 //!   --[no-]verbose          [default: no]
 //!   -o, --output=string     [required] path to output file
+//!   -h, --help              Print this help text and exit.
 //!
 //! example: myprog --output o.txt hello.txt
 //! ```
@@ -148,8 +148,10 @@ pub const Options = struct {
     terminal: ?Io.Terminal = null,
 
     /// The program name used in the help output, e.g. "my-command" in "Usage: my-command [options] ...".
-    /// By default uses the value of `Args.arg0` or the process's first argument (`argv[0]`).
-    /// When there is no `argv[0]`, the default is `"<prog>"`.
+    /// The order of preference is:
+    /// - `Options.arg0` as passed by the user
+    /// - `Args.info.arg0` if `Args.info` is defined and `info.arg0` is non-null
+    /// - the first argument in the input to a parse function
     arg0: ?[]const u8 = null,
 
     /// Call `std.process.exit` with an error status instead of returning `error.Usage` or `error.Help`.
@@ -169,13 +171,6 @@ pub const Info = struct {
     /// Use this to override the arg0 shown in your usage string.
     /// Only necessary when using the generated usage documentation (when `.usage = null`).
     arg0: ?[]const u8 = null,
-    /// Use this to override the generated usage string.
-    /// May contain a single `{s}` or multiple `{0s}` fmt templates which will contain the arg0 of the program.
-    usage: ?[]const u8 = null,
-    /// Use this to override the generated help text.
-    /// Prepended with the usage string of the program.
-    /// May contain a single `{s}` or multiple `{0s}` fmt templates which will contain the arg0 of the program.
-    help: ?[]const u8 = null,
     /// Use this to add a helpful description of your program before arguments/options info in the generated long help text.
     /// Ignored if `.help` is not null.
     /// May contain a single `{s}` or multiple `{0s}` fmt templates which will contain the arg0 of the program.
@@ -223,10 +218,11 @@ pub const PositionalInfo = struct {
 /// It is not possible to precisely deallocate the memory allocated by this function.
 /// An `ArenaAllocator` is recommended to prevent memory leaks.
 pub fn parse(comptime Args: type, arena: Allocator, argv: std.process.Args, options: Options) Error!Args {
+    const info, _, _ = comptime reflectArgs(Args);
     var iter = try argv.iterateAllocator(arena);
     const arg0 = iter.next().?;
     var opts = options;
-    opts.arg0 = opts.arg0 orelse arg0;
+    opts.arg0 = opts.arg0 orelse info.arg0 orelse arg0;
     return innerParse(Args, arena, [:0]const u8, &iter, opts);
 }
 
@@ -251,11 +247,15 @@ pub fn parse(comptime Args: type, arena: Allocator, argv: std.process.Args, opti
 /// It is not possible to precisely deallocate the memory allocated by this function.
 /// An `ArenaAllocator` is recommended to prevent memory leaks.
 pub fn parseIter(comptime Args: type, arena: Allocator, argv: anytype, options: Options) Error!Args {
+    const info, _, _ = comptime reflectArgs(Args);
     const arg0 = argv.next().?;
     const String = @TypeOf(arg0);
-    comptime assert(String == []const u8 or [:0]const u8);
+    comptime switch (String) {
+        []const u8, [:0]const u8, []u8, [:0]u8 => {},
+        else => @compileError("unsupported iterator item: " ++ @typeName(String)),
+    };
     var opts = options;
-    opts.arg0 = opts.arg0 orelse arg0;
+    opts.arg0 = opts.arg0 orelse info.arg0 orelse arg0;
     return innerParse(Args, arena, String, argv, opts);
 }
 
@@ -298,6 +298,7 @@ fn ArgIteratorSlice(comptime String: type) type {
 /// It is not possible to precisely deallocate the memory allocated by this function.
 /// An `ArenaAllocator` is recommended to prevent memory leaks.
 pub fn parseSlice(comptime Args: type, arena: Allocator, argv: anytype, options: Options) Error!Args {
+    const info, _, _ = comptime reflectArgs(Args);
     const String = std.meta.Elem(@TypeOf(argv));
     switch (String) {
         []const u8, [:0]const u8, []u8, [:0]u8 => {},
@@ -307,8 +308,9 @@ pub fn parseSlice(comptime Args: type, arena: Allocator, argv: anytype, options:
         },
     }
     var iter: ArgIteratorSlice(String) = .{ .slice = argv };
+    const arg0: String = iter.next().?;
     var opts = options;
-    opts.arg0 = opts.arg0 orelse "<prog>";
+    opts.arg0 = opts.arg0 orelse info.arg0 orelse arg0;
     return innerParse(Args, arena, String, &iter, opts);
 }
 
@@ -331,13 +333,13 @@ test parseSlice {
         },
     };
     const args = try parseSlice(Args, allocator, &[_][]const u8{
+        "myprog",             "--level=0xff",
         "--example_required", "a.txt",
-        // --example_optional not given
-        "--level=0xff",       "--no-flag",
         "--enum-option",      "always",
-        "positional1",        "positional2",
-        "-12345678",          "--",
-        "--positional4",      "--positional=5",
+        "--no-flag",          "positional1",
+        "positional2",        "-12345678",
+        "--",                 "--positional4",
+        "--positional=5",
     }, .{});
 
     try testing.expectEqualDeep(Args{
@@ -358,9 +360,8 @@ test parseSlice {
 fn innerParseHelp(comptime Args: type, options: Options) error{Help}!noreturn {
     const terminal = options.terminal orelse std.debug.lockStderr(&.{}).terminal();
     defer if (options.terminal == null) std.debug.unlockStderr();
-    // Note: arg0 should always be set by public API
-    printHelp(Args, terminal.writer, options.arg0.?) catch {};
-    if (options.exit) std.process.exit(help_exit_code);
+    terminal.writer.print(getHelpFmt(Args), .{options.arg0.?}) catch {};
+    if (options.exit) std.process.exit(0);
     return error.Help;
 }
 
@@ -377,9 +378,9 @@ pub fn usageError(comptime Args: type, options: Options, comptime fmt: []const u
         term.writer.writeAll("error") catch break :print;
         term.setColor(.reset) catch break :print;
         term.writer.print(": " ++ fmt ++ "\n", args) catch break :print;
-        printUsage(Args, term.writer, options.arg0) catch break :print;
+        term.writer.print(getUsageFmt(Args), .{options.arg0.?}) catch break :print;
     }
-    if (options.exit) std.process.exit(usage_exit_code);
+    if (options.exit) std.process.exit(1);
     return error.Usage;
 }
 
@@ -857,78 +858,12 @@ fn enumValuesString(comptime Enum: type) []const u8 {
     return values_str;
 }
 
-/// Standard exit code for usage errors.
-pub const usage_exit_code = 1;
-
-/// Print the program's usage string to the given writer with the given fallback `arg0` value.
-/// If `Args.arg0` is defined, it is used instead.
-pub fn printUsage(comptime Args: type, writer: *Io.Writer, arg0: ?[]const u8) Io.Writer.Error!void {
-    const usage, const has_arg0_fmt = comptime getUsageFmt(Args);
-    if (has_arg0_fmt) {
-        try writer.print(usage, .{arg0 orelse "<prog>"});
-    } else {
-        try writer.writeAll(usage);
-    }
-}
-
-test printUsage {
-    const Args1 = struct {
-        pub const info: Info = .{
-            .arg0 = "fooprog",
-            .description = "my description",
-        };
-
-        named: struct {
-            foo: struct {
-                value: [:0]const u8,
-                pub const info: NamedInfo = .{
-                    .description = "does a foo thing",
-                    .short = 'f',
-                };
-            },
-            bar: struct { value: bool = false },
-            baz: struct { value: u8 = 0 },
-            quux: struct { value: f32 = -1 },
-            quuz: struct { value: i32 },
-        },
-        positional: struct {
-            foo: struct { value: [:0]const u8 },
-            bar: struct { value: u32 },
-            baz: struct { value: [:0]const u8 = "baz thing" },
-            quux: struct { value: []const []const u8 },
-        },
-    };
-
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const gpa = arena.allocator();
-
-    var aw: Writer.Allocating = .init(gpa);
-    try printUsage(Args1, &aw.writer, "myprog");
-    try testing.expectEqualStrings("Usage: fooprog --foo=string --quuz=int [options...] <foo> <bar> [baz] [quux...]\n", aw.written());
-}
-
-/// Returns a generated usage fmt string for the given Args type, and whether a
-/// string template for `arg0` is present.
-///
-/// A string template for `arg0` is only present when `Args.info.arg0` is null.
-pub fn getUsageFmt(comptime Args: type) struct { []const u8, bool } {
+/// Returns a generated usage fmt string for the given Args type.
+pub fn getUsageFmt(comptime Args: type) []const u8 {
     return comptime fmt: {
-        const info, const named_fields, const positional_fields = reflectArgs(Args);
-        if (info.usage) |user_usage| {
-            var usage: []const u8 = user_usage;
-            if (!mem.endsWith(u8, usage, "\n")) usage = usage ++ "\n";
-            if (hasAtLeastOneStringLiteral(usage)) {
-                break :fmt if (info.arg0) |arg0|
-                    .{ comptimePrint(usage, .{arg0}), false }
-                else
-                    .{ usage, true };
-            } else {
-                break :fmt .{ usage, false };
-            }
-        }
+        _, const named_fields, const positional_fields = reflectArgs(Args);
 
-        var usage: []const u8 = "Usage: " ++ (if (info.arg0) |s| s else "{s}");
+        var usage: []const u8 = "Usage: {s}";
         var at_least_one_optional_named_argument = false;
 
         for (named_fields) |field| {
@@ -956,7 +891,7 @@ pub fn getUsageFmt(comptime Args: type) struct { []const u8, bool } {
             }
         }
 
-        break :fmt .{ usage ++ "\n", info.arg0 == null };
+        break :fmt usage ++ "\n";
     };
 }
 
@@ -977,48 +912,11 @@ test getUsageFmt {
         },
     };
 
-    const fmt, const hasFmt = getUsageFmt(Args);
-    try testing.expect(!hasFmt); // arg0 provided by `Args.arg0`
+    const fmt = getUsageFmt(Args);
     try testing.expectEqualStrings(
-        \\Usage: program --[no-]required [options...] <required> [optional] [optional2]
+        \\Usage: {s} --[no-]required [options...] <required> [optional] [optional2]
         \\
     , fmt);
-}
-
-fn hasAtLeastOneStringLiteral(comptime fmt: []const u8) bool {
-    @setEvalBranchQuota(@as(comptime_int, fmt.len) * 1000);
-    comptime var i = 0;
-    inline while (comptime mem.indexOfScalarPos(u8, fmt, i, '{')) |pos| {
-        i = pos + 1;
-        if (i >= fmt.len or fmt[i] == '{') {
-            // skip escaped {{
-            i += 1;
-            continue;
-        }
-
-        const start = i;
-        const end = comptime mem.indexOfScalarPos(u8, fmt, i, '}') orelse return false;
-        i = end + 1;
-
-        const placeholder: std.fmt.Placeholder = comptime .parse(fmt[start..end]);
-        if (comptime mem.eql(u8, placeholder.specifier_arg, "s")) {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-test hasAtLeastOneStringLiteral {
-    try testing.expect(hasAtLeastOneStringLiteral("{s}"));
-    try testing.expect(hasAtLeastOneStringLiteral(". {s}. "));
-    try testing.expect(hasAtLeastOneStringLiteral(" {s}{{}}{0s}.  {s}"));
-    try testing.expect(hasAtLeastOneStringLiteral("{s}}")); // Note: `print` will throw a compile error for this
-
-    try testing.expect(!hasAtLeastOneStringLiteral(""));
-    try testing.expect(!hasAtLeastOneStringLiteral("s"));
-    try testing.expect(!hasAtLeastOneStringLiteral("{{s}}"));
-    try testing.expect(!hasAtLeastOneStringLiteral("{{s}"));
 }
 
 fn escapeFmt(comptime s: []const u8) []const u8 {
@@ -1035,104 +933,6 @@ fn escapeFmt(comptime s: []const u8) []const u8 {
     }
     result = result ++ s[cursor..];
     return result;
-}
-
-/// Standard exit code when `--help` is provided on the command line.
-pub const help_exit_code = 0;
-
-/// Print the program's help text using the given arg0 fallback.
-/// The given arg0 is only used if `Args.arg0` is not defined.
-pub fn printHelp(comptime Args: type, writer: *Io.Writer, arg0: ?[]const u8) Io.Writer.Error!void {
-    const help, const has_arg0_fmt = comptime getHelpFmt(Args);
-    if (has_arg0_fmt)
-        try writer.print(help, .{arg0 orelse "<prog>"})
-    else
-        try writer.writeAll(help);
-}
-
-test printHelp {
-    const Args = struct {
-        pub const info: Info = .{
-            .arg0 = "hello",
-            .description = "my special description",
-            .epilogue = "my special epilogue",
-        };
-
-        named: struct {
-            foo: struct {
-                value: ?[:0]const u8 = null,
-                pub const info: NamedInfo = .{
-                    .description = "does a foo thing",
-                    .short = 'f',
-                };
-            },
-            bar: struct {
-                value: ?[]const u8,
-                pub const info: NamedInfo = .{
-                    .description = "does a bar thing",
-                };
-            },
-            baz: struct { value: u32 = 10 },
-            quux: struct { value: i8 = -1 },
-            quuz: struct {
-                value: f32 = -420,
-                pub const info: NamedInfo = .{
-                    .description = "Nice.",
-                };
-            },
-            foobar: struct { value: bool = false },
-            barfoo: struct { value: bool },
-            foobaz: struct { value: []const []const u8 },
-            bazfoo: struct { value: ?[]const u8 = null },
-        },
-        positional: struct {
-            foo: struct {
-                value: []const u8,
-                pub const info: PositionalInfo = .{
-                    .description = "a special foo thing",
-                };
-            },
-            bar: struct { value: ?[]const u8 },
-            baz: struct {
-                value: []const []const u8,
-                pub const info: PositionalInfo = .{
-                    .description = "not-so-special baz thing",
-                };
-            },
-        },
-    };
-
-    var arena: std.heap.ArenaAllocator = .init(testing.allocator);
-    defer arena.deinit();
-    const gpa = arena.allocator();
-
-    var aw: Writer.Allocating = .init(gpa);
-    try printHelp(Args, &aw.writer, "myprog");
-    try testing.expectEqualStrings(
-        \\Usage: hello --[no-]bar=[string] --[no-]barfoo [options...] <foo> [bar] [baz...]
-        \\
-        \\my special description
-        \\
-        \\Arguments:
-        \\  foo                         [string. required] a special foo thing
-        \\  bar                         [string]
-        \\  baz...                      [string] not-so-special baz thing
-        \\
-        \\Options:
-        \\  -h, --help                  Print this help text and exit.
-        \\  -f, --[no-]foo=[string]     does a foo thing
-        \\  --[no-]bar=[string]         [required] does a bar thing
-        \\  --baz=int                   [default: 10]
-        \\  --quux=int                  [default: -1]
-        \\  --quuz=float                [default: -420] Nice.
-        \\  --[no-]foobar               [default: no]
-        \\  --[no-]barfoo               [required]
-        \\  --foobaz=string             [multiple]
-        \\  --[no-]bazfoo=[string]
-        \\
-        \\my special epilogue
-        \\
-    , aw.written());
 }
 
 /// Returns a program's help text format string and whether a string template for arg0 is present.
@@ -1166,14 +966,10 @@ test printHelp {
 /// - `{epilogue}` is `Args.epilogue` if present. Otherwise, this is omitted.
 ///
 /// Note that string templates in `Args.info.description` and `Args.epilogue` will be assumed to be `arg0`.
-pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
+pub fn getHelpFmt(comptime Args: type) []const u8 {
     return comptime fmt: {
         const info, const named_fields, const positional_fields = reflectArgs(Args);
-        const usage, var has_arg0_fmt = getUsageFmt(Args);
-        if (info.help) |user_help| {
-            const help: []const u8 = usage ++ "\n" ++ user_help;
-            return .{ help, has_arg0_fmt };
-        }
+        const usage = getUsageFmt(Args);
 
         @setEvalBranchQuota(named_fields.len * 1000 + positional_fields.len * 1000);
 
@@ -1199,7 +995,7 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
                 } else if (field.type == .list or field.type == .optional) "" else ". required",
             });
             if (field.info.positional.description) |description| {
-                rhs = rhs ++ " " ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
+                rhs = rhs ++ " " ++ description;
             }
 
             arguments_table[i] = .{ lhs, rhs };
@@ -1207,60 +1003,49 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         }
 
         var options_table: [named_fields.len + 1]struct { []const u8, []const u8 } = undefined;
-        options_table[0] = .{ "-h, --help", "Print this help text and exit." };
+        options_table[named_fields.len] = .{ "-h, --help", "Print this help text and exit." };
         lhs_max_width = @max(lhs_max_width, "--help".len);
 
-        for (named_fields, 1..) |field, i| {
+        for (named_fields, 0..) |field, i| {
             var lhs: []const u8 = if (field.info.named.short) |short|
                 ("-" ++ &[_]u8{short} ++ ", ")
             else
                 "";
             lhs = lhs ++ field.namedFlagUsage();
             var rhs: []const u8 = switch (field.type) {
-                .bool => if (field.defaultValue()) |default| comptimePrint("[default: {s}] ", .{if (default) "yes" else "no"}) else "[required] ",
-                .@"enum" => if (field.defaultValue()) |default| comptimePrint("[default: {t}] ", .{default}) else "[required] ",
-                .float, .int => if (field.defaultValue()) |default| comptimePrint("[default: {d}] ", .{default}) else "[required] ",
-                .cstring, .string => if (field.defaultValue()) |default| comptimePrint("[default: {s}] ", .{if (default.len == 0) "''" else default}) else "[required] ",
+                .bool => if (field.defaultValue()) |default| comptimePrint("[default: {s}]", .{if (default) "yes" else "no"}) else "[required]",
+                .@"enum" => if (field.defaultValue()) |default| comptimePrint("[default: {t}]", .{default}) else "[required]",
+                .float, .int => if (field.defaultValue()) |default| comptimePrint("[default: {d}]", .{default}) else "[required]",
+                .cstring, .string => if (field.defaultValue()) |default| comptimePrint("[default: {s}]", .{if (default.len == 0) "''" else default}) else "[required]",
                 .optional => |inner| default: {
                     if (field.defaultValue()) |default_optional| {
                         if (default_optional) |default| switch (inner) {
-                            .@"enum" => break :default comptimePrint("[default: {t}] ", .{default}),
-                            .float, .int => break :default comptimePrint("[default: {d}] ", .{default}),
-                            .cstring, .string => break :default comptimePrint("[default: {s}] ", .{default}),
-                            .list => break :default "[multiple] ",
+                            .@"enum" => break :default comptimePrint("[default: {t}]", .{default}),
+                            .float, .int => break :default comptimePrint("[default: {d}]", .{default}),
+                            .cstring, .string => break :default comptimePrint("[default: {s}]", .{default}),
+                            .list => break :default "[multiple]",
                             else => {},
                         };
                         break :default "";
                     } else {
-                        break :default "[required] ";
+                        break :default "[required]";
                     }
                 },
-                .list => "[multiple] ",
+                .list => "[multiple]",
             };
 
             if (field.info.named.description) |description| {
-                rhs = rhs ++ @as([]const u8, if (has_arg0_fmt) escapeFmt(description) else description);
+                rhs = rhs ++ " " ++ description;
             }
 
-            rhs = mem.trimEnd(u8, rhs, " \n");
+            rhs = mem.trimEnd(u8, rhs, "\n");
             options_table[i] = .{ lhs, rhs };
             lhs_max_width = @max(lhs_max_width, lhs.len);
         }
 
-        var help: []const u8 = usage;
+        var help: []const u8 = usage ++ "\n"; // usage already ends with newline
         if (info.description) |description| {
-            help = help ++ "\n";
-            if (hasAtLeastOneStringLiteral(description)) {
-                if (info.arg0) |arg0| {
-                    help = help ++ comptimePrint(description, .{arg0});
-                } else {
-                    has_arg0_fmt = true;
-                    help = help ++ description;
-                }
-            } else {
-                help = help ++ description;
-            }
-            help = help ++ "\n";
+            help = help ++ description ++ "\n";
         }
 
         lhs_max_width += 5; // minimum spacing
@@ -1286,21 +1071,10 @@ pub fn getHelpFmt(comptime Args: type) struct { []const u8, bool } {
         }
 
         if (info.epilogue) |epilogue| {
-            help = help ++ "\n";
-            if (hasAtLeastOneStringLiteral(epilogue)) {
-                if (info.arg0) |arg0| {
-                    help = help ++ comptimePrint(epilogue, .{arg0});
-                } else {
-                    has_arg0_fmt = true;
-                    help = help ++ epilogue;
-                }
-            } else {
-                help = help ++ epilogue;
-            }
-            help = help ++ "\n";
+            help = help ++ "\n" ++ epilogue ++ "\n";
         }
 
-        break :fmt .{ help, has_arg0_fmt };
+        break :fmt help;
     };
 }
 
@@ -1319,13 +1093,25 @@ test "bool" {
         },
     };
 
-    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = true } } }, try parseSlice(Args, allocator, &[_][]const u8{"--b"}, .{}));
-    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = false } } }, try parseSlice(Args, allocator, &[_][]const u8{"--no-b"}, .{}));
-    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = true } } }, try parseSlice(Args, allocator, &[_][]const u8{ "--no-b", "--b" }, .{}));
-    try testing.expectEqualDeep(Args{ .named = .{ .b = .{ .value = false } } }, try parseSlice(Args, allocator, &[_][]const u8{ "--b", "--no-b" }, .{}));
+    try testing.expectEqualDeep(
+        Args{ .named = .{ .b = .{ .value = true } } },
+        try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--b" }, .{}),
+    );
+    try testing.expectEqualDeep(
+        Args{ .named = .{ .b = .{ .value = false } } },
+        try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--no-b" }, .{}),
+    );
+    try testing.expectEqualDeep(
+        Args{ .named = .{ .b = .{ .value = true } } },
+        try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--no-b", "--b" }, .{}),
+    );
+    try testing.expectEqualDeep(
+        Args{ .named = .{ .b = .{ .value = false } } },
+        try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--b", "--no-b" }, .{}),
+    );
 
-    try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{"--b=true"}, silent_options));
-    try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{"--b=false"}, silent_options));
+    try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--b=true" }, silent_options));
+    try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--b=false" }, silent_options));
 }
 
 test "string" {
@@ -1340,8 +1126,7 @@ test "string" {
         },
     };
     const args = try parseSlice(Args, allocator, &[_][:0]const u8{
-        "--a", "a",
-        "--b", "b",
+        "myprog", "--a", "a", "--b", "b",
     }, .{});
 
     try testing.expectEqualDeep(Args{
@@ -1372,14 +1157,15 @@ test "ints and floats" {
         },
     };
     const args = try parseSlice(Args, allocator, &[_][]const u8{
-        "--int_u32",   "0xffffffff",
-        "--int_i32",   "-0x80000000",
-        "--int_u8",    "0o310",
-        "--int_u256",  "115792089237316195423570985008687907853269984665640564039457584007913129639935",
-        "--float_f32", "1.25",
-        "--float_f64", "-0xab.cdef012345p-12",
-        "--inf_f32",   "inf",
-        "--ninf_f64",  "-INF",
+        "myprog",
+        "--int_u32=0xffffffff",
+        "--int_i32=-0x80000000",
+        "--int_u8=0o310",
+        "--int_u256=115792089237316195423570985008687907853269984665640564039457584007913129639935",
+        "--float_f32=1.25",
+        "--float_f64=-0xab.cdef012345p-12",
+        "--inf_f32=inf",
+        "--ninf_f64=-INF",
     }, .{});
 
     try testing.expectEqualDeep(Args{
@@ -1401,7 +1187,7 @@ test "ints and floats" {
         },
     };
     const args2 = try parseSlice(Args2, allocator, &[_][]const u8{
-        "--nan", "nAN",
+        "myprog", "--nan", "nAN",
     }, .{});
 
     try testing.expect(std.math.isNan(args2.named.nan.value));
@@ -1431,12 +1217,7 @@ test "array" {
             .args = .{ .value = &[_][]const u8{ "x", "y" } },
         },
     }, try parseSlice(Args, allocator, &[_][]const u8{
-        "--path", "a",
-        "--path", "b",
-        "--path", "a",
-        "--id",   "1",
-        "--id",   "-12",
-        "x",      "y",
+        "myprog", "--path=a", "--path=b", "--path=a", "--id=1", "--id=-12", "x", "y",
     }, .{}));
 }
 
@@ -1463,9 +1244,7 @@ test "enum" {
         },
     };
     const args = try parseSlice(Args, allocator, &[_][]const u8{
-        "--color",  "always",
-        "--guess",  "the-only-option",
-        "--signal", "TERM",
+        "myprog", "--color=always", "--guess=the-only-option", "--signal=TERM",
     }, .{});
 
     try testing.expectEqualDeep(Args{
@@ -1496,24 +1275,24 @@ test "defaults" {
 
     try testing.expectEqualDeep(Args{
         .named = .{},
-    }, try parseSlice(Args, allocator, &[_][]const u8{}, .{}));
+    }, try parseSlice(Args, allocator, &[_][]const u8{"myprog"}, .{}));
     try testing.expectEqualDeep(Args{
         .named = .{
             .color = .{ .value = .always },
         },
-    }, try parseSlice(Args, allocator, &[_][]const u8{ "--color", "always" }, .{}));
+    }, try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--color", "always" }, .{}));
     try testing.expectEqualDeep(Args{
         .named = .{
             .file = .{ .value = &[_][]const u8{"file.txt"} },
         },
-    }, try parseSlice(Args, allocator, &[_][]const u8{ "--file", "file.txt" }, .{}));
+    }, try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--file", "file.txt" }, .{}));
 
     try testing.expectEqualDeep(Args{
         .named = .{
             .force = .{ .value = true },
             .cleanup = .{ .value = false },
         },
-    }, try parseSlice(Args, allocator, &[_][]const u8{ "--force", "--no-cleanup" }, .{}));
+    }, try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--force", "--no-cleanup" }, .{}));
 }
 
 test "positional" {
@@ -1535,7 +1314,7 @@ test "positional" {
 
         try testing.expectEqualDeep(Args{
             .positional = .{},
-        }, try parseSlice(Args, allocator, &[_][]const u8{}, .{}));
+        }, try parseSlice(Args, allocator, &[_][]const u8{"myprog"}, .{}));
         try testing.expectEqualDeep(Args{
             .positional = .{
                 .level = .{ .value = 1 },
@@ -1544,7 +1323,7 @@ test "positional" {
                 .color = .{ .value = .always },
                 .file = .{ .value = &[_][]const u8{ "file1", "file2" } },
             },
-        }, try parseSlice(Args, allocator, &[_][]const u8{ "1", "2", "a.txt", "always", "file1", "file2" }, .{}));
+        }, try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "1", "2", "a.txt", "always", "file1", "file2" }, .{}));
     }
 
     // required
@@ -1559,8 +1338,8 @@ test "positional" {
             },
         };
 
-        try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{}, silent_options));
-        try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{ "1", "2", "a.txt" }, silent_options));
+        try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{"myprog"}, silent_options));
+        try testing.expectError(error.Usage, parseSlice(Args, allocator, &[_][]const u8{ "myprog", "1", "2", "a.txt" }, silent_options));
         try testing.expectEqualDeep(Args{
             .positional = .{
                 .level = .{ .value = 1 },
@@ -1568,7 +1347,7 @@ test "positional" {
                 .path = .{ .value = "a.txt" },
                 .color = .{ .value = .always },
             },
-        }, try parseSlice(Args, allocator, &[_][]const u8{ "1", "2", "a.txt", "always" }, .{}));
+        }, try parseSlice(Args, allocator, &[_][]const u8{ "myprog", "1", "2", "a.txt", "always" }, .{}));
     }
 }
 
@@ -1586,7 +1365,7 @@ test "usage errors" {
         named: struct {
             name: struct { value: []const u8 = "" },
         },
-    }, allocator, &[_][]const u8{"--bogus"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--bogus" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--bogus") != null);
 
     // expected argument
@@ -1595,7 +1374,7 @@ test "usage errors" {
         named: struct {
             name: struct { value: []const u8 = "" },
         },
-    }, allocator, &[_][]const u8{"--name"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--name" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
 
     // --no-<name> for non-bool.
@@ -1604,7 +1383,7 @@ test "usage errors" {
         named: struct {
             name: struct { value: []const u8 = "" },
         },
-    }, allocator, &[_][]const u8{"--no-name"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--no-name" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--no-name") != null);
 
     // --name=false for bool
@@ -1613,7 +1392,7 @@ test "usage errors" {
         named: struct {
             name: struct { value: bool = false },
         },
-    }, allocator, &[_][]const u8{"--name=true"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--name=true" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
 
     // missing required argument
@@ -1622,7 +1401,7 @@ test "usage errors" {
         named: struct {
             name: struct { value: []const u8 },
         },
-    }, allocator, &[_][]const u8{}, options));
+    }, allocator, &[_][]const u8{"myprog"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
 
     // parse int error
@@ -1631,14 +1410,14 @@ test "usage errors" {
         named: struct {
             name: struct { value: i32 },
         },
-    }, allocator, &[_][]const u8{"--name=abc"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--name=abc" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
             name: struct { value: []const i32 = &.{} },
         },
-    }, allocator, &[_][]const u8{"--name=abc"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--name=abc" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
 
     // parse float error
@@ -1647,14 +1426,14 @@ test "usage errors" {
         named: struct {
             name: struct { value: f32 },
         },
-    }, allocator, &[_][]const u8{"--name=abc"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--name=abc" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
         named: struct {
             name: struct { value: []const f32 = &.{} },
         },
-    }, allocator, &[_][]const u8{"--name=abc"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--name=abc" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
 
     // parse enum error
@@ -1663,7 +1442,7 @@ test "usage errors" {
         named: struct {
             name: struct { value: enum { auto, never, always } },
         },
-    }, allocator, &[_][]const u8{"--name=abc"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--name=abc" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "--name") != null);
     try testing.expect(mem.indexOf(u8, aw.written(), "abc") != null);
     // Error should suggest the set of options.
@@ -1678,7 +1457,7 @@ test "usage errors" {
         positional: struct {
             args: struct { value: []const []const u8 = &.{} },
         },
-    }, allocator, &[_][]const u8{"-z"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "-z" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "-z") != null);
 
     // expected required positional argument
@@ -1687,7 +1466,7 @@ test "usage errors" {
         positional: struct {
             input_file: struct { value: []const u8 },
         },
-    }, allocator, &[_][]const u8{}, options));
+    }, allocator, &[_][]const u8{"myprog"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "input_file") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
@@ -1695,7 +1474,7 @@ test "usage errors" {
             input_file: struct { value: []const u8 },
             output_file: struct { value: []const u8 = "" },
         },
-    }, allocator, &[_][]const u8{}, options));
+    }, allocator, &[_][]const u8{"myprog"}, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "input_file") != null);
     aw.clearRetainingCapacity();
     try testing.expectError(error.Usage, parseSlice(struct {
@@ -1704,7 +1483,7 @@ test "usage errors" {
             output_file: struct { value: []const u8 },
             other: struct { value: []const u8 = "" },
         },
-    }, allocator, &[_][]const u8{"input.txt"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "input.txt" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "output_file") != null);
 }
 
@@ -1723,7 +1502,7 @@ test "help" {
             int: struct { value: i32 },
             flag: struct { value: bool },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     // Because the help output is primarily for humans, don't get too strict in the unit test.
     // Only verify that we see the important stuff that should definitely be there somewhere,
     // but otherwise allow maintainers to adjust the layout, formatting, notation, etc. without causing friction here.
@@ -1738,7 +1517,7 @@ test "help" {
         named: struct {
             color: struct { value: enum { never, auto, always } = .auto },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     // All allowed values for an enum should be spelled out.
     try testing.expect(mem.indexOf(u8, aw.written(), "--color") != null);
     try testing.expect(mem.indexOf(u8, aw.written(), "never") != null);
@@ -1751,13 +1530,13 @@ test "help" {
         named: struct {
             name: struct { value: []const u8 },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     const scalar_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
             name: struct { value: []const []const u8 = &.{} },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     try testing.expect(!mem.eql(u8, scalar_help, aw.written()));
 
     // Default values should be rendered somehow.
@@ -1768,7 +1547,7 @@ test "help" {
             int: struct { value: i32 = 3 },
             f: struct { value: f32 = 1.25 },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), "hello") != null);
     try testing.expect(mem.indexOf(u8, aw.written(), "3") != null);
     try testing.expect(mem.indexOf(u8, aw.written(), "1.25") != null);
@@ -1779,19 +1558,19 @@ test "help" {
         named: struct {
             b: struct { value: bool },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     const bool_required_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
             b: struct { value: bool = true },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     const default_true_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
             b: struct { value: bool = false },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     const default_false_help = try aw.toOwnedSlice();
     try testing.expect(!mem.eql(u8, bool_required_help, default_true_help));
     try testing.expect(!mem.eql(u8, bool_required_help, default_false_help));
@@ -1803,19 +1582,19 @@ test "help" {
         named: struct {
             color: struct { value: enum { never, auto, always } },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     const enum_required_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
             color: struct { value: enum { never, auto, always } = .auto },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     const default_auto_help = try aw.toOwnedSlice();
     try testing.expectError(error.Help, parseSlice(struct {
         named: struct {
             color: struct { value: enum { never, auto, always } = .never },
         },
-    }, allocator, &[_][]const u8{"--help"}, options));
+    }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     const default_never_help = try aw.toOwnedSlice();
     try testing.expect(!mem.eql(u8, enum_required_help, default_auto_help));
     try testing.expect(!mem.eql(u8, enum_required_help, default_never_help));
@@ -1827,7 +1606,7 @@ test "minimal" {
 
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
-    _ = try parseSlice(Args, arena.allocator(), &[_][]const u8{}, .{});
+    _ = try parseSlice(Args, arena.allocator(), &[_][]const u8{"myprog"}, .{});
 }
 
 test "manual deinit" {
@@ -1843,9 +1622,11 @@ test "manual deinit" {
     };
 
     const args = try parseSlice(Args, testing.allocator, &[_][]const u8{
-        "--str_arr=hello1", "--str_arr", "hello2",
-        "--int_arr=123456", "--int_arr", "789012",
-        "positional-12345", "--",        "positi",
+        "myprog",           "--str_arr=hello1",
+        "--str_arr",        "hello2",
+        "--int_arr",        "123456",
+        "positional-12345", "--int_arr=789012",
+        "--",               "positi",
     }, .{});
 
     try testing.expectEqualDeep(Args{
@@ -1866,7 +1647,7 @@ test "manual deinit" {
     // Should be no memory leak errors now.
 }
 
-test "custom help" {
+test "Options.arg0" {
     var arena: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -1876,17 +1657,6 @@ test "custom help" {
     const options = Options{ .arg0 = "unused-prog", .terminal = term, .exit = false };
 
     const Args = struct {
-        pub const info: Info = .{
-            .usage = "Usage: the-zip-thing --output path [options] input.zip",
-            .help =
-            \\Arguments:
-            \\  --output path     where to write the output stuff
-            \\  --[no-]force      overwrite output if already exists
-            \\  input.zip         the zip file to read
-            \\  --help            print this help and exit
-            \\
-            ,
-        };
         named: struct {
             output: struct { value: []const u8 },
             force: struct { value: bool = false },
@@ -1895,8 +1665,8 @@ test "custom help" {
             args: struct { value: []const []const u8 = &.{} },
         },
     };
-    try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
-    try testing.expectEqualStrings(Args.info.usage.? ++ "\n\n" ++ Args.info.help.?, aw.written());
+    try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--help" }, options));
+    try testing.expectEqualStrings(comptimePrint(getHelpFmt(Args), .{"unused-prog"}), aw.written());
 }
 
 test "description" {
@@ -1913,7 +1683,7 @@ test "description" {
             .description = "This is a description",
         };
     };
-    try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
+    try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     try testing.expect(mem.indexOf(u8, aw.written(), Args.info.description.?) != null);
 }
 
@@ -1944,7 +1714,7 @@ test "field help" {
             },
         },
     };
-    try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{"--help"}, options));
+    try testing.expectError(error.Help, parseSlice(Args, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "named"), "output").info.description.?));
     try testing.expect(null != mem.indexOf(u8, aw.written(), @FieldType(@FieldType(Args, "positional"), "args").info.description.?));
 }
@@ -1969,8 +1739,9 @@ test "optionals" {
     };
 
     const args = try parseSlice(Args, allocator, &[_][]const u8{
-        "--bar=hi", "--no-bar",
-        "--bar",    "hello",
+        "myprog",   "--bar=hi",
+        "--no-bar", "--bar",
+        "hello",
     }, options);
     try testing.expectEqualDeep(Args{
         .named = .{
@@ -2019,8 +1790,7 @@ test "shorts" {
     };
 
     const args1 = try parseSlice(Args, allocator, &[_][]const u8{
-        "-f",  "foo",
-        "-Qb",
+        "myprog", "-f", "foo", "-Qb",
     }, options);
     try testing.expectEqualDeep(Args{
         .named = .{
@@ -2031,7 +1801,7 @@ test "shorts" {
     }, args1);
 
     const args2 = try parseSlice(Args, allocator, &[_][]const u8{
-        "-Qf", "bar",
+        "myprog", "-Qf", "bar",
     }, options);
     try testing.expectEqualDeep(Args{
         .named = .{
@@ -2080,7 +1850,7 @@ test "module documentation example" {
     const args = try parseSlice(
         Args,
         arena,
-        &[_][]const u8{ "--output", "o.txt", "hello.txt" },
+        &[_][]const u8{ "myprog", "--output", "o.txt", "hello.txt" },
         options,
     );
     try std.testing.expectEqualDeep(Args{
@@ -2094,10 +1864,8 @@ test "module documentation example" {
         },
     }, args);
 
-    var aw: Writer.Allocating = .init(arena);
-    try printHelp(Args, &aw.writer, null);
     try std.testing.expectEqualStrings(
-        \\Usage: myprog --output=string [options...] <input> [args...]
+        \\Usage: {s} --output=string [options...] <input> [args...]
         \\
         \\this program does a thing
         \\
@@ -2106,11 +1874,11 @@ test "module documentation example" {
         \\  args...                 [string]
         \\
         \\Options:
-        \\  -h, --help              Print this help text and exit.
         \\  --[no-]verbose          [default: no]
         \\  -o, --output=string     [required] path to output file
+        \\  -h, --help              Print this help text and exit.
         \\
         \\example: myprog --output o.txt hello.txt
         \\
-    , aw.written());
+    , getHelpFmt(Args));
 }
