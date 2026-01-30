@@ -504,7 +504,6 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
     if (builtin.os.tag == .linux and result.isBionicLibC() and query.os_tag == null and query.android_api_level == null) {
         result.os.version_range.linux.android = detectAndroidApiLevel(io) catch |err| return switch (err) {
             error.InvalidWtf8,
-            error.CurrentWorkingDirectoryUnlinked,
             error.InvalidBatchScriptArg,
             => unreachable, // Windows-only
             error.ApiLevelQueryFailed => |e| e,
@@ -724,6 +723,7 @@ fn abiAndDynamicLinkerFromFile(
                 error.UnsupportedReparsePointType => unreachable, // Windows only
                 error.NetworkNotFound => unreachable, // Windows only
                 error.AntivirusInterference => unreachable, // Windows only
+                error.FileBusy => unreachable, // Windows only
 
                 error.AccessDenied,
                 error.PermissionDenied,
@@ -845,7 +845,6 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
         error.PipeBusy => return error.Unexpected, // Windows-only
-        error.SharingViolation => return error.Unexpected, // Windows-only
         error.NetworkNotFound => return error.Unexpected, // Windows-only
         error.AntivirusInterference => return error.Unexpected, // Windows-only
         error.FileLocksUnsupported => return error.Unexpected, // No lock requested.
@@ -1053,7 +1052,6 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                 error.NoSpaceLeft => return error.Unexpected,
                 error.NameTooLong => return error.Unexpected,
                 error.PathAlreadyExists => return error.Unexpected,
-                error.SharingViolation => return error.Unexpected,
                 error.BadPathName => return error.Unexpected,
                 error.PipeBusy => return error.Unexpected,
                 error.FileLocksUnsupported => return error.Unexpected,

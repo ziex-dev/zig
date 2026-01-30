@@ -163,7 +163,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const args = try std.cli.parse(Args, arena, init.minimal.args, .{});
-    const cwd_path = try std.process.getCwdAlloc(arena);
+    const cwd_path = try std.process.currentPathAlloc(io, arena);
     const environ_map = init.environ_map;
 
     const search_paths = args.named.@"search-path".value;
