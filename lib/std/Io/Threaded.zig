@@ -8814,11 +8814,11 @@ fn fileReadStreamingPosix(file: File, data: []const []u8) File.ReadStreamingErro
 }
 
 fn fileReadStreamingWindows(file: File, data: []const []u8) File.ReadStreamingError!usize {
-    var io_status_block: windows.IO_STATUS_BLOCK = .{
-        .u = .{ .Status = .PENDING },
-        .Information = 0,
-    };
+    var io_status_block: windows.IO_STATUS_BLOCK = undefined;
+    @memset(@as([]u8, @ptrCast(&io_status_block)), 0);
+    io_status_block.u.Status = .PENDING;
     try ntReadFile(file.handle, data, &noopApc, null, &io_status_block);
+
     while (@atomicLoad(windows.NTSTATUS, &io_status_block.u.Status, .acquire) == .PENDING) {
         // Once we get here we must not return from the function until the
         // operation completes, thereby releasing reference to io_status_block.
@@ -8842,10 +8842,7 @@ fn ntReadFileResult(io_status_block: *const windows.IO_STATUS_BLOCK) !usize {
         .PENDING => unreachable,
         .CANCELLED => unreachable,
         .SUCCESS => return io_status_block.Information,
-        .END_OF_FILE, .PIPE_BROKEN => {
-            if (io_status_block.Information == 0) return error.EndOfStream;
-            return io_status_block.Information;
-        },
+        .END_OF_FILE, .PIPE_BROKEN => return error.EndOfStream,
         .INVALID_DEVICE_REQUEST => return error.IsDir,
         .LOCK_NOT_GRANTED => return error.LockViolation,
         .ACCESS_DENIED => return error.AccessDenied,
@@ -8883,7 +8880,7 @@ fn ntReadFile(
         null, // byte offset
         null, // key
     )) {
-        .PENDING => {
+        .PENDING, .SUCCESS => {
             syscall.finish();
             return;
         },
