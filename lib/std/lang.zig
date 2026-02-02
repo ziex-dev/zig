@@ -114,6 +114,13 @@ pub const OptimizeMode = enum {
     ReleaseSafe,
     ReleaseFast,
     ReleaseSmall,
+
+    pub inline fn hasSafety(self: OptimizeMode) bool {
+        return switch (self) {
+            .Debug, .ReleaseSafe => true,
+            .ReleaseFast, .ReleaseSmall => false,
+        };
+    }
 };
 
 /// The calling convention of a function defines how arguments and return values are passed, as well
