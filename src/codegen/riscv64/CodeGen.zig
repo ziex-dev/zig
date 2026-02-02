@@ -8345,12 +8345,7 @@ fn resolveCallingConventionValues(
 }
 
 fn wantSafety(func: *Func) bool {
-    return switch (func.mod.optimize_mode) {
-        .Debug => true,
-        .ReleaseSafe => true,
-        .ReleaseFast => false,
-        .ReleaseSmall => false,
-    };
+    return func.mod.optimize_mode.hasSafety();
 }
 
 fn fail(func: *const Func, comptime format: []const u8, args: anytype) error{ OutOfMemory, CodegenFail } {

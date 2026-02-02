@@ -4769,12 +4769,7 @@ fn truncRegister(
 
 /// TODO support scope overrides. Also note this logic is duplicated with `Zcu.wantSafety`.
 fn wantSafety(self: *Self) bool {
-    return switch (self.bin_file.comp.root_mod.optimize_mode) {
-        .Debug => true,
-        .ReleaseSafe => true,
-        .ReleaseFast => false,
-        .ReleaseSmall => false,
-    };
+    return self.bin_file.comp.root_mod.optimize_mode.hasSafety();
 }
 
 fn typeOf(self: *Self, inst: Air.Inst.Ref) Type {

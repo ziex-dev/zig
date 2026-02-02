@@ -53,10 +53,7 @@ raw_streaming_mode: if (build_mode_has_safety)
 else
     void = if (build_mode_has_safety) .none else {},
 
-const build_mode_has_safety = switch (@import("builtin").mode) {
-    .Debug, .ReleaseSafe => true,
-    .ReleaseFast, .ReleaseSmall => false,
-};
+const build_mode_has_safety = @import("builtin").mode.hasSafety();
 
 /// The `safety_checks_hint` parameter determines how much memory is used to enable assertions that the above grammar is being followed,
 /// e.g. tripping an assertion rather than allowing `endObject` to emit the final `}` in `[[[]]}`.

@@ -655,9 +655,8 @@ pub const Inst = struct {
         intrinsic: Intrinsic,
 
         comptime {
-            switch (builtin.mode) {
-                .Debug, .ReleaseSafe => {},
-                .ReleaseFast, .ReleaseSmall => assert(@sizeOf(Data) == 4),
+            if (!builtin.mode.hasSafety()) {
+                assert(@sizeOf(Data) == 4);
             }
         }
     };
