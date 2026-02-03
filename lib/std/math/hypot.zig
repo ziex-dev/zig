@@ -30,7 +30,7 @@ pub fn hypot(x: anytype, y: anytype) @TypeOf(x, y) {
     }
     const lower = @sqrt(floatMin(T));
     const upper = @sqrt(floatMax(T) / 2);
-    const scale = std.math.floatTrueMin(T) * upper;
+    const scale = floatTrueMin(T) * upper;
     const hypfn = if (emulateFma(T)) hypotUnfused else hypotFused;
     var major: T = x;
     var minor: T = y;
