@@ -18,10 +18,6 @@ const is_mips = native_arch.isMIPS();
 const is_ppc = native_arch.isPowerPC();
 const is_riscv = native_arch.isRISCV();
 const is_sparc = native_arch.isSPARC();
-const iovec = std.posix.iovec;
-const iovec_const = std.posix.iovec_const;
-const winsize = std.posix.winsize;
-const ACCMODE = std.posix.ACCMODE;
 
 test {
     if (builtin.os.tag == .linux) {
@@ -105,6 +101,10 @@ pub const nlink_t = u32;
 pub const off_t = i64;
 pub const time_t = arch_bits.time_t;
 pub const user_desc = arch_bits.user_desc;
+pub const iovec = std.posix.iovec;
+pub const iovec_const = std.posix.iovec_const;
+pub const winsize = std.posix.winsize;
+pub const ACCMODE = std.posix.ACCMODE;
 
 pub const tls = @import("linux/tls.zig");
 pub const BPF = @import("linux/bpf.zig");
