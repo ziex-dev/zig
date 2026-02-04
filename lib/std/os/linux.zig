@@ -2688,19 +2688,19 @@ pub fn timerfd_settime(fd: fd_t, flags: TFD.TIMER, new_value: *const itimerspec,
     );
 }
 
-// Flags for the 'setitimer' system call
 pub const ITIMER = enum(i32) {
     REAL = 0,
     VIRTUAL = 1,
     PROF = 2,
+    _,
 };
 
-pub fn getitimer(which: i32, curr_value: *itimerspec) usize {
-    return syscall2(.getitimer, @as(usize, @bitCast(@as(isize, which))), @intFromPtr(curr_value));
+pub fn getitimer(which: ITIMER, curr_value: *itimerspec) usize {
+    return syscall2(.getitimer, @as(usize, @bitCast(@as(isize, @intFromEnum(which)))), @intFromPtr(curr_value));
 }
 
-pub fn setitimer(which: i32, new_value: *const itimerspec, old_value: ?*itimerspec) usize {
-    return syscall3(.setitimer, @as(usize, @bitCast(@as(isize, which))), @intFromPtr(new_value), @intFromPtr(old_value));
+pub fn setitimer(which: ITIMER, new_value: *const itimerspec, old_value: ?*itimerspec) usize {
+    return syscall3(.setitimer, @as(usize, @bitCast(@as(isize, @intFromEnum(which)))), @intFromPtr(new_value), @intFromPtr(old_value));
 }
 
 pub fn unshare(flags: usize) usize {
