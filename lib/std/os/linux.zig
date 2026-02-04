@@ -3076,12 +3076,41 @@ pub fn sysinfo(info: *Sysinfo) usize {
 const errno_definition = @import("linux/errno.zig");
 
 pub const E = errno_definition.TargetErrno;
+pub const ErrnoError = errno_definition.Error;
 
 /// Get the errno from a syscall return value. SUCCESS means no error.
 pub fn errno(r: usize) E {
     const signed_r: isize = @bitCast(r);
     const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
     return @enumFromInt(int);
+}
+
+/// Returns an error if the syscall returned an error code, or the original value if it succeeded.
+pub inline fn errorFromSyscall(syscall_return_value: usize) ErrnoError!usize {
+    const signed: isize = @bitCast(syscall_return_value);
+    if (signed < -errno_definition.NUM_ERRNO_CODES or signed >= 0) {
+        return syscall_return_value;
+    }
+    switch (errno_definition.targetErrnoMap[@intCast(-signed)]) {
+        error.ESUCCESS => unreachable,
+        error.UnknownErrno => |e1| {
+            @branchHint(.cold);
+            // If you're here then std is missing an errno value.
+            if (builtin.mode == .Debug and !builtin.is_test) {
+                std.debug.print("unknown errno value: {d}\n", .{signed});
+            }
+            return e1;
+        },
+        else => |e1| return e1,
+    }
+}
+
+test {
+    try std.testing.expectEqual(errorFromSyscall(0), 0);
+    try std.testing.expectEqual(errorFromSyscall(1), 1);
+    try std.testing.expectError(error.EPERM, errorFromSyscall(@as(usize, @bitCast(@as(isize, -1)))));
+    try std.testing.expectError(error.ENOENT, errorFromSyscall(@as(usize, @bitCast(@as(isize, -2)))));
+    try std.testing.expectError(error.UnknownErrno, errorFromSyscall(@as(usize, @bitCast(@as(isize, -(errno_definition.NUM_ERRNO_CODES - 1))))));
 }
 
 /// Process id.
