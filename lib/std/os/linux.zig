@@ -2785,6 +2785,7 @@ pub fn bpf(cmd: BPF.Cmd, attr: *BPF.Attr, size: u32) usize {
 }
 
 pub fn sync() void {
+    // "Always successful"
     _ = syscall0(.sync);
 }
 
