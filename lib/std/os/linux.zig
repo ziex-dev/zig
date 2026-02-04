@@ -5103,16 +5103,17 @@ pub const MSG = struct {
     pub const CMSG_CLOEXEC = 0x40000000;
 };
 
-pub const DT = struct {
-    pub const UNKNOWN = 0;
-    pub const FIFO = 1;
-    pub const CHR = 2;
-    pub const DIR = 4;
-    pub const BLK = 6;
-    pub const REG = 8;
-    pub const LNK = 10;
-    pub const SOCK = 12;
-    pub const WHT = 14;
+pub const DT = enum(u8) {
+    UNKNOWN = 0,
+    FIFO = 1,
+    CHR = 2,
+    DIR = 4,
+    BLK = 6,
+    REG = 8,
+    LNK = 10,
+    SOCK = 12,
+    WHT = 14,
+    _,
 };
 
 pub const T = if (is_mips) struct {
@@ -6315,10 +6316,10 @@ pub const inotify_event = extern struct {
 };
 
 pub const dirent64 = extern struct {
-    ino: u64,
-    off: u64,
+    ino: ino_t,
+    off: u64, // "Not an offset".
     reclen: u16,
-    type: u8,
+    type: DT,
     name: [0]u8,
 };
 
@@ -7285,7 +7286,7 @@ pub const Statx = extern struct {
     mode: u16,
     __spare0: u16,
     /// Inode number.
-    ino: u64,
+    ino: ino_t,
     /// Total size in bytes.
     size: u64,
     /// Number of 512B blocks allocated.
