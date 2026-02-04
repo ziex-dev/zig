@@ -731,7 +731,7 @@ pub fn futex(uaddr: *const anyopaque, futex_op: FUTEX_OP, val: u32, val2timeout:
 }
 
 /// Three-argument variation of the v1 futex call.  Only suitable for a
-/// futex_op that ignores the remaining arguments (e.g., FUTUX_OP.WAKE).
+/// futex_op that ignores the remaining arguments (e.g., FUTEX_OP.WAKE).
 pub fn futex_3arg(uaddr: *const anyopaque, futex_op: FUTEX_OP, val: u32) usize {
     return syscall3(
         if (@hasField(SYS, "futex") and native_arch != .hexagon) .futex else .futex_time64,
@@ -894,7 +894,7 @@ pub fn inotify_add_watch(fd: i32, pathname: [*:0]const u8, mask: u32) usize {
     return syscall3(.inotify_add_watch, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(pathname), mask);
 }
 
-pub fn inotify_rm_watch(fd: i32, wd: i32) usize {
+pub fn inotify_rm_watch(fd: i32, wd: wd_t) usize {
     return syscall2(.inotify_rm_watch, @as(usize, @bitCast(@as(isize, fd))), @as(usize, @bitCast(@as(isize, wd))));
 }
 
@@ -1848,7 +1848,63 @@ pub const F = struct {
     pub const RDLCK = if (is_sparc) 1 else 0;
     pub const WRLCK = if (is_sparc) 2 else 1;
     pub const UNLCK = if (is_sparc) 3 else 2;
+
+    pub const SETLEASE = 1024 + 0;
+    pub const GETLEASE = 1024 + 1;
+
+    /// Request notifications on a directory.
+    pub const NOTIFY = 1024 + 2;
+
+    /// Cancel a blocking posix lock.
+    pub const CANCELLK = 1024 + 5;
+
+    /// Create a file descriptor with FD_CLOEXEC set.
+    pub const DUPFD_CLOEXEC = 1024 + 6;
+
+    /// Set pipe page size array
+    pub const SETPIPE_SZ = 1024 + 7;
+    /// Get pipe page size array
+    pub const GETPIPE_SZ = 1024 + 8;
+
+    /// Add seals to a file.
+    pub const ADD_SEALS = 1024 + 9;
+    /// Get seals on a file.
+    pub const GET_SEALS = 1024 + 10;
+
+    pub const SEAL = struct {
+        /// Prevent further seals from being set.
+        pub const SEAL = 0x0001;
+        /// Prevent file from shrinking.
+        pub const SHRINK = 0x0002;
+        /// Prevent file from growing.
+        pub const GROW = 0x0004;
+        /// Prevent writes.
+        pub const WRITE = 0x0008;
+        /// Prevent future writes while mapped.
+        pub const FUTURE_WRITE = 0x0010;
+    };
+
+    /// Set/Get write life time hints.
+    /// * {GET,SET}_RW_HINT operate on the underlying inode.
+    /// * {GET,SET}_FILE_RW_HINT operate only on the specific file.
+    pub const GET_RW_HINT = 1024 + 11;
+    pub const SET_RW_HINT = 1024 + 12;
+    pub const GET_FILE_RW_HINT = 1024 + 13;
+    pub const SET_FILE_RW_HINT = 1024 + 14;
 };
+
+/// Hint values for F.GET_RW_HINT and F.SET_RW_HINT.
+pub const RW_HINT = enum(u32) {
+    WRITE_LIFE_NOT_SET = 0,
+    WRITE_LIFE_NONE = 1,
+    WRITE_LIFE_SHORT = 2,
+    WRITE_LIFE_MEDIUM = 3,
+    WRITE_LIFE_LONG = 4,
+    WRITE_LIFE_EXTREME = 5,
+    _,
+};
+
+pub const RWH = RW_HINT;
 
 pub const F_OWNER = enum(i32) {
     TID = 0,
@@ -3619,8 +3675,12 @@ pub const E = switch (native_arch) {
     },
 };
 
+/// Process id.
 pub const pid_t = i32;
+/// File descriptor.
 pub const fd_t = i32;
+/// Watch descriptor.
+pub const wd_t = i32;
 pub const socket_t = i32;
 pub const uid_t = u32;
 pub const gid_t = u32;
