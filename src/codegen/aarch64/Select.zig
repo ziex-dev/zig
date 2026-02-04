@@ -356,8 +356,8 @@ pub fn analyze(isel: *Select, air_body: []const Air.Inst.Index) !void {
         inline .block, .dbg_inline_block => |air_tag| {
             const air_body_block = switch (air_tag) {
                 else => comptime unreachable,
-                inline .block => isel.air.unwrapBlock(air_inst_index),
-                inline .dbg_inline_block => isel.air.unwrapDbgBlock(air_inst_index),
+                .block => isel.air.unwrapBlock(air_inst_index),
+                .dbg_inline_block => isel.air.unwrapDbgBlock(air_inst_index),
             };
 
             const result_ty = air_body_block.ty.toIntern();
@@ -2701,7 +2701,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             };
             defer as.operands.deinit(gpa);
 
-            var it = unwrapped_asm.iterateInputs();
+            var it = unwrapped_asm.iterateOutputs();
             while (it.next()) |output| {
                 const constraint = output.constraint;
                 const name = output.name;

@@ -1182,26 +1182,26 @@ fn analyzeInstCondBr(
 ) !void {
     const gpa = a.gpa;
 
-    const unwrapCond = switch (inst_type) {
+    const unwrapped_cond = switch (inst_type) {
         .cond_br => a.air.unwrapCondBr(inst),
         .@"try" => a.air.unwrapTry(inst),
         .try_ptr => a.air.unwrapTryPtr(inst),
     };
 
     const condition = switch (inst_type) {
-        .cond_br => unwrapCond.condition,
-        .@"try" => unwrapCond.error_union,
-        .try_ptr => unwrapCond.error_union_ptr,
+        .cond_br => unwrapped_cond.condition,
+        .@"try" => unwrapped_cond.error_union,
+        .try_ptr => unwrapped_cond.error_union_ptr,
     };
 
     const then_body = switch (inst_type) {
-        .cond_br => unwrapCond.then_body,
+        .cond_br => unwrapped_cond.then_body,
         // The "then body" is just the remainder of this block
         else => &.{},
     };
 
     const else_body = switch (inst_type) {
-        .cond_br, .@"try", .try_ptr => unwrapCond.else_body,
+        .cond_br, .@"try", .try_ptr => unwrapped_cond.else_body,
     };
 
     switch (pass) {

@@ -397,8 +397,8 @@ const Writer = struct {
         try w.writeType(s, ty_pl.ty.toType());
 
         const body = switch (tag) {
-            inline .block => w.air.unwrapBlock(inst).body,
-            inline .dbg_inline_block => body: {
+            .block => w.air.unwrapBlock(inst).body,
+            .dbg_inline_block => body: {
                 const dbg_block = w.air.unwrapDbgBlock(inst);
                 try s.writeAll(", ");
                 try w.writeInstRef(s, Air.internedToRef(dbg_block.func), false);
