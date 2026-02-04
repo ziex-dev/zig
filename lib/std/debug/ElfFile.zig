@@ -283,20 +283,30 @@ pub fn searchSymtab(ef: *ElfFile, gpa: Allocator, vaddr: u64) error{
                     return ctx.target >= sym_end;
                 }
             };
-            const sym_index_index = std.sort.partitionPoint(usize, search_table, @as(SearchContext, .{
+            var sym_index_index = std.sort.partitionPoint(usize, search_table, @as(SearchContext, .{
                 .swap_endian = swap_endian,
                 .target = vaddr,
                 .symbols = symbols,
             }), SearchContext.predicate);
-            if (sym_index_index == search_table.len) return .unknown;
-            var sym = symbols[search_table[sym_index_index]];
-            if (swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
-            if (vaddr < sym.st_value or vaddr >= sym.st_value + sym.st_size) return .unknown;
-            return .{
-                .name = std.mem.sliceTo(strtab[sym.st_name..], 0),
-                .compile_unit_name = null,
-                .source_location = null,
-            };
+            // Symbol may overlap so we need to continue searching
+            //         $d st_value  $d sym_end
+            //            v         v
+            //  |.........|XXXXXXXXX|......| $d symbol <- first search_table[sym_index_index]
+            //  |..|XXXXXXXXXXXXXXXXXXX|...| $a symbol <- desire search_table[sym_index_index+1]
+            //     ^   ^               ^
+            //     |   vaddr           |
+            //    $a st_value        $a sym_end
+            while (sym_index_index < search_table.len) : (sym_index_index += 1) {
+                var sym = symbols[search_table[sym_index_index]];
+                if (swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
+                if (vaddr < sym.st_value or vaddr >= sym.st_value + sym.st_size) continue;
+                return .{
+                    .name = std.mem.sliceTo(strtab[sym.st_name..], 0),
+                    .compile_unit_name = null,
+                    .source_location = null,
+                };
+            }
+            return .unknown;
         },
     }
 }
