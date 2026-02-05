@@ -266,16 +266,19 @@ pub fn init(options: StepOptions) Step {
 /// here.
 pub fn make(s: *Step, options: MakeOptions) error{ MakeFailed, MakeSkipped }!void {
     const arena = s.owner.allocator;
+    const graph = s.owner.graph;
+    const io = graph.io;
 
-    var timer: ?std.time.Timer = t: {
-        if (!s.owner.graph.time_report) break :t null;
+    var start_ts: ?Io.Timestamp = t: {
+        if (!graph.time_report) break :t null;
         if (s.id == .compile) break :t null;
         if (s.id == .run and s.cast(Run).?.stdio == .zig_test) break :t null;
-        break :t std.time.Timer.start() catch @panic("--time-report not supported on this host");
+        break :t Io.Clock.awake.now(io);
     };
     const make_result = s.makeFn(s, options);
-    if (timer) |*t| {
-        options.web_server.?.updateTimeReportGeneric(s, t.read());
+    if (start_ts) |*ts| {
+        const duration = ts.untilNow(io, .awake);
+        options.web_server.?.updateTimeReportGeneric(s, duration);
     }
 
     make_result catch |err| switch (err) {
@@ -383,9 +386,13 @@ pub const ZigProcess = struct {
     child: std.process.Child,
     multi_reader_buffer: Io.File.MultiReader.Buffer(2),
     multi_reader: Io.File.MultiReader,
-    progress_ipc_fd: if (std.Progress.have_ipc) ?std.posix.fd_t else void,
+    progress_ipc_index: ?if (std.Progress.have_ipc) std.Progress.Ipc.Index else noreturn,
 
     pub const StreamEnum = enum { stdout, stderr };
+
+    pub fn saveState(zp: *ZigProcess, prog_node: std.Progress.Node) void {
+        zp.progress_ipc_index = if (std.Progress.have_ipc) prog_node.takeIpcIndex() else null;
+    }
 
     pub fn deinit(zp: *ZigProcess, io: Io) void {
         zp.child.kill(io);
@@ -414,7 +421,14 @@ pub fn evalZigProcess(
 
     if (s.getZigProcess()) |zp| update: {
         assert(watch);
-        if (std.Progress.have_ipc) if (zp.progress_ipc_fd) |fd| prog_node.setIpcFd(fd);
+        if (zp.progress_ipc_index) |ipc_index| prog_node.setIpcIndex(ipc_index);
+        zp.progress_ipc_index = null;
+        var exited = false;
+        defer if (exited) {
+            s.cast(Compile).?.zig_process = null;
+            zp.deinit(io);
+            gpa.destroy(zp);
+        } else zp.saveState(prog_node);
         const result = zigProcessUpdate(s, zp, watch, web_server, gpa) catch |err| switch (err) {
             error.BrokenPipe, error.EndOfStream => |reason| {
                 std.log.info("{s} restart required: {t}", .{ argv[0], reason });
@@ -423,7 +437,7 @@ pub fn evalZigProcess(
                     return s.fail("unable to wait for {s}: {t}", .{ argv[0], e });
                 };
                 _ = term;
-                s.clearZigProcess(gpa);
+                exited = true;
                 break :update;
             },
             else => |e| return e,
@@ -439,7 +453,7 @@ pub fn evalZigProcess(
                 return s.fail("unable to wait for {s}: {t}", .{ argv[0], e });
             };
             s.result_peak_rss = zp.child.resource_usage_statistics.getMaxRss() orelse 0;
-            s.clearZigProcess(gpa);
+            exited = true;
             try handleChildProcessTerm(s, term);
             return error.MakeFailed;
         }
@@ -464,19 +478,16 @@ pub fn evalZigProcess(
         .progress_node = prog_node,
     }) catch |err| return s.fail("failed to spawn zig compiler {s}: {t}", .{ argv[0], err });
 
-    zp.* = .{
-        .child = zp.child,
-        .multi_reader_buffer = undefined,
-        .multi_reader = undefined,
-        .progress_ipc_fd = if (std.Progress.have_ipc) prog_node.getIpcFd() else {},
-    };
     zp.multi_reader.init(gpa, io, zp.multi_reader_buffer.toStreams(), &.{
         zp.child.stdout.?, zp.child.stderr.?,
     });
-    if (watch) s.setZigProcess(zp);
+    if (watch) s.cast(Compile).?.zig_process = zp;
     defer if (!watch) zp.deinit(io);
 
-    const result = try zigProcessUpdate(s, zp, watch, web_server, gpa);
+    const result = result: {
+        defer if (watch) zp.saveState(prog_node);
+        break :result try zigProcessUpdate(s, zp, watch, web_server, gpa);
+    };
 
     if (!watch) {
         // Send EOF to stdin.
@@ -534,7 +545,7 @@ fn zigProcessUpdate(s: *Step, zp: *ZigProcess, watch: bool, web_server: ?*Build.
     const arena = b.allocator;
     const io = b.graph.io;
 
-    var timer = try std.time.Timer.start();
+    const start_ts = Io.Clock.awake.now(io);
 
     try sendMessage(io, zp.child.stdin.?, .update);
     if (!watch) try sendMessage(io, zp.child.stdin.?, .exit);
@@ -637,7 +648,7 @@ fn zigProcessUpdate(s: *Step, zp: *ZigProcess, watch: bool, web_server: ?*Build.
                     .compile = s.cast(Step.Compile).?,
                     .use_llvm = tr.flags.use_llvm,
                     .stats = tr.stats,
-                    .ns_total = timer.read(),
+                    .ns_total = @intCast(start_ts.untilNow(io, .awake).toNanoseconds()),
                     .llvm_pass_timings_len = tr.llvm_pass_timings_len,
                     .files_len = tr.files_len,
                     .decls_len = tr.decls_len,
@@ -648,7 +659,7 @@ fn zigProcessUpdate(s: *Step, zp: *ZigProcess, watch: bool, web_server: ?*Build.
         }
     }
 
-    s.result_duration_ns = timer.read();
+    s.result_duration_ns = @intCast(start_ts.untilNow(io, .awake).toNanoseconds());
 
     const stderr_contents = zp.multi_reader.reader(1).buffered();
     if (stderr_contents.len > 0) {
@@ -665,26 +676,6 @@ pub fn getZigProcess(s: *Step) ?*ZigProcess {
         .compile => s.cast(Compile).?.zig_process,
         else => null,
     };
-}
-
-fn setZigProcess(s: *Step, zp: *ZigProcess) void {
-    switch (s.id) {
-        .compile => s.cast(Compile).?.zig_process = zp,
-        else => unreachable,
-    }
-}
-
-fn clearZigProcess(s: *Step, gpa: Allocator) void {
-    switch (s.id) {
-        .compile => {
-            const compile = s.cast(Compile).?;
-            if (compile.zig_process) |zp| {
-                gpa.destroy(zp);
-                compile.zig_process = null;
-            }
-        },
-        else => unreachable,
-    }
 }
 
 fn sendMessage(io: Io, file: Io.File, tag: std.zig.Client.Message.Tag) !void {

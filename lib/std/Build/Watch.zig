@@ -358,7 +358,7 @@ const Os = switch (builtin.os.tag) {
                 var dir_handle: windows.HANDLE = undefined;
                 const root_fd = path.root_dir.handle.handle;
                 const sub_path = path.subPathOrDot();
-                const sub_path_w = try windows.sliceToPrefixedFileW(root_fd, sub_path);
+                const sub_path_w = try std.Io.Threaded.sliceToPrefixedFileW(root_fd, sub_path); // TODO eliminate this call
                 const path_len_bytes = std.math.cast(u16, sub_path_w.len * 2) orelse return error.NameTooLong;
 
                 var nt_name = windows.UNICODE_STRING{
@@ -366,15 +366,7 @@ const Os = switch (builtin.os.tag) {
                     .MaximumLength = @intCast(path_len_bytes),
                     .Buffer = @constCast(sub_path_w.span().ptr),
                 };
-                var attr = windows.OBJECT_ATTRIBUTES{
-                    .Length = @sizeOf(windows.OBJECT_ATTRIBUTES),
-                    .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(sub_path_w.span())) null else root_fd,
-                    .Attributes = .{},
-                    .ObjectName = &nt_name,
-                    .SecurityDescriptor = null,
-                    .SecurityQualityOfService = null,
-                };
-                var io: windows.IO_STATUS_BLOCK = undefined;
+                var iosb: windows.IO_STATUS_BLOCK = undefined;
 
                 switch (windows.ntdll.NtCreateFile(
                     &dir_handle,
@@ -385,14 +377,18 @@ const Os = switch (builtin.os.tag) {
                         .STANDARD = .{ .SYNCHRONIZE = true },
                         .GENERIC = .{ .READ = true },
                     },
-                    &attr,
-                    &io,
+                    &.{
+                        .RootDirectory = if (std.fs.path.isAbsoluteWindowsW(sub_path_w.span())) null else root_fd,
+                        .ObjectName = &nt_name,
+                    },
+                    &iosb,
                     null,
                     .{},
                     .VALID_FLAGS,
                     .OPEN,
                     .{
                         .DIRECTORY_FILE = true,
+                        .IO = .ASYNCHRONOUS,
                         .OPEN_FOR_BACKUP_INTENT = true,
                     },
                     null,
