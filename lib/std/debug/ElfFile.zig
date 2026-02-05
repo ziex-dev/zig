@@ -27,7 +27,8 @@ strtab: ?[]const u8,
 symtab: ?SymtabSection,
 
 /// Binary search table lazily populated by `searchSymtab`.
-symbol_search_table: ?[]usize,
+/// It host a sorted list of none overlaping symbol range.
+symbol_search_table: ?[]SymbolRange,
 
 /// The memory-mapped ELF file, which is referenced by `dwarf`. This field is here only so that
 /// this memory can be unmapped by `ElfFile.deinit`.
@@ -87,6 +88,67 @@ pub const DebugInfoSearchPaths = struct {
             .exe_dir = std.fs.path.dirname(exe_path) orelse ".",
         };
         @compileError("std.Options.elf_debug_info_search_paths must be provided");
+    }
+};
+
+const SymbolRange = struct {
+    start: u64,
+    stop: u64,
+    index: usize,
+    original_size: u64,
+
+    pub fn inRange(self: *const SymbolRange, val: u64) bool {
+        return self.start <= val and val < self.stop;
+    }
+
+    pub fn splitOverlap(self: *SymbolRange, new: *RangeInsertion) ?SymbolRange {
+        if (new.start >= self.stop or new.stop <= self.start or self.isEmpty()) {
+            // no symbol overlap we can ignore this
+            return null;
+        }
+
+        // Overlap from the right
+        if (self.inRange(new.start) and new.stop > self.stop) {
+            if (new.original_size > self.original_size) {
+                // this could shrink the new size to zero.
+                // The new will not be included in the search.
+                new.start = self.stop;
+            } else {
+                self.stop = new.start;
+            }
+            return null;
+        }
+
+        // Overlap from the left
+        if (new.start < self.start and self.inRange(new.stop)) {
+            if (new.original_size > self.original_size) {
+                // this could shrink the new size to zero.
+                // The new will not be included in the search.
+                new.stop = self.start;
+            } else {
+                self.start = new.stop;
+            }
+            return null;
+        }
+
+        // new in self
+        if (new.start >= self.start and new.stop <= self.stop) {
+            defer self.stop = new.start;
+            return .{
+                .start = new.stop,
+                .stop = self.stop,
+                .index = self.index,
+                .original_size = self.original_size,
+            };
+        }
+
+        // self strictly in new
+        new.fragment.appendAssumeCapacity(.{ self.start, self.stop });
+        return null;
+    }
+
+    pub fn isEmpty(self: *const SymbolRange) bool {
+        return self.start >= self.stop;
     }
 };
 
@@ -256,7 +318,6 @@ pub fn searchSymtab(ef: *ElfFile, gpa: Allocator, vaddr: u64) error{
     const strtab = ef.strtab orelse return error.NoStrtab;
 
     if (symtab.bytes.len % symtab.entry_size != 0) return error.BadSymtab;
-
     const swap_endian = ef.endian != @import("builtin").cpu.arch.endian();
 
     switch (ef.is_64) {
@@ -268,38 +329,33 @@ pub fn searchSymtab(ef: *ElfFile, gpa: Allocator, vaddr: u64) error{
                 ef.symbol_search_table = try buildSymbolSearchTable(gpa, ef.endian, Sym, symbols);
             }
             const search_table = ef.symbol_search_table.?;
+
             const SearchContext = struct {
-                swap_endian: bool,
                 target: u64,
-                symbols: []align(1) const Sym,
-                fn predicate(ctx: @This(), sym_index: usize) bool {
-                    // We need to return `true` for the first N items, then `false` for the rest --
-                    // the index we'll get out is the first `false` one. So, we'll return `true` iff
-                    // the target address is after the *end* of this symbol. This synchronizes with
-                    // the logic in `buildSymbolSearchTable` which sorts by *end* address.
-                    var sym = ctx.symbols[sym_index];
-                    if (ctx.swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
-                    const sym_end = sym.st_value + sym.st_size;
-                    return ctx.target >= sym_end;
+
+                pub fn compare(self: @This(), range: SymbolRange) std.math.Order {
+                    if (range.inRange(self.target)) {
+                        return .eq;
+                    }
+                    if (self.target < range.start) {
+                        return .lt;
+                    }
+                    // self.target >= range.stop
+                    return .gt;
                 }
             };
-            var sym_index_index = std.sort.partitionPoint(usize, search_table, @as(SearchContext, .{
-                .swap_endian = swap_endian,
-                .target = vaddr,
-                .symbols = symbols,
-            }), SearchContext.predicate);
-            // Symbol may overlap so we need to continue searching
-            //         $d st_value  $d sym_end
-            //            v         v
-            //  |.........|XXXXXXXXX|......| $d symbol <- first search_table[sym_index_index]
-            //  |..|XXXXXXXXXXXXXXXXXXX|...| $a symbol <- desire search_table[sym_index_index+1]
-            //     ^   ^               ^
-            //     |   vaddr           |
-            //    $a st_value        $a sym_end
-            while (sym_index_index < search_table.len) : (sym_index_index += 1) {
-                var sym = symbols[search_table[sym_index_index]];
+
+            const range = std.sort.binarySearch(
+                SymbolRange,
+                search_table,
+                @as(SearchContext, .{ .target = vaddr }),
+                SearchContext.compare,
+            );
+
+            if (range) |search_index| {
+                const sym_range = search_table[search_index];
+                var sym = symbols[sym_range.index];
                 if (swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
-                if (vaddr < sym.st_value or vaddr >= sym.st_value + sym.st_size) continue;
                 return .{
                     .name = std.mem.sliceTo(strtab[sym.st_name..], 0),
                     .compile_unit_name = null,
@@ -311,13 +367,27 @@ pub fn searchSymtab(ef: *ElfFile, gpa: Allocator, vaddr: u64) error{
     }
 }
 
+const RangeInsertion = struct {
+    start: u64,
+    stop: u64,
+    index: usize,
+    original_size: u64,
+    // List of range that have to be substract
+    fragment: std.ArrayList(struct { u64, u64 }),
+};
+
 fn buildSymbolSearchTable(gpa: Allocator, endian: Endian, comptime Sym: type, symbols: []align(1) const Sym) error{
     OutOfMemory,
     BadSymtab,
-}![]usize {
-    var result: std.ArrayList(usize) = .empty;
+}![]SymbolRange {
+    var result: std.ArrayList(SymbolRange) = .empty;
     defer result.deinit(gpa);
 
+    const SortRange = struct {
+        pub fn sortRange(_: @This(), lhs: struct { u64, u64 }, rhs: struct { u64, u64 }) bool {
+            return lhs[0] < rhs[0];
+        }
+    };
     const swap_endian = endian != @import("builtin").cpu.arch.endian();
 
     for (symbols, 0..) |sym_orig, sym_index| {
@@ -325,29 +395,59 @@ fn buildSymbolSearchTable(gpa: Allocator, endian: Endian, comptime Sym: type, sy
         if (swap_endian) std.mem.byteSwapAllFields(Sym, &sym);
         if (sym.st_name == 0) continue;
         if (sym.st_shndx == elf.SHN_UNDEF) continue;
-        try result.append(gpa, sym_index);
+        if (sym.st_size == 0) continue;
+        var new_range: RangeInsertion = .{
+            .start = sym.st_value,
+            .stop = sym.st_value + sym.st_size,
+            .index = sym_index,
+            .original_size = sym.st_size,
+            .fragment = .empty,
+        };
+        defer new_range.fragment.deinit(gpa);
+
+        for (result.items) |*range| {
+            try new_range.fragment.ensureTotalCapacity(gpa, 1);
+            const split_range = range.splitOverlap(&new_range);
+
+            if (split_range) |split| {
+                if (!split.isEmpty()) {
+                    try result.append(gpa, split);
+                }
+                break;
+            }
+        }
+
+        std.mem.sort(struct { u64, u64 }, new_range.fragment.items, @as(SortRange, .{}), SortRange.sortRange);
+
+        var start = new_range.start;
+        for (new_range.fragment.items) |hole| {
+            if (hole[0] != start) {
+                try result.append(gpa, .{
+                    .start = start,
+                    .stop = hole[0],
+                    .index = new_range.index,
+                    .original_size = new_range.original_size,
+                });
+            }
+            start = hole[1];
+        }
+        if (start != new_range.stop) {
+            try result.append(gpa, .{
+                .start = start,
+                .stop = new_range.stop,
+                .index = new_range.index,
+                .original_size = new_range.original_size,
+            });
+        }
     }
 
     const SortContext = struct {
-        swap_endian: bool,
-        symbols: []align(1) const Sym,
-        fn lessThan(ctx: @This(), lhs_sym_index: usize, rhs_sym_index: usize) bool {
-            // We sort by *end* address, not start address. This matches up with logic in `searchSymtab`.
-            var lhs_sym = ctx.symbols[lhs_sym_index];
-            var rhs_sym = ctx.symbols[rhs_sym_index];
-            if (ctx.swap_endian) {
-                std.mem.byteSwapAllFields(Sym, &lhs_sym);
-                std.mem.byteSwapAllFields(Sym, &rhs_sym);
-            }
-            const lhs_val = lhs_sym.st_value + lhs_sym.st_size;
-            const rhs_val = rhs_sym.st_value + rhs_sym.st_size;
-            return lhs_val < rhs_val;
+        fn lessThan(_: @This(), lhs_sym: SymbolRange, rhs_sym: SymbolRange) bool {
+            return lhs_sym.start < rhs_sym.start;
         }
     };
-    std.mem.sort(usize, result.items, @as(SortContext, .{
-        .swap_endian = swap_endian,
-        .symbols = symbols,
-    }), SortContext.lessThan);
+
+    std.mem.sort(SymbolRange, result.items, @as(SortContext, .{}), SortContext.lessThan);
 
     return result.toOwnedSlice(gpa);
 }
@@ -557,4 +657,77 @@ fn loadInner(
         .sections = sections,
         .mapped_mem = mapped_mem,
     };
+}
+
+test "search symbol" {
+    const alloc = std.testing.allocator;
+    var symtable: std.ArrayList(elf.Elf64_Sym) = .empty;
+    defer symtable.deinit(alloc);
+
+    try symtable.append(alloc, .{
+        .st_name = 0,
+        .st_info = 0,
+        .st_other = 0,
+        .st_shndx = 1,
+        .st_value = 0,
+        .st_size = 100,
+    });
+    try symtable.append(alloc, .{
+        .st_name = 2,
+        .st_info = 0,
+        .st_other = 0,
+        .st_shndx = 1,
+        .st_value = 3,
+        .st_size = 4,
+    });
+    try symtable.append(alloc, .{
+        .st_name = 4,
+        .st_info = 0,
+        .st_other = 0,
+        .st_shndx = 1,
+        .st_value = 3,
+        .st_size = 3,
+    });
+    try symtable.append(alloc, .{
+        .st_name = 6,
+        .st_info = 0,
+        .st_other = 0,
+        .st_shndx = 1,
+        .st_value = 4,
+        .st_size = 3,
+    });
+
+    try symtable.append(alloc, .{
+        .st_name = 8,
+        .st_info = 0,
+        .st_other = 0,
+        .st_shndx = 1,
+        .st_value = 2,
+        .st_size = 12,
+    });
+
+    var elfFile = ElfFile{
+        .is_64 = true,
+        .arena = .{},
+        .debug_frame = null,
+        .dwarf = null,
+        .eh_frame = null,
+        .endian = @import("builtin").cpu.arch.endian(),
+        .mapped_debug_file = null,
+        .mapped_file = &.{},
+        .symbol_search_table = null,
+        .symtab = .{
+            .bytes = std.mem.sliceAsBytes(symtable.items),
+            .entry_size = @sizeOf(elf.Elf64_Sym),
+        },
+        .strtab = &.{ 'a', 0, 'b', 0, 'c', 0, 'd', 0, 'e', 0 },
+    };
+    defer alloc.free(elfFile.symbol_search_table.?);
+
+    var sym = try elfFile.searchSymtab(alloc, 3);
+    try std.testing.expectEqualStrings("c", sym.name.?);
+    sym = try elfFile.searchSymtab(alloc, 9);
+    try std.testing.expectEqualStrings("e", sym.name.?);
+    sym = try elfFile.searchSymtab(alloc, 4);
+    try std.testing.expectEqualStrings("d", sym.name.?);
 }
