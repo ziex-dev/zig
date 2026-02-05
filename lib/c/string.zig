@@ -44,6 +44,8 @@ comptime {
         @export(&memrchr, .{ .name = "memrchr", .linkage = common.linkage, .visibility = common.visibility });
         @export(&mempcpy, .{ .name = "mempcpy", .linkage = common.linkage, .visibility = common.visibility });
 
+        @export(&swab, .{ .name = "swab", .linkage = common.linkage, .visibility = common.visibility });
+
         @export(&__strcoll_l, .{ .name = "__strcoll_l", .linkage = common.linkage, .visibility = common.visibility });
         @export(&__strxfrm_l, .{ .name = "__strxfrm_l", .linkage = common.linkage, .visibility = common.visibility });
         @export(&__strcoll_l, .{ .name = "strcoll_l", .linkage = common.linkage, .visibility = common.visibility });
@@ -291,9 +293,9 @@ fn mempcpy(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) c
     return dst_bytes + len;
 }
 
-fn swab(noalias src_ptr: [*]const u8, noalias dest_ptr: [*]u8, n: isize) callconv(.c) void {
-    var src = src_ptr;
-    var dest = dest_ptr;
+fn swab(noalias src_ptr: *const anyopaque, noalias dest_ptr: *anyopaque, n: isize) callconv(.c) void {
+    var src: [*]const u8 = @ptrCast(src_ptr);
+    var dest: [*]u8 = @ptrCast(dest_ptr);
     var i = n;
 
     while (i > 1) : (i -= 2) {
@@ -312,9 +314,27 @@ test strncmp {
 }
 
 test swab {
-    const a = "ab";
-    var b: [2]u8 = undefined;
+    var a: [4]u8 = undefined;
+    @memset(a[0..], '\x00');
+    swab("abcd", &a, 4);
+    try std.testing.expectEqualSlices(u8, "badc", &a);
 
-    swab(a, &b, 2);
-    try std.testing.expectEqualSlices(u8, "ba", &b);
+    // Partial copy
+    @memset(a[0..], '\x00');
+    swab("abcd", &a, 2);
+    try std.testing.expectEqualSlices(u8, "ba\x00\x00", &a);
+
+    // n < 1
+    @memset(a[0..], '\x00');
+    swab("abcd", &a, 0);
+    try std.testing.expectEqualSlices(u8, "\x00" ** 4, &a);
+    swab("abcd", &a, -1);
+    try std.testing.expectEqualSlices(u8, "\x00" ** 4, &a);
+
+    // Odd n
+    @memset(a[0..], '\x00');
+    swab("abcd", &a, 1);
+    try std.testing.expectEqualSlices(u8, "\x00" ** 4, &a);
+    swab("abcd", &a, 3);
+    try std.testing.expectEqualSlices(u8, "ba\x00\x00", &a);
 }
