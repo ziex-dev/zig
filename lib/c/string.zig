@@ -291,9 +291,30 @@ fn mempcpy(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) c
     return dst_bytes + len;
 }
 
+fn swab(noalias src_ptr: [*]const u8, noalias dest_ptr: [*]u8, n: isize) callconv(.c) void {
+    var src = src_ptr;
+    var dest = dest_ptr;
+    var i = n;
+
+    while (i > 1) : (i -= 2) {
+        dest[0] = src[1];
+        dest[1] = src[0];
+        dest += 2;
+        src += 2;
+    }
+}
+
 test strncmp {
     try std.testing.expect(strncmp(@ptrCast("a"), @ptrCast("b"), 1) < 0);
     try std.testing.expect(strncmp(@ptrCast("a"), @ptrCast("c"), 1) < 0);
     try std.testing.expect(strncmp(@ptrCast("b"), @ptrCast("a"), 1) > 0);
     try std.testing.expect(strncmp(@ptrCast("\xff"), @ptrCast("\x02"), 1) > 0);
+}
+
+test swab {
+    const a = "ab";
+    var b: [2]u8 = undefined;
+
+    swab(a, &b, 2);
+    try std.testing.expectEqualSlices(u8, "ba", &b);
 }
