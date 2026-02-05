@@ -5,6 +5,7 @@ const Case = struct {
     src_path: []const u8,
     set_env_vars: bool = false,
     make_tmp_dir: bool = false,
+    child_path: ?[]const u8 = null,
 };
 
 const cases = [_]Case{
@@ -22,6 +23,15 @@ const cases = [_]Case{
     .{
         .src_path = "relpaths.zig",
         .make_tmp_dir = true,
+    },
+    .{
+        .src_path = "signals.zig",
+    },
+    // This is currently not supported by the new Io interface. Commented until PR discussions.
+    //.{ .src_path = "signals_with_init.zig" },
+    .{
+        .src_path = "sigpipe.zig",
+        .child_path = "breakpipe.zig",
     },
 };
 
@@ -72,6 +82,25 @@ fn run_exe(b: *std.Build, optimize: std.builtin.OptimizeMode, case: *const Case,
     });
 
     const run_cmd = b.addRunArtifact(exe);
+
+    if (case.child_path != null) {
+        const child_name = b.fmt("test-posix-{s}{s}{s}", .{
+            std.fs.path.stem(case.child_path.?),
+            if (link_libc) "-libc" else "",
+            if (link_libc and target.result.isGnuLibC()) "-gnu" else if (link_libc and target.result.isMuslLibC()) "-musl" else "",
+        });
+
+        const child = b.addExecutable(.{
+            .name = child_name,
+            .root_module = b.createModule(.{
+                .target = b.resolveTargetQuery(.{}),
+                .root_source_file = b.path(case.child_path.?),
+            }),
+        });
+
+        run_cmd.addArtifactArg(child);
+    }
+
     if (case.make_tmp_dir) {
         run_cmd.addDirectoryArg(b.tmpPath());
     }

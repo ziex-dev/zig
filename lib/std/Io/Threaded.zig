@@ -1619,6 +1619,12 @@ pub fn init(
             .flags = 0,
         };
         if (have_sig_io) posix.sigaction(.IO, &act, &t.old_sig_io);
+        // NOTE: Comment only kept for PR discussions.
+        //
+        // This is where we are not allowing .PIPE to be inherited from
+        // its parent process.  This could be fine and working as intended
+        // but at least according to POSIX, if we are using
+        // std.Process.Init this is currently unavoidable.
         if (have_sig_pipe) posix.sigaction(.PIPE, &act, &t.old_sig_pipe);
         t.have_signal_handler = true;
     }
