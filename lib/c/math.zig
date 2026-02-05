@@ -39,6 +39,7 @@ comptime {
         @export(&atanf, .{ .name = "atanf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&atan, .{ .name = "atan", .linkage = common.linkage, .visibility = common.visibility });
         @export(&atanl, .{ .name = "atanl", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&atan2, .{ .name = "atan2", .linkage = common.linkage, .visibility = common.visibility });
         @export(&cbrt, .{ .name = "cbrt", .linkage = common.linkage, .visibility = common.visibility });
         @export(&cbrtf, .{ .name = "cbrtf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&hypot, .{ .name = "hypot", .linkage = common.linkage, .visibility = common.visibility });
@@ -73,6 +74,10 @@ fn atanl(x: c_longdouble) callconv(.c) c_longdouble {
         128 => math.atan(@as(f128, @floatCast(x))),
         else => unreachable,
     };
+}
+
+fn atan2(y: f64, x: f64) callconv(.c) f64 {
+    return math.atan2(y, x);
 }
 
 fn isnan(x: f64) callconv(.c) c_int {
