@@ -830,7 +830,7 @@ fn verifyEd25519(
     if (pub_key_algo != .curveEd25519) return error.CertificateSignatureAlgorithmMismatch;
     const Ed25519 = crypto.sign.Ed25519;
     if (encoded_sig.len != Ed25519.Signature.encoded_length) return error.CertificateSignatureInvalid;
-    const sig = Ed25519.Signature.fromBytes(encoded_sig[0..Ed25519.Signature.encoded_length].*);
+    const sig = Ed25519.Signature.fromBytes(encoded_sig[0..Ed25519.Signature.encoded_length].*) catch return error.CertificateSignatureInvalid;
     if (encoded_pub_key.len != Ed25519.PublicKey.encoded_length) return error.CertificateSignatureInvalid;
     const pub_key = Ed25519.PublicKey.fromBytes(encoded_pub_key[0..Ed25519.PublicKey.encoded_length].*) catch |err| switch (err) {
         error.NonCanonical => return error.CertificateSignatureInvalid,

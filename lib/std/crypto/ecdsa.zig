@@ -123,7 +123,7 @@ pub fn Ecdsa(comptime Curve: type, comptime Hash: type) type {
 
             /// Create a signature from a raw encoding of (r, s).
             /// ECDSA always assumes big-endian.
-            pub fn fromBytes(bytes: [encoded_length]u8) Signature {
+            pub fn fromBytes(bytes: [encoded_length]u8) !Signature {
                 return Signature{
                     .r = bytes[0 .. encoded_length / 2].*,
                     .s = bytes[encoded_length / 2 ..].*,

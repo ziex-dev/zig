@@ -251,7 +251,7 @@ pub const Ed25519 = struct {
 
         /// Create a signature from a raw encoding of (r, s).
         /// EdDSA always assumes little-endian.
-        pub fn fromBytes(bytes: [encoded_length]u8) Signature {
+        pub fn fromBytes(bytes: [encoded_length]u8) !Signature {
             return Signature{
                 .r = bytes[0..Curve.encoded_length].*,
                 .s = bytes[Curve.encoded_length..].*,
@@ -725,7 +725,7 @@ test "test vectors" {
         };
         var sig_bytes: [64]u8 = undefined;
         _ = try fmt.hexToBytes(&sig_bytes, entry.sig_hex);
-        const sig = Ed25519.Signature.fromBytes(sig_bytes);
+        const sig = try Ed25519.Signature.fromBytes(sig_bytes);
         if (entry.expected) |error_type| {
             try std.testing.expectError(error_type, sig.verify(msg[0..msg_len], public_key));
         } else {
@@ -797,7 +797,7 @@ test "cofactored vs cofactorless verification" {
 
     var sig_bytes: [64]u8 = undefined;
     _ = try fmt.hexToBytes(&sig_bytes, sig_hex);
-    const sig = Ed25519.Signature.fromBytes(sig_bytes);
+    const sig = try Ed25519.Signature.fromBytes(sig_bytes);
 
     try sig.verify(&msg, pk);
 
