@@ -111,34 +111,26 @@ pub const Datetime = struct {
         if (d.minute >= 60) return error.InvalidMinute;
         if (d.second >= 60) return error.InvalidSecond;
 
-        // Calculate days from epoch (can be negative for dates before epoch)
-        var total_days: i96 = undefined;
-
         const total_years: i32 = @as(i32, d.year) - epoch_year;
 
-        var total_leap_years: i30 = undefined;
-        if (d.year >= epoch_year) {
-            total_leap_years = countLeapYearsBetween(epoch_year, d.year);
-        } else {
-            total_leap_years = -@as(i30, countLeapYearsBetween(d.year, epoch_year));
-        }
-        total_days = @as(i96, total_years) * 365 + @as(i96, total_leap_years);
+        const total_leap_years: i30 = if (d.year >= epoch_year)
+            countLeapYearsBetween(epoch_year, d.year)
+        else
+            -@as(i30, countLeapYearsBetween(d.year, epoch_year));
 
-        // Add days for complete months in the given year
-        var m: Month = .jan;
-        while (@intFromEnum(m) < @intFromEnum(d.month)) {
-            total_days += getDaysInMonth(d.year, m);
-            m = @enumFromInt(@intFromEnum(m) + 1);
-        }
-
-        // Add remaining days (subtract 1 because day is 1-indexed)
-        total_days += d.day - 1;
+        // Calculate days from epoch (can be negative for dates before epoch),
+        // starting with adding up the days of all previous years...
+        const total_days = @as(i96, total_years) * 365 + @as(i96, total_leap_years)
+            // ...add days for all months in the given year
+        + getDaysInMonthCumulative(d.year, d.month)
+            // ...subtract all days from current incomplete month
+        - getDaysInMonth(d.year, d.month)
+            // ...add back days that we have completed in current month
+            // (subtract 1 because day is 1-indexed)
+        + d.day - 1;
 
         // Convert to seconds and add time components
-        var total_secs: i96 = total_days * @as(i96, secs_per_day);
-        total_secs += @as(i96, d.hour) * 3600;
-        total_secs += @as(i96, d.minute) * 60;
-        total_secs += d.second;
+        const total_secs: i96 = total_days * @as(i96, secs_per_day) + @as(i96, d.hour) * 3600 + @as(i96, d.minute) * 60 + d.second;
 
         const nanoseconds: i96 = total_secs * std.time.ns_per_s;
 
@@ -188,6 +180,24 @@ pub fn getDaysInMonth(year: Datetime.Year, month: Datetime.Month) u5 {
         .nov => 30,
         .dec => 31,
     };
+}
+
+/// Get the cumulative number of days in the given month and year.
+pub fn getDaysInMonthCumulative(year: Datetime.Year, month: Datetime.Month) u9 {
+    return @as(u9, switch (month) {
+        .jan => 31,
+        .feb => 59,
+        .mar => 90,
+        .apr => 120,
+        .may => 151,
+        .jun => 181,
+        .jul => 212,
+        .aug => 243,
+        .sep => 273,
+        .oct => 304,
+        .nov => 334,
+        .dec => 365,
+    }) + @as(u9, if (isLeapYear(year) and month != .jan) 1 else 0);
 }
 
 pub const YearAndDay = struct {
