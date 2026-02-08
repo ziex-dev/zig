@@ -520,8 +520,6 @@ pub const Retry = struct {
                     io.sleep(delay, .awake) catch |sleep_err| switch (sleep_err) {
                         // If canceled, cotinue to retry
                         Io.Cancelable.Canceled => {},
-                        // TODO: Find a better solution than silently not retrying
-                        else => return err,
                     };
                     r.cur_retries += 1;
                     continue;
@@ -543,8 +541,9 @@ pub const Retry = struct {
     }
 
     fn calcJitter(_: *Retry, io: Io) i64 {
-        const maybe_now = Io.Clock.now(.real, io) catch null;
-        const seed = if (maybe_now) |now| blk: {
+        const clock = Io.Clock.real;
+        const seed = if (clock.isSupported(io)) blk: {
+            const now = clock.now(io);
             break :blk @as(u64, @bitCast(@as(i64, @truncate(now.nanoseconds))));
         } else blk: {
             var x: u64 = undefined;
@@ -1406,7 +1405,7 @@ fn parseRetryAfter(io: Io, header_iter: *std.http.HeaderIterator) !?u32 {
         .second = second,
     };
     const timestamp_retry_after = try datetime.asTimestamp();
-    const timestamp_cur = try Io.Clock.now(.real, io);
+    const timestamp_cur = Io.Clock.now(.real, io);
 
     // If Retry-After is before or equal to now, disregard it and calc delay as usual
     if (timestamp_retry_after.nanoseconds <= timestamp_cur.nanoseconds) {
