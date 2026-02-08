@@ -361,12 +361,13 @@ pub const HeaderInstallation = union(enum) {
     }
 };
 
-pub const TestRunner = struct {
-    path: LazyPath,
+pub const TestRunner = union(enum) {
+    module: *Module,
     /// Test runners can either be "simple", running tests when spawned and terminating when the
     /// tests are complete, or they can use `std.zig.Server` over stdio to interact more closely
     /// with the build system.
-    mode: enum { simple, server },
+    simple: LazyPath,
+    server: LazyPath,
 };
 
 pub fn create(owner: *std.Build, options: Options) *Compile {
@@ -453,11 +454,10 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
     }
 
     if (options.test_runner) |runner| {
-        compile.test_runner = .{
-            .path = runner.path.dupe(compile.step.owner),
-            .mode = runner.mode,
-        };
-        runner.path.addStepDependencies(&compile.step);
+        switch (runner) {
+            .server, .simple => |path| path.addStepDependencies(&compile.step),
+            else => {},
+        }
     }
 
     // Only the PE/COFF format has a Resource Table which is where the manifest
@@ -974,7 +974,12 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
     try addFlag(&zig_args, "lld", compile.use_lld);
     try addFlag(&zig_args, "new-linker", compile.use_new_linker);
 
-    if (compile.root_module.resolved_target.?.query.ofmt) |ofmt| {
+    const root_module = if (compile.test_runner) |test_runner| switch (test_runner) {
+        .module => test_runner.module,
+        else => compile.root_module,
+    } else compile.root_module;
+
+    if (root_module.resolved_target.?.query.ofmt) |ofmt| {
         try zig_args.append(try std.fmt.allocPrint(arena, "-ofmt={s}", .{@tagName(ofmt)}));
     }
 
@@ -1004,6 +1009,8 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         try zig_args.append("-ffuzz");
     }
 
+    var cli_named_modules = try CliNamedModules.init(arena, root_module);
+
     {
         // Stores system libraries that have already been seen for at least one
         // module, along with any arguments that need to be passed to the
@@ -1017,7 +1024,7 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         var prev_preferred_link_mode: std.builtin.LinkMode = .dynamic;
         // Track the number of positional arguments so that a nice error can be
         // emitted if there is nothing to link.
-        var total_linker_objects: usize = @intFromBool(compile.root_module.root_source_file != null);
+        var total_linker_objects: usize = @intFromBool(root_module.root_source_file != null);
 
         // Fully recursive iteration including dynamic libraries to detect
         // libc and libc++ linkage.
@@ -1027,8 +1034,6 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
                 if (mod.link_libcpp == true) compile.is_linking_libcpp = true;
             }
         }
-
-        var cli_named_modules = try CliNamedModules.init(arena, compile.root_module);
 
         // For this loop, don't chase dynamic libraries because their link
         // objects are already linked.
@@ -1343,8 +1348,19 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
     }
 
     if (compile.test_runner) |test_runner| {
-        try zig_args.append("--test-runner");
-        try zig_args.append(test_runner.path.getPath2(b, step));
+        switch (test_runner) {
+            .module => |module| {
+                const runner_module_index = cli_named_modules.modules.getIndex(module).?;
+                const runner_module_cli_name = cli_named_modules.names.keys()[runner_module_index];
+
+                try zig_args.append("--test-runner-module");
+                try zig_args.append(runner_module_cli_name);
+            },
+            .simple, .server => |lazy_path| {
+                try zig_args.append("--test-runner");
+                try zig_args.append(lazy_path.getPath2(b, step));
+            },
+        }
     }
 
     for (b.debug_log_scopes) |log_scope| {
@@ -2051,6 +2067,25 @@ pub fn getCompileDependencies(start: *Compile, chase_dynamic: bool) []const *Com
     var next_idx: usize = 0;
 
     compiles.putNoClobber(arena, start, {}) catch @panic("OOM");
+
+    if (start.test_runner) |test_runner| {
+        switch (test_runner) {
+            .module => |module| {
+                for (module.getGraph().modules) |mod| {
+                    for (mod.link_objects.items) |lo| {
+                        switch (lo) {
+                            .other_step => |other_compile| {
+                                if (!chase_dynamic and other_compile.isDynamicLibrary()) continue;
+                                compiles.put(arena, other_compile, {}) catch @panic("OOM");
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+    }
 
     while (next_idx < compiles.count()) {
         const compile = compiles.keys()[next_idx];

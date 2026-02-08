@@ -899,6 +899,7 @@ fn buildOutputType(
     var build_id: ?std.zig.BuildId = null;
     var runtime_args_start: ?usize = null;
     var test_filters: std.ArrayList([]const u8) = .empty;
+    var test_runner_mod_name: ?[]const u8 = null;
     var test_runner_path: ?[]const u8 = null;
     var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(environ_map);
     var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
@@ -1322,6 +1323,8 @@ fn buildOutputType(
                         create_module.libc_paths_file = args_iter.nextOrFatal();
                     } else if (mem.eql(u8, arg, "--test-filter")) {
                         try test_filters.append(arena, args_iter.nextOrFatal());
+                    } else if (mem.eql(u8, arg, "--test-runner-module")) {
+                        test_runner_mod_name = args_iter.nextOrFatal();
                     } else if (mem.eql(u8, arg, "--test-runner")) {
                         test_runner_path = args_iter.nextOrFatal();
                     } else if (mem.eql(u8, arg, "--test-cmd")) {
@@ -3154,7 +3157,10 @@ fn buildOutputType(
 
     const root_mod = switch (arg_mode) {
         .zig_test, .zig_test_obj => root_mod: {
-            const test_mod = if (test_runner_path) |test_runner| test_mod: {
+            const test_mod = if (test_runner_mod_name) |mod_name| test_mod: {
+                if (create_module.modules.get(mod_name)) |cli_mod| break :test_mod cli_mod.resolved.?;
+                fatal("missing '{s}' test runner module", .{mod_name});
+            } else if (test_runner_path) |test_runner| test_mod: {
                 const test_mod = try Package.Module.create(arena, .{
                     .paths = .{
                         .root = try .fromUnresolved(arena, dirs, &.{fs.path.dirname(test_runner) orelse "."}),

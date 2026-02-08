@@ -14,8 +14,7 @@ pub fn build(b: *std.Build) void {
     const t = b.addTest(.{
         .root_module = test_mod,
         .test_runner = .{
-            .path = b.path("test_runner/main.zig"),
-            .mode = .simple,
+            .simple = b.path("test_runner/main.zig"),
         },
     });
 

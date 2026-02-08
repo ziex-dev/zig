@@ -1768,6 +1768,7 @@ pub const CreateOptions = struct {
     clang_preprocessor_mode: ClangPreprocessorMode = .no,
     reference_trace: ?u32 = null,
     test_filters: []const []const u8 = &.{},
+    test_runner_mod_name: ?[]const u8 = null,
     test_runner_path: ?[]const u8 = null,
     subsystem: ?std.zig.Subsystem = null,
     mingw_unicode_entry_point: bool = false,

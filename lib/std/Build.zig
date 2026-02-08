@@ -954,7 +954,7 @@ pub fn addRunArtifact(b: *Build, exe: *Step.Compile) *Step.Run {
         }
 
         const test_server_mode: bool = s: {
-            if (exe.test_runner) |r| break :s r.mode == .server;
+            if (exe.test_runner) |r| break :s r == .server;
             if (exe.use_llvm == false) {
                 // The default test runner does not use the server protocol if the selected backend
                 // is too immature to support it. Keep this logic in sync with `need_simple` in the
