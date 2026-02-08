@@ -19,7 +19,6 @@ const builtin = @import("builtin");
 const std = @import("std.zig");
 const math = std.math;
 const assert = std.debug.assert;
-const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
 userdata: ?*anyopaque,
@@ -65,10 +64,10 @@ pub const VTable = struct {
         /// The length is the size in bytes of the result type.
         /// This pointer's lifetime expires directly after the call to this function.
         result: []u8,
-        result_alignment: std.mem.Alignment,
+        result_alignment: Alignment,
         /// Copied and then passed to `start`.
         context: []const u8,
-        context_alignment: std.mem.Alignment,
+        context_alignment: Alignment,
         start: *const fn (context: *const anyopaque, result: *anyopaque) void,
     ) ?*AnyFuture,
     /// Thread-safe.
@@ -76,10 +75,10 @@ pub const VTable = struct {
         /// Corresponds to `Io.userdata`.
         userdata: ?*anyopaque,
         result_len: usize,
-        result_alignment: std.mem.Alignment,
+        result_alignment: Alignment,
         /// Copied and then passed to `start`.
         context: []const u8,
-        context_alignment: std.mem.Alignment,
+        context_alignment: Alignment,
         start: *const fn (context: *const anyopaque, result: *anyopaque) void,
     ) ConcurrentError!*AnyFuture,
     /// This function is only called when `async` returns a non-null value.
@@ -93,7 +92,7 @@ pub const VTable = struct {
         /// Points to a buffer where the result is written.
         /// The length is equal to size in bytes of result type.
         result: []u8,
-        result_alignment: std.mem.Alignment,
+        result_alignment: Alignment,
     ) void,
     /// Equivalent to `await` but initiates cancel request.
     ///
@@ -108,7 +107,7 @@ pub const VTable = struct {
         /// Points to a buffer where the result is written.
         /// The length is equal to size in bytes of result type.
         result: []u8,
-        result_alignment: std.mem.Alignment,
+        result_alignment: Alignment,
     ) void,
 
     /// When this function returns, implementation guarantees that `start` has
@@ -123,7 +122,7 @@ pub const VTable = struct {
         group: *Group,
         /// Copied and then passed to `start`.
         context: []const u8,
-        context_alignment: std.mem.Alignment,
+        context_alignment: Alignment,
         start: *const fn (context: *const anyopaque) Cancelable!void,
     ) void,
     /// Thread-safe.
@@ -134,7 +133,7 @@ pub const VTable = struct {
         group: *Group,
         /// Copied and then passed to `start`.
         context: []const u8,
-        context_alignment: std.mem.Alignment,
+        context_alignment: Alignment,
         start: *const fn (context: *const anyopaque) Cancelable!void,
     ) ConcurrentError!void,
     groupAwait: *const fn (?*anyopaque, *Group, token: *anyopaque) Cancelable!void,
@@ -388,7 +387,7 @@ pub const Operation = union(enum) {
     };
 
     pub const OptionalIndex = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = math.maxInt(u32),
         _,
 
         pub fn fromIndex(i: usize) OptionalIndex {
