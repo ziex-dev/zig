@@ -954,6 +954,16 @@ pub const SendFlags = packed struct(u8) {
     _: u3 = 0,
 };
 
+pub const ShutdownHow = enum { recv, send, both };
+
+pub const ShutdownError = error{
+    ConnectionAborted,
+    ConnectionResetByPeer,
+    NetworkDown,
+    SocketUnconnected,
+    SystemResources,
+} || Io.UnexpectedError || Io.Cancelable;
+
 pub const Interface = struct {
     /// Value 0 indicates `none`.
     index: u32,
@@ -1043,7 +1053,11 @@ pub const Socket = struct {
 
     /// Leaves `address` in a valid state.
     pub fn close(s: *const Socket, io: Io) void {
-        io.vtable.netClose(io.userdata, s.handle);
+        io.vtable.netClose(io.userdata, (&s.handle)[0..1]);
+    }
+
+    pub fn closeMany(io: Io, sockets: []const Socket) void {
+        io.vtable.netClose(io.userdata, sockets);
     }
 
     pub const SendError = error{
@@ -1123,7 +1137,7 @@ pub const Socket = struct {
         const maybe_err, const count = io.vtable.netReceive(io.userdata, s.handle, (&message)[0..1], buffer, .{}, .none);
         if (maybe_err) |err| switch (err) {
             // No timeout is passed to `netReceieve`, so it must not return timeout related errors.
-            error.Timeout, error.UnsupportedClock => unreachable,
+            error.Timeout => unreachable,
             else => |e| return e,
         };
         assert(1 == count);
@@ -1173,6 +1187,35 @@ pub const Socket = struct {
     ) struct { ?ReceiveTimeoutError, usize } {
         return io.vtable.netReceive(io.userdata, s.handle, message_buffer, data_buffer, flags, timeout);
     }
+
+    pub const CreatePairError = error{
+        OperationUnsupported,
+        AccessDenied,
+        AddressFamilyUnsupported,
+        ProtocolUnsupportedBySystem,
+        /// The per-process limit on the number of open file descriptors has been reached.
+        ProcessFdQuotaExceeded,
+        /// The system-wide limit on the total number of open files has been reached.
+        SystemFdQuotaExceeded,
+        /// Insufficient memory is available. The socket cannot be created
+        /// until sufficient resources are freed.
+        SystemResources,
+        ProtocolUnsupportedByAddressFamily,
+        SocketModeUnsupported,
+    } || Io.UnexpectedError || Io.Cancelable;
+
+    pub const CreatePairOptions = struct {
+        family: IpAddress.Family = .ip4,
+        mode: Mode = .stream,
+        protocol: ?Protocol = null,
+    };
+
+    /// Create a set of two sockets that are connected to each other.
+    ///
+    /// Also known as "socketpair".
+    pub fn createPair(io: Io, options: CreatePairOptions) CreatePairError![2]Socket {
+        return io.vtable.netSocketCreatePair(io.userdata, options);
+    }
 };
 
 /// An open socket connection with a network protocol that guarantees
@@ -1184,7 +1227,11 @@ pub const Stream = struct {
     const max_iovecs_len = 8;
 
     pub fn close(s: *const Stream, io: Io) void {
-        io.vtable.netClose(io.userdata, s.socket.handle);
+        io.vtable.netClose(io.userdata, (&s.socket.handle)[0..1]);
+    }
+
+    pub fn shutdown(s: *const Stream, io: Io, how: ShutdownHow) ShutdownError!void {
+        return io.vtable.netShutdown(io.userdata, s.socket.handle, how);
     }
 
     pub const Reader = struct {
@@ -1256,6 +1303,7 @@ pub const Stream = struct {
         interface: Io.Writer,
         stream: Stream,
         err: ?Error = null,
+        write_file_err: ?WriteFileError = null,
 
         pub const Error = error{
             /// Another TCP Fast Open is already in progress.
@@ -1285,12 +1333,19 @@ pub const Stream = struct {
             SocketNotBound,
         } || Io.UnexpectedError || Io.Cancelable;
 
+        pub const WriteFileError = error{
+            NetworkDown,
+        } || Io.Cancelable || Io.UnexpectedError;
+
         pub fn init(stream: Stream, io: Io, buffer: []u8) Writer {
             return .{
                 .io = io,
                 .stream = stream,
                 .interface = .{
-                    .vtable = &.{ .drain = drain },
+                    .vtable = &.{
+                        .drain = drain,
+                        .sendFile = sendFile,
+                    },
                     .buffer = buffer,
                 },
             };
@@ -1306,6 +1361,13 @@ pub const Stream = struct {
                 return error.WriteFailed;
             };
             return io_w.consume(n);
+        }
+
+        fn sendFile(io_w: *Io.Writer, file_reader: *Io.File.Reader, limit: Io.Limit) Io.Writer.FileError!usize {
+            _ = io_w;
+            _ = file_reader;
+            _ = limit;
+            return error.Unimplemented; // TODO
         }
     };
 

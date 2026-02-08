@@ -1,11 +1,12 @@
 const builtin = @import("builtin");
+const native_endian = builtin.cpu.arch.endian();
+
 const std = @import("../std.zig");
 const mem = std.mem;
 const elf = std.elf;
 const fs = std.fs;
 const assert = std.debug.assert;
 const Target = std.Target;
-const native_endian = builtin.cpu.arch.endian();
 const posix = std.posix;
 const Io = std.Io;
 
@@ -39,6 +40,7 @@ pub const GetExternalExecutorOptions = struct {
 /// Return whether or not the given host is capable of running executables of
 /// the other target.
 pub fn getExternalExecutor(
+    io: Io,
     host: *const std.Target,
     candidate: *const std.Target,
     options: GetExternalExecutorOptions,
@@ -69,7 +71,7 @@ pub fn getExternalExecutor(
     if (os_match and cpu_ok) native: {
         if (options.link_libc) {
             if (candidate.dynamic_linker.get()) |candidate_dl| {
-                fs.cwd().access(candidate_dl, .{}) catch {
+                Io.Dir.cwd().access(io, candidate_dl, .{}) catch {
                     bad_result = .{ .bad_dl = candidate_dl };
                     break :native;
                 };
@@ -209,7 +211,8 @@ pub const DetectError = error{
     DeviceBusy,
     OSVersionDetectionFail,
     Unexpected,
-    ProcessNotFound,
+    /// Android-only. Querying API level through `getprop` failed.
+    ApiLevelQueryFailed,
 } || Io.Cancelable;
 
 /// Given a `Target.Query`, which specifies in detail which parts of the
@@ -247,7 +250,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 os.version_range.windows.min = detected_version;
                 os.version_range.windows.max = detected_version;
             },
-            .macos => try darwin.macos.detect(&os),
+            .macos => try darwin.macos.detect(io, &os),
             .freebsd, .netbsd, .dragonfly => {
                 const key = switch (builtin.target.os.tag) {
                     .freebsd => "kern.osreldate",
@@ -257,12 +260,14 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                 var value: u32 = undefined;
                 var len: usize = @sizeOf(@TypeOf(value));
 
-                posix.sysctlbynameZ(key, &value, &len, null, 0) catch |err| switch (err) {
-                    error.PermissionDenied => unreachable, // only when setting values,
-                    error.SystemResources => unreachable, // memory already on the stack
-                    error.UnknownName => unreachable, // constant, known good value
-                    error.Unexpected => return error.OSVersionDetectionFail,
-                };
+                switch (posix.errno(posix.system.sysctlbyname(key, &value, &len, null, 0))) {
+                    .SUCCESS => {},
+                    .FAULT => unreachable,
+                    .PERM => unreachable, // only when setting values,
+                    .NOMEM => unreachable, // memory already on the stack
+                    .NOENT => unreachable, // constant, known good value
+                    else => return error.OSVersionDetectionFail,
+                }
 
                 switch (builtin.target.os.tag) {
                     .freebsd => {
@@ -322,7 +327,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
                     error.Unexpected => return error.OSVersionDetectionFail,
                 };
 
-                if (Target.Query.parseVersion(buf[0..len :0])) |ver| {
+                if (Target.Query.parseVersion(buf[0 .. len - 1 :0])) |ver| {
                     assert(ver.build == null);
                     assert(ver.pre == null);
                     os.version_range.semver.min = ver;
@@ -415,14 +420,11 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         error.Canceled => |e| return e,
         error.Unexpected => |e| return e,
         error.WouldBlock => return error.Unexpected,
-        error.BrokenPipe => return error.Unexpected,
         error.ConnectionResetByPeer => return error.Unexpected,
-        error.Timeout => return error.Unexpected,
         error.NotOpenForReading => return error.Unexpected,
         error.SocketUnconnected => return error.Unexpected,
 
         error.AccessDenied,
-        error.ProcessNotFound,
         error.SymLinkLoop,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
@@ -500,6 +502,27 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         }
     }
 
+    if (builtin.os.tag == .linux and result.isBionicLibC() and query.os_tag == null and query.android_api_level == null) {
+        result.os.version_range.linux.android = detectAndroidApiLevel(io) catch |err| return switch (err) {
+            error.InvalidWtf8,
+            error.InvalidBatchScriptArg,
+            => unreachable, // Windows-only
+            error.ApiLevelQueryFailed => |e| e,
+            else => blk: {
+                std.log.err("spawning or reading from getprop failed ({s})", .{@errorName(err)});
+                switch (err) {
+                    error.SystemResources,
+                    error.FileSystem,
+                    error.ProcessFdQuotaExceeded,
+                    error.SystemFdQuotaExceeded,
+                    error.SymLinkLoop,
+                    => |e| break :blk e,
+                    else => break :blk error.ApiLevelQueryFailed,
+                }
+            },
+        };
+    }
+
     return result;
 }
 
@@ -553,7 +576,6 @@ pub const AbiAndDynamicLinkerFromFileError = error{
     SystemResources,
     ProcessFdQuotaExceeded,
     SystemFdQuotaExceeded,
-    ProcessNotFound,
     IsDir,
     WouldBlock,
     InputOutput,
@@ -693,13 +715,16 @@ fn abiAndDynamicLinkerFromFile(
 
             // So far, no luck. Next we try to see if the information is
             // present in the symlink data for the dynamic linker path.
-            var link_buf: [posix.PATH_MAX]u8 = undefined;
-            const link_name = posix.readlink(dl_path, &link_buf) catch |err| switch (err) {
+            var link_buffer: [posix.PATH_MAX]u8 = undefined;
+            const link_name = if (Io.Dir.readLinkAbsolute(io, dl_path, &link_buffer)) |n|
+                link_buffer[0..n]
+            else |err| switch (err) {
                 error.NameTooLong => unreachable,
                 error.BadPathName => unreachable, // Windows only
                 error.UnsupportedReparsePointType => unreachable, // Windows only
                 error.NetworkNotFound => unreachable, // Windows only
                 error.AntivirusInterference => unreachable, // Windows only
+                error.FileBusy => unreachable, // Windows only
 
                 error.AccessDenied,
                 error.PermissionDenied,
@@ -711,6 +736,7 @@ fn abiAndDynamicLinkerFromFile(
                 error.SystemResources,
                 error.FileSystem,
                 error.SymLinkLoop,
+                error.Canceled,
                 error.Unexpected,
                 => |e| return e,
             };
@@ -786,10 +812,11 @@ test glibcVerFromLinkName {
 }
 
 fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
-    var dir = fs.cwd().openDir(rpath, .{}) catch |err| switch (err) {
+    const cwd: Io.Dir = .cwd();
+
+    var dir = cwd.openDir(io, rpath, .{}) catch |err| switch (err) {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
-        error.DeviceBusy => return error.Unexpected,
         error.NetworkNotFound => return error.Unexpected, // Windows-only
 
         error.FileNotFound => return error.GLibCNotFound,
@@ -805,7 +832,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.Unexpected => |e| return e,
         error.Canceled => |e| return e,
     };
-    defer dir.close();
+    defer dir.close(io);
 
     // Now we have a candidate for the path to libc shared object. In
     // the past, we used readlink() here because the link name would
@@ -815,14 +842,13 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
     // .dynstr section, and finding the max version number of symbols
     // that start with "GLIBC_2.".
     const glibc_so_basename = "libc.so.6";
-    var file = dir.openFile(glibc_so_basename, .{}) catch |err| switch (err) {
+    var file = dir.openFile(io, glibc_so_basename, .{}) catch |err| switch (err) {
         error.NameTooLong => return error.Unexpected,
         error.BadPathName => return error.Unexpected,
         error.PipeBusy => return error.Unexpected, // Windows-only
-        error.SharingViolation => return error.Unexpected, // Windows-only
         error.NetworkNotFound => return error.Unexpected, // Windows-only
         error.AntivirusInterference => return error.Unexpected, // Windows-only
-        error.FileLocksNotSupported => return error.Unexpected, // No lock requested.
+        error.FileLocksUnsupported => return error.Unexpected, // No lock requested.
         error.NoSpaceLeft => return error.Unexpected, // read-only
         error.PathAlreadyExists => return error.Unexpected, // read-only
         error.DeviceBusy => return error.Unexpected, // read-only
@@ -837,7 +863,6 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.NotDir => return error.GLibCNotFound,
         error.IsDir => return error.GLibCNotFound,
 
-        error.ProcessNotFound => |e| return e,
         error.ProcessFdQuotaExceeded => |e| return e,
         error.SystemFdQuotaExceeded => |e| return e,
         error.SystemResources => |e| return e,
@@ -845,11 +870,11 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.Unexpected => |e| return e,
         error.Canceled => |e| return e,
     };
-    defer file.close();
+    defer file.close(io);
 
     // Empirically, glibc 2.34 libc.so .dynstr section is 32441 bytes on my system.
     var buffer: [8000]u8 = undefined;
-    var file_reader: Io.File.Reader = .initAdapted(file, io, &buffer);
+    var file_reader: Io.File.Reader = .init(file, io, &buffer);
 
     return glibcVerFromSoFile(&file_reader) catch |err| switch (err) {
         error.InvalidElfMagic,
@@ -1024,14 +1049,13 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
         };
 
         while (true) {
-            const file = fs.openFileAbsolute(file_name, .{}) catch |err| switch (err) {
+            const file = Io.Dir.openFileAbsolute(io, file_name, .{}) catch |err| switch (err) {
                 error.NoSpaceLeft => return error.Unexpected,
                 error.NameTooLong => return error.Unexpected,
                 error.PathAlreadyExists => return error.Unexpected,
-                error.SharingViolation => return error.Unexpected,
                 error.BadPathName => return error.Unexpected,
                 error.PipeBusy => return error.Unexpected,
-                error.FileLocksNotSupported => return error.Unexpected,
+                error.FileLocksUnsupported => return error.Unexpected,
                 error.FileBusy => return error.Unexpected, // opened without write permissions
                 error.AntivirusInterference => return error.Unexpected, // Windows-only error
 
@@ -1044,14 +1068,17 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                 error.NetworkNotFound,
                 error.FileTooBig,
                 error.Unexpected,
-                => return error.UnableToOpenElfFile,
-
+                => |e| if (e == error.FileNotFound and os.tag == .linux and mem.eql(u8, file_name, "/usr/bin/env")) {
+                    // Android does not have a /usr directory, so try again
+                    file_name = "/system/bin/env";
+                    continue;
+                } else return error.UnableToOpenElfFile,
                 else => |e| return e,
             };
             var is_elf_file = false;
-            defer if (!is_elf_file) file.close();
+            defer if (!is_elf_file) file.close(io);
 
-            file_reader = .initAdapted(file, io, &file_reader_buffer);
+            file_reader = .init(file, io, &file_reader_buffer);
             file_name = undefined; // it aliases file_reader_buffer
 
             const header = elf.Header.read(&file_reader.interface) catch |hdr_err| switch (hdr_err) {
@@ -1076,7 +1103,7 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
                     const path_maybe_args = mem.trimEnd(u8, trimmed_line, "\n");
 
                     // Separate path and args.
-                    const path_end = mem.indexOfAny(u8, path_maybe_args, &.{ ' ', '\t', 0 }) orelse path_maybe_args.len;
+                    const path_end = mem.findAny(u8, path_maybe_args, &.{ ' ', '\t', 0 }) orelse path_maybe_args.len;
                     const unvalidated_path = path_maybe_args[0..path_end];
                     file_name = if (fs.path.isAbsolute(unvalidated_path)) unvalidated_path else return error.RelativeShebang;
                     continue;
@@ -1101,7 +1128,6 @@ fn detectAbiAndDynamicLinker(io: Io, cpu: Target.Cpu, os: Target.Os, query: Targ
         error.SymLinkLoop,
         error.ProcessFdQuotaExceeded,
         error.SystemFdQuotaExceeded,
-        error.ProcessNotFound,
         error.Canceled,
         => |e| return e,
 
@@ -1129,6 +1155,41 @@ const LdInfo = struct {
     ld: Target.DynamicLinker,
     abi: Target.Abi,
 };
+
+fn detectAndroidApiLevel(io: Io) !u32 {
+    comptime if (builtin.os.tag != .linux) unreachable;
+
+    var child = try std.process.spawn(io, .{
+        .argv = &.{
+            "/system/bin/getprop",
+            "ro.build.version.sdk",
+        },
+        .stdin = .ignore,
+        .stdout = .pipe,
+        .stderr = .ignore,
+    });
+    errdefer child.kill(io);
+
+    // PROP_VALUE_MAX is 92, output is value + newline.
+    // Currently API levels are two-digit numbers, but we want to make sure we never read a partial value.
+    var stdout_buf: [92 + 1]u8 = undefined;
+    var reader = child.stdout.?.readerStreaming(io, &.{});
+    const n = try reader.interface.readSliceShort(&stdout_buf);
+    const api_level = std.fmt.parseInt(u32, stdout_buf[0 .. n - 1], 10) catch |e| {
+        std.log.err(
+            "Could not parse API level, unexpected getprop output '{s}' ({s})",
+            .{ stdout_buf[0 .. n - 1], @errorName(e) },
+        );
+        return error.ApiLevelQueryFailed;
+    };
+
+    const term = try child.wait(io);
+    if (term != .exited or term.exited != 0) {
+        std.log.err("getprop terminated abnormally: {}", .{term});
+        return error.ApiLevelQueryFailed;
+    }
+    return api_level;
+}
 
 test {
     _ = NativePaths;

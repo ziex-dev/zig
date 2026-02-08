@@ -267,7 +267,7 @@ pub const Options = struct {
     pub const best = level_9;
 };
 
-/// It is asserted `buffer` is least `flate.max_history_len` bytes.
+/// It is asserted `buffer` is least `flate.max_window_len` bytes.
 /// It is asserted `output` has a capacity of at least 8 bytes.
 pub fn init(
     output: *Writer,
@@ -598,7 +598,7 @@ fn testFuzzedMatchLen(_: void, input: []const u8) !void {
     const bytes = w.buffered()[bytes_off..];
     old = @min(old, bytes.len - 1, token.max_length - 1);
 
-    const diff_index = mem.indexOfDiff(u8, prev, bytes).?; // unwrap since lengths are not same
+    const diff_index = mem.findDiff(u8, prev, bytes).?; // unwrap since lengths are not same
     const expected_len = @min(diff_index, 258);
     errdefer std.debug.print(
         \\prev : '{any}'

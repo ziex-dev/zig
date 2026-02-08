@@ -128,6 +128,7 @@
       }
       .table-wrapper {
         width: 100%;
+        margin: 1em auto;
         overflow-x: auto;
       }
 
@@ -437,6 +438,25 @@
 
       {#header_close#}
       {#header_close#}
+
+      {#header_open|Identifiers#}
+      <p>
+      Identifiers must start with an alphabetic character or underscore and may be followed
+      by any number of alphanumeric characters or underscores.
+      They must not overlap with any keywords. See {#link|Keyword Reference#}.
+      </p>
+
+      {#header_open|String Identifier Syntax#}
+      <p>
+      If a name that does not fit these requirements is needed, such as for
+      linking with external libraries, the {#syntax#}@""{#endsyntax#} syntax
+      may be used.
+      </p>
+      {#code|identifiers.zig#}
+      {#header_close#}
+      {#header_close#}
+
+
       {#header_open|Values#}
       {#code|values.zig#}
 
@@ -962,28 +982,15 @@
       humans and computers to do when reading code, and creates more optimization opportunities.
       </p>
       <p>
+      Variables are never allowed to shadow {#link|Identifiers#} from an outer scope.
+      </p>
+      <p>
       The {#syntax#}extern{#endsyntax#} keyword or {#link|@extern#} builtin function can be used to link against a variable that is exported
       from another object. The {#syntax#}export{#endsyntax#} keyword or {#link|@export#} builtin function
       can be used to make a variable available to other objects at link time. In both cases,
       the type of the variable must be C ABI compatible.
       </p>
       {#see_also|Exporting a C Library#}
-
-      {#header_open|Identifiers#}
-      <p>
-      Variable identifiers are never allowed to shadow identifiers from an outer scope.
-      </p>
-      <p>
-      Identifiers must start with an alphabetic character or underscore and may be followed
-      by any number of alphanumeric characters or underscores.
-      They must not overlap with any keywords. See {#link|Keyword Reference#}.
-      </p>
-      <p>
-      If a name that does not fit these requirements is needed, such as for linking with external libraries, the {#syntax#}@""{#endsyntax#} syntax may be used.
-      </p>
-      {#code|identifiers.zig#}
-
-      {#header_close#}
 
       {#header_open|Container Level Variables#}
       <p>
@@ -2461,7 +2468,8 @@ or
       {#header_open|Tagged union#}
       <p>Unions can be declared with an enum tag type.
       This turns the union into a <em>tagged</em> union, which makes it eligible
-      to use with {#link|switch#} expressions.
+      to use with {#link|switch#} expressions. When switching on tagged unions,
+      the tag value can be obtained using an additional capture. 
       Tagged unions coerce to their tag type: {#link|Type Coercion: Unions and Enums#}.
       </p>
       {#code|test_tagged_union.zig#}
@@ -2594,6 +2602,13 @@ or
 
       {#header_close#}
 
+      {#header_open|Switching on Errors#}
+      <p>
+      When switching on errors, some special cases are allowed to simplify generic programming patterns:
+      </p>
+      {#code|test_switch_on_errors.zig#}
+      {#header_close#}
+
       {#header_open|Labeled switch#}
       <p>
       When a switch statement is labeled, it can be referenced from a
@@ -2659,12 +2674,13 @@ or
       {#code|test_inline_else.zig#}
 
       <p>
-      When using an inline prong switching on an union an additional
-      capture can be used to obtain the union's enum tag value.
+      When using an inline prong switching on an union an additional capture
+      can be used to obtain the union's enum tag value at comptime, even though
+      its payload might only be known at runtime.
       </p>
       {#code|test_inline_switch_union_tag.zig#}
 
-      {#see_also|inline while|inline for#}
+      {#see_also|inline while|inline for|Tagged union#}
       {#header_close#}
       {#header_close#}
 
@@ -3448,6 +3464,52 @@ void do_a_thing(struct Foo *foo) {
       {#link|Floats#} coerce to float types which can represent every value of the old type.
       </p>
       {#code|test_integer_widening.zig#}
+
+      {#header_close#}
+      {#header_open|Type Coercion: Int to Float#}
+      <p>
+      {#link|Integers#} coerce to {#link|Floats#} if every possible integer value can be stored in the float
+      without rounding (i.e. the integer's precision does not exceed the float's significand precision).
+      Larger integer types that cannot be safely coerced must be explicitly casted with {#link|@floatFromInt#}.
+      </p>
+      <div class="table-wrapper">
+      <table>
+        <thead>
+        <tr>
+          <th scope="col">Float Type</th>
+          <th scope="col">Largest Integer Types</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+            <th scope="row">{#syntax#}f16{#endsyntax#}</th>
+            <td>{#syntax#}i12{#endsyntax#} and {#syntax#}u11{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f32{#endsyntax#}</th>
+            <td>{#syntax#}i25{#endsyntax#} and {#syntax#}u24{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f64{#endsyntax#}</th>
+            <td>{#syntax#}i54{#endsyntax#} and {#syntax#}u53{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f80{#endsyntax#}</th>
+            <td>{#syntax#}i65{#endsyntax#} and {#syntax#}u64{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f128{#endsyntax#}</th>
+            <td>{#syntax#}i114{#endsyntax#} and {#syntax#}u113{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}c_longdouble{#endsyntax#}</th>
+            <td>Varies by target</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      {#code|test_int_to_float_coercion.zig#}
+      {#code|test_failed_int_to_float_coercion.zig#}
 
       {#header_close#}
       {#header_open|Type Coercion: Float to Int#}
@@ -7027,8 +7089,7 @@ WebAssembly.instantiate(typedArray, {
 The result is 3{#end_shell_samp#}
       {#header_close#}
       {#header_open|WASI#}
-      <p>Zig's support for WebAssembly System Interface (WASI) is under active development.
-      Example of using the standard library and reading command line arguments:</p>
+      <p>Zig standard library has first-class support for WebAssembly System Interface.</p>
       {#code|wasi_args.zig#}
 
       {#shell_samp#}$ wasmtime wasi_args.wasm 123 hello
@@ -7090,6 +7151,7 @@ coding style.
         <li>Data</li>
         <li>Context</li>
         <li>Manager</li>
+        <li>State</li>
         <li>utils, misc, or somebody's initials</li>
       </ul>
       <p>Everything is a value, all types are data, everything is context, all logic manages state.
@@ -7113,6 +7175,31 @@ coding style.
       <p>This example is an exception to the rule specified in {#link|Avoid Redundancy in Names#}.
       The meaning of the type has been reduced to its core: it is a json value. The name
       cannot be any more specific without being incorrect.</p>
+      {#header_close#}
+
+      {#header_open|Refrain from Underscore Prefixes#}
+      <p>In some programming languages, it is common to prefix identifiers with
+      underscores {#syntax#}_like_this{#endsyntax#} to avoid keyword
+      collisions, name collisions, or indicate additional metadata associated with usage of the
+      identifier, such as: privacy, existence of complex data invariants, exclusion from
+      semantic versioning, or context-specific type reflection meaning.
+      </p>
+      <p>In Zig, there are no private fields, and this style guide recommends
+      against pretending otherwise. Instead, fields should be named carefully
+      based on their semantics and documentation should indicate how to use
+      fields without violating data invariants. If a field is not subject to
+      the same semantic versioning rules as everything else, the exception
+      should be noted in the {#link|Doc Comments#}.
+      </p>
+      <p>As for {#link|type reflection|@typeInfo#}, it is less error prone and
+      more maintainable to use the type system than to make field names
+      meaningful.</p>
+      <p>Regarding name collisions, an underscore is insufficient to explain
+      the difference between the two otherwise identical names. If there's no
+      danger in getting them mixed up, then this guide recommends more verbose
+      names at outer scopes and more abbreviated names at inner scopes.</p>
+      <p>Finally, keyword collisions are better avoided via
+      {#link|String Identifier Syntax#}.</p>
       {#header_close#}
 
       {#header_open|Whitespace#}

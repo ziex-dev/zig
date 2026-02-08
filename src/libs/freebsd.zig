@@ -1,9 +1,9 @@
 const std = @import("std");
+const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const mem = std.mem;
 const log = std.log;
-const fs = std.fs;
-const path = fs.path;
+const path = std.Io.Dir.path;
 const assert = std.debug.assert;
 const Version = std.SemanticVersion;
 const Path = std.Build.Cache.Path;
@@ -401,8 +401,8 @@ pub const BuiltSharedObjects = struct {
     lock: Cache.Lock,
     dir_path: Path,
 
-    pub fn deinit(self: *BuiltSharedObjects, gpa: Allocator) void {
-        self.lock.release();
+    pub fn deinit(self: *BuiltSharedObjects, gpa: Allocator, io: Io) void {
+        self.lock.release(io);
         gpa.free(self.dir_path.sub_path);
         self.* = undefined;
     }
@@ -444,12 +444,13 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     var cache: Cache = .{
         .gpa = gpa,
         .io = io,
-        .manifest_dir = try comp.dirs.global_cache.handle.makeOpenPath("h", .{}),
+        .manifest_dir = try comp.dirs.global_cache.handle.createDirPathOpen(io, "h", .{}),
+        .cwd = comp.dirs.cwd,
     };
-    cache.addPrefix(.{ .path = null, .handle = fs.cwd() });
+    cache.addPrefix(.{ .path = null, .handle = Io.Dir.cwd() });
     cache.addPrefix(comp.dirs.zig_lib);
     cache.addPrefix(comp.dirs.global_cache);
-    defer cache.manifest_dir.close();
+    defer cache.manifest_dir.close(io);
 
     var man = cache.obtain();
     defer man.deinit();
@@ -468,7 +469,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
             .lock = man.toOwnedLock(),
             .dir_path = .{
                 .root_dir = comp.dirs.global_cache,
-                .sub_path = try gpa.dupe(u8, "o" ++ fs.path.sep_str ++ digest),
+                .sub_path = try gpa.dupe(u8, "o" ++ path.sep_str ++ digest),
             },
         });
     }
@@ -477,10 +478,10 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
     const o_sub_path = try path.join(arena, &[_][]const u8{ "o", &digest });
 
     var o_directory: Cache.Directory = .{
-        .handle = try comp.dirs.global_cache.handle.makeOpenPath(o_sub_path, .{}),
+        .handle = try comp.dirs.global_cache.handle.createDirPathOpen(io, o_sub_path, .{}),
         .path = try comp.dirs.global_cache.join(arena, &.{o_sub_path}),
     };
-    defer o_directory.handle.close();
+    defer o_directory.handle.close(io);
 
     const abilists_contents = man.files.keys()[abilists_index].contents.?;
     const metadata = try loadMetaData(gpa, abilists_contents);
@@ -520,7 +521,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         for (metadata.all_versions[0 .. target_ver_index + 1]) |ver| {
             try map_contents.print("FBSD_{d}.{d} {{ }};\n", .{ ver.major, ver.minor });
         }
-        try o_directory.handle.writeFile(.{ .sub_path = all_map_basename, .data = map_contents.items });
+        try o_directory.handle.writeFile(io, .{ .sub_path = all_map_basename, .data = map_contents.items });
         map_contents.deinit();
     }
 
@@ -974,7 +975,7 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
 
         var lib_name_buf: [32]u8 = undefined; // Larger than each of the names "c", "stdthreads", etc.
         const asm_file_basename = std.fmt.bufPrint(&lib_name_buf, "{s}.s", .{lib.name}) catch unreachable;
-        try o_directory.handle.writeFile(.{ .sub_path = asm_file_basename, .data = stubs_asm.items });
+        try o_directory.handle.writeFile(io, .{ .sub_path = asm_file_basename, .data = stubs_asm.items });
         try buildSharedLib(comp, arena, o_directory, asm_file_basename, lib, prog_node);
     }
 
@@ -986,12 +987,13 @@ pub fn buildSharedObjects(comp: *Compilation, prog_node: std.Progress.Node) anye
         .lock = man.toOwnedLock(),
         .dir_path = .{
             .root_dir = comp.dirs.global_cache,
-            .sub_path = try gpa.dupe(u8, "o" ++ fs.path.sep_str ++ digest),
+            .sub_path = try gpa.dupe(u8, "o" ++ path.sep_str ++ digest),
         },
     });
 }
 
-fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) void {
+fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) std.Io.Cancelable!void {
+    const io = comp.io;
     const target = comp.getTarget();
     const target_os_version = target.os.version_range.semver.min;
 
@@ -1002,8 +1004,8 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) void {
     var task_buffer_i: usize = 0;
 
     {
-        comp.mutex.lock(); // protect comp.arena
-        defer comp.mutex.unlock();
+        comp.mutex.lockUncancelable(io); // protect comp.arena
+        defer comp.mutex.unlock(io);
 
         for (libs) |lib| {
             if (lib.added_in) |add_in| {
@@ -1013,7 +1015,7 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) void {
             const so_path: Path = .{
                 .root_dir = so_files.dir_path.root_dir,
                 .sub_path = std.fmt.allocPrint(comp.arena, "{s}{c}lib{s}.so.{d}", .{
-                    so_files.dir_path.sub_path, fs.path.sep, lib.name, lib.getSoVersion(&target.os),
+                    so_files.dir_path.sub_path, path.sep, lib.name, lib.getSoVersion(&target.os),
                 }) catch return comp.setAllocFailure(),
             };
             task_buffer[task_buffer_i] = .{ .load_dso = so_path };
@@ -1021,7 +1023,7 @@ fn queueSharedObjects(comp: *Compilation, so_files: BuiltSharedObjects) void {
         }
     }
 
-    comp.queuePrelinkTasks(task_buffer[0..task_buffer_i]);
+    try comp.queuePrelinkTasks(task_buffer[0..task_buffer_i]);
 }
 
 fn buildSharedLib(
@@ -1094,8 +1096,8 @@ fn buildSharedLib(
 
     var sub_create_diag: Compilation.CreateDiagnostic = undefined;
     const sub_compilation = Compilation.create(comp.gpa, arena, io, &sub_create_diag, .{
+        .thread_limit = comp.thread_limit,
         .dirs = comp.dirs.withoutLocalCache(),
-        .thread_pool = comp.thread_pool,
         .self_exe_path = comp.self_exe_path,
         // Because we manually cache the whole set of objects, we don't cache the individual objects
         // within it. In fact, we *can't* do that, because we need `emit_bin` to specify the path.
@@ -1118,6 +1120,7 @@ fn buildSharedLib(
         .soname = soname,
         .c_source_files = &c_source_files,
         .skip_linker_dependencies = true,
+        .environ_map = comp.environ_map,
     }) catch |err| switch (err) {
         error.CreateFail => {
             comp.lockAndSetMiscFailure(misc_task, "sub-compilation of {t} failed: {f}", .{ misc_task, sub_create_diag });

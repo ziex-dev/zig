@@ -108,6 +108,7 @@ pub fn deinit(f: *Flush, gpa: Allocator) void {
 
 pub fn finish(f: *Flush, wasm: *Wasm) !void {
     const comp = wasm.base.comp;
+    const io = comp.io;
     const shared_memory = comp.config.shared_memory;
     const diags = &comp.link_diags;
     const gpa = comp.gpa;
@@ -127,17 +128,20 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
     if (comp.zcu) |zcu| {
         const ip: *const InternPool = &zcu.intern_pool; // No mutations allowed!
 
+        log.debug("total MIR instructions: {d}", .{wasm.mir_instructions.len});
+
         // Detect any intrinsics that were called; they need to have dependencies on the symbols marked.
         // Likewise detect `@tagName` calls so those functions can be included in the output and synthesized.
         for (wasm.mir_instructions.items(.tag), wasm.mir_instructions.items(.data)) |tag, *data| switch (tag) {
             .call_intrinsic => {
                 const symbol_name = try wasm.internString(@tagName(data.intrinsic));
                 const i: Wasm.FunctionImport.Index = @enumFromInt(wasm.object_function_imports.getIndex(symbol_name) orelse {
-                    return diags.fail("missing compiler runtime intrinsic '{s}' (undefined linker symbol)", .{
-                        @tagName(data.intrinsic),
+                    return diags.fail("missing compiler runtime intrinsic '{t}' (undefined linker symbol)", .{
+                        data.intrinsic,
                     });
                 });
                 try wasm.markFunctionImport(symbol_name, i.value(wasm), i);
+                log.debug("markFunctionImport intrinsic {d}={t}", .{ i, data.intrinsic });
             },
             .call_tag_name => {
                 assert(ip.indexToKey(data.ip_index) == .enum_type);
@@ -146,11 +150,10 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                     wasm.tag_name_table_ref_count += 1;
                     const int_tag_ty = Zcu.Type.fromInterned(data.ip_index).intTagType(zcu);
                     gop.value_ptr.* = .{ .tag_name = .{
-                        .symbol_name = try wasm.internStringFmt("__zig_tag_name_{d}", .{@intFromEnum(data.ip_index)}),
+                        .symbol_name = try wasm.internStringFmt("__zig_tag_name_{d}", .{data.ip_index}),
                         .type_index = try wasm.internFunctionType(.auto, &.{int_tag_ty.ip_index}, .slice_const_u8_sentinel_0, target),
                         .table_index = @intCast(wasm.tag_name_offs.items.len),
                     } };
-                    try wasm.functions.put(gpa, .fromZcuFunc(wasm, @enumFromInt(gop.index)), {});
                     const tag_names = ip.loadEnumType(data.ip_index).names;
                     for (tag_names.get(ip)) |tag_name| {
                         const slice = tag_name.toSlice(ip);
@@ -158,6 +161,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                         try wasm.tag_name_bytes.appendSlice(gpa, slice[0 .. slice.len + 1]);
                     }
                 }
+                try wasm.functions.put(gpa, .fromZcuFunc(wasm, @enumFromInt(gop.index)), {});
             },
             else => continue,
         };
@@ -1067,7 +1071,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
     }
 
     // Finally, write the entire binary into the file.
-    var file_writer = wasm.base.file.?.writer(&.{});
+    var file_writer = wasm.base.file.?.writer(io, &.{});
     file_writer.interface.writeAll(binary_bytes.items) catch |err| switch (err) {
         error.WriteFailed => return file_writer.err.?,
     };
@@ -1867,13 +1871,21 @@ fn emitTagNameFunction(
     const enum_type = ip.loadEnumType(enum_type_ip);
     const tag_values = enum_type.values.get(ip);
 
-    try code.ensureUnusedCapacity(gpa, 7 * 5 + 6 + 1 * 6);
-    appendReservedUleb32(code, 0); // no locals
-
     const slice_abi_size = 8;
     const encoded_alignment = @ctz(@as(u32, 4));
+
     if (tag_values.len == 0) {
-        // Then it's auto-numbered and therefore a direct table lookup.
+        // Auto-numbered, therefore a direct table lookup.
+
+        try code.ensureUnusedCapacity(
+            gpa,
+            6 * @sizeOf(std.wasm.Opcode) +
+                7 * 5 + // appendReservedUleb32
+                1 * 6, // appendReservedI32Const
+        );
+
+        appendReservedUleb32(code, 0); // no locals
+
         code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.local_get));
         appendReservedUleb32(code, 0);
 
@@ -1890,78 +1902,91 @@ fn emitTagNameFunction(
         code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i64_store));
         appendReservedUleb32(code, encoded_alignment);
         appendReservedUleb32(code, 0);
-    } else {
-        const int_info = Zcu.Type.intInfo(.fromInterned(enum_type.tag_ty), zcu);
-        const outer_block_type: std.wasm.BlockType = switch (int_info.bits) {
-            0...32 => .i32,
-            33...64 => .i64,
-            else => return diags.fail("wasm linker does not yet implement @tagName for sparse enums with more than 64 bit integer tag types", .{}),
-        };
 
-        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.local_get));
-        appendReservedUleb32(code, 0);
-
-        // Outer block that computes table offset.
-        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.block));
-        code.appendAssumeCapacity(@intFromEnum(outer_block_type));
-
-        for (tag_values, 0..) |tag_value, tag_index| {
-            // block for this if case
-            code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.block));
-            code.appendAssumeCapacity(@intFromEnum(std.wasm.BlockType.empty));
-
-            // Tag value whose name should be returned.
-            code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.local_get));
-            appendReservedUleb32(code, 1);
-
-            const val: Zcu.Value = .fromInterned(tag_value);
-            switch (outer_block_type) {
-                .i32 => {
-                    const x: u32 = switch (int_info.signedness) {
-                        .signed => @bitCast(@as(i32, @intCast(val.toSignedInt(zcu)))),
-                        .unsigned => @intCast(val.toUnsignedInt(zcu)),
-                    };
-                    appendReservedI32Const(code, x);
-                    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i32_ne));
-                },
-                .i64 => {
-                    const x: u64 = switch (int_info.signedness) {
-                        .signed => @bitCast(val.toSignedInt(zcu)),
-                        .unsigned => val.toUnsignedInt(zcu),
-                    };
-                    appendReservedI64Const(code, x);
-                    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i64_ne));
-                },
-                else => unreachable,
-            }
-
-            // if they're not equal, break out of current branch
-            code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.br_if));
-            appendReservedUleb32(code, 0);
-
-            // Put the table offset of the result on the stack.
-            appendReservedI32Const(code, @intCast(tag_index * slice_abi_size));
-
-            // break outside blocks
-            code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.br));
-            appendReservedUleb32(code, 1);
-
-            // end the block for this case
-            code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.end));
-        }
-        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.@"unreachable"));
         code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.end));
 
-        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i64_load));
-        appendReservedUleb32(code, encoded_alignment);
-        appendReservedUleb32(code, table_base_addr + table_index * 8);
-
-        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i64_store));
-        appendReservedUleb32(code, encoded_alignment);
-        appendReservedUleb32(code, 0);
+        return;
     }
 
-    // End of the function body
+    const int_info = Zcu.Type.intInfo(.fromInterned(enum_type.tag_ty), zcu);
+    const outer_block_type: std.wasm.BlockType = switch (int_info.bits) {
+        0...32 => .i32,
+        33...64 => .i64,
+        else => return diags.fail("wasm linker does not yet implement @tagName for sparse enums with more than 64 bit integer tag types", .{}),
+    };
+
+    try code.ensureUnusedCapacity(
+        gpa,
+        (7 + tag_values.len * 6) * @sizeOf(std.wasm.Opcode) +
+            (1 + tag_values.len * 1) * @sizeOf(std.wasm.BlockType) +
+            (6 + tag_values.len * 3) * 5 + // appendReservedUleb32
+            (tag_values.len * 2) * 11, // appendReservedI32Const / appendReservedI64Const
+    );
+
+    appendReservedUleb32(code, 0); // no locals
+
+    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.local_get));
+    appendReservedUleb32(code, 0);
+
+    // Outer block that computes table offset.
+    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.block));
+    code.appendAssumeCapacity(@intFromEnum(outer_block_type));
+
+    for (tag_values, 0..) |tag_value, tag_index| {
+        // block for this if case
+        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.block));
+        code.appendAssumeCapacity(@intFromEnum(std.wasm.BlockType.empty));
+
+        // Tag value whose name should be returned.
+        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.local_get));
+        appendReservedUleb32(code, 1);
+
+        const val: Zcu.Value = .fromInterned(tag_value);
+        switch (outer_block_type) {
+            .i32 => {
+                const x: u32 = switch (int_info.signedness) {
+                    .signed => @bitCast(@as(i32, @intCast(val.toSignedInt(zcu)))),
+                    .unsigned => @intCast(val.toUnsignedInt(zcu)),
+                };
+                appendReservedI32Const(code, x);
+                code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i32_ne));
+            },
+            .i64 => {
+                const x: u64 = switch (int_info.signedness) {
+                    .signed => @bitCast(val.toSignedInt(zcu)),
+                    .unsigned => val.toUnsignedInt(zcu),
+                };
+                appendReservedI64Const(code, x);
+                code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i64_ne));
+            },
+            else => unreachable,
+        }
+
+        // if they're not equal, break out of current branch
+        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.br_if));
+        appendReservedUleb32(code, 0);
+
+        // Put the table offset of the result on the stack.
+        appendReservedI32Const(code, @intCast(tag_index * slice_abi_size));
+
+        // break outside blocks
+        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.br));
+        appendReservedUleb32(code, 1);
+
+        // end the block for this case
+        code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.end));
+    }
+    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.@"unreachable"));
+    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.end));
+
+    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i64_load));
+    appendReservedUleb32(code, encoded_alignment);
+    appendReservedUleb32(code, table_base_addr + table_index * 8);
+
+    code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.i64_store));
+    appendReservedUleb32(code, encoded_alignment);
+    appendReservedUleb32(code, 0);
+
     code.appendAssumeCapacity(@intFromEnum(std.wasm.Opcode.end));
 }
 

@@ -1,6 +1,7 @@
 pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Path) link.File.FlushError!void {
-    const gpa = macho_file.base.comp.gpa;
-    const diags = &macho_file.base.comp.link_diags;
+    const gpa = comp.gpa;
+    const io = comp.io;
+    const diags = &comp.link_diags;
 
     // TODO: "positional arguments" is a CLI concept, not a linker concept. Delete this unnecessary array list.
     var positionals = std.array_list.Managed(link.Input).init(gpa);
@@ -9,24 +10,22 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
     positionals.appendSliceAssumeCapacity(comp.link_inputs);
 
     for (comp.c_object_table.keys()) |key| {
-        try positionals.append(try link.openObjectInput(diags, key.status.success.object_path));
+        try positionals.append(try link.openObjectInput(io, diags, key.status.success.object_path));
     }
 
-    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(diags, path));
+    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
 
     if (macho_file.getZigObject() == null and positionals.items.len == 1) {
         // Instead of invoking a full-blown `-r` mode on the input which sadly will strip all
         // debug info segments/sections (this is apparently by design by Apple), we copy
         // the *only* input file over.
         const path = positionals.items[0].path().?;
-        const in_file = path.root_dir.handle.openFile(path.sub_path, .{}) catch |err|
+        const in_file = path.root_dir.handle.openFile(io, path.sub_path, .{}) catch |err|
             return diags.fail("failed to open {f}: {s}", .{ path, @errorName(err) });
-        const stat = in_file.stat() catch |err|
+        const stat = in_file.stat(io) catch |err|
             return diags.fail("failed to stat {f}: {s}", .{ path, @errorName(err) });
-        const amt = in_file.copyRangeAll(0, macho_file.base.file.?, 0, stat.size) catch |err|
-            return diags.fail("failed to copy range of file {f}: {s}", .{ path, @errorName(err) });
-        if (amt != stat.size)
-            return diags.fail("unexpected short write in copy range of file {f}", .{path});
+        link.File.copyRangeAll2(io, in_file, macho_file.base.file.?, 0, 0, stat.size) catch |err|
+            return diags.fail("failed to copy range of file {f}: {t}", .{ path, err });
         return;
     }
 
@@ -79,6 +78,7 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
 
 pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Path) link.File.FlushError!void {
     const gpa = comp.gpa;
+    const io = comp.io;
     const diags = &macho_file.base.comp.link_diags;
 
     var positionals = std.array_list.Managed(link.Input).init(gpa);
@@ -88,17 +88,17 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
     positionals.appendSliceAssumeCapacity(comp.link_inputs);
 
     for (comp.c_object_table.keys()) |key| {
-        try positionals.append(try link.openObjectInput(diags, key.status.success.object_path));
+        try positionals.append(try link.openObjectInput(io, diags, key.status.success.object_path));
     }
 
-    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(diags, path));
+    if (module_obj_path) |path| try positionals.append(try link.openObjectInput(io, diags, path));
 
     if (comp.compiler_rt_strat == .obj) {
-        try positionals.append(try link.openObjectInput(diags, comp.compiler_rt_obj.?.full_object_path));
+        try positionals.append(try link.openObjectInput(io, diags, comp.compiler_rt_obj.?.full_object_path));
     }
 
     if (comp.ubsan_rt_strat == .obj) {
-        try positionals.append(try link.openObjectInput(diags, comp.ubsan_rt_obj.?.full_object_path));
+        try positionals.append(try link.openObjectInput(io, diags, comp.ubsan_rt_obj.?.full_object_path));
     }
 
     for (positionals.items) |link_input| {
@@ -229,7 +229,7 @@ pub fn flushStaticLib(macho_file: *MachO, comp: *Compilation, module_obj_path: ?
 
     assert(writer.end == total_size);
 
-    try macho_file.setEndPos(total_size);
+    try macho_file.setLength(total_size);
     try macho_file.pwriteAll(writer.buffered(), 0);
 
     if (diags.hasErrors()) return error.LinkFailure;
@@ -289,7 +289,9 @@ fn initOutputSections(macho_file: *MachO) !void {
     } else false;
     if (needs_eh_frame) {
         assert(needs_unwind_info);
-        macho_file.eh_frame_sect_index = try macho_file.addSection("__TEXT", "__eh_frame", .{});
+        macho_file.eh_frame_sect_index = try macho_file.addSection("__TEXT", "__eh_frame", .{
+            .flags = std.macho.S_COALESCED | std.macho.S_ATTR_NO_TOC | std.macho.S_ATTR_STRIP_STATIC_SYMS | std.macho.S_ATTR_LIVE_SUPPORT,
+        });
     }
 }
 
@@ -539,7 +541,7 @@ fn createSegment(macho_file: *MachO) !void {
     const gpa = macho_file.base.comp.gpa;
 
     // For relocatable, we only ever need a single segment so create it now.
-    const prot: macho.vm_prot_t = macho.PROT.READ | macho.PROT.WRITE | macho.PROT.EXEC;
+    const prot: macho.vm_prot_t = .{ .READ = true, .WRITE = true, .EXEC = true };
     try macho_file.segments.append(gpa, .{
         .cmdsize = @sizeOf(macho.segment_command_64),
         .segname = MachO.makeStaticString(""),
@@ -773,7 +775,6 @@ fn writeHeader(macho_file: *MachO, ncmds: usize, sizeofcmds: usize) !void {
 
 const std = @import("std");
 const Path = std.Build.Cache.Path;
-const WaitGroup = std.Thread.WaitGroup;
 const assert = std.debug.assert;
 const log = std.log.scoped(.link);
 const macho = std.macho;

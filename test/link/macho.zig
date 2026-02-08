@@ -68,12 +68,14 @@ pub fn testAll(b: *Build, build_opts: BuildOptions) *Step {
     macho_step.dependOn(testTlsLargeTbss(b, .{ .target = default_target }));
     macho_step.dependOn(testTlsZig(b, .{ .target = default_target }));
     macho_step.dependOn(testUndefinedFlag(b, .{ .target = default_target }));
+    macho_step.dependOn(testUndefinedDynamicLookup(b, .{ .target = default_target }));
     macho_step.dependOn(testDiscardLocalSymbols(b, .{ .target = default_target }));
     macho_step.dependOn(testUnresolvedError(b, .{ .target = default_target }));
     macho_step.dependOn(testUnresolvedError2(b, .{ .target = default_target }));
     macho_step.dependOn(testUnwindInfo(b, .{ .target = default_target }));
     macho_step.dependOn(testUnwindInfoNoSubsectionsX64(b, .{ .target = x86_64_target }));
     macho_step.dependOn(testUnwindInfoNoSubsectionsArm64(b, .{ .target = aarch64_target }));
+    macho_step.dependOn(testEhFramePointerEncodingSdata4(b, .{ .target = aarch64_target }));
     macho_step.dependOn(testWeakBind(b, .{ .target = x86_64_target }));
     macho_step.dependOn(testWeakRef(b, .{ .target = b.resolveTargetQuery(.{
         .cpu_arch = .x86_64,
@@ -716,7 +718,7 @@ fn testHelloZig(b: *Build, opts: Options) *Step {
     const exe = addExecutable(b, opts, .{ .name = "main", .zig_source_bytes =
         \\const std = @import("std");
         \\pub fn main() void {
-        \\    std.fs.File.stdout().writeAll("Hello world!\n") catch @panic("fail");
+        \\    std.Io.File.stdout().writeStreamingAll(std.Options.debug_io, "Hello world!\n") catch @panic("fail");
         \\}
     });
 
@@ -868,9 +870,10 @@ fn testLayout(b: *Build, opts: Options) *Step {
 }
 
 fn testLinkDirectlyCppTbd(b: *Build, opts: Options) *Step {
+    const io = b.graph.io;
     const test_step = addTestStep(b, "link-directly-cpp-tbd", opts);
 
-    const sdk = std.zig.system.darwin.getSdk(b.allocator, &opts.target.result) orelse
+    const sdk = std.zig.system.darwin.getSdk(b.allocator, io, &opts.target.result) orelse
         @panic("macOS SDK is required to run the test");
 
     const exe = addExecutable(b, opts, .{
@@ -2371,7 +2374,7 @@ fn testTlsZig(b: *Build, opts: Options) *Step {
         \\threadlocal var x: i32 = 0;
         \\threadlocal var y: i32 = -1;
         \\pub fn main() void {
-        \\    var stdout_writer = std.fs.File.stdout().writerStreaming(&.{});
+        \\    var stdout_writer = std.Io.File.stdout().writerStreaming(std.Options.debug_io, &.{});
         \\    stdout_writer.interface.print("{d} {d}\n", .{x, y}) catch unreachable;
         \\    x -= 1;
         \\    y += 1;
@@ -2632,6 +2635,29 @@ fn testUndefinedFlag(b: *Build, opts: Options) *Step {
     return test_step;
 }
 
+fn testUndefinedDynamicLookup(b: *Build, opts: Options) *Step {
+    const test_step = addTestStep(b, "undefined-dynamic-lookup", opts);
+
+    // Create a dylib with an undefined external symbol reference
+    const dylib = addSharedLibrary(b, opts, .{ .name = "a" });
+    addCSourceBytes(dylib,
+        \\extern int undefined_symbol(void);
+        \\int call_undefined(void) {
+        \\    return undefined_symbol();
+        \\}
+    , &.{});
+    dylib.linker_allow_shlib_undefined = true;
+
+    // Verify the Mach-O header does NOT contain NOUNDEFS flag
+    const check = dylib.checkObject();
+    check.checkInHeaders();
+    check.checkExact("header");
+    check.checkNotPresent("NOUNDEFS");
+    test_step.dependOn(&check.step);
+
+    return test_step;
+}
+
 fn testUnresolvedError(b: *Build, opts: Options) *Step {
     const test_step = addTestStep(b, "unresolved-error", opts);
 
@@ -2847,6 +2873,71 @@ fn testUnwindInfo(b: *Build, opts: Options) *Step {
     check.checkInSymtab();
     check.checkContains("(was private external) ___gxx_personality_v0");
     test_step.dependOn(&check.step);
+
+    return test_step;
+}
+
+fn testEhFramePointerEncodingSdata4(b: *Build, opts: Options) *Step {
+    const test_step = addTestStep(b, "eh_frame-pointer-encoding-sdata4", opts);
+
+    const a_o = addObject(b, opts, .{ .name = "foo", .asm_source_bytes =
+        \\.global _foo
+        \\.align 2
+        \\_foo:
+        \\  mov w0, #100
+        \\  ret
+        \\LEND_foo:
+        \\
+        \\.section __TEXT,__gcc_except_tab
+        \\LLSDA_foo:
+        \\  .byte 0xff
+        \\  .byte 0xff
+        \\  .byte 0x01
+        \\  .uleb128 0
+        \\
+        \\.section __TEXT,__eh_frame,coalesced,no_toc+strip_static_syms+live_support
+        \\LCIE:
+        \\  .long LCIE_end - LCIE_start
+        \\LCIE_start:
+        \\  .long 0      ; CIE ID
+        \\  .byte 1      ; Version
+        \\  .asciz "zLR" ; Augmentation string
+        \\  .uleb128 1   ; Code alignment factor
+        \\  .sleb128 -8  ; Data alignment factor
+        \\  .byte 30     ; Return address register
+        \\  .uleb128 2   ; Augmentation data length
+        \\  .byte 0x1b   ; LSDA pointer encoding (DW_EH_PE_pcrel | DW_EH_PE_sdata4)
+        \\  .byte 0x1b   ; FDE pointer encoding (DW_EH_PE_pcrel | DW_EH_PE_sdata4)
+        \\  .byte 0x0c   ; DW_CFA_def_cfa
+        \\  .uleb128 31  ; Reg 31
+        \\  .uleb128 0   ; Offset 0
+        \\  .align 3
+        \\LCIE_end:
+        \\LFDE:
+        \\  .long LFDE_end - LFDE_start
+        \\LFDE_start:
+        \\  .long LFDE_start - LCIE ; CIE pointer
+        \\  .long _foo - .          ; PC begin
+        \\  .long LEND_foo - _foo   ; PC range
+        \\  .uleb128 4              ; Augmentation data length
+        \\  .long LLSDA_foo - .     ; LSDA pointer
+        \\  .align 3
+        \\LFDE_end:
+    });
+
+    const exe = addExecutable(b, opts, .{ .name = "main", .c_source_bytes =
+        \\#include <stdio.h>
+        \\int foo();
+        \\int main() {
+        \\  printf("%d\n", foo());
+        \\  return 0;
+        \\}
+    });
+    exe.root_module.addObject(a_o);
+
+    const run = addRunArtifact(exe);
+    run.expectStdOutEqual("100\n");
+    test_step.dependOn(&run.step);
 
     return test_step;
 }

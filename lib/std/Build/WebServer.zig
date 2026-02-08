@@ -2,7 +2,6 @@ gpa: Allocator,
 graph: *const Build.Graph,
 all_steps: []const *Build.Step,
 listen_address: net.IpAddress,
-ttyconf: Io.tty.Config,
 root_prog_node: std.Progress.Node,
 watch: bool,
 
@@ -25,7 +24,7 @@ time_report_update_times: []i64,
 
 build_status: std.atomic.Value(abi.BuildStatus),
 /// When an event occurs which means WebSocket clients should be sent updates, call `notifyUpdate`
-/// to increment this value. Each client thread waits for this increment with `std.Thread.Futex`, so
+/// to increment this value. Each client thread waits for this increment with `Io.futexWaitTimeout`, so
 /// `notifyUpdate` will wake those threads. Updates are sent on a short interval regardless, so it
 /// is recommended to only use `notifyUpdate` for changes which the user should see immediately. For
 /// instance, we do not call `notifyUpdate` when the number of "unique runs" in the fuzzer changes,
@@ -47,12 +46,11 @@ pub const base_clock: Io.Clock = .awake;
 /// Thread-safe. Triggers updates to be sent to connected WebSocket clients; see `update_id`.
 pub fn notifyUpdate(ws: *WebServer) void {
     _ = ws.update_id.rmw(.Add, 1, .release);
-    std.Thread.Futex.wake(&ws.update_id, 16);
+    ws.graph.io.futexWake(u32, &ws.update_id.raw, 16);
 }
 
 pub const Options = struct {
     gpa: Allocator,
-    ttyconf: Io.tty.Config,
     graph: *const std.Build.Graph,
     all_steps: []const *Build.Step,
     root_prog_node: std.Progress.Node,
@@ -98,7 +96,6 @@ pub fn init(opts: Options) WebServer {
 
     return .{
         .gpa = opts.gpa,
-        .ttyconf = opts.ttyconf,
         .graph = opts.graph,
         .all_steps = all_steps,
         .listen_address = opts.listen_address,
@@ -122,13 +119,14 @@ pub fn init(opts: Options) WebServer {
         .update_id = .init(0),
 
         .runner_request_mutex = .init,
-        .runner_request_ready_cond = .{},
-        .runner_request_empty_cond = .{},
+        .runner_request_ready_cond = .init,
+        .runner_request_empty_cond = .init,
         .runner_request = null,
     };
 }
 pub fn deinit(ws: *WebServer) void {
     const gpa = ws.gpa;
+    const io = ws.graph.io;
 
     gpa.free(ws.step_names_trailing);
     gpa.free(ws.step_status_bits);
@@ -139,7 +137,7 @@ pub fn deinit(ws: *WebServer) void {
     gpa.free(ws.time_report_update_times);
 
     if (ws.serve_thread) |t| {
-        if (ws.tcp_server) |*s| s.stream.close();
+        if (ws.tcp_server) |*s| s.stream.close(io);
         t.join();
     }
     if (ws.tcp_server) |*s| s.deinit();
@@ -217,9 +215,9 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
             else => {},
         }
         if (@bitSizeOf(usize) != 64) {
-            // Current implementation depends on posix.mmap()'s second parameter, `length: usize`,
-            // being compatible with `std.fs.getEndPos() u64`'s return value. This is not the case
-            // on 32-bit platforms.
+            // Current implementation depends on posix.mmap()'s second
+            // parameter, `length: usize`, being compatible with file system's
+            // u64 return value. This is not the case on 32-bit platforms.
             // Affects or affected by issues #5185, #22523, and #22464.
             std.process.fatal("--fuzz not yet implemented on {d}-bit platforms", .{@bitSizeOf(usize)});
         }
@@ -232,7 +230,6 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
         ws.fuzz = Fuzz.init(
             ws.gpa,
             ws.graph.io,
-            ws.ttyconf,
             ws.all_steps,
             ws.root_prog_node,
             .{ .forever = .{ .ws = ws } },
@@ -246,7 +243,7 @@ pub fn finishBuild(ws: *WebServer, opts: struct {
 
 pub fn now(s: *const WebServer) i64 {
     const io = s.graph.io;
-    const ts = base_clock.now(io) catch s.base_timestamp;
+    const ts = base_clock.now(io);
     return @intCast(s.base_timestamp.durationTo(ts).toNanoseconds());
 }
 
@@ -380,7 +377,20 @@ fn serveWebSocket(ws: *WebServer, sock: *http.Server.WebSocket) !noreturn {
         }
 
         prev_time = start_time;
-        std.Thread.Futex.timedWait(&ws.update_id, start_update_id, std.time.ns_per_ms * default_update_interval_ms) catch {};
+
+        const old_cp = io.swapCancelProtection(.blocked);
+        defer _ = io.swapCancelProtection(old_cp);
+        io.futexWaitTimeout(
+            u32,
+            &ws.update_id.raw,
+            start_update_id,
+            .{ .duration = .{
+                .clock = .awake,
+                .raw = .fromMilliseconds(default_update_interval_ms),
+            } },
+        ) catch |err| switch (err) {
+            error.Canceled => unreachable,
+        };
     }
 }
 fn recvWebSocketMessages(ws: *WebServer, sock: *http.Server.WebSocket) void {
@@ -468,11 +478,12 @@ pub fn serveFile(
     content_type: []const u8,
 ) !void {
     const gpa = ws.gpa;
+    const io = ws.graph.io;
     // The desired API is actually sendfile, which will require enhancing http.Server.
     // We load the file with every request so that the user can make changes to the file
     // and refresh the HTML page without restarting this server.
-    const file_contents = path.root_dir.handle.readFileAlloc(path.sub_path, gpa, .limited(10 * 1024 * 1024)) catch |err| {
-        log.err("failed to read '{f}': {s}", .{ path, @errorName(err) });
+    const file_contents = path.root_dir.handle.readFileAlloc(io, path.sub_path, gpa, .limited(10 * 1024 * 1024)) catch |err| {
+        log.err("failed to read '{f}': {t}", .{ path, err });
         return error.AlreadyReported;
     };
     defer gpa.free(file_contents);
@@ -484,8 +495,8 @@ pub fn serveFile(
     });
 }
 pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []const Cache.Path) !void {
-    const gpa = ws.gpa;
-    const io = ws.graph.io;
+    const graph = ws.graph;
+    const io = graph.io;
 
     var send_buffer: [0x4000]u8 = undefined;
     var response = try request.respondStreaming(&send_buffer, .{
@@ -497,20 +508,17 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
         },
     });
 
-    var cached_cwd_path: ?[]const u8 = null;
-    defer if (cached_cwd_path) |p| gpa.free(p);
-
     var archiver: std.tar.Writer = .{ .underlying_writer = &response.writer };
 
     for (paths) |path| {
-        var file = path.root_dir.handle.openFile(path.sub_path, .{}) catch |err| {
+        var file = path.root_dir.handle.openFile(io, path.sub_path, .{}) catch |err| {
             log.err("failed to open '{f}': {s}", .{ path, @errorName(err) });
             continue;
         };
-        defer file.close();
-        const stat = try file.stat();
+        defer file.close(io);
+        const stat = try file.stat(io);
         var read_buffer: [1024]u8 = undefined;
-        var file_reader: Io.File.Reader = .initSize(file.adaptToNewApi(), io, &read_buffer, stat.size);
+        var file_reader: Io.File.Reader = .initSize(file, io, &read_buffer, stat.size);
 
         // TODO: this logic is completely bogus -- obviously so, because `path.root_dir.path` can
         // be cwd-relative. This is also related to why linkification doesn't work in the fuzzer UI:
@@ -518,10 +526,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
         // resulting in modules named "" and "src". The compiler needs to tell the build system
         // about the module graph so that the build system can correctly encode this information in
         // the tar file.
-        archiver.prefix = path.root_dir.path orelse cwd: {
-            if (cached_cwd_path == null) cached_cwd_path = try std.process.getCwdAlloc(gpa);
-            break :cwd cached_cwd_path.?;
-        };
+        archiver.prefix = path.root_dir.path orelse graph.cache.cwd;
         try archiver.writeFile(path.sub_path, &file_reader, @intCast(stat.mtime.toSeconds()));
     }
 
@@ -530,13 +535,13 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
 }
 
 fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.OptimizeMode) !Cache.Path {
-    const io = ws.graph.io;
     const root_name = "build-web";
     const arch_os_abi = "wasm32-freestanding";
     const cpu_features = "baseline+atomics+bulk_memory+multivalue+mutable_globals+nontrapping_fptoint+reference_types+sign_ext";
 
     const gpa = ws.gpa;
     const graph = ws.graph;
+    const io = graph.io;
 
     const main_src_path: Cache.Path = .{
         .root_dir = graph.zig_lib_directory,
@@ -574,34 +579,39 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
         "--listen=-",
     });
 
-    var child: std.process.Child = .init(argv.items, gpa);
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    try child.spawn();
-
-    var poller = Io.poll(gpa, enum { stdout, stderr }, .{
-        .stdout = child.stdout.?,
-        .stderr = child.stderr.?,
+    var child = try std.process.spawn(io, .{
+        .argv = argv.items,
+        .environ_map = &graph.environ_map,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
     });
-    defer poller.deinit();
+    defer child.kill(io);
 
-    try child.stdin.?.writeAll(@ptrCast(@as([]const std.zig.Client.Message.Header, &.{
+    var stderr_task = try io.concurrent(readStreamAlloc, .{ gpa, io, child.stderr.?, .unlimited });
+    defer if (stderr_task.cancel(io)) |slice| gpa.free(slice) else |_| {};
+
+    var stdout_buffer: [512]u8 = undefined;
+    var stdout_reader: Io.File.Reader = .initStreaming(child.stdout.?, io, &stdout_buffer);
+    const stdout = &stdout_reader.interface;
+
+    try child.stdin.?.writeStreamingAll(io, @ptrCast(@as([]const std.zig.Client.Message.Header, &.{
         .{ .tag = .update, .bytes_len = 0 },
         .{ .tag = .exit, .bytes_len = 0 },
     })));
 
     const Header = std.zig.Server.Message.Header;
+
     var result: ?Cache.Path = null;
     var result_error_bundle = std.zig.ErrorBundle.empty;
+    var body_buffer: std.ArrayList(u8) = .empty;
+    defer body_buffer.deinit(gpa);
 
-    const stdout = poller.reader(.stdout);
-
-    poll: while (true) {
-        while (stdout.buffered().len < @sizeOf(Header)) if (!(try poller.poll())) break :poll;
-        const header = stdout.takeStruct(Header, .little) catch unreachable;
-        while (stdout.buffered().len < header.bytes_len) if (!try poller.poll()) break :poll;
-        const body = stdout.take(header.bytes_len) catch unreachable;
+    while (true) {
+        const header = try stdout.takeStruct(Header, .little);
+        body_buffer.clearRetainingCapacity();
+        try stdout.appendExact(gpa, &body_buffer, header.bytes_len);
+        const body = body_buffer.items;
 
         switch (header.tag) {
             .zig_version => {
@@ -628,46 +638,53 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
         }
     }
 
-    const stderr_contents = try poller.toOwnedSlice(.stderr);
+    const stderr_contents = try stderr_task.await(io);
     if (stderr_contents.len > 0) {
         std.debug.print("{s}", .{stderr_contents});
     }
 
     // Send EOF to stdin.
-    child.stdin.?.close();
+    child.stdin.?.close(io);
     child.stdin = null;
 
-    switch (try child.wait()) {
-        .Exited => |code| {
+    switch (try child.wait(io)) {
+        .exited => |code| {
             if (code != 0) {
                 log.err(
                     "the following command exited with error code {d}:\n{s}",
-                    .{ code, try Build.Step.allocPrintCmd(arena, null, argv.items) },
+                    .{ code, try Build.Step.allocPrintCmd(arena, .inherit, null, argv.items) },
                 );
                 return error.WasmCompilationFailed;
             }
         },
-        .Signal, .Stopped, .Unknown => {
+        .signal => |sig| {
+            log.err(
+                "the following command terminated with signal {t}:\n{s}",
+                .{ sig, try Build.Step.allocPrintCmd(arena, .inherit, null, argv.items) },
+            );
+            return error.WasmCompilationFailed;
+        },
+        .stopped, .unknown => {
             log.err(
                 "the following command terminated unexpectedly:\n{s}",
-                .{try Build.Step.allocPrintCmd(arena, null, argv.items)},
+                .{try Build.Step.allocPrintCmd(arena, .inherit, null, argv.items)},
             );
             return error.WasmCompilationFailed;
         },
     }
 
     if (result_error_bundle.errorMessageCount() > 0) {
-        result_error_bundle.renderToStdErr(.{}, .auto);
+        try result_error_bundle.renderToStderr(io, .{}, .auto);
         log.err("the following command failed with {d} compilation errors:\n{s}", .{
             result_error_bundle.errorMessageCount(),
-            try Build.Step.allocPrintCmd(arena, null, argv.items),
+            try Build.Step.allocPrintCmd(arena, .inherit, null, argv.items),
         });
         return error.WasmCompilationFailed;
     }
 
     const base_path = result orelse {
         log.err("child process failed to report result\n{s}", .{
-            try Build.Step.allocPrintCmd(arena, null, argv.items),
+            try Build.Step.allocPrintCmd(arena, .inherit, null, argv.items),
         });
         return error.WasmCompilationFailed;
     };
@@ -680,6 +697,14 @@ fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.Optim
         .output_mode = .Exe,
     });
     return base_path.join(arena, bin_name);
+}
+
+fn readStreamAlloc(gpa: Allocator, io: Io, file: Io.File, limit: Io.Limit) ![]u8 {
+    var file_reader: Io.File.Reader = .initStreaming(file, io, &.{});
+    return file_reader.interface.allocRemaining(gpa, limit) catch |err| switch (err) {
+        error.ReadFailed => return file_reader.err.?,
+        else => |e| return e,
+    };
 }
 
 pub fn updateTimeReportCompile(ws: *WebServer, opts: struct {
@@ -736,7 +761,7 @@ pub fn updateTimeReportCompile(ws: *WebServer, opts: struct {
     ws.notifyUpdate();
 }
 
-pub fn updateTimeReportGeneric(ws: *WebServer, step: *Build.Step, ns_total: u64) void {
+pub fn updateTimeReportGeneric(ws: *WebServer, step: *Build.Step, duration: Io.Duration) void {
     const gpa = ws.gpa;
     const io = ws.graph.io;
 
@@ -755,7 +780,7 @@ pub fn updateTimeReportGeneric(ws: *WebServer, step: *Build.Step, ns_total: u64)
     const out: *align(1) abi.time_report.GenericResult = @ptrCast(buf);
     out.* = .{
         .step_idx = step_idx,
-        .ns_total = ns_total,
+        .ns_total = @intCast(duration.toNanoseconds()),
     };
     {
         ws.time_report_mutex.lock(io) catch return;

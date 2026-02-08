@@ -1,4 +1,5 @@
 const std = @import("std");
+const Io = std.Io;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
@@ -46,15 +47,11 @@ const Interestingness = enum { interesting, unknown, boring };
 // - reduce flags sent to the compiler
 // - integrate with the build system?
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    const gpa = general_purpose_allocator.allocator();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const gpa = init.gpa;
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
     var opt_checker_path: ?[]const u8 = null;
     var opt_root_source_file_path: ?[]const u8 = null;
@@ -68,9 +65,8 @@ pub fn main() !void {
             const arg = args[i];
             if (mem.startsWith(u8, arg, "-")) {
                 if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                    const stdout = std.fs.File.stdout();
-                    try stdout.writeAll(usage);
-                    return std.process.cleanExit();
+                    try Io.File.stdout().writeStreamingAll(io, usage);
+                    return std.process.cleanExit(io);
                 } else if (mem.eql(u8, arg, "--")) {
                     argv = args[i + 1 ..];
                     break;
@@ -87,9 +83,7 @@ pub fn main() !void {
                     if (i >= args.len) fatal("expected 32-bit integer after {s}", .{arg});
                     const next_arg = args[i];
                     seed = std.fmt.parseUnsigned(u32, next_arg, 0) catch |err| {
-                        fatal("unable to parse seed '{s}' as 32-bit integer: {s}", .{
-                            next_arg, @errorName(err),
-                        });
+                        fatal("unable to parse seed '{s}' as 32-bit integer: {t}", .{ next_arg, err });
                     };
                 } else {
                     fatal("unrecognized parameter: '{s}'", .{arg});
@@ -120,7 +114,7 @@ pub fn main() !void {
     var astgen_input: std.Io.Writer.Allocating = .init(gpa);
     defer astgen_input.deinit();
 
-    var tree = try parse(gpa, root_source_file_path);
+    var tree = try parse(gpa, io, root_source_file_path);
     defer {
         gpa.free(tree.source);
         tree.deinit(gpa);
@@ -128,12 +122,10 @@ pub fn main() !void {
 
     if (!skip_smoke_test) {
         std.debug.print("smoke testing the interestingness check...\n", .{});
-        switch (try runCheck(arena, interestingness_argv.items)) {
+        switch (try runCheck(arena, io, interestingness_argv.items)) {
             .interesting => {},
             .boring, .unknown => |t| {
-                fatal("interestingness check returned {s} for unmodified input\n", .{
-                    @tagName(t),
-                });
+                fatal("interestingness check returned {t} for unmodified input\n", .{t});
             },
         }
     }
@@ -185,7 +177,7 @@ pub fn main() !void {
                 std.debug.print("{s} ", .{@tagName(t)});
             }
             std.debug.print("\n", .{});
-            try transformationsToFixups(gpa, arena, root_source_file_path, this_set, &fixups);
+            try transformationsToFixups(gpa, arena, io, root_source_file_path, this_set, &fixups);
 
             rendered.clearRetainingCapacity();
             try tree.render(gpa, &rendered.writer, fixups);
@@ -232,16 +224,16 @@ pub fn main() !void {
                 }
             }
 
-            try std.fs.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
+            try Io.Dir.cwd().writeFile(io, .{ .sub_path = root_source_file_path, .data = rendered.written() });
             // std.debug.print("trying this code:\n{s}\n", .{rendered.items});
 
-            const interestingness = try runCheck(arena, interestingness_argv.items);
-            std.debug.print("{d} random transformations: {s}. {d}/{d}\n", .{
-                subset_size, @tagName(interestingness), start_index, transformations.items.len,
+            const interestingness = try runCheck(arena, io, interestingness_argv.items);
+            std.debug.print("{d} random transformations: {t}. {d}/{d}\n", .{
+                subset_size, interestingness, start_index, transformations.items.len,
             });
             switch (interestingness) {
                 .interesting => {
-                    const new_tree = try parse(gpa, root_source_file_path);
+                    const new_tree = try parse(gpa, io, root_source_file_path);
                     gpa.free(tree.source);
                     tree.deinit(gpa);
                     tree = new_tree;
@@ -273,12 +265,12 @@ pub fn main() !void {
         fixups.clearRetainingCapacity();
         rendered.clearRetainingCapacity();
         try tree.render(gpa, &rendered.writer, fixups);
-        try std.fs.cwd().writeFile(.{ .sub_path = root_source_file_path, .data = rendered.written() });
+        try Io.Dir.cwd().writeFile(io, .{ .sub_path = root_source_file_path, .data = rendered.written() });
 
-        return std.process.cleanExit();
+        return std.process.cleanExit(io);
     }
     std.debug.print("no more transformations found\n", .{});
-    return std.process.cleanExit();
+    return std.process.cleanExit(io);
 }
 
 fn sortTransformations(transformations: []Walk.Transformation, rng: std.Random) void {
@@ -290,23 +282,24 @@ fn sortTransformations(transformations: []Walk.Transformation, rng: std.Random) 
 
 fn termToInteresting(term: std.process.Child.Term) Interestingness {
     return switch (term) {
-        .Exited => |code| switch (code) {
+        .exited => |code| switch (code) {
             0 => .interesting,
             1 => .unknown,
             else => .boring,
         },
-        else => b: {
+        .signal => |sig| {
+            std.debug.print("interestingness check terminated with signal {t}\n", .{sig});
+            return .boring;
+        },
+        else => {
             std.debug.print("interestingness check aborted unexpectedly\n", .{});
-            break :b .boring;
+            return .boring;
         },
     };
 }
 
-fn runCheck(arena: std.mem.Allocator, argv: []const []const u8) !Interestingness {
-    const result = try std.process.Child.run(.{
-        .allocator = arena,
-        .argv = argv,
-    });
+fn runCheck(arena: Allocator, io: Io, argv: []const []const u8) !Interestingness {
+    const result = try std.process.run(arena, io, .{ .argv = argv });
     if (result.stderr.len != 0)
         std.debug.print("{s}", .{result.stderr});
     return termToInteresting(result.term);
@@ -315,6 +308,7 @@ fn runCheck(arena: std.mem.Allocator, argv: []const []const u8) !Interestingness
 fn transformationsToFixups(
     gpa: Allocator,
     arena: Allocator,
+    io: Io,
     root_source_file_path: []const u8,
     transforms: []const Walk.Transformation,
     fixups: *Ast.Render.Fixups,
@@ -352,7 +346,7 @@ fn transformationsToFixups(
                 inline_imported_file.imported_string,
             });
             defer gpa.free(full_imported_path);
-            var other_file_ast = try parse(gpa, full_imported_path);
+            var other_file_ast = try parse(gpa, io, full_imported_path);
             defer {
                 gpa.free(other_file_ast.source);
                 other_file_ast.deinit(gpa);
@@ -396,8 +390,9 @@ fn transformationsToFixups(
     };
 }
 
-fn parse(gpa: Allocator, file_path: []const u8) !Ast {
-    const source_code = std.fs.cwd().readFileAllocOptions(
+fn parse(gpa: Allocator, io: Io, file_path: []const u8) !Ast {
+    const source_code = Io.Dir.cwd().readFileAllocOptions(
+        io,
         file_path,
         gpa,
         .limited(std.math.maxInt(u32)),

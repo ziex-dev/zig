@@ -1,36 +1,39 @@
 const std = @import("std");
-const fs = std.fs;
+const Io = std.Io;
+const Dir = std.Io.Dir;
 const mem = std.mem;
 const ascii = std.ascii;
 
 const catalog_txt = @embedFile("crc/catalog.txt");
 
-pub fn main() anyerror!void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
+    return @"i like cheese"(arena, io, args);
+}
 
-    const args = try std.process.argsAlloc(arena);
+fn @"i like cheese"(arena: std.mem.Allocator, io: Io, args: []const []const u8) !void {
     if (args.len <= 1) printUsageAndExit(args[0]);
 
     const zig_src_root = args[1];
     if (mem.startsWith(u8, zig_src_root, "-")) printUsageAndExit(args[0]);
 
-    var zig_src_dir = try fs.cwd().openDir(zig_src_root, .{});
-    defer zig_src_dir.close();
+    var zig_src_dir = try Dir.cwd().openDir(io, zig_src_root, .{});
+    defer zig_src_dir.close(io);
 
-    const hash_sub_path = try fs.path.join(arena, &.{ "lib", "std", "hash" });
-    var hash_target_dir = try zig_src_dir.makeOpenPath(hash_sub_path, .{});
-    defer hash_target_dir.close();
+    const hash_sub_path = try Dir.path.join(arena, &.{ "lib", "std", "hash" });
+    var hash_target_dir = try zig_src_dir.createDirPathOpen(io, hash_sub_path, .{});
+    defer hash_target_dir.close(io);
 
-    const crc_sub_path = try fs.path.join(arena, &.{ "lib", "std", "hash", "crc" });
-    var crc_target_dir = try zig_src_dir.makeOpenPath(crc_sub_path, .{});
-    defer crc_target_dir.close();
+    const crc_sub_path = try Dir.path.join(arena, &.{ "lib", "std", "hash", "crc" });
+    var crc_target_dir = try zig_src_dir.createDirPathOpen(io, crc_sub_path, .{});
+    defer crc_target_dir.close(io);
 
-    var zig_code_file = try hash_target_dir.createFile("crc.zig", .{});
-    defer zig_code_file.close();
+    var zig_code_file = try hash_target_dir.createFile(io, "crc.zig", .{});
+    defer zig_code_file.close(io);
     var zig_code_file_buffer: [4096]u8 = undefined;
-    var zig_code_file_writer = zig_code_file.writer(&zig_code_file_buffer);
+    var zig_code_file_writer = zig_code_file.writer(io, &zig_code_file_buffer);
     const code_writer = &zig_code_file_writer.interface;
 
     try code_writer.writeAll(
@@ -51,10 +54,10 @@ pub fn main() anyerror!void {
         \\
     );
 
-    var zig_test_file = try crc_target_dir.createFile("test.zig", .{});
-    defer zig_test_file.close();
+    var zig_test_file = try crc_target_dir.createFile(io, "test.zig", .{});
+    defer zig_test_file.close(io);
     var zig_test_file_buffer: [4096]u8 = undefined;
-    var zig_test_file_writer = zig_test_file.writer(&zig_test_file_buffer);
+    var zig_test_file_writer = zig_test_file.writer(io, &zig_test_file_buffer);
     const test_writer = &zig_test_file_writer.interface;
 
     try test_writer.writeAll(
@@ -190,8 +193,8 @@ pub fn main() anyerror!void {
 }
 
 fn printUsageAndExit(arg0: []const u8) noreturn {
-    const w, _ = std.debug.lockStderrWriter(&.{});
-    defer std.debug.unlockStderrWriter();
+    const stderr = std.debug.lockStderr(&.{});
+    const w = &stderr.file_writer.interface;
     printUsage(w, arg0) catch std.process.exit(2);
     std.process.exit(1);
 }

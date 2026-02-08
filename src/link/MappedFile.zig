@@ -1,12 +1,23 @@
-file: std.Io.File,
+const MappedFile = @This();
+
+const builtin = @import("builtin");
+const is_linux = builtin.os.tag == .linux;
+const is_windows = builtin.os.tag == .windows;
+
+const std = @import("std");
+const Io = std.Io;
+const assert = std.debug.assert;
+const linux = std.os.linux;
+const windows = std.os.windows;
+
+io: Io,
 flags: packed struct {
     block_size: std.mem.Alignment,
     copy_file_range_unsupported: bool,
     fallocate_punch_hole_unsupported: bool,
     fallocate_insert_range_unsupported: bool,
 },
-section: if (is_windows) windows.HANDLE else void,
-contents: []align(std.heap.page_size_min) u8,
+memory_map: Io.File.MemoryMap,
 nodes: std.ArrayList(Node),
 free_ni: Node.Index,
 large: std.ArrayList(u64),
@@ -16,20 +27,20 @@ writers: std.SinglyLinkedList,
 
 pub const growth_factor = 4;
 
-pub const Error = std.posix.MMapError || std.posix.MRemapError || std.fs.File.SetEndPosError || error{
+pub const Error = error{
     NotFile,
-    SystemResources,
-    IsDir,
-    Unseekable,
-    NoSpaceLeft,
-};
+} || Io.File.MemoryMap.CreateError || Io.File.MemoryMap.SetLengthError || Io.File.WritePositionalError;
 
-pub fn init(file: std.Io.File, gpa: std.mem.Allocator) !MappedFile {
+pub fn init(file: Io.File, gpa: std.mem.Allocator, io: Io) !MappedFile {
     var mf: MappedFile = .{
-        .file = file,
+        .io = io,
         .flags = undefined,
-        .section = if (is_windows) windows.INVALID_HANDLE_VALUE else {},
-        .contents = &.{},
+        .memory_map = .{
+            .file = file,
+            .memory = &.{},
+            .offset = 0,
+            .section = null,
+        },
         .nodes = .empty,
         .free_ni = .none,
         .large = .empty,
@@ -39,38 +50,9 @@ pub fn init(file: std.Io.File, gpa: std.mem.Allocator) !MappedFile {
     };
     errdefer mf.deinit(gpa);
     const size: u64, const block_size = stat: {
-        if (is_windows) {
-            var sbi: windows.SYSTEM_BASIC_INFORMATION = undefined;
-            break :stat .{
-                try windows.GetFileSizeEx(file.handle),
-                switch (windows.ntdll.NtQuerySystemInformation(
-                    .SystemBasicInformation,
-                    &sbi,
-                    @sizeOf(windows.SYSTEM_BASIC_INFORMATION),
-                    null,
-                )) {
-                    .SUCCESS => @max(sbi.PageSize, sbi.AllocationGranularity),
-                    else => std.heap.page_size_max,
-                },
-            };
-        }
-        if (is_linux) {
-            const statx = try linux.wrapped.statx(
-                mf.file.handle,
-                "",
-                std.posix.AT.EMPTY_PATH,
-                .{ .TYPE = true, .SIZE = true, .BLOCKS = true },
-            );
-            assert(statx.mask.TYPE);
-            assert(statx.mask.SIZE);
-            assert(statx.mask.BLOCKS);
-
-            if (!std.posix.S.ISREG(statx.mode)) return error.PathAlreadyExists;
-            break :stat .{ statx.size, @max(std.heap.pageSize(), statx.blksize) };
-        }
-        const stat = try std.posix.fstat(mf.file.handle);
-        if (!std.posix.S.ISREG(stat.mode)) return error.PathAlreadyExists;
-        break :stat .{ @bitCast(stat.size), @max(std.heap.pageSize(), stat.blksize) };
+        const stat = try file.stat(io);
+        if (stat.kind != .file) return error.PathAlreadyExists;
+        break :stat .{ stat.size, @max(std.heap.pageSize(), stat.block_size) };
     };
     mf.flags = .{
         .block_size = .fromByteUnits(std.math.ceilPowerOfTwoAssert(usize, block_size)),
@@ -306,12 +288,12 @@ pub const Node = extern struct {
 
         pub fn slice(ni: Node.Index, mf: *const MappedFile) []u8 {
             const file_loc = ni.fileLocation(mf, true);
-            return mf.contents[@intCast(file_loc.offset)..][0..@intCast(file_loc.size)];
+            return mf.memory_map.memory[@intCast(file_loc.offset)..][0..@intCast(file_loc.size)];
         }
 
         pub fn sliceConst(ni: Node.Index, mf: *const MappedFile) []const u8 {
             const file_loc = ni.fileLocation(mf, false);
-            return mf.contents[@intCast(file_loc.offset)..][0..@intCast(file_loc.size)];
+            return mf.memory_map.memory[@intCast(file_loc.offset)..][0..@intCast(file_loc.size)];
         }
 
         pub fn resize(ni: Node.Index, mf: *MappedFile, gpa: std.mem.Allocator, size: u64) !void {
@@ -354,7 +336,7 @@ pub const Node = extern struct {
         mf: *MappedFile,
         writer_node: std.SinglyLinkedList.Node,
         ni: Node.Index,
-        interface: std.Io.Writer,
+        interface: Io.Writer,
         err: ?Error,
 
         pub fn deinit(w: *Writer) void {
@@ -362,18 +344,18 @@ pub const Node = extern struct {
             w.* = undefined;
         }
 
-        const vtable: std.Io.Writer.VTable = .{
+        const vtable: Io.Writer.VTable = .{
             .drain = drain,
             .sendFile = sendFile,
-            .flush = std.Io.Writer.noopFlush,
+            .flush = Io.Writer.noopFlush,
             .rebase = growingRebase,
         };
 
         fn drain(
-            interface: *std.Io.Writer,
+            interface: *Io.Writer,
             data: []const []const u8,
             splat: usize,
-        ) std.Io.Writer.Error!usize {
+        ) Io.Writer.Error!usize {
             const pattern = data[data.len - 1];
             const splat_len = pattern.len * splat;
             const start_len = interface.end;
@@ -400,10 +382,10 @@ pub const Node = extern struct {
         }
 
         fn sendFile(
-            interface: *std.Io.Writer,
-            file_reader: *std.Io.File.Reader,
-            limit: std.Io.Limit,
-        ) std.Io.Writer.FileError!usize {
+            interface: *Io.Writer,
+            file_reader: *Io.File.Reader,
+            limit: Io.Limit,
+        ) Io.Writer.FileError!usize {
             if (limit == .nothing) return 0;
             const pos = file_reader.logicalPos();
             const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
@@ -433,8 +415,8 @@ pub const Node = extern struct {
                     return n;
                 },
                 .streaming,
-                .streaming_reading,
-                .positional_reading,
+                .streaming_simple,
+                .positional_simple,
                 .failure,
                 => {
                     const dest = limit.slice(interface.unusedCapacitySlice());
@@ -447,10 +429,10 @@ pub const Node = extern struct {
         }
 
         fn growingRebase(
-            interface: *std.Io.Writer,
+            interface: *Io.Writer,
             preserve: usize,
             unused_capacity: usize,
-        ) std.Io.Writer.Error!void {
+        ) Io.Writer.Error!void {
             _ = preserve;
             const total_capacity = interface.end + unused_capacity;
             if (interface.buffer.len >= total_capacity) return;
@@ -612,13 +594,15 @@ pub fn addNodeAfter(
 }
 
 fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested_size: u64) !void {
+    const io = mf.io;
     const node = ni.get(mf);
     const old_offset, const old_size = node.location().resolve(mf);
     const new_size = node.flags.alignment.forward(@intCast(requested_size));
     // Resize the entire file
     if (ni == Node.Index.root) {
         try mf.ensureCapacityForSetLocation(gpa);
-        try std.fs.File.adaptFromNewApi(mf.file).setEndPos(new_size);
+        try mf.memory_map.write(io);
+        try mf.memory_map.file.setLength(io, new_size);
         try mf.ensureTotalCapacity(@intCast(new_size));
         ni.setLocationAssumeCapacity(mf, old_offset, new_size);
         return;
@@ -642,6 +626,7 @@ fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested
     if (is_linux and !mf.flags.fallocate_insert_range_unsupported and
         node.flags.alignment.order(mf.flags.block_size).compare(.gte))
     insert_range: {
+        try mf.memory_map.write(io);
         // Ask the filesystem driver to insert extents into the file without copying any data
         const last_offset, const last_size = parent.last.location(mf).resolve(mf);
         const last_end = last_offset + last_size;
@@ -653,12 +638,12 @@ fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested
         _, const file_size = Node.Index.root.location(mf).resolve(mf);
         while (true) switch (linux.errno(switch (std.math.order(range_file_offset, file_size)) {
             .lt => linux.fallocate(
-                mf.file.handle,
+                mf.memory_map.file.handle,
                 linux.FALLOC.FL_INSERT_RANGE,
                 @intCast(range_file_offset),
                 @intCast(range_size),
             ),
-            .eq => linux.ftruncate(mf.file.handle, @intCast(range_file_offset + range_size)),
+            .eq => linux.ftruncate(mf.memory_map.file.handle, @intCast(range_file_offset + range_size)),
             .gt => unreachable,
         })) {
             .SUCCESS => {
@@ -865,7 +850,7 @@ fn moveRange(mf: *MappedFile, old_file_offset: u64, new_file_offset: u64, size: 
     if (is_linux and !mf.flags.fallocate_punch_hole_unsupported and
         size >= mf.flags.block_size.toByteUnits() * 2 - 1) while (true)
         switch (linux.errno(linux.fallocate(
-            mf.file.handle,
+            mf.memory_map.file.handle,
             linux.FALLOC.FL_PUNCH_HOLE | linux.FALLOC.FL_KEEP_SIZE,
             @intCast(old_file_offset),
             @intCast(size),
@@ -885,24 +870,26 @@ fn moveRange(mf: *MappedFile, old_file_offset: u64, new_file_offset: u64, size: 
             .TXTBSY => return error.FileBusy,
             else => |e| return std.posix.unexpectedErrno(e),
         };
-    @memset(mf.contents[@intCast(old_file_offset)..][0..@intCast(size)], 0);
+    @memset(mf.memory_map.memory[@intCast(old_file_offset)..][0..@intCast(size)], 0);
 }
 
 fn copyRange(mf: *MappedFile, old_file_offset: u64, new_file_offset: u64, size: u64) !void {
-    const copy_size = try mf.copyFileRange(mf.file, old_file_offset, new_file_offset, size);
+    const copy_size = try mf.copyFileRange(mf.memory_map.file, old_file_offset, new_file_offset, size);
     if (copy_size < size) @memcpy(
-        mf.contents[@intCast(new_file_offset + copy_size)..][0..@intCast(size - copy_size)],
-        mf.contents[@intCast(old_file_offset + copy_size)..][0..@intCast(size - copy_size)],
+        mf.memory_map.memory[@intCast(new_file_offset + copy_size)..][0..@intCast(size - copy_size)],
+        mf.memory_map.memory[@intCast(old_file_offset + copy_size)..][0..@intCast(size - copy_size)],
     );
 }
 
 fn copyFileRange(
     mf: *MappedFile,
-    old_file: std.Io.File,
+    old_file: Io.File,
     old_file_offset: u64,
     new_file_offset: u64,
     size: u64,
 ) !u64 {
+    const io = mf.io;
+    try mf.memory_map.write(io);
     var remaining_size = size;
     if (is_linux and !mf.flags.copy_file_range_unsupported) {
         var old_file_offset_mut: i64 = @intCast(old_file_offset);
@@ -911,7 +898,7 @@ fn copyFileRange(
             const copy_len = linux.copy_file_range(
                 old_file.handle,
                 &old_file_offset_mut,
-                mf.file.handle,
+                mf.memory_map.file.handle,
                 &new_file_offset_mut,
                 @intCast(remaining_size),
                 0,
@@ -947,82 +934,41 @@ fn ensureCapacityForSetLocation(mf: *MappedFile, gpa: std.mem.Allocator) !void {
 }
 
 pub fn ensureTotalCapacity(mf: *MappedFile, new_capacity: usize) !void {
-    if (mf.contents.len >= new_capacity) return;
+    if (mf.memory_map.memory.len >= new_capacity) return;
     try mf.ensureTotalCapacityPrecise(new_capacity +| new_capacity / growth_factor);
 }
 
 pub fn ensureTotalCapacityPrecise(mf: *MappedFile, new_capacity: usize) !void {
-    if (mf.contents.len >= new_capacity) return;
+    if (mf.memory_map.memory.len >= new_capacity) return;
+    const io = mf.io;
     const aligned_capacity = mf.flags.block_size.forward(new_capacity);
-    if (!is_linux) mf.unmap() else if (mf.contents.len > 0) {
-        mf.contents = try std.posix.mremap(
-            mf.contents.ptr,
-            mf.contents.len,
-            aligned_capacity,
-            .{ .MAYMOVE = true },
-            null,
-        );
-        return;
-    }
-    if (is_windows) {
-        if (mf.section == windows.INVALID_HANDLE_VALUE) switch (windows.ntdll.NtCreateSection(
-            &mf.section,
-            .{
-                .SPECIFIC = .{ .SECTION = .{
-                    .QUERY = true,
-                    .MAP_WRITE = true,
-                    .MAP_READ = true,
-                    .EXTEND_SIZE = true,
-                } },
-                .STANDARD = .{ .RIGHTS = .REQUIRED },
-            },
-            null,
-            @constCast(&@as(i64, @intCast(aligned_capacity))),
-            .{ .READWRITE = true },
-            .{ .COMMIT = true },
-            mf.file.handle,
-        )) {
-            .SUCCESS => {},
-            else => return error.MemoryMappingNotSupported,
-        };
-        var contents_ptr: ?[*]align(std.heap.page_size_min) u8 = null;
-        var contents_len = aligned_capacity;
-        switch (windows.ntdll.NtMapViewOfSection(
-            mf.section,
-            windows.GetCurrentProcess(),
-            @ptrCast(&contents_ptr),
-            null,
-            0,
-            null,
-            &contents_len,
-            .Unmap,
-            .{},
-            .{ .READWRITE = true },
-        )) {
-            .SUCCESS => mf.contents = contents_ptr.?[0..contents_len],
-            else => return error.MemoryMappingNotSupported,
+
+    if (mf.memory_map.memory.len > 0) {
+        if (mf.memory_map.setLength(io, aligned_capacity)) |_| {
+            return;
+        } else |err| switch (err) {
+            error.OperationUnsupported => {},
+            else => |e| return e,
         }
-    } else mf.contents = try std.posix.mmap(
-        null,
-        aligned_capacity,
-        std.posix.PROT.READ | std.posix.PROT.WRITE,
-        .{ .TYPE = if (is_linux) .SHARED_VALIDATE else .SHARED },
-        mf.file.handle,
-        0,
-    );
+        unmap(mf);
+    }
+
+    const file = mf.memory_map.file;
+    mf.memory_map = try .create(io, file, .{ .len = aligned_capacity });
 }
 
 pub fn unmap(mf: *MappedFile) void {
-    if (mf.contents.len == 0) return;
-    if (is_windows)
-        _ = windows.ntdll.NtUnmapViewOfSection(windows.GetCurrentProcess(), mf.contents.ptr)
-    else
-        std.posix.munmap(mf.contents);
-    mf.contents = &.{};
-    if (is_windows and mf.section != windows.INVALID_HANDLE_VALUE) {
-        windows.CloseHandle(mf.section);
-        mf.section = windows.INVALID_HANDLE_VALUE;
-    }
+    if (mf.memory_map.memory.len == 0) return;
+    const io = mf.io;
+    const file = mf.memory_map.file;
+    mf.memory_map.destroy(io);
+    mf.memory_map.memory = &.{};
+    mf.memory_map.file = file;
+}
+
+pub fn flush(mf: *MappedFile) Io.File.WritePositionalError!void {
+    const io = mf.io;
+    try mf.memory_map.write(io);
 }
 
 fn verify(mf: *MappedFile) void {
@@ -1059,12 +1005,3 @@ fn verifyNode(mf: *MappedFile, parent_ni: Node.Index) void {
         ni = node.next;
     }
 }
-
-const assert = std.debug.assert;
-const builtin = @import("builtin");
-const is_linux = builtin.os.tag == .linux;
-const is_windows = builtin.os.tag == .windows;
-const linux = std.os.linux;
-const MappedFile = @This();
-const std = @import("std");
-const windows = std.os.windows;

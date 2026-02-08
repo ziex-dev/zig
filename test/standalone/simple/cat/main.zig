@@ -1,28 +1,22 @@
 const std = @import("std");
-const fs = std.fs;
+const Io = std.Io;
 const mem = std.mem;
 const warn = std.log.warn;
 const fatal = std.process.fatal;
 
-pub fn main() !void {
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    var threaded: std.Io.Threaded = .init(arena);
-    defer threaded.deinit();
-    const io = threaded.io();
-
-    const args = try std.process.argsAlloc(arena);
+pub fn main(init: std.process.Init) !void {
+    const arena = init.arena.allocator();
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(arena);
 
     const exe = args[0];
     var catted_anything = false;
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = fs.File.stdout().writerStreaming(&stdout_buffer);
+    var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
-    var stdin_reader = fs.File.stdin().readerStreaming(io, &.{});
+    var stdin_reader = Io.File.stdin().readerStreaming(io, &.{});
 
-    const cwd = fs.cwd();
+    const cwd = Io.Dir.cwd();
 
     for (args[1..]) |arg| {
         if (mem.eql(u8, arg, "-")) {
@@ -32,8 +26,8 @@ pub fn main() !void {
         } else if (mem.startsWith(u8, arg, "-")) {
             return usage(exe);
         } else {
-            const file = cwd.openFile(arg, .{}) catch |err| fatal("unable to open file: {t}\n", .{err});
-            defer file.close();
+            const file = cwd.openFile(io, arg, .{}) catch |err| fatal("unable to open file: {t}\n", .{err});
+            defer file.close(io);
 
             catted_anything = true;
             var file_reader = file.reader(io, &.{});

@@ -6,22 +6,17 @@ fn testOne(in: abi.Slice) callconv(.c) void {
     std.debug.assertReadable(in.toSlice());
 }
 
-pub fn main() !void {
-    var debug_gpa_ctx: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_gpa_ctx.deinit();
-    const gpa = debug_gpa_ctx.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    var args = try std.process.argsWithAllocator(gpa);
+    var args = try init.minimal.args.iterateAllocator(gpa);
     defer args.deinit();
     _ = args.skip(); // executable name
 
-    var threaded: std.Io.Threaded = .init(gpa);
-    defer threaded.deinit();
-    const io = threaded.io();
-
     const cache_dir_path = args.next() orelse @panic("expected cache directory path argument");
-    var cache_dir = try std.fs.cwd().openDir(cache_dir_path, .{});
-    defer cache_dir.close();
+    var cache_dir = try std.Io.Dir.cwd().openDir(io, cache_dir_path, .{});
+    defer cache_dir.close(io);
 
     abi.fuzzer_init(.fromSlice(cache_dir_path));
     abi.fuzzer_init_test(testOne, .fromSlice("test"));
@@ -30,8 +25,8 @@ pub fn main() !void {
 
     const pc_digest = abi.fuzzer_coverage().id;
     const coverage_file_path = "v/" ++ std.fmt.hex(pc_digest);
-    const coverage_file = try cache_dir.openFile(coverage_file_path, .{});
-    defer coverage_file.close();
+    const coverage_file = try cache_dir.openFile(io, coverage_file_path, .{});
+    defer coverage_file.close(io);
 
     var read_buf: [@sizeOf(abi.SeenPcsHeader)]u8 = undefined;
     var r = coverage_file.reader(io, &read_buf);
@@ -42,6 +37,6 @@ pub fn main() !void {
     const expected_len = @sizeOf(abi.SeenPcsHeader) +
         try std.math.divCeil(usize, pcs_header.pcs_len, @bitSizeOf(usize)) * @sizeOf(usize) +
         pcs_header.pcs_len * @sizeOf(usize);
-    if (try coverage_file.getEndPos() != expected_len)
+    if (try coverage_file.length(io) != expected_len)
         return error.WrongEnd;
 }

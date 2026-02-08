@@ -50,8 +50,10 @@ stage3-debug/bin/zig build test docs \
   -Dskip-wasm \
   -Dskip-linux \
   -Dskip-netbsd \
+  -Dskip-openbsd \
   -Dskip-windows \
   -Dskip-darwin \
+  -Dskip-test-incremental \
   --search-prefix "$PREFIX" \
   --zig-lib-dir "$PWD/../lib" \
   --test-timeout 2m

@@ -752,25 +752,6 @@ pub fn fieldIndex(comptime T: type, comptime name: []const u8) ?comptime_int {
     return null;
 }
 
-/// Returns a slice of pointers to public declarations of a namespace.
-pub fn declList(comptime Namespace: type, comptime Decl: type) []const *const Decl {
-    const S = struct {
-        fn declNameLessThan(context: void, lhs: *const Decl, rhs: *const Decl) bool {
-            _ = context;
-            return mem.lessThan(u8, lhs.name, rhs.name);
-        }
-    };
-    comptime {
-        const decls = declarations(Namespace);
-        var array: [decls.len]*const Decl = undefined;
-        for (decls, 0..) |decl, i| {
-            array[i] = &@field(Namespace, decl.name);
-        }
-        mem.sort(*const Decl, &array, {}, S.declNameLessThan);
-        return &array;
-    }
-}
-
 /// Deprecated: use @Int
 pub fn Int(comptime signedness: std.builtin.Signedness, comptime bit_count: u16) type {
     return @Int(signedness, bit_count);
@@ -983,13 +964,13 @@ pub inline fn hasUniqueRepresentation(comptime T: type) bool {
         else => false, // TODO can we know if it's true for some of these types ?
 
         .@"anyframe",
-        .@"enum",
         .error_set,
         .@"fn",
         => true,
 
         .bool => false,
 
+        .@"enum" => |info| hasUniqueRepresentation(info.tag_type),
         .int => |info| @sizeOf(T) * 8 == info.bits,
 
         .pointer => |info| info.size != .slice,
@@ -1089,9 +1070,11 @@ test hasUniqueRepresentation {
 
     inline for ([_]type{ i0, u8, i16, u32, i64 }) |T| {
         try testing.expect(hasUniqueRepresentation(T));
+        try testing.expect(hasUniqueRepresentation(enum(T) { _ }));
     }
     inline for ([_]type{ i1, u9, i17, u33, i24 }) |T| {
         try testing.expect(!hasUniqueRepresentation(T));
+        try testing.expect(!hasUniqueRepresentation(enum(T) { _ }));
     }
 
     try testing.expect(hasUniqueRepresentation(*u8));

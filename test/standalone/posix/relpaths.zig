@@ -1,71 +1,29 @@
 // Test relative paths through POSIX APIS.  These tests have to change the cwd, so
 // they shouldn't be Zig unit tests.
 
-const std = @import("std");
 const builtin = @import("builtin");
 
-pub fn main() !void {
+const std = @import("std");
+const Io = std.Io;
+
+pub fn main(init: std.process.Init) !void {
     if (builtin.target.os.tag == .wasi) return; // Can link, but can't change into tmpDir
 
-    var Allocator = std.heap.DebugAllocator(.{}){};
-    const a = Allocator.allocator();
-    defer std.debug.assert(Allocator.deinit() == .ok);
+    const io = init.io;
 
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const tmp_dir_path = args[1];
+
+    var tmp_dir = try Io.Dir.cwd().openDir(io, tmp_dir_path, .{});
+    defer tmp_dir.close(io);
 
     // Want to test relative paths, so cd into the tmpdir for these tests
-    try tmp.dir.setAsCwd();
+    try std.process.setCurrentDir(io, tmp_dir);
 
-    try test_symlink(a, tmp);
-    try test_link(tmp);
+    try test_link(io, tmp_dir);
 }
 
-fn test_symlink(a: std.mem.Allocator, tmp: std.testing.TmpDir) !void {
-    const target_name = "symlink-target";
-    const symlink_name = "symlinker";
-
-    // Create the target file
-    try tmp.dir.writeFile(.{ .sub_path = target_name, .data = "nonsense" });
-
-    if (builtin.target.os.tag == .windows) {
-        const wtarget_name = try std.unicode.wtf8ToWtf16LeAllocZ(a, target_name);
-        const wsymlink_name = try std.unicode.wtf8ToWtf16LeAllocZ(a, symlink_name);
-        defer a.free(wtarget_name);
-        defer a.free(wsymlink_name);
-
-        std.os.windows.CreateSymbolicLink(tmp.dir.fd, wsymlink_name, wtarget_name, false) catch |err| switch (err) {
-            // Symlink requires admin privileges on windows, so this test can legitimately fail.
-            error.AccessDenied => return,
-            else => return err,
-        };
-    } else {
-        try std.posix.symlink(target_name, symlink_name);
-    }
-
-    var buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const given = try std.posix.readlink(symlink_name, buffer[0..]);
-    try std.testing.expectEqualStrings(target_name, given);
-}
-
-fn getLinkInfo(fd: std.posix.fd_t) !struct { std.posix.ino_t, std.posix.nlink_t } {
-    if (builtin.target.os.tag == .linux) {
-        const stx = try std.os.linux.wrapped.statx(
-            fd,
-            "",
-            std.posix.AT.EMPTY_PATH,
-            .{ .INO = true, .NLINK = true },
-        );
-        std.debug.assert(stx.mask.INO);
-        std.debug.assert(stx.mask.NLINK);
-        return .{ stx.ino, stx.nlink };
-    }
-
-    const st = try std.posix.fstat(fd);
-    return .{ st.ino, st.nlink };
-}
-
-fn test_link(tmp: std.testing.TmpDir) !void {
+fn test_link(io: Io, tmp_dir: Io.Dir) !void {
     switch (builtin.target.os.tag) {
         .linux, .illumos => {},
         else => return,
@@ -74,29 +32,29 @@ fn test_link(tmp: std.testing.TmpDir) !void {
     const target_name = "link-target";
     const link_name = "newlink";
 
-    try tmp.dir.writeFile(.{ .sub_path = target_name, .data = "example" });
+    try tmp_dir.writeFile(io, .{ .sub_path = target_name, .data = "example" });
 
-    // Test 1: create the relative link from inside tmp
-    try std.posix.link(target_name, link_name);
+    // Test 1: create the relative link from inside tmp_dir
+    try Io.Dir.hardLink(.cwd(), target_name, .cwd(), link_name, io, .{});
 
     // Verify
-    const efd = try tmp.dir.openFile(target_name, .{});
-    defer efd.close();
+    const efd = try tmp_dir.openFile(io, target_name, .{});
+    defer efd.close(io);
 
-    const nfd = try tmp.dir.openFile(link_name, .{});
-    defer nfd.close();
+    const nfd = try tmp_dir.openFile(io, link_name, .{});
+    defer nfd.close(io);
 
     {
-        const eino, _ = try getLinkInfo(efd.handle);
-        const nino, const nlink = try getLinkInfo(nfd.handle);
-        try std.testing.expectEqual(eino, nino);
-        try std.testing.expectEqual(@as(std.posix.nlink_t, 2), nlink);
+        const e_stat = try efd.stat(io);
+        const n_stat = try nfd.stat(io);
+        try std.testing.expectEqual(e_stat.inode, n_stat.inode);
+        try std.testing.expectEqual(2, n_stat.nlink);
     }
 
     // Test 2: Remove the link and see the stats update
-    try std.posix.unlink(link_name);
+    try Io.Dir.cwd().deleteFile(io, link_name);
     {
-        _, const elink = try getLinkInfo(efd.handle);
-        try std.testing.expectEqual(@as(std.posix.nlink_t, 1), elink);
+        const e_stat = try efd.stat(io);
+        try std.testing.expectEqual(1, e_stat.nlink);
     }
 }

@@ -47,5 +47,16 @@ stage3-debug/bin/zig build test docs \
   -Denable-macos-sdk \
   -Dstatic-llvm \
   -Dskip-non-native \
+  -Dskip-test-incremental \
   --search-prefix "$PREFIX" \
   --test-timeout 2m
+
+stage3-debug/bin/zig build \
+  --prefix stage4-debug \
+  -Denable-llvm \
+  -Dno-lib \
+  -Dtarget=$TARGET \
+  -Duse-zig-libcxx \
+  -Dversion-string="$(stage3-debug/bin/zig version)"
+
+stage4-debug/bin/zig test ../test/behavior.zig

@@ -146,6 +146,7 @@ pub const MAP_TYPE = enum(u4) {
     SHARED = 0x01,
     PRIVATE = 0x02,
     SHARED_VALIDATE = 0x03,
+    DROPPABLE = 0x08,
 };
 
 pub const MAP = switch (native_arch) {
@@ -324,6 +325,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -346,6 +348,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -368,6 +371,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -393,6 +397,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _27: u6 = 0,
     },
@@ -417,6 +422,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         _20: u1 = 0,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -439,6 +445,7 @@ pub const O = switch (native_arch) {
         CLOEXEC: bool = false,
         SYNC: bool = false,
         PATH: bool = false,
+        /// This is typically invalid without also setting `DIRECTORY`.
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
@@ -459,13 +466,16 @@ pub const O = switch (native_arch) {
         NOFOLLOW: bool = false,
         NOATIME: bool = false,
         CLOEXEC: bool = false,
-        _20: u1 = 0,
+        /// This is typically invalid without also setting `TMPFILE1` and `DIRECTORY`.
+        TMPFILE0: bool = false,
         PATH: bool = false,
-        _22: u10 = 0,
+        _22: u4 = 0,
+        /// This is typically invalid without also setting `TMPFILE0` and `DIRECTORY`.
+        TMPFILE1: bool = false,
+        _27: u5 = 0,
 
         // #define O_RSYNC    04010000
         // #define O_SYNC     04010000
-        // #define O_TMPFILE 020200000
         // #define O_NDELAY O_NONBLOCK
     },
     .m68k => packed struct(u32) {
@@ -490,6 +500,15 @@ pub const O = switch (native_arch) {
         _22: u10 = 0,
     },
     else => @compileError("missing std.os.linux.O constants for this architecture"),
+};
+
+pub const RENAME = packed struct(u32) {
+    /// Cannot be set together with `EXCHANGE`.
+    NOREPLACE: bool = false,
+    /// Cannot be set together with `NOREPLACE`.
+    EXCHANGE: bool = false,
+    WHITEOUT: bool = false,
+    _: u29 = 0,
 };
 
 /// Set by startup code, used by `getauxval`.
@@ -612,6 +631,20 @@ pub fn chroot(path: [*:0]const u8) usize {
 
 pub fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) usize {
     return syscall3(.execve, @intFromPtr(path), @intFromPtr(argv), @intFromPtr(envp));
+}
+
+pub const EXECVEAT = packed struct(u32) {
+    _1: u8 = 0, // 0x00000001
+    /// Do not follow symbolic links.
+    SYMLINK_NOFOLLOW: bool, // 0x00000100
+    _200: u3 = 0, // 0x00000200
+    /// Allow empty relative pathname.
+    EMPTY_PATH: bool, // 0x00001000
+    _: u19 = 0,
+};
+
+pub fn execveat(dirfd: fd_t, path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8, flags: EXECVEAT) usize {
+    return syscall5(.execveat, fd_to_usize(dirfd), @intFromPtr(path), @intFromPtr(argv), @intFromPtr(envp), @as(u32, @bitCast(flags)));
 }
 
 pub fn fork() usize {
@@ -964,17 +997,129 @@ pub fn umount2(special: [*:0]const u8, flags: u32) usize {
     return syscall2(.umount2, @intFromPtr(special), flags);
 }
 
+pub const MOVE_MOUNT = packed struct(u32) {
+    /// Follow symlinks on from path.
+    F_SYMLINKS: bool, // 0x00000001
+    /// Follow automounts on from path.
+    F_AUTOMOUNTS: bool, // 0x00000002
+    /// Empty from path permitted.
+    F_EMPTY_PATH: bool, // 0x00000004
+    _8: bool = false, // 0x00000008
+    /// Follow symlinks on to path.
+    T_SYMLINKS: bool, // 0x00000010
+    /// Follow automounts on to path.
+    T_AUTOMOUNTS: bool, // 0x00000020
+    /// Empty to path permitted.
+    T_EMPTY_PATH: bool, // 0x00000040
+    _80: bool = false, // 0x00000080
+    /// Set sharing group instead.
+    SET_GROUP: bool, // 0x00000100
+    _: u23 = 0,
+};
+
+pub fn move_mount(from_dirfd: fd_t, from_path: [*:0]const u8, to_dirfd: fd_t, to_path: [*:0]const u8, flags: MOVE_MOUNT) usize {
+    return syscall5(.move_mount, fd_to_usize(from_dirfd), @intFromPtr(from_path), fd_to_usize(to_dirfd), @intFromPtr(to_path), @as(u32, @bitCast(flags)));
+}
+
+pub const MOUNT_ATTR = packed struct(u32) {
+    /// Update atime relative to mtime/ctime.
+    RELATIME: u0, // This is the default ATIME, it's true unless a different ATIME is set.
+    /// Mount read-only.
+    RDONLY: bool, // 0x00000001
+    /// Ignore suid and sgid bits.
+    NOSUID: bool, // 0x00000002
+    /// Disallow access to device special files.
+    NODEV: bool, // 0x00000004
+    /// Disallow program execution.
+    NOEXEC: bool, // 0x00000008
+    /// Do not update access times.
+    NOATIME: bool, // 0x00000010
+    /// Always perform atime updates.
+    STRICTATIME: bool, // 0x00000020
+    _40: bool = false, // 0x00000040
+    /// Do not update directory access times.
+    NODIRATIME: bool, // 0x00000080
+    _100: u12 = 0, // 0x00000100
+    /// Idmap mount to @userns_fd in struct mount_attr.
+    IDMAP: bool, // 0x00100000
+    /// Do not follow symlinks.
+    NOSYMFOLLOW: bool, // 0x00200000
+    _: u10 = 0,
+
+    // ATIME: u32, // 0x00000070 This is a mask, not a flag.
+};
+
+pub fn mount_setattr(dirfd: fd_t, path: [*:0]const u8, flags: MOUNT_ATTR) usize {
+    return syscall3(.mount_setattr, fd_to_usize(dirfd), @intFromPtr(path), @as(u32, @bitCast(flags)));
+}
+
+pub const FSOPEN = packed struct(u32) {
+    /// Set CLOEXEC on the new fd.
+    CLOEXEC: bool, // 0x00000001
+    _: u31 = 0,
+};
+
+pub fn fsopen(fsname: [*:0]const u8, flags: FSOPEN) usize {
+    return syscall2(.fsopen, @intFromPtr(fsname), @as(u32, @bitCast(flags)));
+}
+
+pub const FSCONFIG_CMD = enum(u32) {
+    /// Set parameter, supplying no value.
+    SET_FLAG,
+    /// Set parameter, supplying a string value.
+    SET_STRING,
+    /// Set parameter, supplying a binary blob value.
+    SET_BINARY,
+    /// Set parameter, supplying an object by path.
+    SET_PATH,
+    /// Set parameter, supplying an object by (empty) path.
+    SET_PATH_EMPTY,
+    /// Set parameter, supplying an object by fd.
+    SET_FD,
+    /// Invoke superblock creation.
+    CREATE,
+    /// Invoke superblock reconfiguration.
+    RECONFIGURE,
+};
+
+pub fn fsconfig(fd: fd_t, cmd: FSCONFIG_CMD, key: ?[*:0]const u8, value: ?[*:0]const u8, aux: u32) usize {
+    return syscall5(.fsconfig, fd_to_usize(fd), @intFromEnum(cmd), @intFromPtr(key), @intFromPtr(value), aux);
+}
+
+pub const FSMOUNT = packed struct(u32) {
+    /// Set CLOEXEC on the fd.
+    CLOEXEC: bool, // 0x00000001
+    _31: u31 = 0,
+};
+
+pub fn fsmount(fsfd: fd_t, flags: FSMOUNT, attr_flags: MOUNT_ATTR) usize {
+    return syscall3(.fsmount, fd_to_usize(fsfd), @as(u32, @bitCast(flags)), @as(u32, @bitCast(attr_flags)));
+}
+
+pub const FSPICK = packed struct(u32) {
+    /// Set CLOEXEC on the new fd.
+    CLOEXEC: bool, // 0x00000001
+    SYMLINK_NOFOLLOW: bool, // 0x00000002
+    NO_AUTOMOUNT: bool, // 0x00000004
+    EMPTY_PATH: bool, // 0x00000008
+    _28: u28 = 0,
+};
+
+pub fn fspick(dirfd: fd_t, path: [*:0]const u8, flags: FSPICK) usize {
+    return syscall3(.fspick, fd_to_usize(dirfd), @intFromPtr(path), @as(u32, @bitCast(flags)));
+}
+
 pub fn pivot_root(new_root: [*:0]const u8, put_old: [*:0]const u8) usize {
     return syscall2(.pivot_root, @intFromPtr(new_root), @intFromPtr(put_old));
 }
 
-pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, offset: i64) usize {
+pub fn mmap(address: ?[*]u8, length: usize, prot: PROT, flags: MAP, fd: i32, offset: i64) usize {
     if (@hasField(SYS, "mmap2")) {
         return syscall6(
             .mmap2,
             @intFromPtr(address),
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
             @truncate(@as(u64, @bitCast(offset)) / std.heap.pageSize()),
@@ -987,7 +1132,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
             @intFromPtr(&[_]usize{
                 @intFromPtr(address),
                 length,
-                prot,
+                @as(u32, @bitCast(prot)),
                 @as(u32, @bitCast(flags)),
                 @bitCast(@as(isize, fd)),
                 @as(u64, @bitCast(offset)),
@@ -996,7 +1141,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
             .mmap,
             @intFromPtr(address),
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
             @as(u64, @bitCast(offset)),
@@ -1004,8 +1149,8 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
     }
 }
 
-pub fn mprotect(address: [*]const u8, length: usize, protection: usize) usize {
-    return syscall3(.mprotect, @intFromPtr(address), length, protection);
+pub fn mprotect(address: [*]const u8, length: usize, protection: PROT) usize {
+    return syscall3(.mprotect, @intFromPtr(address), length, @as(u32, @bitCast(protection)));
 }
 
 pub fn mremap(old_addr: ?[*]const u8, old_len: usize, new_len: usize, flags: MREMAP, new_addr: ?[*]const u8) usize {
@@ -1247,6 +1392,10 @@ pub fn faccessat(dirfd: i32, path: [*:0]const u8, mode: u32, flags: u32) usize {
     return syscall4(.faccessat2, @as(usize, @bitCast(@as(isize, dirfd))), @intFromPtr(path), mode, flags);
 }
 
+pub fn acct(path: [*:0]const u8) usize {
+    return syscall1(.acct, @intFromPtr(path));
+}
+
 pub fn pipe(fd: *[2]i32) usize {
     if (comptime (native_arch.isMIPS() or native_arch.isSPARC())) {
         return syscall_pipe(fd);
@@ -1337,9 +1486,22 @@ pub fn rename(old: [*:0]const u8, new: [*:0]const u8) usize {
     if (@hasField(SYS, "rename")) {
         return syscall2(.rename, @intFromPtr(old), @intFromPtr(new));
     } else if (@hasField(SYS, "renameat")) {
-        return syscall4(.renameat, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new));
+        return syscall4(
+            .renameat,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+        );
     } else {
-        return syscall5(.renameat2, @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(old), @as(usize, @bitCast(@as(isize, AT.FDCWD))), @intFromPtr(new), 0);
+        return syscall5(
+            .renameat2,
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(old),
+            @as(usize, @bitCast(@as(isize, AT.FDCWD))),
+            @intFromPtr(new),
+            0,
+        );
     }
 }
 
@@ -1364,14 +1526,14 @@ pub fn renameat(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]co
     }
 }
 
-pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: u32) usize {
+pub fn renameat2(oldfd: i32, oldpath: [*:0]const u8, newfd: i32, newpath: [*:0]const u8, flags: RENAME) usize {
     return syscall5(
         .renameat2,
         @as(usize, @bitCast(@as(isize, oldfd))),
         @intFromPtr(oldpath),
         @as(usize, @bitCast(@as(isize, newfd))),
         @intFromPtr(newpath),
-        flags,
+        @as(u32, @bitCast(flags)),
     );
 }
 
@@ -1412,6 +1574,18 @@ pub fn close(fd: i32) usize {
     return syscall1(.close, @as(usize, @bitCast(@as(isize, fd))));
 }
 
+pub const CLOSE_RANGE = packed struct(u32) {
+    /// Unshare the file descriptor table before closing file descriptors.
+    UNSHARE: bool, // 0x00000001
+    /// Set the FD_CLOEXEC bit instead of closing the file descriptor.
+    CLOEXEC: bool, // 0x00000002
+    _: u30 = 0,
+};
+
+pub fn close_range(first: fd_t, last: fd_t, flags: CLOSE_RANGE) usize {
+    return syscall3(.close_range, fd_to_usize(first), fd_to_usize(last), @as(u32, @bitCast(flags)));
+}
+
 pub fn fchmod(fd: i32, mode: mode_t) usize {
     return syscall2(.fchmod, @as(usize, @bitCast(@as(isize, fd))), mode);
 }
@@ -1420,7 +1594,7 @@ pub fn chmod(path: [*:0]const u8, mode: mode_t) usize {
     if (@hasField(SYS, "chmod")) {
         return syscall2(.chmod, @intFromPtr(path), mode);
     } else {
-        return fchmodat(AT.FDCWD, path, mode, 0);
+        return fchmodat(AT.FDCWD, path, mode);
     }
 }
 
@@ -1432,7 +1606,31 @@ pub fn fchown(fd: i32, owner: uid_t, group: gid_t) usize {
     }
 }
 
-pub fn fchmodat(fd: i32, path: [*:0]const u8, mode: mode_t, _: u32) usize {
+pub fn fchownat(fd: i32, path: [*:0]const u8, owner: uid_t, group: gid_t, flags: u32) usize {
+    return syscall5(.fchownat, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(path), owner, group, flags);
+}
+
+pub fn chown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
+    if (@hasField(SYS, "chown32")) {
+        return syscall3(.chown32, @intFromPtr(path), owner, group);
+    } else if (@hasField(SYS, "chown")) {
+        return syscall3(.chown, @intFromPtr(path), owner, group);
+    } else {
+        return fchownat(AT.FDCWD, path, owner, group, 0);
+    }
+}
+
+pub fn lchown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
+    if (@hasField(SYS, "lchown32")) {
+        return syscall3(.lchown32, @intFromPtr(path), owner, group);
+    } else if (@hasField(SYS, "lchown")) {
+        return syscall3(.lchown, @intFromPtr(path), owner, group);
+    } else {
+        return fchownat(AT.FDCWD, path, owner, group, AT.SYMLINK_NOFOLLOW);
+    }
+}
+
+pub fn fchmodat(fd: i32, path: [*:0]const u8, mode: mode_t) usize {
     return syscall3(.fchmodat, @bitCast(@as(isize, fd)), @intFromPtr(path), mode);
 }
 
@@ -1561,14 +1759,14 @@ pub fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) usize {
     }
 }
 
-pub fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: i32) usize {
+pub fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: u32) usize {
     return syscall5(
         .linkat,
         @as(usize, @bitCast(@as(isize, oldfd))),
         @intFromPtr(oldpath),
         @as(usize, @bitCast(@as(isize, newfd))),
         @intFromPtr(newpath),
-        @as(usize, @bitCast(@as(isize, flags))),
+        flags,
     );
 }
 
@@ -1598,8 +1796,15 @@ pub fn wait4(pid: pid_t, status: *u32, flags: u32, usage: ?*rusage) usize {
     );
 }
 
-pub fn waitid(id_type: P, id: i32, infop: *siginfo_t, flags: u32) usize {
-    return syscall5(.waitid, @intFromEnum(id_type), @as(usize, @bitCast(@as(isize, id))), @intFromPtr(infop), flags, 0);
+pub fn waitid(id_type: P, id: i32, infop: *siginfo_t, flags: u32, usage: ?*rusage) usize {
+    return syscall5(
+        .waitid,
+        @intFromEnum(id_type),
+        @as(usize, @bitCast(@as(isize, id))),
+        @intFromPtr(infop),
+        flags,
+        @intFromPtr(usage),
+    );
 }
 
 pub const F = struct {
@@ -1643,6 +1848,32 @@ pub const F = struct {
     pub const RDLCK = if (is_sparc) 1 else 0;
     pub const WRLCK = if (is_sparc) 2 else 1;
     pub const UNLCK = if (is_sparc) 3 else 2;
+
+    pub const LINUX_SPECIFIC_BASE = 1024;
+
+    pub const SETLEASE = LINUX_SPECIFIC_BASE + 0;
+    pub const GETLEASE = LINUX_SPECIFIC_BASE + 1;
+    pub const NOTIFY = LINUX_SPECIFIC_BASE + 2;
+    pub const DUPFD_QUERY = LINUX_SPECIFIC_BASE + 3;
+    pub const CREATED_QUERY = LINUX_SPECIFIC_BASE + 4;
+    pub const CANCELLK = LINUX_SPECIFIC_BASE + 5;
+    pub const DUPFD_CLOEXEC = LINUX_SPECIFIC_BASE + 6;
+    pub const SETPIPE_SZ = LINUX_SPECIFIC_BASE + 7;
+    pub const GETPIPE_SZ = LINUX_SPECIFIC_BASE + 8;
+    pub const ADD_SEALS = LINUX_SPECIFIC_BASE + 9;
+    pub const GET_SEALS = LINUX_SPECIFIC_BASE + 10;
+
+    pub const SEAL_SEAL = 0x0001;
+    pub const SEAL_SHRINK = 0x0002;
+    pub const SEAL_GROW = 0x0004;
+    pub const SEAL_WRITE = 0x0008;
+    pub const SEAL_FUTURE_WRITE = 0x0010;
+    pub const SEAL_EXEC = 0x0020;
+
+    pub const GET_RW_HINT = LINUX_SPECIFIC_BASE + 11;
+    pub const SET_RW_HINT = LINUX_SPECIFIC_BASE + 12;
+    pub const GET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 13;
+    pub const SET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 14;
 };
 
 pub const F_OWNER = enum(i32) {
@@ -1709,21 +1940,21 @@ fn init_vdso_clock_gettime(clk: clockid_t, ts: *timespec) callconv(.c) usize {
     @atomicStore(?VdsoClockGettime, &vdso_clock_gettime, ptr, .monotonic);
     // Call into the VDSO if available
     if (ptr) |f| return f(clk, ts);
-    return @as(usize, @bitCast(-@as(isize, @intFromEnum(E.NOSYS))));
+    return @bitCast(-@as(isize, @intFromEnum(E.NOSYS)));
 }
 
-pub fn clock_getres(clk_id: i32, tp: *timespec) usize {
+pub fn clock_getres(clk_id: clockid_t, tp: *timespec) usize {
     return syscall2(
         if (@hasField(SYS, "clock_getres") and native_arch != .hexagon) .clock_getres else .clock_getres_time64,
-        @as(usize, @bitCast(@as(isize, clk_id))),
+        @as(usize, @intFromEnum(clk_id)),
         @intFromPtr(tp),
     );
 }
 
-pub fn clock_settime(clk_id: i32, tp: *const timespec) usize {
+pub fn clock_settime(clk_id: clockid_t, tp: *const timespec) usize {
     return syscall2(
         if (@hasField(SYS, "clock_settime") and native_arch != .hexagon) .clock_settime else .clock_settime64,
-        @as(usize, @bitCast(@as(isize, clk_id))),
+        @as(usize, @intFromEnum(clk_id)),
         @intFromPtr(tp),
     );
 }
@@ -1880,7 +2111,11 @@ pub fn setpgid(pid: pid_t, pgid: pid_t) usize {
     return syscall2(.setpgid, @intCast(pid), @intCast(pgid));
 }
 
-pub fn getgroups(size: usize, list: ?*gid_t) usize {
+pub fn getpgid(pid: pid_t) usize {
+    return syscall1(.getpgid, @intCast(pid));
+}
+
+pub fn getgroups(size: usize, list: ?[*]gid_t) usize {
     if (@hasField(SYS, "getgroups32")) {
         return syscall2(.getgroups32, size, @intFromPtr(list));
     } else {
@@ -1898,6 +2133,10 @@ pub fn setgroups(size: usize, list: [*]const gid_t) usize {
 
 pub fn setsid() usize {
     return syscall0(.setsid);
+}
+
+pub fn getsid(pid: pid_t) usize {
+    return syscall1(.getsid, @intCast(pid));
 }
 
 pub fn getpid() pid_t {
@@ -2439,7 +2678,7 @@ pub fn unshare(flags: usize) usize {
 }
 
 pub fn setns(fd: fd_t, flags: u32) usize {
-    return syscall2(.setns, fd, flags);
+    return syscall2(.setns, @as(usize, @bitCast(@as(isize, fd))), flags);
 }
 
 pub fn capget(hdrp: *cap_user_header_t, datap: *cap_user_data_t) usize {
@@ -2450,7 +2689,7 @@ pub fn capset(hdrp: *cap_user_header_t, datap: *const cap_user_data_t) usize {
     return syscall2(.capset, @intFromPtr(hdrp), @intFromPtr(datap));
 }
 
-pub fn sigaltstack(ss: ?*stack_t, old_ss: ?*stack_t) usize {
+pub fn sigaltstack(ss: ?*const stack_t, old_ss: ?*stack_t) usize {
     return syscall2(.sigaltstack, @intFromPtr(ss), @intFromPtr(old_ss));
 }
 
@@ -3578,24 +3817,30 @@ pub const FUTEX2_FLAGS = packed struct(u32) {
     _undefined: u24 = 0,
 };
 
-pub const PROT = struct {
-    /// page can not be accessed
-    pub const NONE = 0x0;
-    /// page can be read
-    pub const READ = 0x1;
-    /// page can be written
-    pub const WRITE = 0x2;
-    /// page can be executed
-    pub const EXEC = 0x4;
-    /// page may be used for atomic ops
-    pub const SEM = switch (native_arch) {
-        .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => 0x10,
-        else => 0x8,
-    };
-    /// mprotect flag: extend change to start of growsdown vma
-    pub const GROWSDOWN = 0x01000000;
-    /// mprotect flag: extend change to end of growsup vma
-    pub const GROWSUP = 0x02000000;
+pub const PROT = switch (native_arch) {
+    .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => packed struct(u32) {
+        READ: bool = false,
+        WRITE: bool = false,
+        EXEC: bool = false,
+        _: u1 = 0,
+        /// Page may be used for atomic ops.
+        SEM: bool = false,
+        __: u19 = 0,
+        GROWSDOWN: bool = false,
+        GROWSUP: bool = false,
+        ___: u6 = 0,
+    },
+    else => packed struct(u32) {
+        READ: bool = false,
+        WRITE: bool = false,
+        EXEC: bool = false,
+        /// Page may be used for atomic ops.
+        SEM: bool = false,
+        __: u20 = 0,
+        GROWSDOWN: bool = false,
+        GROWSUP: bool = false,
+        ___: u6 = 0,
+    },
 };
 
 pub const FD_CLOEXEC = 1;
@@ -3616,14 +3861,14 @@ pub const W = struct {
     pub fn EXITSTATUS(s: u32) u8 {
         return @as(u8, @intCast((s & 0xff00) >> 8));
     }
-    pub fn TERMSIG(s: u32) u32 {
-        return s & 0x7f;
+    pub fn TERMSIG(s: u32) SIG {
+        return @enumFromInt(s & 0x7f);
     }
     pub fn STOPSIG(s: u32) u32 {
         return EXITSTATUS(s);
     }
     pub fn IFEXITED(s: u32) bool {
-        return TERMSIG(s) == 0;
+        return (s & 0x7f) == 0;
     }
     pub fn IFSTOPPED(s: u32) bool {
         return @as(u16, @truncate(((s & 0xffff) *% 0x10001) >> 8)) > 0x7f00;
@@ -6040,7 +6285,7 @@ pub const dirent64 = extern struct {
     off: u64,
     reclen: u16,
     type: u8,
-    name: u8, // field address is the address of first byte of name https://github.com/ziglang/zig/issues/173
+    name: [0]u8,
 };
 
 pub const dl_phdr_info = extern struct {
@@ -6203,6 +6448,16 @@ const siginfo_fields_union = extern union {
         syscall: i32,
         native_arch: u32,
     },
+};
+
+pub const CLD = enum(i32) {
+    EXITED = 1,
+    KILLED = 2,
+    DUMPED = 3,
+    TRAPPED = 4,
+    STOPPED = 5,
+    CONTINUED = 6,
+    _,
 };
 
 pub const siginfo_t = if (is_mips)
@@ -6891,10 +7146,6 @@ pub const utsname = extern struct {
 };
 pub const HOST_NAME_MAX = 64;
 
-/// Flags used to request specific members in `Statx` be filled out.
-/// The `Statx.mask` member will be updated with what information the kernel
-/// returned. Callers must check this field since support varies by kernel
-/// version and filesystem.
 pub const STATX = packed struct(u32) {
     /// Want `mode & S.IFMT`.
     TYPE: bool = false,
@@ -6982,7 +7233,9 @@ pub const statx_timestamp = extern struct {
 
 /// Renamed to `Statx` to not conflict with the `statx` function.
 pub const Statx = extern struct {
-    /// Mask of bits indicating filled fields.
+    /// Mask of bits indicating filled fields. Updated with what information
+    /// the kernel returned. Callers must check this field since support varies
+    /// by kernel version and filesystem.
     mask: STATX,
     /// Block size for filesystem I/O.
     blksize: u32,
@@ -7742,13 +7995,13 @@ pub const SIOCOUTQ = T.IOCOUTQ;
 
 pub const SOCK_IOC_TYPE = 0x89;
 
-pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, i64[2]);
+pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, [2]i64);
 pub const SIOCGSTAMP_OLD = IOCTL.IOR('s', 100, timeval);
 
 /// Get stamp (timeval)
 pub const SIOCGSTAMP = if (native_arch == .x86_64 or @sizeOf(timeval) == 8) SIOCGSTAMP_OLD else SIOCGSTAMP_NEW;
 
-pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, i64[2]);
+pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, [2]i64);
 pub const SIOCGSTAMPNS_OLD = IOCTL.IOR('s', 101, kernel_timespec);
 
 /// Get stamp (timespec)
@@ -8419,12 +8672,36 @@ pub const timezone = extern struct {
 pub const kernel_timespec = extern struct {
     sec: i64,
     nsec: i64,
+
+    /// For use with `utimensat` and `futimens`.
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    /// For use with `utimensat` and `futimens`.
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
 };
 
 // https://github.com/ziglang/zig/issues/4726#issuecomment-2190337877
 pub const timespec = if (native_arch == .hexagon or native_arch == .riscv32) kernel_timespec else extern struct {
     sec: isize,
     nsec: isize,
+
+    /// For use with `utimensat` and `futimens`.
+    pub const NOW: timespec = .{
+        .sec = 0,
+        .nsec = 0x3fffffff,
+    };
+
+    /// For use with `utimensat` and `futimens`.
+    pub const OMIT: timespec = .{
+        .sec = 0,
+        .nsec = 0x3ffffffe,
+    };
 };
 
 pub const XDP = struct {
@@ -9627,6 +9904,7 @@ pub const PERF = struct {
         pub const PERIOD = 1074275332;
         pub const SET_OUTPUT = 9221;
         pub const SET_FILTER = 1074275334;
+        pub const ID = 2148017159;
         pub const SET_BPF = 1074013192;
         pub const PAUSE_OUTPUT = 1074013193;
         pub const QUERY_BPF = 3221758986;
@@ -9872,164 +10150,6 @@ pub const cmsghdr = extern struct {
     type: i32,
 };
 
-/// The syscalls, but with Zig error sets, going through libc if linking libc,
-/// and with some footguns eliminated.
-pub const wrapped = struct {
-    pub const lfs64_abi = builtin.link_libc and (builtin.abi.isGnu() or builtin.abi.isAndroid());
-    const system = if (builtin.link_libc) std.c else std.os.linux;
-
-    pub const SendfileError = std.posix.UnexpectedError || error{
-        /// `out_fd` is an unconnected socket, or out_fd closed its read end.
-        BrokenPipe,
-        /// Descriptor is not valid or locked, or an mmap(2)-like operation is not available for in_fd.
-        UnsupportedOperation,
-        /// Nonblocking I/O has been selected but the write would block.
-        WouldBlock,
-        /// Unspecified error while reading from in_fd.
-        InputOutput,
-        /// Insufficient kernel memory to read from in_fd.
-        SystemResources,
-        /// `offset` is not `null` but the input file is not seekable.
-        Unseekable,
-    };
-
-    pub fn sendfile(
-        out_fd: fd_t,
-        in_fd: fd_t,
-        in_offset: ?*off_t,
-        in_len: usize,
-    ) SendfileError!usize {
-        const adjusted_len = @min(in_len, 0x7ffff000); // Prevents EOVERFLOW.
-        const sendfileSymbol = if (lfs64_abi) system.sendfile64 else system.sendfile;
-        const rc = sendfileSymbol(out_fd, in_fd, in_offset, adjusted_len);
-        switch (system.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .BADF => return invalidApiUsage(), // Always a race condition.
-            .FAULT => return invalidApiUsage(), // Segmentation fault.
-            .OVERFLOW => return unexpectedErrno(.OVERFLOW), // We avoid passing too large of a `count`.
-            .NOTCONN => return error.BrokenPipe, // `out_fd` is an unconnected socket
-            .INVAL => return error.UnsupportedOperation,
-            .AGAIN => return error.WouldBlock,
-            .IO => return error.InputOutput,
-            .PIPE => return error.BrokenPipe,
-            .NOMEM => return error.SystemResources,
-            .NXIO => return error.Unseekable,
-            .SPIPE => return error.Unseekable,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-
-    pub const CopyFileRangeError = std.posix.UnexpectedError || error{
-        /// One of:
-        /// * One or more file descriptors are not valid.
-        /// * fd_in is not open for reading; or fd_out is not open for writing.
-        /// * The O_APPEND flag is set for the open file description referred
-        /// to by the file descriptor fd_out.
-        BadFileFlags,
-        /// One of:
-        /// * An attempt was made to write at a position past the maximum file
-        ///   offset the kernel supports.
-        /// * An attempt was made to write a range that exceeds the allowed
-        ///   maximum file size. The maximum file size differs between
-        ///   filesystem implementations and can be different from the maximum
-        ///   allowed file offset.
-        /// * An attempt was made to write beyond the process's file size
-        ///   resource limit. This may also result in the process receiving a
-        ///   SIGXFSZ signal.
-        FileTooBig,
-        /// One of:
-        /// * either fd_in or fd_out is not a regular file
-        /// * flags argument is not zero
-        /// * fd_in and fd_out refer to the same file and the source and target ranges overlap.
-        InvalidArguments,
-        /// A low-level I/O error occurred while copying.
-        InputOutput,
-        /// Either fd_in or fd_out refers to a directory.
-        IsDir,
-        OutOfMemory,
-        /// There is not enough space on the target filesystem to complete the copy.
-        NoSpaceLeft,
-        /// (since Linux 5.19) the filesystem does not support this operation.
-        OperationNotSupported,
-        /// The requested source or destination range is too large to represent
-        /// in the specified data types.
-        Overflow,
-        /// fd_out refers to an immutable file.
-        PermissionDenied,
-        /// Either fd_in or fd_out refers to an active swap file.
-        SwapFile,
-        /// The files referred to by fd_in and fd_out are not on the same
-        /// filesystem, and the source and target filesystems are not of the
-        /// same type, or do not support cross-filesystem copy.
-        NotSameFileSystem,
-    };
-
-    pub fn copy_file_range(fd_in: fd_t, off_in: ?*i64, fd_out: fd_t, off_out: ?*i64, len: usize, flags: u32) CopyFileRangeError!usize {
-        const use_c = std.c.versionCheck(if (builtin.abi.isAndroid()) .{ .major = 34, .minor = 0, .patch = 0 } else .{ .major = 2, .minor = 27, .patch = 0 });
-        const sys = if (use_c) std.c else std.os.linux;
-        const rc = sys.copy_file_range(fd_in, off_in, fd_out, off_out, len, flags);
-        switch (sys.errno(rc)) {
-            .SUCCESS => return @intCast(rc),
-            .BADF => return error.BadFileFlags,
-            .FBIG => return error.FileTooBig,
-            .INVAL => return error.InvalidArguments,
-            .IO => return error.InputOutput,
-            .ISDIR => return error.IsDir,
-            .NOMEM => return error.OutOfMemory,
-            .NOSPC => return error.NoSpaceLeft,
-            .OPNOTSUPP => return error.OperationNotSupported,
-            .OVERFLOW => return error.Overflow,
-            .PERM => return error.PermissionDenied,
-            .TXTBSY => return error.SwapFile,
-            .XDEV => return error.NotSameFileSystem,
-            else => |err| return unexpectedErrno(err),
-        }
-    }
-
-    pub const StatxError = std.posix.UnexpectedError || error{
-        /// Search permission is denied for one of the directories in `path`.
-        AccessDenied,
-        /// Too many symbolic links were encountered traversing `path`.
-        SymLinkLoop,
-        /// `path` is too long.
-        NameTooLong,
-        /// One of:
-        /// - A component of `path` does not exist.
-        /// - A component of `path` is not a directory.
-        /// - `path` is a relative and `dirfd` is not a directory file descriptor.
-        FileNotFound,
-        /// Insufficient memory is available.
-        SystemResources,
-    };
-
-    pub fn statx(dirfd: fd_t, path: [*:0]const u8, flags: u32, mask: STATX) StatxError!Statx {
-        const use_c = std.c.versionCheck(if (builtin.abi.isAndroid())
-            .{ .major = 30, .minor = 0, .patch = 0 }
-        else
-            .{ .major = 2, .minor = 28, .patch = 0 });
-        const sys = if (use_c) std.c else std.os.linux;
-
-        var stx = std.mem.zeroes(Statx);
-        const rc = sys.statx(dirfd, path, flags, mask, &stx);
-        return switch (sys.errno(rc)) {
-            .SUCCESS => stx,
-            .ACCES => error.AccessDenied,
-            .BADF => invalidApiUsage(),
-            .FAULT => invalidApiUsage(),
-            .INVAL => invalidApiUsage(),
-            .LOOP => error.SymLinkLoop,
-            .NAMETOOLONG => error.NameTooLong,
-            .NOENT => error.FileNotFound,
-            .NOTDIR => error.FileNotFound,
-            .NOMEM => error.SystemResources,
-            else => |err| unexpectedErrno(err),
-        };
-    }
-
-    const unexpectedErrno = std.posix.unexpectedErrno;
-
-    fn invalidApiUsage() error{Unexpected} {
-        if (builtin.mode == .Debug) @panic("invalid API usage");
-        return error.Unexpected;
-    }
-};
+inline fn fd_to_usize(fd: fd_t) usize {
+    return @as(usize, @bitCast(@as(isize, fd)));
+}

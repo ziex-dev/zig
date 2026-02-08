@@ -137,6 +137,16 @@ pub fn isPrint(c: u8) bool {
     return isAscii(c) and !isControl(c);
 }
 
+/// Returns whether the character has some graphical representation,
+pub fn isGraphical(c: u8) bool {
+    return isPrint(c) and c != ' ';
+}
+
+/// Returns whether the character is a punctuation character.
+pub fn isPunctuation(c: u8) bool {
+    return isGraphical(c) and !isAlphanumeric(c);
+}
+
 /// Returns whether this character is included in `whitespace`.
 pub fn isWhitespace(c: u8) bool {
     return switch (c) {
@@ -156,7 +166,7 @@ test whitespace {
 
     var i: u8 = 0;
     while (isAscii(i)) : (i += 1) {
-        if (isWhitespace(i)) try std.testing.expect(std.mem.indexOfScalar(u8, &whitespace, i) != null);
+        if (isWhitespace(i)) try std.testing.expect(std.mem.findScalar(u8, &whitespace, i) != null);
     }
 }
 
@@ -264,6 +274,17 @@ test "ASCII character classes" {
     try testing.expect(!isPrint(control_code.esc));
     try testing.expect(!isPrint(0x80));
     try testing.expect(!isPrint(0xff));
+
+    try testing.expect(isGraphical('@'));
+    try testing.expect(isGraphical('!'));
+    try testing.expect(!isGraphical(' '));
+
+    try testing.expect(isPunctuation('@'));
+    try testing.expect(isPunctuation('!'));
+    try testing.expect(isPunctuation(';'));
+    try testing.expect(isPunctuation(','));
+    try testing.expect(!isPunctuation('A'));
+    try testing.expect(!isPunctuation('8'));
 }
 
 /// Writes a lower case copy of `ascii_string` to `output`.
@@ -357,19 +378,25 @@ test endsWithIgnoreCase {
     try std.testing.expect(!endsWithIgnoreCase("BoB", "Bo"));
 }
 
+/// Deprecated in favor of `findIgnoreCase`.
+pub const indexOfIgnoreCase = findIgnoreCase;
+
 /// Finds `needle` in `haystack`, ignoring case, starting at index 0.
-pub fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
-    return indexOfIgnoreCasePos(haystack, 0, needle);
+pub fn findIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    return findIgnoreCasePos(haystack, 0, needle);
 }
 
+/// Deprecated in favor of `findIgnoreCasePos`.
+pub const indexOfIgnoreCasePos = findIgnoreCasePos;
+
 /// Finds `needle` in `haystack`, ignoring case, starting at `start_index`.
-/// Uses Boyer-Moore-Horspool algorithm on large inputs; `indexOfIgnoreCasePosLinear` on small inputs.
-pub fn indexOfIgnoreCasePos(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
+/// Uses Boyer-Moore-Horspool algorithm on large inputs; `findIgnoreCasePosLinear` on small inputs.
+pub fn findIgnoreCasePos(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
     if (needle.len > haystack.len) return null;
     if (needle.len == 0) return start_index;
 
     if (haystack.len < 52 or needle.len <= 4)
-        return indexOfIgnoreCasePosLinear(haystack, start_index, needle);
+        return findIgnoreCasePosLinear(haystack, start_index, needle);
 
     var skip_table: [256]usize = undefined;
     boyerMooreHorspoolPreprocessIgnoreCase(needle, skip_table[0..]);
@@ -383,9 +410,12 @@ pub fn indexOfIgnoreCasePos(haystack: []const u8, start_index: usize, needle: []
     return null;
 }
 
-/// Consider using `indexOfIgnoreCasePos` instead of this, which will automatically use a
+/// Deprecated in favor of `findIgnoreCaseLinear`.
+pub const indexOfIgnoreCasePosLinear = findIgnoreCasePosLinear;
+
+/// Consider using `findIgnoreCasePos` instead of this, which will automatically use a
 /// more sophisticated algorithm on larger inputs.
-pub fn indexOfIgnoreCasePosLinear(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
+pub fn findIgnoreCasePosLinear(haystack: []const u8, start_index: usize, needle: []const u8) ?usize {
     var i: usize = start_index;
     const end = haystack.len - needle.len;
     while (i <= end) : (i += 1) {
@@ -407,15 +437,15 @@ fn boyerMooreHorspoolPreprocessIgnoreCase(pattern: []const u8, table: *[256]usiz
     }
 }
 
-test indexOfIgnoreCase {
-    try std.testing.expect(indexOfIgnoreCase("one Two Three Four", "foUr").? == 14);
-    try std.testing.expect(indexOfIgnoreCase("one two three FouR", "gOur") == null);
-    try std.testing.expect(indexOfIgnoreCase("foO", "Foo").? == 0);
-    try std.testing.expect(indexOfIgnoreCase("foo", "fool") == null);
-    try std.testing.expect(indexOfIgnoreCase("FOO foo", "fOo").? == 0);
+test findIgnoreCase {
+    try std.testing.expect(findIgnoreCase("one Two Three Four", "foUr").? == 14);
+    try std.testing.expect(findIgnoreCase("one two three FouR", "gOur") == null);
+    try std.testing.expect(findIgnoreCase("foO", "Foo").? == 0);
+    try std.testing.expect(findIgnoreCase("foo", "fool") == null);
+    try std.testing.expect(findIgnoreCase("FOO foo", "fOo").? == 0);
 
-    try std.testing.expect(indexOfIgnoreCase("one two three four five six seven eight nine ten eleven", "ThReE fOUr").? == 8);
-    try std.testing.expect(indexOfIgnoreCase("one two three four five six seven eight nine ten eleven", "Two tWo") == null);
+    try std.testing.expect(findIgnoreCase("one two three four five six seven eight nine ten eleven", "ThReE fOUr").? == 8);
+    try std.testing.expect(findIgnoreCase("one two three four five six seven eight nine ten eleven", "Two tWo") == null);
 }
 
 /// Returns the lexicographical order of two slices. O(n).
@@ -432,6 +462,30 @@ pub fn orderIgnoreCase(lhs: []const u8, rhs: []const u8) std.math.Order {
         }
     }
     return std.math.order(lhs.len, rhs.len);
+}
+
+/// Returns the lexicographical order of two many-item pointers with NUL-termination. O(n).
+pub fn orderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8) std.math.Order {
+    return boundedOrderIgnoreCaseZ(lhs, rhs, std.math.maxInt(usize));
+}
+
+test orderIgnoreCaseZ {
+    try std.testing.expect(orderIgnoreCaseZ("aBcD", "Bee") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("AbC", "aBc") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("abC", "aBc0") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("", "") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("", "a") == .lt);
+
+    const s: [*:0]const u8 = "Abc";
+    try std.testing.expect(orderIgnoreCaseZ(s, s) == .eq);
+}
+
+/// Returns the lexicographical order of two many-item pointers with NUL-termination until some specified bound. O(n).
+pub fn boundedOrderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8, bound: usize) std.math.Order {
+    if (lhs == rhs) return .eq;
+    var i: usize = 0;
+    while (i < bound and toLower(lhs[i]) == toLower(rhs[i]) and lhs[i] != 0) : (i += 1) {}
+    return if (i < bound) std.math.order(toLower(lhs[i]), toLower(rhs[i])) else .eq;
 }
 
 /// Returns whether the lexicographical order of `lhs` is lower than `rhs`.

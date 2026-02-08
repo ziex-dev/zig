@@ -24,15 +24,82 @@ pub const ValidateError = error{
     InvalidHostName,
 };
 
+/// Validates a hostname according to [RFC 1123](https://www.rfc-editor.org/rfc/rfc1123)
 pub fn validate(bytes: []const u8) ValidateError!void {
-    if (bytes.len > max_len) return error.NameTooLong;
-    if (!std.unicode.utf8ValidateSlice(bytes)) return error.InvalidHostName;
-    for (bytes) |byte| {
-        if (!std.ascii.isAscii(byte) or byte == '.' or byte == '-' or std.ascii.isAlphanumeric(byte)) {
-            continue;
+    if (bytes.len == 0) return error.InvalidHostName;
+    if (bytes[0] == '.') return error.InvalidHostName;
+
+    // Ignore trailing dot (FQDN). It doesn't count toward our length.
+    const end = if (bytes[bytes.len - 1] == '.') end: {
+        if (bytes.len == 1) return error.InvalidHostName;
+        break :end bytes.len - 1;
+    } else bytes.len;
+
+    // The accepted maximum length of a hostname, including labels and dots.
+    if (end > max_len) return error.NameTooLong;
+
+    // Hostnames are divided into dot-separated "labels", which:
+    //
+    // - Start with a letter or digit
+    // - Can contain letters, digits, or hyphens
+    // - Must end with a letter or digit
+    // - Have a minimum of 1 character and a maximum of 63
+    var label_start: usize = 0;
+    var label_len: usize = 0;
+    for (bytes[0..end], 0..) |c, i| {
+        switch (c) {
+            '.' => {
+                if (label_len == 0 or label_len > 63) return error.InvalidHostName;
+                if (!std.ascii.isAlphanumeric(bytes[label_start])) return error.InvalidHostName;
+                if (!std.ascii.isAlphanumeric(bytes[i - 1])) return error.InvalidHostName;
+
+                label_start = i + 1;
+                label_len = 0;
+            },
+            '-' => {
+                label_len += 1;
+            },
+            else => {
+                if (!std.ascii.isAlphanumeric(c)) return error.InvalidHostName;
+                label_len += 1;
+            },
         }
-        return error.InvalidHostName;
     }
+
+    // Validate the final label
+    if (label_len == 0 or label_len > 63) return error.InvalidHostName;
+    if (!std.ascii.isAlphanumeric(bytes[label_start])) return error.InvalidHostName;
+    if (!std.ascii.isAlphanumeric(bytes[end - 1])) return error.InvalidHostName;
+}
+
+test validate {
+    // Valid hostnames
+    try validate("example");
+    try validate("example.com");
+    try validate("www.example.com");
+    try validate("sub.domain.example.com");
+    try validate("example.com.");
+    try validate("host-name.example.com.");
+    try validate("123.example.com.");
+    try validate("a-b.com");
+    try validate("a.b.c.d.e.f.g");
+    try validate("127.0.0.1"); // Also a valid hostname
+    try validate("a" ** 63 ++ ".com"); // Label exactly 63 chars (valid)
+    try validate("a." ** 127 ++ "a"); // Total length 255 (valid)
+
+    // Invalid hostnames
+    try std.testing.expectError(error.InvalidHostName, validate(""));
+    try std.testing.expectError(error.InvalidHostName, validate(".example.com"));
+    try std.testing.expectError(error.InvalidHostName, validate("example.com.."));
+    try std.testing.expectError(error.InvalidHostName, validate("host..domain"));
+    try std.testing.expectError(error.InvalidHostName, validate("-hostname"));
+    try std.testing.expectError(error.InvalidHostName, validate("hostname-"));
+    try std.testing.expectError(error.InvalidHostName, validate("a.-.b"));
+    try std.testing.expectError(error.InvalidHostName, validate("host_name.com"));
+    try std.testing.expectError(error.InvalidHostName, validate("."));
+    try std.testing.expectError(error.InvalidHostName, validate(".."));
+    try std.testing.expectError(error.InvalidHostName, validate("a" ** 64 ++ ".com")); // Label length 64 (too long)
+    try std.testing.expectError(error.NameTooLong, validate("a." ** 127 ++ "ab")); // Total length 256 (too long)
 }
 
 pub fn init(bytes: []const u8) ValidateError!HostName {
@@ -75,26 +142,30 @@ pub const LookupError = error{
     InvalidDnsAAAARecord,
     InvalidDnsCnameRecord,
     NameServerFailure,
+    NoAddressReturned,
     /// Failed to open or read "/etc/hosts" or "/etc/resolv.conf".
     DetectingNetworkConfigurationFailed,
-} || Io.Clock.Error || IpAddress.BindError || Io.Cancelable;
+} || IpAddress.BindError || Io.Cancelable;
 
 pub const LookupResult = union(enum) {
     address: IpAddress,
     canonical_name: HostName,
-    end: LookupError!void,
 };
 
-/// Adds any number of `IpAddress` into resolved, exactly one canonical_name,
-/// and then always finishes by adding one `LookupResult.end` entry.
+/// Adds any number of `LookupResult.address` into `resolved`, and exactly one
+/// `LookupResult.canonical_name`.
 ///
 /// Guaranteed not to block if provided queue has capacity at least 16.
+///
+/// Closes `resolved` before return, even on error.
+///
+/// Asserts `resolved` is not closed until this call returns.
 pub fn lookup(
     host_name: HostName,
     io: Io,
     resolved: *Io.Queue(LookupResult),
     options: LookupOptions,
-) void {
+) LookupError!void {
     return io.vtable.netLookup(io.userdata, host_name, resolved, options);
 }
 
@@ -211,92 +282,104 @@ pub fn connect(
     port: u16,
     options: IpAddress.ConnectOptions,
 ) ConnectError!Stream {
-    var connect_many_buffer: [32]ConnectManyResult = undefined;
-    var connect_many_queue: Io.Queue(ConnectManyResult) = .init(&connect_many_buffer);
+    var connect_many_buffer: [32]IpAddress.ConnectError!Stream = undefined;
+    var connect_many_queue: Io.Queue(IpAddress.ConnectError!Stream) = .init(&connect_many_buffer);
 
     var connect_many = io.async(connectMany, .{ host_name, io, port, &connect_many_queue, options });
-    var saw_end = false;
     defer {
-        connect_many.cancel(io);
-        if (!saw_end) while (true) switch (connect_many_queue.getOneUncancelable(io)) {
-            .connection => |loser| if (loser) |s| s.close(io) else |_| continue,
-            .end => break,
-        };
+        connect_many.cancel(io) catch {};
+        while (connect_many_queue.getOneUncancelable(io)) |loser| {
+            if (loser) |s| s.close(io) else |_| {}
+        } else |err| switch (err) {
+            error.Closed => {},
+        }
     }
 
-    var aggregate_error: ConnectError = error.UnknownHostName;
+    var ip_connect_error: ?IpAddress.ConnectError = null;
 
-    while (connect_many_queue.getOne(io)) |result| switch (result) {
-        .connection => |connection| if (connection) |stream| return stream else |err| switch (err) {
+    while (connect_many_queue.getOne(io)) |result| {
+        if (result) |stream| {
+            return stream;
+        } else |err| switch (err) {
+            error.Canceled => unreachable,
+
             error.SystemResources,
             error.OptionUnsupported,
             error.ProcessFdQuotaExceeded,
             error.SystemFdQuotaExceeded,
-            error.Canceled,
             => |e| return e,
 
             error.WouldBlock => return error.Unexpected,
 
-            else => |e| aggregate_error = e,
-        },
-        .end => |end| {
-            saw_end = true;
-            try end;
-            return aggregate_error;
-        },
+            else => |e| ip_connect_error = e,
+        }
     } else |err| switch (err) {
         error.Canceled => |e| return e,
+        error.Closed => {
+            // There was no successful connection attempt. If there was a lookup error, return that.
+            try connect_many.await(io);
+            // Otherwise, return the error from a failed IP connection attempt.
+            return ip_connect_error orelse
+                return error.UnknownHostName;
+        },
     }
 }
 
-pub const ConnectManyResult = union(enum) {
-    connection: IpAddress.ConnectError!Stream,
-    end: ConnectError!void,
-};
-
 /// Asynchronously establishes a connection to all IP addresses associated with
 /// a host name, adding them to a results queue upon completion.
+///
+/// `error.Canceled` will never be added to the queue, but other errors may be.
+///
+/// Closes `results` before return, even on error.
+///
+/// Asserts `results` is not closed until this call returns.
 pub fn connectMany(
     host_name: HostName,
     io: Io,
     port: u16,
-    results: *Io.Queue(ConnectManyResult),
+    results: *Io.Queue(IpAddress.ConnectError!Stream),
     options: IpAddress.ConnectOptions,
-) void {
+) LookupError!void {
+    defer results.close(io);
+
     var canonical_name_buffer: [max_len]u8 = undefined;
     var lookup_buffer: [32]HostName.LookupResult = undefined;
     var lookup_queue: Io.Queue(LookupResult) = .init(&lookup_buffer);
-    var group: Io.Group = .init;
-    defer group.cancel(io);
-
-    group.async(io, lookup, .{ host_name, io, &lookup_queue, .{
+    var lookup_future = io.async(lookup, .{ host_name, io, &lookup_queue, .{
         .port = port,
         .canonical_name_buffer = &canonical_name_buffer,
     } });
+    defer lookup_future.cancel(io) catch {};
+
+    var group: Io.Group = .init;
+    defer group.cancel(io);
 
     while (lookup_queue.getOne(io)) |dns_result| switch (dns_result) {
         .address => |address| group.async(io, enqueueConnection, .{ address, io, results, options }),
         .canonical_name => continue,
-        .end => |lookup_result| {
-            group.wait(io);
-            results.putOneUncancelable(io, .{ .end = lookup_result });
-            return;
-        },
     } else |err| switch (err) {
-        error.Canceled => |e| {
-            group.cancel(io);
-            results.putOneUncancelable(io, .{ .end = e });
+        error.Canceled => |e| return e,
+        error.Closed => {
+            try group.await(io);
+            return lookup_future.await(io);
         },
     }
 }
-
 fn enqueueConnection(
     address: IpAddress,
     io: Io,
-    queue: *Io.Queue(ConnectManyResult),
+    queue: *Io.Queue(IpAddress.ConnectError!Stream),
     options: IpAddress.ConnectOptions,
-) void {
-    queue.putOneUncancelable(io, .{ .connection = address.connect(io, options) });
+) Io.Cancelable!void {
+    const result = address.connect(io, options) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        else => |e| e, // other errors go in the result queue
+    };
+    errdefer if (result) |s| s.close(io) else |_| {};
+    queue.putOne(io, result) catch |err| switch (err) {
+        error.Canceled => |e| return e,
+        error.Closed => unreachable, // `queue` must not be closed
+    };
 }
 
 pub const ResolvConf = struct {
@@ -324,7 +407,7 @@ pub const ResolvConf = struct {
             .attempts = 2,
         };
 
-        const file = Io.File.openAbsolute(io, "/etc/resolv.conf", .{}) catch |err| switch (err) {
+        const file = Io.Dir.openFileAbsolute(io, "/etc/resolv.conf", .{}) catch |err| switch (err) {
             error.FileNotFound,
             error.NotDir,
             error.AccessDenied,

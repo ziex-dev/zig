@@ -129,7 +129,7 @@ test "resolve DNS" {
         var results_buffer: [32]net.HostName.LookupResult = undefined;
         var results: Io.Queue(net.HostName.LookupResult) = .init(&results_buffer);
 
-        net.HostName.lookup(try .init("localhost"), io, &results, .{
+        try net.HostName.lookup(try .init("localhost"), io, &results, .{
             .port = 80,
             .canonical_name_buffer = &canonical_name_buffer,
         });
@@ -142,11 +142,10 @@ test "resolve DNS" {
                     addresses_found += 1;
             },
             .canonical_name => |canonical_name| try testing.expectEqualStrings("localhost", canonical_name.bytes),
-            .end => |end| {
-                try end;
-                break;
-            },
-        } else |err| return err;
+        } else |err| switch (err) {
+            error.Closed => {},
+            error.Canceled => |e| return e,
+        }
 
         try testing.expect(addresses_found != 0);
     }
@@ -161,20 +160,19 @@ test "resolve DNS" {
         net.HostName.lookup(try .init("example.com"), io, &results, .{
             .port = 80,
             .canonical_name_buffer = &canonical_name_buffer,
-        });
+        }) catch |err| switch (err) {
+            error.UnknownHostName => return error.SkipZigTest,
+            error.NameServerFailure => return error.SkipZigTest,
+            else => |e| return e,
+        };
 
         while (results.getOne(io)) |result| switch (result) {
             .address => {},
             .canonical_name => {},
-            .end => |end| {
-                end catch |err| switch (err) {
-                    error.UnknownHostName => return error.SkipZigTest,
-                    error.NameServerFailure => return error.SkipZigTest,
-                    else => return err,
-                };
-                break;
-            },
-        } else |err| return err;
+        } else |err| switch (err) {
+            error.Closed => {},
+            error.Canceled => |e| return e,
+        }
     }
 }
 
@@ -234,8 +232,10 @@ test "listen on an in use port" {
 fn testClientToHost(allocator: mem.Allocator, name: []const u8, port: u16) anyerror!void {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const connection = try net.tcpConnectToHost(allocator, name, port);
-    defer connection.close();
+    defer connection.close(io);
 
     var buf: [100]u8 = undefined;
     const len = try connection.read(&buf);
@@ -246,8 +246,10 @@ fn testClientToHost(allocator: mem.Allocator, name: []const u8, port: u16) anyer
 fn testClient(addr: net.IpAddress) anyerror!void {
     if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
+    const io = testing.io;
+
     const socket_file = try net.tcpConnectToAddress(addr);
-    defer socket_file.close();
+    defer socket_file.close(io);
 
     var buf: [100]u8 = undefined;
     const len = try socket_file.read(&buf);
@@ -269,14 +271,15 @@ test "listen on a unix socket, send bytes, receive bytes" {
     if (builtin.single_threaded) return error.SkipZigTest;
     if (!net.has_unix_sockets) return error.SkipZigTest;
     if (builtin.os.tag == .windows) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/25983
+    if (builtin.cpu.arch == .mipsel) return error.SkipZigTest; // TODO
 
     const io = testing.io;
 
-    const socket_path = try generateFileName("socket.unix");
+    const socket_path = try generateFileName(io, "socket.unix");
     defer testing.allocator.free(socket_path);
 
     const socket_addr = try net.UnixAddress.init(socket_path);
-    defer std.fs.cwd().deleteFile(socket_path) catch {};
+    defer Io.Dir.cwd().deleteFile(io, socket_path) catch {};
 
     var server = try socket_addr.listen(io, .{});
     defer server.socket.close(io);
@@ -305,13 +308,13 @@ test "listen on a unix socket, send bytes, receive bytes" {
     try testing.expectEqualSlices(u8, "Hello world!", buf[0..n]);
 }
 
-fn generateFileName(base_name: []const u8) ![]const u8 {
+fn generateFileName(io: Io, base_name: []const u8) ![]const u8 {
     const random_bytes_count = 12;
-    const sub_path_len = comptime std.fs.base64_encoder.calcSize(random_bytes_count);
+    const sub_path_len = comptime std.base64.url_safe.Encoder.calcSize(random_bytes_count);
     var random_bytes: [12]u8 = undefined;
-    std.crypto.random.bytes(&random_bytes);
+    io.random(&random_bytes);
     var sub_path: [sub_path_len]u8 = undefined;
-    _ = std.fs.base64_encoder.encode(&sub_path, &random_bytes);
+    _ = std.base64.url_safe.Encoder.encode(&sub_path, &random_bytes);
     return std.fmt.allocPrint(testing.allocator, "{s}-{s}", .{ sub_path[0..], base_name });
 }
 
@@ -332,7 +335,7 @@ test "non-blocking tcp server" {
     try testing.expectError(error.WouldBlock, accept_err);
 
     const socket_file = try net.tcpConnectToAddress(server.socket.address);
-    defer socket_file.close();
+    defer socket_file.close(io);
 
     var stream = try server.accept(io);
     defer stream.close(io);
@@ -343,6 +346,8 @@ test "non-blocking tcp server" {
     const len = try socket_file.read(&buf);
     const msg = buf[0..len];
     try testing.expect(mem.eql(u8, msg, "hello from server\n"));
+
+    try stream.shutdown(io, .both);
 }
 
 test "decompress compressed DNS name" {

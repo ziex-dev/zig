@@ -349,7 +349,7 @@ pub const VM = struct {
 pub const exception_type_t = c_int;
 
 pub extern "c" fn NSVersionOfRunTimeLibrary(library_name: [*:0]const u8) u32;
-pub extern "c" fn _NSGetExecutablePath(buf: [*:0]u8, bufsize: *u32) c_int;
+pub extern "c" fn _NSGetExecutablePath(buf: [*]u8, bufsize: *u32) c_int;
 pub extern "c" fn _dyld_image_count() u32;
 pub extern "c" fn _dyld_get_image_header(image_index: u32) ?*mach_header;
 pub extern "c" fn _dyld_get_image_vmaddr_slide(image_index: u32) usize;
@@ -808,7 +808,7 @@ pub const task_vm_info = extern struct {
 
 pub const task_vm_info_data_t = task_vm_info;
 
-pub const vm_prot_t = c_int;
+pub const vm_prot_t = std.macho.vm_prot_t;
 pub const boolean_t = c_int;
 
 pub extern "c" fn mach_vm_protect(

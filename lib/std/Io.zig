@@ -1,564 +1,54 @@
+//! A cross-platform interface that abstracts all I/O operations and
+//! concurrency. It includes:
+//! * file system
+//! * networking
+//! * processes
+//! * time and sleeping
+//! * randomness
+//! * async, await, concurrent, and cancel
+//! * concurrent queues
+//! * wait groups and select
+//! * mutexes, futexes, events, and conditions
+//! * memory mapped files
+//! This interface allows programmers to write optimal, reusable code while
+//! participating in these operations.
+const Io = @This();
+
 const builtin = @import("builtin");
-const is_windows = builtin.os.tag == .windows;
 
 const std = @import("std.zig");
-const windows = std.os.windows;
-const posix = std.posix;
 const math = std.math;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
 
-pub const Limit = enum(usize) {
-    nothing = 0,
-    unlimited = std.math.maxInt(usize),
-    _,
+userdata: ?*anyopaque,
+vtable: *const VTable,
 
-    /// `std.math.maxInt(usize)` is interpreted to mean `.unlimited`.
-    pub fn limited(n: usize) Limit {
-        return @enumFromInt(n);
-    }
-
-    /// Any value grater than `std.math.maxInt(usize)` is interpreted to mean
-    /// `.unlimited`.
-    pub fn limited64(n: u64) Limit {
-        return @enumFromInt(@min(n, std.math.maxInt(usize)));
-    }
-
-    pub fn countVec(data: []const []const u8) Limit {
-        var total: usize = 0;
-        for (data) |d| total += d.len;
-        return .limited(total);
-    }
-
-    pub fn min(a: Limit, b: Limit) Limit {
-        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
-    }
-
-    pub fn minInt(l: Limit, n: usize) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn minInt64(l: Limit, n: u64) usize {
-        return @min(n, @intFromEnum(l));
-    }
-
-    pub fn slice(l: Limit, s: []u8) []u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
-        return s[0..l.minInt(s.len)];
-    }
-
-    pub fn toInt(l: Limit) ?usize {
-        return switch (l) {
-            else => @intFromEnum(l),
-            .unlimited => null,
-        };
-    }
-
-    /// Reduces a slice to account for the limit, leaving room for one extra
-    /// byte above the limit, allowing for the use case of differentiating
-    /// between end-of-stream and reaching the limit.
-    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
-        assert(non_empty_buffer.len >= 1);
-        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
-    }
-
-    pub fn nonzero(l: Limit) bool {
-        return @intFromEnum(l) > 0;
-    }
-
-    /// Return a new limit reduced by `amount` or return `null` indicating
-    /// limit would be exceeded.
-    pub fn subtract(l: Limit, amount: usize) ?Limit {
-        if (l == .unlimited) return .unlimited;
-        if (amount > @intFromEnum(l)) return null;
-        return @enumFromInt(@intFromEnum(l) - amount);
-    }
-};
-
-pub const Reader = @import("Io/Reader.zig");
-pub const Writer = @import("Io/Writer.zig");
-
-pub const tty = @import("Io/tty.zig");
-
-pub fn poll(
-    gpa: Allocator,
-    comptime StreamEnum: type,
-    files: PollFiles(StreamEnum),
-) Poller(StreamEnum) {
-    const enum_fields = @typeInfo(StreamEnum).@"enum".fields;
-    var result: Poller(StreamEnum) = .{
-        .gpa = gpa,
-        .readers = @splat(.failing),
-        .poll_fds = undefined,
-        .windows = if (is_windows) .{
-            .first_read_done = false,
-            .overlapped = [1]windows.OVERLAPPED{
-                std.mem.zeroes(windows.OVERLAPPED),
-            } ** enum_fields.len,
-            .small_bufs = undefined,
-            .active = .{
-                .count = 0,
-                .handles_buf = undefined,
-                .stream_map = undefined,
-            },
-        } else {},
-    };
-
-    inline for (enum_fields, 0..) |field, i| {
-        if (is_windows) {
-            result.windows.active.handles_buf[i] = @field(files, field.name).handle;
-        } else {
-            result.poll_fds[i] = .{
-                .fd = @field(files, field.name).handle,
-                .events = posix.POLL.IN,
-                .revents = undefined,
-            };
-        }
-    }
-
-    return result;
-}
-
-pub fn Poller(comptime StreamEnum: type) type {
-    return struct {
-        const enum_fields = @typeInfo(StreamEnum).@"enum".fields;
-        const PollFd = if (is_windows) void else posix.pollfd;
-
-        gpa: Allocator,
-        readers: [enum_fields.len]Reader,
-        poll_fds: [enum_fields.len]PollFd,
-        windows: if (is_windows) struct {
-            first_read_done: bool,
-            overlapped: [enum_fields.len]windows.OVERLAPPED,
-            small_bufs: [enum_fields.len][128]u8,
-            active: struct {
-                count: math.IntFittingRange(0, enum_fields.len),
-                handles_buf: [enum_fields.len]windows.HANDLE,
-                stream_map: [enum_fields.len]StreamEnum,
-
-                pub fn removeAt(self: *@This(), index: u32) void {
-                    assert(index < self.count);
-                    for (index + 1..self.count) |i| {
-                        self.handles_buf[i - 1] = self.handles_buf[i];
-                        self.stream_map[i - 1] = self.stream_map[i];
-                    }
-                    self.count -= 1;
-                }
-            },
-        } else void,
-
-        const Self = @This();
-
-        pub fn deinit(self: *Self) void {
-            const gpa = self.gpa;
-            if (is_windows) {
-                // cancel any pending IO to prevent clobbering OVERLAPPED value
-                for (self.windows.active.handles_buf[0..self.windows.active.count]) |h| {
-                    _ = windows.kernel32.CancelIo(h);
-                }
-            }
-            inline for (&self.readers) |*r| gpa.free(r.buffer);
-            self.* = undefined;
-        }
-
-        pub fn poll(self: *Self) !bool {
-            if (is_windows) {
-                return pollWindows(self, null);
-            } else {
-                return pollPosix(self, null);
-            }
-        }
-
-        pub fn pollTimeout(self: *Self, nanoseconds: u64) !bool {
-            if (is_windows) {
-                return pollWindows(self, nanoseconds);
-            } else {
-                return pollPosix(self, nanoseconds);
-            }
-        }
-
-        pub fn reader(self: *Self, which: StreamEnum) *Reader {
-            return &self.readers[@intFromEnum(which)];
-        }
-
-        pub fn toOwnedSlice(self: *Self, which: StreamEnum) error{OutOfMemory}![]u8 {
-            const gpa = self.gpa;
-            const r = reader(self, which);
-            if (r.seek == 0) {
-                const new = try gpa.realloc(r.buffer, r.end);
-                r.buffer = &.{};
-                r.end = 0;
-                return new;
-            }
-            const new = try gpa.dupe(u8, r.buffered());
-            gpa.free(r.buffer);
-            r.buffer = &.{};
-            r.seek = 0;
-            r.end = 0;
-            return new;
-        }
-
-        fn pollWindows(self: *Self, nanoseconds: ?u64) !bool {
-            const bump_amt = 512;
-            const gpa = self.gpa;
-
-            if (!self.windows.first_read_done) {
-                var already_read_data = false;
-                for (0..enum_fields.len) |i| {
-                    const handle = self.windows.active.handles_buf[i];
-                    switch (try windowsAsyncReadToFifoAndQueueSmallRead(
-                        gpa,
-                        handle,
-                        &self.windows.overlapped[i],
-                        &self.readers[i],
-                        &self.windows.small_bufs[i],
-                        bump_amt,
-                    )) {
-                        .populated, .empty => |state| {
-                            if (state == .populated) already_read_data = true;
-                            self.windows.active.handles_buf[self.windows.active.count] = handle;
-                            self.windows.active.stream_map[self.windows.active.count] = @as(StreamEnum, @enumFromInt(i));
-                            self.windows.active.count += 1;
-                        },
-                        .closed => {}, // don't add to the wait_objects list
-                        .closed_populated => {
-                            // don't add to the wait_objects list, but we did already get data
-                            already_read_data = true;
-                        },
-                    }
-                }
-                self.windows.first_read_done = true;
-                if (already_read_data) return true;
-            }
-
-            while (true) {
-                if (self.windows.active.count == 0) return false;
-
-                const status = windows.kernel32.WaitForMultipleObjects(
-                    self.windows.active.count,
-                    &self.windows.active.handles_buf,
-                    0,
-                    if (nanoseconds) |ns|
-                        @min(std.math.cast(u32, ns / std.time.ns_per_ms) orelse (windows.INFINITE - 1), windows.INFINITE - 1)
-                    else
-                        windows.INFINITE,
-                );
-                if (status == windows.WAIT_FAILED)
-                    return windows.unexpectedError(windows.GetLastError());
-                if (status == windows.WAIT_TIMEOUT)
-                    return true;
-
-                if (status < windows.WAIT_OBJECT_0 or status > windows.WAIT_OBJECT_0 + enum_fields.len - 1)
-                    unreachable;
-
-                const active_idx = status - windows.WAIT_OBJECT_0;
-
-                const stream_idx = @intFromEnum(self.windows.active.stream_map[active_idx]);
-                const handle = self.windows.active.handles_buf[active_idx];
-
-                const overlapped = &self.windows.overlapped[stream_idx];
-                const stream_reader = &self.readers[stream_idx];
-                const small_buf = &self.windows.small_bufs[stream_idx];
-
-                const num_bytes_read = switch (try windowsGetReadResult(handle, overlapped, false)) {
-                    .success => |n| n,
-                    .closed => {
-                        self.windows.active.removeAt(active_idx);
-                        continue;
-                    },
-                    .aborted => unreachable,
-                };
-                const buf = small_buf[0..num_bytes_read];
-                const dest = try writableSliceGreedyAlloc(stream_reader, gpa, buf.len);
-                @memcpy(dest[0..buf.len], buf);
-                advanceBufferEnd(stream_reader, buf.len);
-
-                switch (try windowsAsyncReadToFifoAndQueueSmallRead(
-                    gpa,
-                    handle,
-                    overlapped,
-                    stream_reader,
-                    small_buf,
-                    bump_amt,
-                )) {
-                    .empty => {}, // irrelevant, we already got data from the small buffer
-                    .populated => {},
-                    .closed,
-                    .closed_populated, // identical, since we already got data from the small buffer
-                    => self.windows.active.removeAt(active_idx),
-                }
-                return true;
-            }
-        }
-
-        fn pollPosix(self: *Self, nanoseconds: ?u64) !bool {
-            const gpa = self.gpa;
-            // We ask for ensureUnusedCapacity with this much extra space. This
-            // has more of an effect on small reads because once the reads
-            // start to get larger the amount of space an ArrayList will
-            // allocate grows exponentially.
-            const bump_amt = 512;
-
-            const err_mask = posix.POLL.ERR | posix.POLL.NVAL | posix.POLL.HUP;
-
-            const events_len = try posix.poll(&self.poll_fds, if (nanoseconds) |ns|
-                std.math.cast(i32, ns / std.time.ns_per_ms) orelse std.math.maxInt(i32)
-            else
-                -1);
-            if (events_len == 0) {
-                for (self.poll_fds) |poll_fd| {
-                    if (poll_fd.fd != -1) return true;
-                } else return false;
-            }
-
-            var keep_polling = false;
-            for (&self.poll_fds, &self.readers) |*poll_fd, *r| {
-                // Try reading whatever is available before checking the error
-                // conditions.
-                // It's still possible to read after a POLL.HUP is received,
-                // always check if there's some data waiting to be read first.
-                if (poll_fd.revents & posix.POLL.IN != 0) {
-                    const buf = try writableSliceGreedyAlloc(r, gpa, bump_amt);
-                    const amt = posix.read(poll_fd.fd, buf) catch |err| switch (err) {
-                        error.BrokenPipe => 0, // Handle the same as EOF.
-                        else => |e| return e,
-                    };
-                    advanceBufferEnd(r, amt);
-                    if (amt == 0) {
-                        // Remove the fd when the EOF condition is met.
-                        poll_fd.fd = -1;
-                    } else {
-                        keep_polling = true;
-                    }
-                } else if (poll_fd.revents & err_mask != 0) {
-                    // Exclude the fds that signaled an error.
-                    poll_fd.fd = -1;
-                } else if (poll_fd.fd != -1) {
-                    keep_polling = true;
-                }
-            }
-            return keep_polling;
-        }
-
-        /// Returns a slice into the unused capacity of `buffer` with at least
-        /// `min_len` bytes, extending `buffer` by resizing it with `gpa` as necessary.
-        ///
-        /// After calling this function, typically the caller will follow up with a
-        /// call to `advanceBufferEnd` to report the actual number of bytes buffered.
-        fn writableSliceGreedyAlloc(r: *Reader, allocator: Allocator, min_len: usize) Allocator.Error![]u8 {
-            {
-                const unused = r.buffer[r.end..];
-                if (unused.len >= min_len) return unused;
-            }
-            if (r.seek > 0) {
-                const data = r.buffer[r.seek..r.end];
-                @memmove(r.buffer[0..data.len], data);
-                r.seek = 0;
-                r.end = data.len;
-            }
-            {
-                var list: std.ArrayList(u8) = .{
-                    .items = r.buffer[0..r.end],
-                    .capacity = r.buffer.len,
-                };
-                defer r.buffer = list.allocatedSlice();
-                try list.ensureUnusedCapacity(allocator, min_len);
-            }
-            const unused = r.buffer[r.end..];
-            assert(unused.len >= min_len);
-            return unused;
-        }
-
-        /// After writing directly into the unused capacity of `buffer`, this function
-        /// updates `end` so that users of `Reader` can receive the data.
-        fn advanceBufferEnd(r: *Reader, n: usize) void {
-            assert(n <= r.buffer.len - r.end);
-            r.end += n;
-        }
-
-        /// The `ReadFile` docuementation states that `lpNumberOfBytesRead` does not have a meaningful
-        /// result when using overlapped I/O, but also that it cannot be `null` on Windows 7. For
-        /// compatibility, we point it to this dummy variables, which we never otherwise access.
-        /// See: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
-        var win_dummy_bytes_read: u32 = undefined;
-
-        /// Read as much data as possible from `handle` with `overlapped`, and write it to the FIFO. Before
-        /// returning, queue a read into `small_buf` so that `WaitForMultipleObjects` returns when more data
-        /// is available. `handle` must have no pending asynchronous operation.
-        fn windowsAsyncReadToFifoAndQueueSmallRead(
-            gpa: Allocator,
-            handle: windows.HANDLE,
-            overlapped: *windows.OVERLAPPED,
-            r: *Reader,
-            small_buf: *[128]u8,
-            bump_amt: usize,
-        ) !enum { empty, populated, closed_populated, closed } {
-            var read_any_data = false;
-            while (true) {
-                const fifo_read_pending = while (true) {
-                    const buf = try writableSliceGreedyAlloc(r, gpa, bump_amt);
-                    const buf_len = math.cast(u32, buf.len) orelse math.maxInt(u32);
-
-                    if (0 == windows.kernel32.ReadFile(
-                        handle,
-                        buf.ptr,
-                        buf_len,
-                        &win_dummy_bytes_read,
-                        overlapped,
-                    )) switch (windows.GetLastError()) {
-                        .IO_PENDING => break true,
-                        .BROKEN_PIPE => return if (read_any_data) .closed_populated else .closed,
-                        else => |err| return windows.unexpectedError(err),
-                    };
-
-                    const num_bytes_read = switch (try windowsGetReadResult(handle, overlapped, false)) {
-                        .success => |n| n,
-                        .closed => return if (read_any_data) .closed_populated else .closed,
-                        .aborted => unreachable,
-                    };
-
-                    read_any_data = true;
-                    advanceBufferEnd(r, num_bytes_read);
-
-                    if (num_bytes_read == buf_len) {
-                        // We filled the buffer, so there's probably more data available.
-                        continue;
-                    } else {
-                        // We didn't fill the buffer, so assume we're out of data.
-                        // There is no pending read.
-                        break false;
-                    }
-                };
-
-                if (fifo_read_pending) cancel_read: {
-                    // Cancel the pending read into the FIFO.
-                    _ = windows.kernel32.CancelIo(handle);
-
-                    // We have to wait for the handle to be signalled, i.e. for the cancellation to complete.
-                    switch (windows.kernel32.WaitForSingleObject(handle, windows.INFINITE)) {
-                        windows.WAIT_OBJECT_0 => {},
-                        windows.WAIT_FAILED => return windows.unexpectedError(windows.GetLastError()),
-                        else => unreachable,
-                    }
-
-                    // If it completed before we canceled, make sure to tell the FIFO!
-                    const num_bytes_read = switch (try windowsGetReadResult(handle, overlapped, true)) {
-                        .success => |n| n,
-                        .closed => return if (read_any_data) .closed_populated else .closed,
-                        .aborted => break :cancel_read,
-                    };
-                    read_any_data = true;
-                    advanceBufferEnd(r, num_bytes_read);
-                }
-
-                // Try to queue the 1-byte read.
-                if (0 == windows.kernel32.ReadFile(
-                    handle,
-                    small_buf,
-                    small_buf.len,
-                    &win_dummy_bytes_read,
-                    overlapped,
-                )) switch (windows.GetLastError()) {
-                    .IO_PENDING => {
-                        // 1-byte read pending as intended
-                        return if (read_any_data) .populated else .empty;
-                    },
-                    .BROKEN_PIPE => return if (read_any_data) .closed_populated else .closed,
-                    else => |err| return windows.unexpectedError(err),
-                };
-
-                // We got data back this time. Write it to the FIFO and run the main loop again.
-                const num_bytes_read = switch (try windowsGetReadResult(handle, overlapped, false)) {
-                    .success => |n| n,
-                    .closed => return if (read_any_data) .closed_populated else .closed,
-                    .aborted => unreachable,
-                };
-                const buf = small_buf[0..num_bytes_read];
-                const dest = try writableSliceGreedyAlloc(r, gpa, buf.len);
-                @memcpy(dest[0..buf.len], buf);
-                advanceBufferEnd(r, buf.len);
-                read_any_data = true;
-            }
-        }
-
-        /// Simple wrapper around `GetOverlappedResult` to determine the result of a `ReadFile` operation.
-        /// If `!allow_aborted`, then `aborted` is never returned (`OPERATION_ABORTED` is considered unexpected).
-        ///
-        /// The `ReadFile` documentation states that the number of bytes read by an overlapped `ReadFile` must be determined using `GetOverlappedResult`, even if the
-        /// operation immediately returns data:
-        /// "Use NULL for [lpNumberOfBytesRead] if this is an asynchronous operation to avoid potentially
-        /// erroneous results."
-        /// "If `hFile` was opened with `FILE_FLAG_OVERLAPPED`, the following conditions are in effect: [...]
-        /// The lpNumberOfBytesRead parameter should be set to NULL. Use the GetOverlappedResult function to
-        /// get the actual number of bytes read."
-        /// See: https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile
-        fn windowsGetReadResult(
-            handle: windows.HANDLE,
-            overlapped: *windows.OVERLAPPED,
-            allow_aborted: bool,
-        ) !union(enum) {
-            success: u32,
-            closed,
-            aborted,
-        } {
-            var num_bytes_read: u32 = undefined;
-            if (0 == windows.kernel32.GetOverlappedResult(
-                handle,
-                overlapped,
-                &num_bytes_read,
-                0,
-            )) switch (windows.GetLastError()) {
-                .BROKEN_PIPE => return .closed,
-                .OPERATION_ABORTED => |err| if (allow_aborted) {
-                    return .aborted;
-                } else {
-                    return windows.unexpectedError(err);
-                },
-                else => |err| return windows.unexpectedError(err),
-            };
-            return .{ .success = num_bytes_read };
-        }
-    };
-}
-
-/// Given an enum, returns a struct with fields of that enum, each field
-/// representing an I/O stream for polling.
-pub fn PollFiles(comptime StreamEnum: type) type {
-    return @Struct(.auto, null, std.meta.fieldNames(StreamEnum), &@splat(std.fs.File), &@splat(.{}));
-}
-
-test {
-    _ = net;
-    _ = Reader;
-    _ = Writer;
-    _ = tty;
-    _ = Evented;
-    _ = Threaded;
-    _ = @import("Io/test.zig");
-}
-
-const Io = @This();
-
+pub const Threaded = @import("Io/Threaded.zig");
 pub const Evented = switch (builtin.os.tag) {
     .linux => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/IoUring.zig"),
+        .x86_64, .aarch64 => IoUring,
         else => void, // context-switching code not implemented yet
     },
     .dragonfly, .freebsd, .netbsd, .openbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => @import("Io/Kqueue.zig"),
+        .x86_64, .aarch64 => Kqueue,
         else => void, // context-switching code not implemented yet
     },
     else => void,
 };
-pub const Threaded = @import("Io/Threaded.zig");
-pub const net = @import("Io/net.zig");
+pub const Kqueue = @import("Io/Kqueue.zig");
+pub const IoUring = @import("Io/IoUring.zig");
 
-userdata: ?*anyopaque,
-vtable: *const VTable,
+pub const Reader = @import("Io/Reader.zig");
+pub const Writer = @import("Io/Writer.zig");
+pub const net = @import("Io/net.zig");
+pub const Dir = @import("Io/Dir.zig");
+pub const File = @import("Io/File.zig");
+pub const Terminal = @import("Io/Terminal.zig");
+
+pub const RwLock = @import("Io/RwLock.zig");
+pub const Semaphore = @import("Io/Semaphore.zig");
 
 pub const VTable = struct {
     /// If it returns `null` it means `result` has been already populated and
@@ -634,7 +124,7 @@ pub const VTable = struct {
         /// Copied and then passed to `start`.
         context: []const u8,
         context_alignment: std.mem.Alignment,
-        start: *const fn (*Group, context: *const anyopaque) void,
+        start: *const fn (context: *const anyopaque) Cancelable!void,
     ) void,
     /// Thread-safe.
     groupConcurrent: *const fn (
@@ -645,47 +135,108 @@ pub const VTable = struct {
         /// Copied and then passed to `start`.
         context: []const u8,
         context_alignment: std.mem.Alignment,
-        start: *const fn (*Group, context: *const anyopaque) void,
+        start: *const fn (context: *const anyopaque) Cancelable!void,
     ) ConcurrentError!void,
-    groupWait: *const fn (?*anyopaque, *Group, token: *anyopaque) void,
+    groupAwait: *const fn (?*anyopaque, *Group, token: *anyopaque) Cancelable!void,
     groupCancel: *const fn (?*anyopaque, *Group, token: *anyopaque) void,
+
+    recancel: *const fn (?*anyopaque) void,
+    swapCancelProtection: *const fn (?*anyopaque, new: CancelProtection) CancelProtection,
+    checkCancel: *const fn (?*anyopaque) Cancelable!void,
 
     /// Blocks until one of the futures from the list has a result ready, such
     /// that awaiting it will not block. Returns that index.
     select: *const fn (?*anyopaque, futures: []const *AnyFuture) Cancelable!usize,
 
-    mutexLock: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) Cancelable!void,
-    mutexLockUncancelable: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) void,
-    mutexUnlock: *const fn (?*anyopaque, prev_state: Mutex.State, mutex: *Mutex) void,
+    futexWait: *const fn (?*anyopaque, ptr: *const u32, expected: u32, Timeout) Cancelable!void,
+    futexWaitUncancelable: *const fn (?*anyopaque, ptr: *const u32, expected: u32) void,
+    futexWake: *const fn (?*anyopaque, ptr: *const u32, max_waiters: u32) void,
 
-    conditionWait: *const fn (?*anyopaque, cond: *Condition, mutex: *Mutex) Cancelable!void,
-    conditionWaitUncancelable: *const fn (?*anyopaque, cond: *Condition, mutex: *Mutex) void,
-    conditionWake: *const fn (?*anyopaque, cond: *Condition, wake: Condition.Wake) void,
+    operate: *const fn (?*anyopaque, Operation) Cancelable!Operation.Result,
+    batchAwaitAsync: *const fn (?*anyopaque, *Batch) Cancelable!void,
+    batchAwaitConcurrent: *const fn (?*anyopaque, *Batch, Timeout) Batch.AwaitConcurrentError!void,
+    batchCancel: *const fn (?*anyopaque, *Batch) void,
 
-    dirMake: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.Mode) Dir.MakeError!void,
-    dirMakePath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.Mode) Dir.MakeError!void,
-    dirMakeOpenPath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.OpenOptions) Dir.MakeOpenPathError!Dir,
+    dirCreateDir: *const fn (?*anyopaque, Dir, []const u8, Dir.Permissions) Dir.CreateDirError!void,
+    dirCreateDirPath: *const fn (?*anyopaque, Dir, []const u8, Dir.Permissions) Dir.CreateDirPathError!Dir.CreatePathStatus,
+    dirCreateDirPathOpen: *const fn (?*anyopaque, Dir, []const u8, Dir.Permissions, Dir.OpenOptions) Dir.CreateDirPathOpenError!Dir,
+    dirOpenDir: *const fn (?*anyopaque, Dir, []const u8, Dir.OpenOptions) Dir.OpenError!Dir,
     dirStat: *const fn (?*anyopaque, Dir) Dir.StatError!Dir.Stat,
-    dirStatPath: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.StatPathOptions) Dir.StatPathError!File.Stat,
-    dirAccess: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.AccessOptions) Dir.AccessError!void,
-    dirCreateFile: *const fn (?*anyopaque, Dir, sub_path: []const u8, File.CreateFlags) File.OpenError!File,
-    dirOpenFile: *const fn (?*anyopaque, Dir, sub_path: []const u8, File.OpenFlags) File.OpenError!File,
-    dirOpenDir: *const fn (?*anyopaque, Dir, sub_path: []const u8, Dir.OpenOptions) Dir.OpenError!Dir,
-    dirClose: *const fn (?*anyopaque, Dir) void,
+    dirStatFile: *const fn (?*anyopaque, Dir, []const u8, Dir.StatFileOptions) Dir.StatFileError!File.Stat,
+    dirAccess: *const fn (?*anyopaque, Dir, []const u8, Dir.AccessOptions) Dir.AccessError!void,
+    dirCreateFile: *const fn (?*anyopaque, Dir, []const u8, File.CreateFlags) File.OpenError!File,
+    dirCreateFileAtomic: *const fn (?*anyopaque, Dir, []const u8, Dir.CreateFileAtomicOptions) Dir.CreateFileAtomicError!File.Atomic,
+    dirOpenFile: *const fn (?*anyopaque, Dir, []const u8, File.OpenFlags) File.OpenError!File,
+    dirClose: *const fn (?*anyopaque, []const Dir) void,
+    dirRead: *const fn (?*anyopaque, *Dir.Reader, []Dir.Entry) Dir.Reader.Error!usize,
+    dirRealPath: *const fn (?*anyopaque, Dir, out_buffer: []u8) Dir.RealPathError!usize,
+    dirRealPathFile: *const fn (?*anyopaque, Dir, path_name: []const u8, out_buffer: []u8) Dir.RealPathFileError!usize,
+    dirDeleteFile: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteFileError!void,
+    dirDeleteDir: *const fn (?*anyopaque, Dir, []const u8) Dir.DeleteDirError!void,
+    dirRename: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenameError!void,
+    dirRenamePreserve: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8) Dir.RenamePreserveError!void,
+    dirSymLink: *const fn (?*anyopaque, Dir, target_path: []const u8, sym_link_path: []const u8, Dir.SymLinkFlags) Dir.SymLinkError!void,
+    dirReadLink: *const fn (?*anyopaque, Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLinkError!usize,
+    dirSetOwner: *const fn (?*anyopaque, Dir, ?File.Uid, ?File.Gid) Dir.SetOwnerError!void,
+    dirSetFileOwner: *const fn (?*anyopaque, Dir, []const u8, ?File.Uid, ?File.Gid, Dir.SetFileOwnerOptions) Dir.SetFileOwnerError!void,
+    dirSetPermissions: *const fn (?*anyopaque, Dir, Dir.Permissions) Dir.SetPermissionsError!void,
+    dirSetFilePermissions: *const fn (?*anyopaque, Dir, []const u8, File.Permissions, Dir.SetFilePermissionsOptions) Dir.SetFilePermissionsError!void,
+    dirSetTimestamps: *const fn (?*anyopaque, Dir, []const u8, Dir.SetTimestampsOptions) Dir.SetTimestampsError!void,
+    dirHardLink: *const fn (?*anyopaque, old_dir: Dir, old_sub_path: []const u8, new_dir: Dir, new_sub_path: []const u8, Dir.HardLinkOptions) Dir.HardLinkError!void,
+
     fileStat: *const fn (?*anyopaque, File) File.StatError!File.Stat,
-    fileClose: *const fn (?*anyopaque, File) void,
-    fileWriteStreaming: *const fn (?*anyopaque, File, buffer: [][]const u8) File.WriteStreamingError!usize,
-    fileWritePositional: *const fn (?*anyopaque, File, buffer: [][]const u8, offset: u64) File.WritePositionalError!usize,
-    /// Returns 0 on end of stream.
-    fileReadStreaming: *const fn (?*anyopaque, File, data: [][]u8) File.Reader.Error!usize,
-    /// Returns 0 on end of stream.
-    fileReadPositional: *const fn (?*anyopaque, File, data: [][]u8, offset: u64) File.ReadPositionalError!usize,
+    fileLength: *const fn (?*anyopaque, File) File.LengthError!u64,
+    fileClose: *const fn (?*anyopaque, []const File) void,
+    fileWritePositional: *const fn (?*anyopaque, File, header: []const u8, data: []const []const u8, splat: usize, offset: u64) File.WritePositionalError!usize,
+    fileWriteFileStreaming: *const fn (?*anyopaque, File, header: []const u8, *Io.File.Reader, Io.Limit) File.Writer.WriteFileError!usize,
+    fileWriteFilePositional: *const fn (?*anyopaque, File, header: []const u8, *Io.File.Reader, Io.Limit, offset: u64) File.WriteFilePositionalError!usize,
+    /// Returns 0 if reading at or past the end.
+    fileReadPositional: *const fn (?*anyopaque, File, data: []const []u8, offset: u64) File.ReadPositionalError!usize,
     fileSeekBy: *const fn (?*anyopaque, File, relative_offset: i64) File.SeekError!void,
     fileSeekTo: *const fn (?*anyopaque, File, absolute_offset: u64) File.SeekError!void,
-    openSelfExe: *const fn (?*anyopaque, File.OpenFlags) File.OpenSelfExeError!File,
+    fileSync: *const fn (?*anyopaque, File) File.SyncError!void,
+    fileIsTty: *const fn (?*anyopaque, File) Cancelable!bool,
+    fileEnableAnsiEscapeCodes: *const fn (?*anyopaque, File) File.EnableAnsiEscapeCodesError!void,
+    fileSupportsAnsiEscapeCodes: *const fn (?*anyopaque, File) Cancelable!bool,
+    fileSetLength: *const fn (?*anyopaque, File, u64) File.SetLengthError!void,
+    fileSetOwner: *const fn (?*anyopaque, File, ?File.Uid, ?File.Gid) File.SetOwnerError!void,
+    fileSetPermissions: *const fn (?*anyopaque, File, File.Permissions) File.SetPermissionsError!void,
+    fileSetTimestamps: *const fn (?*anyopaque, File, File.SetTimestampsOptions) File.SetTimestampsError!void,
+    fileLock: *const fn (?*anyopaque, File, File.Lock) File.LockError!void,
+    fileTryLock: *const fn (?*anyopaque, File, File.Lock) File.LockError!bool,
+    fileUnlock: *const fn (?*anyopaque, File) void,
+    fileDowngradeLock: *const fn (?*anyopaque, File) File.DowngradeLockError!void,
+    fileRealPath: *const fn (?*anyopaque, File, out_buffer: []u8) File.RealPathError!usize,
+    fileHardLink: *const fn (?*anyopaque, File, Dir, []const u8, File.HardLinkOptions) File.HardLinkError!void,
 
-    now: *const fn (?*anyopaque, Clock) Clock.Error!Timestamp,
-    sleep: *const fn (?*anyopaque, Timeout) SleepError!void,
+    fileMemoryMapCreate: *const fn (?*anyopaque, File, File.MemoryMap.CreateOptions) File.MemoryMap.CreateError!File.MemoryMap,
+    fileMemoryMapDestroy: *const fn (?*anyopaque, *File.MemoryMap) void,
+    fileMemoryMapSetLength: *const fn (?*anyopaque, *File.MemoryMap, usize) File.MemoryMap.SetLengthError!void,
+    fileMemoryMapRead: *const fn (?*anyopaque, *File.MemoryMap) File.ReadPositionalError!void,
+    fileMemoryMapWrite: *const fn (?*anyopaque, *File.MemoryMap) File.WritePositionalError!void,
+
+    processExecutableOpen: *const fn (?*anyopaque, File.OpenFlags) std.process.OpenExecutableError!File,
+    processExecutablePath: *const fn (?*anyopaque, buffer: []u8) std.process.ExecutablePathError!usize,
+    lockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!LockedStderr,
+    tryLockStderr: *const fn (?*anyopaque, ?Terminal.Mode) Cancelable!?LockedStderr,
+    unlockStderr: *const fn (?*anyopaque) void,
+    processCurrentPath: *const fn (?*anyopaque, buffer: []u8) std.process.CurrentPathError!usize,
+    processSetCurrentDir: *const fn (?*anyopaque, Dir) std.process.SetCurrentDirError!void,
+    processReplace: *const fn (?*anyopaque, std.process.ReplaceOptions) std.process.ReplaceError,
+    processReplacePath: *const fn (?*anyopaque, Dir, std.process.ReplaceOptions) std.process.ReplaceError,
+    processSpawn: *const fn (?*anyopaque, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
+    processSpawnPath: *const fn (?*anyopaque, Dir, std.process.SpawnOptions) std.process.SpawnError!std.process.Child,
+    childWait: *const fn (?*anyopaque, *std.process.Child) std.process.Child.WaitError!std.process.Child.Term,
+    childKill: *const fn (?*anyopaque, *std.process.Child) void,
+
+    progressParentFile: *const fn (?*anyopaque) std.Progress.ParentFileError!File,
+
+    now: *const fn (?*anyopaque, Clock) Timestamp,
+    clockResolution: *const fn (?*anyopaque, Clock) Clock.ResolutionError!Duration,
+    sleep: *const fn (?*anyopaque, Timeout) Cancelable!void,
+
+    random: *const fn (?*anyopaque, buffer: []u8) void,
+    randomSecure: *const fn (?*anyopaque, buffer: []u8) RandomSecureError!void,
 
     netListenIp: *const fn (?*anyopaque, address: net.IpAddress, net.IpAddress.ListenOptions) net.IpAddress.ListenError!net.Server,
     netAccept: *const fn (?*anyopaque, server: net.Socket.Handle) net.Server.AcceptError!net.Stream,
@@ -693,15 +244,393 @@ pub const VTable = struct {
     netConnectIp: *const fn (?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.ConnectOptions) net.IpAddress.ConnectError!net.Stream,
     netListenUnix: *const fn (?*anyopaque, *const net.UnixAddress, net.UnixAddress.ListenOptions) net.UnixAddress.ListenError!net.Socket.Handle,
     netConnectUnix: *const fn (?*anyopaque, *const net.UnixAddress) net.UnixAddress.ConnectError!net.Socket.Handle,
+    netSocketCreatePair: *const fn (?*anyopaque, net.Socket.CreatePairOptions) net.Socket.CreatePairError![2]net.Socket,
     netSend: *const fn (?*anyopaque, net.Socket.Handle, []net.OutgoingMessage, net.SendFlags) struct { ?net.Socket.SendError, usize },
     netReceive: *const fn (?*anyopaque, net.Socket.Handle, message_buffer: []net.IncomingMessage, data_buffer: []u8, net.ReceiveFlags, Timeout) struct { ?net.Socket.ReceiveTimeoutError, usize },
     /// Returns 0 on end of stream.
     netRead: *const fn (?*anyopaque, src: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize,
     netWrite: *const fn (?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize,
-    netClose: *const fn (?*anyopaque, handle: net.Socket.Handle) void,
+    netWriteFile: *const fn (?*anyopaque, net.Socket.Handle, header: []const u8, *Io.File.Reader, Io.Limit) net.Stream.Writer.WriteFileError!usize,
+    netClose: *const fn (?*anyopaque, handle: []const net.Socket.Handle) void,
+    netShutdown: *const fn (?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void,
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,
-    netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) void,
+    netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
+};
+
+pub const Operation = union(enum) {
+    file_read_streaming: FileReadStreaming,
+    file_write_streaming: FileWriteStreaming,
+    /// On Windows this is NtDeviceIoControlFile. On POSIX this is ioctl. On
+    /// other systems this tag is unreachable.
+    device_io_control: DeviceIoControl,
+
+    pub const Tag = @typeInfo(Operation).@"union".tag_type.?;
+
+    /// May return 0 reads which is different than `error.EndOfStream`.
+    pub const FileReadStreaming = struct {
+        file: File,
+        data: []const []u8,
+
+        pub const Error = UnendingError || error{EndOfStream};
+        pub const UnendingError = error{
+            InputOutput,
+            SystemResources,
+            /// Trying to read a directory file descriptor as if it were a file.
+            IsDir,
+            ConnectionResetByPeer,
+            /// File was not opened with read capability.
+            NotOpenForReading,
+            SocketUnconnected,
+            /// Non-blocking has been enabled, and reading from the file descriptor
+            /// would block.
+            WouldBlock,
+            /// In WASI, this error occurs when the file descriptor does
+            /// not hold the required rights to read from it.
+            AccessDenied,
+            /// Unable to read file due to lock. Depending on the `Io` implementation,
+            /// reading from a locked file may return this error, or may ignore the
+            /// lock.
+            LockViolation,
+        } || Io.UnexpectedError;
+
+        pub const Result = Error!usize;
+    };
+
+    pub const FileWriteStreaming = struct {
+        file: File,
+        header: []const u8 = &.{},
+        data: []const []const u8,
+        splat: usize = 1,
+
+        pub const Error = error{
+            DiskQuota,
+            FileTooBig,
+            InputOutput,
+            NoSpaceLeft,
+            DeviceBusy,
+            /// File descriptor does not hold the required rights to write to it.
+            AccessDenied,
+            PermissionDenied,
+            /// File is an unconnected socket, or closed its read end.
+            BrokenPipe,
+            /// Insufficient kernel memory to read from in_fd.
+            SystemResources,
+            NotOpenForWriting,
+            /// The process cannot access the file because another process has locked
+            /// a portion of the file. Windows-only.
+            LockViolation,
+            /// Non-blocking has been enabled and this operation would block.
+            WouldBlock,
+            /// This error occurs when a device gets disconnected before or mid-flush
+            /// while it's being written to - errno(6): No such device or address.
+            NoDevice,
+            FileBusy,
+        } || Io.UnexpectedError;
+
+        pub const Result = Error!usize;
+    };
+
+    pub const DeviceIoControl = switch (builtin.os.tag) {
+        .wasi => noreturn,
+        .windows => struct {
+            file: File,
+            code: std.os.windows.CTL_CODE,
+            in: []const u8 = &.{},
+            out: []u8 = &.{},
+
+            pub const Result = std.os.windows.IO_STATUS_BLOCK;
+        },
+        else => struct {
+            file: File,
+            /// Device-dependent operation code.
+            code: u32,
+            arg: ?*anyopaque,
+
+            /// Device and operation dependent result. Negative values are
+            /// negative errno.
+            pub const Result = i32;
+        },
+    };
+
+    pub const Result = Result: {
+        const operation_fields = @typeInfo(Operation).@"union".fields;
+        var field_names: [operation_fields.len][]const u8 = undefined;
+        var field_types: [operation_fields.len]type = undefined;
+        for (operation_fields, &field_names, &field_types) |field, *field_name, *field_type| {
+            field_name.* = field.name;
+            field_type.* = if (field.type == noreturn) noreturn else field.type.Result;
+        }
+        break :Result @Union(.auto, Tag, &field_names, &field_types, &@splat(.{}));
+    };
+
+    pub const Storage = union {
+        unused: List.DoubleNode,
+        submission: Submission,
+        pending: Pending,
+        completion: Completion,
+
+        pub const Submission = struct {
+            node: List.SingleNode,
+            operation: Operation,
+        };
+
+        pub const Pending = struct {
+            node: List.DoubleNode,
+            tag: Tag,
+            context: [3]usize,
+        };
+
+        pub const Completion = struct {
+            node: List.SingleNode,
+            result: Result,
+        };
+    };
+
+    pub const OptionalIndex = enum(u32) {
+        none = std.math.maxInt(u32),
+        _,
+
+        pub fn fromIndex(i: usize) OptionalIndex {
+            const oi: OptionalIndex = @enumFromInt(i);
+            assert(oi != .none);
+            return oi;
+        }
+
+        pub fn toIndex(oi: OptionalIndex) u32 {
+            assert(oi != .none);
+            return @intFromEnum(oi);
+        }
+    };
+    pub const List = struct {
+        head: OptionalIndex,
+        tail: OptionalIndex,
+
+        pub const empty: List = .{ .head = .none, .tail = .none };
+
+        pub const SingleNode = struct { next: OptionalIndex };
+        pub const DoubleNode = struct { prev: OptionalIndex, next: OptionalIndex };
+    };
+};
+
+/// Performs one `Operation`.
+pub fn operate(io: Io, operation: Operation) Cancelable!Operation.Result {
+    return io.vtable.operate(io.userdata, operation);
+}
+
+/// Submits many operations together without waiting for all of them to
+/// complete.
+///
+/// This is a low-level abstraction based on `Operation`. For a higher
+/// level API that operates on `Future`, see `Select` and `Group`.
+pub const Batch = struct {
+    storage: []Operation.Storage,
+    unused: Operation.List,
+    submissions: Operation.List,
+    pending: Operation.List,
+    completions: Operation.List,
+    context: ?*anyopaque,
+
+    /// After calling this, it is safe to unconditionally defer a call to
+    /// `cancel`. `storage` is a pre-allocated buffer of undefined memory that
+    /// determines the maximum number of active operations that can be
+    /// submitted via `add` and `addAt`.
+    pub fn init(storage: []Operation.Storage) Batch {
+        var prev: Operation.OptionalIndex = .none;
+        for (storage, 0..) |*operation, index| {
+            operation.* = .{ .unused = .{ .prev = prev, .next = .fromIndex(index + 1) } };
+            prev = .fromIndex(index);
+        }
+        storage[storage.len - 1].unused.next = .none;
+        return .{
+            .storage = storage,
+            .unused = .{
+                .head = .fromIndex(0),
+                .tail = .fromIndex(storage.len - 1),
+            },
+            .submissions = .empty,
+            .pending = .empty,
+            .completions = .empty,
+            .context = null,
+        };
+    }
+
+    /// Adds an operation to be performed at the next await call.
+    /// Returns the index that will be returned by `next` after the operation completes.
+    /// Asserts that no more than `storage.len` operations are active at a time.
+    pub fn add(b: *Batch, operation: Operation) u32 {
+        const index = b.unused.next;
+        b.addAt(index.toIndex(), operation);
+        return index;
+    }
+
+    /// Adds an operation to be performed at the next await call.
+    /// After the operation completes, `next` will return `index`.
+    /// Asserts that the operation at `index` is not active.
+    pub fn addAt(b: *Batch, index: u32, operation: Operation) void {
+        const storage = &b.storage[index];
+        const unused = storage.unused;
+        switch (unused.prev) {
+            .none => b.unused.head = .none,
+            else => |prev_index| b.storage[prev_index.toIndex()].unused.next = unused.next,
+        }
+        switch (unused.next) {
+            .none => b.unused.tail = .none,
+            else => |next_index| b.storage[next_index.toIndex()].unused.prev = unused.prev,
+        }
+
+        switch (b.submissions.tail) {
+            .none => b.submissions.head = .fromIndex(index),
+            else => |tail_index| b.storage[tail_index.toIndex()].submission.node.next = .fromIndex(index),
+        }
+        storage.* = .{ .submission = .{ .node = .{ .next = .none }, .operation = operation } };
+        b.submissions.tail = .fromIndex(index);
+    }
+
+    pub const Completion = struct {
+        /// The element within the provided operation storage that completed.
+        /// `addAt` can be used to re-arm the `Batch` using this `index`.
+        index: u32,
+        /// The return value of the operation.
+        result: Operation.Result,
+    };
+
+    /// After calling `awaitAsync`, `awaitConcurrent`, or `cancel`, this
+    /// function iterates over the completed operations.
+    ///
+    /// Each completion returned from this function dequeues from the `Batch`.
+    /// It is not required to dequeue all completions before awaiting again.
+    pub fn next(b: *Batch) ?Completion {
+        const index = b.completions.head;
+        if (index == .none) return null;
+        const storage = &b.storage[index.toIndex()];
+        const completion = storage.completion;
+        const next_index = completion.node.next;
+        b.completions.head = next_index;
+        if (next_index == .none) b.completions.tail = .none;
+
+        const tail_index = b.unused.tail;
+        switch (tail_index) {
+            .none => b.unused.head = index,
+            else => b.storage[tail_index.toIndex()].unused.next = index,
+        }
+        storage.* = .{ .unused = .{ .prev = tail_index, .next = .none } };
+        b.unused.tail = index;
+        return .{ .index = index.toIndex(), .result = completion.result };
+    }
+
+    /// Waits for at least one of the submitted operations to complete. After
+    /// this function returns the completed operations can be iterated with
+    /// `next`.
+    ///
+    /// This function provides opportunity for the implementation to introduce
+    /// concurrency into the batched operations, but unlike `awaitConcurrent`,
+    /// does not require it, and therefore cannot fail with
+    /// `error.ConcurrencyUnavailable`.
+    pub fn awaitAsync(b: *Batch, io: Io) Cancelable!void {
+        return io.vtable.batchAwaitAsync(io.userdata, b);
+    }
+
+    pub const AwaitConcurrentError = ConcurrentError || Cancelable || Timeout.Error;
+
+    /// Waits for at least one of the submitted operations to complete. After
+    /// this function returns the completed operations can be iterated with
+    /// `next`.
+    ///
+    /// Unlike `awaitAsync`, this function requires the implementation to
+    /// perform the operations concurrently and therefore can fail with
+    /// `error.ConcurrencyUnavailable`.
+    pub fn awaitConcurrent(b: *Batch, io: Io, timeout: Timeout) AwaitConcurrentError!void {
+        return io.vtable.batchAwaitConcurrent(io.userdata, b, timeout);
+    }
+
+    /// Requests all pending operations to be interrupted, then waits for all
+    /// pending operations to complete. After this returns, the `Batch` is in a
+    /// well-defined state, ready to be iterated with `next`. Successfully
+    /// canceled operations will be absent from the iteration. Some operations
+    /// may have successfully completed regardless of the cancel request and
+    /// will appear in the iteration.
+    pub fn cancel(b: *Batch, io: Io) void {
+        return io.vtable.batchCancel(io.userdata, b);
+    }
+};
+
+pub const Limit = enum(usize) {
+    nothing = 0,
+    unlimited = math.maxInt(usize),
+    _,
+
+    /// `math.maxInt(usize)` is interpreted to mean `.unlimited`.
+    pub fn limited(n: usize) Limit {
+        return @enumFromInt(n);
+    }
+
+    /// Any value grater than `math.maxInt(usize)` is interpreted to mean
+    /// `.unlimited`.
+    pub fn limited64(n: u64) Limit {
+        return @enumFromInt(@min(n, math.maxInt(usize)));
+    }
+
+    pub fn countVec(data: []const []const u8) Limit {
+        var total: usize = 0;
+        for (data) |d| total += d.len;
+        return .limited(total);
+    }
+
+    pub fn min(a: Limit, b: Limit) Limit {
+        return @enumFromInt(@min(@intFromEnum(a), @intFromEnum(b)));
+    }
+
+    pub fn max(a: Limit, b: Limit) Limit {
+        if (a == .unlimited or b == .unlimited) {
+            return .unlimited;
+        }
+
+        return @enumFromInt(@max(@intFromEnum(a), @intFromEnum(b)));
+    }
+
+    pub fn minInt(l: Limit, n: usize) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn minInt64(l: Limit, n: u64) usize {
+        return @min(n, @intFromEnum(l));
+    }
+
+    pub fn slice(l: Limit, s: []u8) []u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn sliceConst(l: Limit, s: []const u8) []const u8 {
+        return s[0..l.minInt(s.len)];
+    }
+
+    pub fn toInt(l: Limit) ?usize {
+        return switch (l) {
+            else => @intFromEnum(l),
+            .unlimited => null,
+        };
+    }
+
+    /// Reduces a slice to account for the limit, leaving room for one extra
+    /// byte above the limit, allowing for the use case of differentiating
+    /// between end-of-stream and reaching the limit.
+    pub fn slice1(l: Limit, non_empty_buffer: []u8) []u8 {
+        assert(non_empty_buffer.len >= 1);
+        return non_empty_buffer[0..@min(@intFromEnum(l) +| 1, non_empty_buffer.len)];
+    }
+
+    pub fn nonzero(l: Limit) bool {
+        return @intFromEnum(l) > 0;
+    }
+
+    /// Return a new limit reduced by `amount` or return `null` indicating
+    /// limit would be exceeded.
+    pub fn subtract(l: Limit, amount: usize) ?Limit {
+        if (l == .unlimited) return .unlimited;
+        if (amount > @intFromEnum(l)) return null;
+        return @enumFromInt(@intFromEnum(l) - amount);
+    }
 };
 
 pub const Cancelable = error{
@@ -720,9 +649,6 @@ pub const UnexpectedError = error{
     /// the respective function.
     Unexpected,
 };
-
-pub const Dir = @import("Io/Dir.zig");
-pub const File = @import("Io/File.zig");
 
 pub const Clock = enum {
     /// A settable system-wide clock that measures real (i.e. wall-clock)
@@ -774,30 +700,53 @@ pub const Clock = enum {
     /// thread.
     cpu_thread,
 
-    pub const Error = error{UnsupportedClock} || UnexpectedError;
-
-    /// This function is not cancelable because first of all it does not block,
-    /// but more importantly, the cancelation logic itself may want to check
-    /// the time.
-    pub fn now(clock: Clock, io: Io) Error!Io.Timestamp {
+    /// This function is not cancelable because it does not block.
+    ///
+    /// Resolution is determined by `resolution` which may be 0 if the
+    /// clock is unsupported.
+    ///
+    /// See also:
+    /// * `Clock.Timestamp.now`
+    pub fn now(clock: Clock, io: Io) Io.Timestamp {
         return io.vtable.now(io.userdata, clock);
+    }
+
+    pub const ResolutionError = error{
+        ClockUnavailable,
+        Unexpected,
+    };
+
+    /// Reveals the granularity of `clock`. May be zero, indicating
+    /// unsupported clock.
+    pub fn resolution(clock: Clock, io: Io) ResolutionError!Io.Duration {
+        return io.vtable.clockResolution(io.userdata, clock);
     }
 
     pub const Timestamp = struct {
         raw: Io.Timestamp,
         clock: Clock,
 
-        /// This function is not cancelable because first of all it does not block,
-        /// but more importantly, the cancelation logic itself may want to check
-        /// the time.
-        pub fn now(io: Io, clock: Clock) Error!Clock.Timestamp {
+        /// This function is not cancelable because it does not block.
+        ///
+        /// Resolution is determined by `resolution` which may be 0 if
+        /// the clock is unsupported.
+        ///
+        /// See also:
+        /// * `Clock.now`
+        pub fn now(io: Io, clock: Clock) Clock.Timestamp {
             return .{
-                .raw = try io.vtable.now(io.userdata, clock),
+                .raw = io.vtable.now(io.userdata, clock),
                 .clock = clock,
             };
         }
 
-        pub fn wait(t: Clock.Timestamp, io: Io) SleepError!void {
+        /// Sleeps until the timestamp arrives.
+        ///
+        /// See also:
+        /// * `Io.sleep`
+        /// * `Clock.Duration.sleep`
+        /// * `Timeout.sleep`
+        pub fn wait(t: Clock.Timestamp, io: Io) Cancelable!void {
             return io.vtable.sleep(io.userdata, .{ .deadline = t });
         }
 
@@ -825,30 +774,38 @@ pub const Clock = enum {
             };
         }
 
-        pub fn fromNow(io: Io, duration: Clock.Duration) Error!Clock.Timestamp {
+        /// Resolution is determined by `resolution` which may be 0 if
+        /// the clock is unsupported.
+        pub fn fromNow(io: Io, duration: Clock.Duration) Clock.Timestamp {
             return .{
                 .clock = duration.clock,
-                .raw = (try duration.clock.now(io)).addDuration(duration.raw),
+                .raw = duration.clock.now(io).addDuration(duration.raw),
             };
         }
 
-        pub fn untilNow(timestamp: Clock.Timestamp, io: Io) Error!Clock.Duration {
-            const now_ts = try Clock.Timestamp.now(io, timestamp.clock);
+        /// Resolution is determined by `resolution` which may be 0 if
+        /// the clock is unsupported.
+        pub fn untilNow(timestamp: Clock.Timestamp, io: Io) Clock.Duration {
+            const now_ts = Clock.Timestamp.now(io, timestamp.clock);
             return timestamp.durationTo(now_ts);
         }
 
-        pub fn durationFromNow(timestamp: Clock.Timestamp, io: Io) Error!Clock.Duration {
-            const now_ts = try timestamp.clock.now(io);
+        /// Resolution is determined by `resolution` which may be 0 if
+        /// the clock is unsupported.
+        pub fn durationFromNow(timestamp: Clock.Timestamp, io: Io) Clock.Duration {
+            const now_ts = timestamp.clock.now(io);
             return .{
                 .clock = timestamp.clock,
                 .raw = now_ts.durationTo(timestamp.raw),
             };
         }
 
-        pub fn toClock(t: Clock.Timestamp, io: Io, clock: Clock) Error!Clock.Timestamp {
+        /// Resolution is determined by `resolution` which may be 0 if
+        /// the clock is unsupported.
+        pub fn toClock(t: Clock.Timestamp, io: Io, clock: Clock) Clock.Timestamp {
             if (t.clock == clock) return t;
-            const now_old = try t.clock.now(io);
-            const now_new = try clock.now(io);
+            const now_old = t.clock.now(io);
+            const now_new = clock.now(io);
             const duration = now_old.durationTo(t);
             return .{
                 .clock = clock,
@@ -856,9 +813,9 @@ pub const Clock = enum {
             };
         }
 
-        pub fn compare(lhs: Clock.Timestamp, op: std.math.CompareOperator, rhs: Clock.Timestamp) bool {
+        pub fn compare(lhs: Clock.Timestamp, op: math.CompareOperator, rhs: Clock.Timestamp) bool {
             assert(lhs.clock == rhs.clock);
-            return std.math.compare(lhs.raw.nanoseconds, op, rhs.raw.nanoseconds);
+            return math.compare(lhs.raw.nanoseconds, op, rhs.raw.nanoseconds);
         }
     };
 
@@ -866,7 +823,13 @@ pub const Clock = enum {
         raw: Io.Duration,
         clock: Clock,
 
-        pub fn sleep(duration: Clock.Duration, io: Io) SleepError!void {
+        /// Waits until a specified amount of time has passed on `clock`.
+        ///
+        /// See also:
+        /// * `Io.sleep`
+        /// * `Clock.Timestamp.wait`
+        /// * `Timeout.sleep`
+        pub fn sleep(duration: Clock.Duration, io: Io) Cancelable!void {
             return io.vtable.sleep(io.userdata, .{ .duration = duration });
         }
     };
@@ -874,6 +837,10 @@ pub const Clock = enum {
 
 pub const Timestamp = struct {
     nanoseconds: i96,
+
+    pub fn now(io: Io, clock: Clock) Io.Timestamp {
+        return io.vtable.now(io.userdata, clock);
+    }
 
     pub const zero: Timestamp = .{ .nanoseconds = 0 };
 
@@ -917,13 +884,20 @@ pub const Timestamp = struct {
             .fill = n.fill,
         });
     }
+
+    /// Resolution is determined by `Clock.resolution` which may be 0 if
+    /// the clock is unsupported.
+    pub fn untilNow(t: Timestamp, io: Io, clock: Clock) Duration {
+        const now_ts = clock.now(io);
+        return t.durationTo(now_ts);
+    }
 };
 
 pub const Duration = struct {
     nanoseconds: i96,
 
     pub const zero: Duration = .{ .nanoseconds = 0 };
-    pub const max: Duration = .{ .nanoseconds = std.math.maxInt(i96) };
+    pub const max: Duration = .{ .nanoseconds = math.maxInt(i96) };
 
     pub fn fromNanoseconds(x: i96) Duration {
         return .{ .nanoseconds = x };
@@ -956,25 +930,39 @@ pub const Timeout = union(enum) {
     duration: Clock.Duration,
     deadline: Clock.Timestamp,
 
-    pub const Error = error{ Timeout, UnsupportedClock };
+    pub const Error = error{Timeout};
 
-    pub fn toDeadline(t: Timeout, io: Io) Clock.Error!?Clock.Timestamp {
+    pub fn toTimestamp(t: Timeout, io: Io) ?Clock.Timestamp {
         return switch (t) {
             .none => null,
-            .duration => |d| try .fromNow(io, d),
+            .duration => |d| .fromNow(io, d),
             .deadline => |d| d,
         };
     }
 
-    pub fn toDurationFromNow(t: Timeout, io: Io) Clock.Error!?Clock.Duration {
+    pub fn toDeadline(t: Timeout, io: Io) Timeout {
         return switch (t) {
-            .none => null,
-            .duration => |d| d,
-            .deadline => |d| try d.durationFromNow(io),
+            .none => .none,
+            .duration => |d| .{ .deadline = .fromNow(io, d) },
+            .deadline => |d| .{ .deadline = d },
         };
     }
 
-    pub fn sleep(timeout: Timeout, io: Io) SleepError!void {
+    pub fn toDurationFromNow(t: Timeout, io: Io) ?Clock.Duration {
+        return switch (t) {
+            .none => null,
+            .duration => |d| d,
+            .deadline => |d| d.durationFromNow(io),
+        };
+    }
+
+    /// Waits until the timeout has passed.
+    ///
+    /// See also:
+    /// * `Io.sleep`
+    /// * `Clock.Duration.sleep`
+    /// * `Clock.Timestamp.wait`
+    pub fn sleep(timeout: Timeout, io: Io) Cancelable!void {
         return io.vtable.sleep(io.userdata, timeout);
     }
 };
@@ -986,7 +974,14 @@ pub fn Future(Result: type) type {
         any_future: ?*AnyFuture,
         result: Result,
 
-        /// Equivalent to `await` but places a cancellation request.
+        /// Equivalent to `await` but places a cancelation request. This causes the task to receive
+        /// `error.Canceled` from its next "cancelation point" (if any). A cancelation point is a
+        /// call to a function in `Io` which can return `error.Canceled`.
+        ///
+        /// After cancelation of a task is requested, only the next cancelation point in that task
+        /// will return `error.Canceled`: future points will not re-signal the cancelation. As such,
+        /// it is usually a bug to ignore `error.Canceled`. However, to defer handling cancelation
+        /// requests, see also `recancel` and `CancelProtection`.
         ///
         /// Idempotent. Not threadsafe.
         pub fn cancel(f: *@This(), io: Io) Result {
@@ -1006,90 +1001,159 @@ pub fn Future(Result: type) type {
     };
 }
 
+/// An unordered set of tasks which can only be awaited or canceled as a whole.
+/// Tasks are spawned in the group with `Group.async` and `Group.concurrent`.
+///
+/// The resources associated with each task are *guaranteed* to be released when
+/// the individual task returns, as opposed to when the whole group completes or
+/// is awaited. For this reason, it is not a resource leak to have a long-lived
+/// group which concurrent tasks are repeatedly added to. However, asynchronous
+/// tasks are not guaranteed to run until `Group.await` or `Group.cancel` is
+/// called, so adding async tasks to a group without ever awaiting it may leak
+/// resources.
 pub const Group = struct {
+    /// This value indicates whether or not a group has pending tasks. `null`
+    /// means there are no pending tasks, and no resources associated with the
+    /// group, so `await` and `cancel` return immediately without calling the
+    /// implementation. This means that `token` must be accessed atomically to
+    /// avoid racing with the check in `await` and `cancel`.
+    token: std.atomic.Value(?*anyopaque),
+    /// This value is available for the implementation to use as it wishes.
     state: usize,
-    context: ?*anyopaque,
-    token: ?*anyopaque,
 
-    pub const init: Group = .{ .state = 0, .context = null, .token = null };
+    pub const init: Group = .{ .token = .init(null), .state = 0 };
 
-    /// Calls `function` with `args` asynchronously. The resource spawned is
-    /// owned by the group.
+    /// Equivalent to `Io.async`, except the task is spawned in this `Group`
+    /// instead of becoming associated with a `Future`.
     ///
-    /// `function` *may* be called immediately, before `async` returns.
+    /// The return type of `function` must be coercible to `Cancelable!void`.
     ///
-    /// When this function returns, it is guaranteed that `function` has
-    /// already been called and completed, or it has successfully been assigned
-    /// a unit of concurrency.
+    /// Once this function is called, there are resources associated with the
+    /// group. To release those resources, `Group.await` or `Group.cancel` must
+    /// eventually be called.
     ///
-    /// After this is called, `wait` or `cancel` must be called before the
-    /// group is deinitialized.
-    ///
-    /// Threadsafe.
-    ///
-    /// See also:
-    /// * `concurrent`
-    /// * `Io.async`
+    /// If `error.Canceled` is returned from any operation this task performs,
+    /// it is asserted that `function` returns `error.Canceled`.
     pub fn async(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
-            fn start(group: *Group, context: *const anyopaque) void {
-                _ = group;
+            fn start(context: *const anyopaque) Cancelable!void {
                 const args_casted: *const Args = @ptrCast(@alignCast(context));
-                @call(.auto, function, args_casted.*);
+                return @call(.auto, function, args_casted.*);
             }
         };
         io.vtable.groupAsync(io.userdata, g, @ptrCast(&args), .of(Args), TypeErased.start);
     }
 
-    /// Calls `function` with `args`, such that the function is not guaranteed
-    /// to have returned until `wait` is called, allowing the caller to
-    /// progress while waiting for any `Io` operations.
+    /// Equivalent to `Io.concurrent`, except the task is spawned in this
+    /// `Group` instead of becoming associated with a `Future`.
     ///
-    /// The resource spawned is owned by the group; after this is called,
-    /// `wait` or `cancel` must be called before the group is deinitialized.
+    /// The return type of `function` must be coercible to `Cancelable!void`.
     ///
-    /// This has stronger guarantee than `async`, placing restrictions on what kind
-    /// of `Io` implementations are supported. By calling `async` instead, one
-    /// allows, for example, stackful single-threaded blocking I/O.
+    /// Once this function is called, there are resources associated with the
+    /// group. To release those resources, `Group.await` or `Group.cancel` must
+    /// eventually be called.
     ///
-    /// Threadsafe.
-    ///
-    /// See also:
-    /// * `async`
-    /// * `Io.concurrent`
+    /// If `error.Canceled` is returned from any operation this task performs,
+    /// it is asserted that `function` returns `error.Canceled`.
     pub fn concurrent(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) ConcurrentError!void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
-            fn start(group: *Group, context: *const anyopaque) void {
-                _ = group;
+            fn start(context: *const anyopaque) Cancelable!void {
                 const args_casted: *const Args = @ptrCast(@alignCast(context));
-                @call(.auto, function, args_casted.*);
+                return @call(.auto, function, args_casted.*);
             }
         };
         return io.vtable.groupConcurrent(io.userdata, g, @ptrCast(&args), .of(Args), TypeErased.start);
     }
 
     /// Blocks until all tasks of the group finish. During this time,
-    /// cancellation requests propagate to all members of the group.
+    /// cancelation requests propagate to all members of the group, and
+    /// will also cause `error.Canceled` to be returned when the group
+    /// does ultimately finish.
     ///
     /// Idempotent. Not threadsafe.
-    pub fn wait(g: *Group, io: Io) void {
-        const token = g.token orelse return;
-        g.token = null;
-        io.vtable.groupWait(io.userdata, g, token);
+    ///
+    /// It is safe to call this function concurrently with `Group.async` or
+    /// `Group.concurrent`, provided that the group does not complete until
+    /// the call to `Group.async` or `Group.concurrent` returns.
+    pub fn await(g: *Group, io: Io) Cancelable!void {
+        const token = g.token.load(.acquire) orelse return;
+        try io.vtable.groupAwait(io.userdata, g, token);
+        assert(g.token.raw == null);
     }
 
-    /// Equivalent to `wait` but immediately requests cancellation on all
+    /// Equivalent to `await` but immediately requests cancelation on all
     /// members of the group.
     ///
+    /// For a description of cancelation and cancelation points, see `Future.cancel`.
+    ///
     /// Idempotent. Not threadsafe.
+    ///
+    /// It is safe to call this function concurrently with `Group.async` or
+    /// `Group.concurrent`, provided that the group does not complete until
+    /// the call to `Group.async` or `Group.concurrent` returns.
     pub fn cancel(g: *Group, io: Io) void {
-        const token = g.token orelse return;
-        g.token = null;
+        const token = g.token.load(.acquire) orelse return;
         io.vtable.groupCancel(io.userdata, g, token);
+        assert(g.token.raw == null);
     }
 };
+
+/// Asserts that `error.Canceled` was returned from a prior cancelation point, and "re-arms" the
+/// cancelation request, so that `error.Canceled` will be returned again from the next cancelation
+/// point.
+///
+/// For a description of cancelation and cancelation points, see `Future.cancel`.
+pub fn recancel(io: Io) void {
+    io.vtable.recancel(io.userdata);
+}
+
+/// In rare cases, it is desirable to completely block cancelation notification, so that a region
+/// of code can run uninterrupted before `error.Canceled` is potentially observed. Therefore, every
+/// task has a "cancel protection" state which indicates whether or not `Io` functions can introduce
+/// cancelation points.
+///
+/// To modify a task's cancel protection state, see `swapCancelProtection`.
+///
+/// For a description of cancelation and cancelation points, see `Future.cancel`.
+pub const CancelProtection = enum {
+    /// Any call to an `Io` function with `error.Canceled` in its error set is a cancelation point.
+    ///
+    /// This is the default state, which all tasks are created in.
+    unblocked,
+    /// No `Io` function introduces a cancelation point (`error.Canceled` will never be returned).
+    blocked,
+};
+/// Updates the current task's cancel protection state (see `CancelProtection`).
+///
+/// The typical usage for this function is to protect a block of code from cancelation:
+/// ```
+/// const old_cancel_protect = io.swapCancelProtection(.blocked);
+/// defer _ = io.swapCancelProtection(old_cancel_protect);
+/// doSomeWork() catch |err| switch (err) {
+///     error.Canceled => unreachable,
+/// };
+/// ```
+///
+/// For a description of cancelation and cancelation points, see `Future.cancel`.
+pub fn swapCancelProtection(io: Io, new: CancelProtection) CancelProtection {
+    return io.vtable.swapCancelProtection(io.userdata, new);
+}
+
+/// This function acts as a pure cancelation point (subject to protection; see `CancelProtection`)
+/// and does nothing else. In other words, it returns `error.Canceled` if there is an outstanding
+/// non-blocked cancelation request, but otherwise is a no-op.
+///
+/// It is rarely necessary to call this function. The primary use case is in long-running CPU-bound
+/// tasks which may need to respond to cancelation before completing. Short tasks, or those which
+/// perform other `Io` operations (and hence have other cancelation points), will typically already
+/// respond quickly to cancelation requests.
+///
+/// For a description of cancelation and cancelation points, see `Future.cancel`.
+pub fn checkCancel(io: Io) Cancelable!void {
+    return io.vtable.checkCancel(io.userdata);
+}
 
 pub fn Select(comptime U: type) type {
     return struct {
@@ -1138,17 +1202,20 @@ pub fn Select(comptime U: type) type {
             function: anytype,
             args: std.meta.ArgsTuple(@TypeOf(function)),
         ) void {
-            const Args = @TypeOf(args);
-            const TypeErased = struct {
-                fn start(group: *Group, context: *const anyopaque) void {
-                    const args_casted: *const Args = @ptrCast(@alignCast(context));
-                    const unerased_select: *S = @fieldParentPtr("group", group);
-                    const elem = @unionInit(U, @tagName(field), @call(.auto, function, args_casted.*));
-                    unerased_select.queue.putOneUncancelable(unerased_select.io, elem);
+            const Context = struct {
+                select: *S,
+                args: @TypeOf(args),
+                fn start(type_erased_context: *const anyopaque) Cancelable!void {
+                    const context: *const @This() = @ptrCast(@alignCast(type_erased_context));
+                    const elem = @unionInit(U, @tagName(field), @call(.auto, function, context.args));
+                    context.select.queue.putOneUncancelable(context.select.io, elem) catch |err| switch (err) {
+                        error.Closed => unreachable,
+                    };
                 }
             };
+            const context: Context = .{ .select = s, .args = args };
             _ = @atomicRmw(usize, &s.outstanding, .Add, 1, .monotonic);
-            s.io.vtable.groupAsync(s.io.userdata, &s.group, @ptrCast(&args), .of(Args), TypeErased.start);
+            s.io.vtable.groupAsync(s.io.userdata, &s.group, @ptrCast(&context), .of(Context), Context.start);
         }
 
         /// Blocks until another task of the select finishes.
@@ -1156,13 +1223,18 @@ pub fn Select(comptime U: type) type {
         /// Asserts there is at least one more `outstanding` task.
         ///
         /// Not threadsafe.
-        pub fn wait(s: *S) Cancelable!U {
+        pub fn await(s: *S) Cancelable!U {
             s.outstanding -= 1;
-            return s.queue.getOne(s.io);
+            return s.queue.getOne(s.io) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                error.Closed => unreachable,
+            };
         }
 
-        /// Equivalent to `wait` but requests cancellation on all remaining
+        /// Equivalent to `wait` but requests cancelation on all remaining
         /// tasks owned by the select.
+        ///
+        /// For a description of cancelation and cancelation points, see `Future.cancel`.
         ///
         /// It is illegal to call `wait` after this.
         ///
@@ -1174,104 +1246,344 @@ pub fn Select(comptime U: type) type {
     };
 }
 
-pub const Mutex = struct {
-    state: State,
+/// Atomically checks if the value at `ptr` equals `expected`, and if so, blocks until either:
+///
+/// * a matching (same `ptr` argument) `futexWake` call occurs, or
+/// * a spurious ("random") wakeup occurs.
+///
+/// Typically, `futexWake` should be called immediately after updating the value at `ptr.*`, to
+/// unblock tasks using `futexWait` to wait for the value to change from what it previously was.
+///
+/// The caller is responsible for identifying spurious wakeups if necessary, typically by checking
+/// the value at `ptr.*`.
+///
+/// Asserts that `T` is 4 bytes in length and has a well-defined layout with no padding bits.
+pub fn futexWait(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T) Cancelable!void {
+    return futexWaitTimeout(io, T, ptr, expected, .none);
+}
+/// Same as `futexWait`, except also unblocks if `timeout` expires. As with `futexWait`, spurious
+/// wakeups are possible. It remains the caller's responsibility to differentiate between these
+/// three possible wake-up reasons if necessary.
+pub fn futexWaitTimeout(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T, timeout: Timeout) Cancelable!void {
+    const expected_int: u32 = switch (@typeInfo(T)) {
+        .@"enum" => @bitCast(@intFromEnum(expected)),
+        else => @bitCast(expected),
+    };
+    return io.vtable.futexWait(io.userdata, @ptrCast(ptr), expected_int, timeout);
+}
+/// Same as `futexWait`, except does not introduce a cancelation point.
+///
+/// For a description of cancelation and cancelation points, see `Future.cancel`.
+pub fn futexWaitUncancelable(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, expected: T) void {
+    const expected_int: u32 = switch (@typeInfo(T)) {
+        .@"enum" => @bitCast(@intFromEnum(expected)),
+        else => @bitCast(expected),
+    };
+    io.vtable.futexWaitUncancelable(io.userdata, @ptrCast(ptr), expected_int);
+}
+/// Unblocks pending futex waits on `ptr`, up to a limit of `max_waiters` calls.
+pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, max_waiters: u32) void {
+    comptime assert(@sizeOf(T) == @sizeOf(u32));
+    if (max_waiters == 0) return;
+    return io.vtable.futexWake(io.userdata, @ptrCast(ptr), max_waiters);
+}
 
-    pub const State = enum(usize) {
-        locked_once = 0b00,
-        unlocked = 0b01,
-        contended = 0b10,
-        /// contended
-        _,
+/// Mutex is a synchronization primitive which enforces atomic access to a
+/// shared region of code known as the "critical section".
+///
+/// Mutex is an extern struct so that it may be used as a field inside another
+/// extern struct. Having a guaranteed memory layout including mutexes is
+/// important for IPC over shared memory (mmap).
+pub const Mutex = extern struct {
+    state: std.atomic.Value(State),
 
-        pub fn isUnlocked(state: State) bool {
-            return @intFromEnum(state) & @intFromEnum(State.unlocked) == @intFromEnum(State.unlocked);
-        }
+    pub const init: Mutex = .{ .state = .init(.unlocked) };
+
+    pub const State = enum(u32) {
+        unlocked,
+        locked_once,
+        contended,
     };
 
-    pub const init: Mutex = .{ .state = .unlocked };
-
-    pub fn tryLock(mutex: *Mutex) bool {
-        const prev_state: State = @enumFromInt(@atomicRmw(
-            usize,
-            @as(*usize, @ptrCast(&mutex.state)),
-            .And,
-            ~@intFromEnum(State.unlocked),
-            .acquire,
-        ));
-        return prev_state.isUnlocked();
+    pub fn tryLock(m: *Mutex) bool {
+        return m.state.cmpxchgWeak(.unlocked, .locked_once, .acquire, .monotonic) == null;
     }
 
-    pub fn lock(mutex: *Mutex, io: std.Io) Cancelable!void {
-        const prev_state: State = @enumFromInt(@atomicRmw(
-            usize,
-            @as(*usize, @ptrCast(&mutex.state)),
-            .And,
-            ~@intFromEnum(State.unlocked),
+    pub fn lock(m: *Mutex, io: Io) Cancelable!void {
+        const initial_state = m.state.cmpxchgWeak(
+            .unlocked,
+            .locked_once,
             .acquire,
-        ));
-        if (prev_state.isUnlocked()) {
-            @branchHint(.likely);
-            return;
-        }
-        return io.vtable.mutexLock(io.userdata, prev_state, mutex);
-    }
-
-    /// Same as `lock` but cannot be canceled.
-    pub fn lockUncancelable(mutex: *Mutex, io: std.Io) void {
-        const prev_state: State = @enumFromInt(@atomicRmw(
-            usize,
-            @as(*usize, @ptrCast(&mutex.state)),
-            .And,
-            ~@intFromEnum(State.unlocked),
-            .acquire,
-        ));
-        if (prev_state.isUnlocked()) {
-            @branchHint(.likely);
-            return;
-        }
-        return io.vtable.mutexLockUncancelable(io.userdata, prev_state, mutex);
-    }
-
-    pub fn unlock(mutex: *Mutex, io: std.Io) void {
-        const prev_state = @cmpxchgWeak(State, &mutex.state, .locked_once, .unlocked, .release, .acquire) orelse {
+            .monotonic,
+        ) orelse {
             @branchHint(.likely);
             return;
         };
-        assert(prev_state != .unlocked); // mutex not locked
-        return io.vtable.mutexUnlock(io.userdata, prev_state, mutex);
+        if (initial_state == .contended) {
+            try io.futexWait(State, &m.state.raw, .contended);
+        }
+        while (m.state.swap(.contended, .acquire) != .unlocked) {
+            try io.futexWait(State, &m.state.raw, .contended);
+        }
+    }
+
+    /// Same as `lock`, except does not introduce a cancelation point.
+    ///
+    /// For a description of cancelation and cancelation points, see `Future.cancel`.
+    pub fn lockUncancelable(m: *Mutex, io: Io) void {
+        const initial_state = m.state.cmpxchgWeak(
+            .unlocked,
+            .locked_once,
+            .acquire,
+            .monotonic,
+        ) orelse {
+            @branchHint(.likely);
+            return;
+        };
+        if (initial_state == .contended) {
+            io.futexWaitUncancelable(State, &m.state.raw, .contended);
+        }
+        while (m.state.swap(.contended, .acquire) != .unlocked) {
+            io.futexWaitUncancelable(State, &m.state.raw, .contended);
+        }
+    }
+
+    pub fn unlock(m: *Mutex, io: Io) void {
+        switch (m.state.swap(.unlocked, .release)) {
+            .unlocked => unreachable,
+            .locked_once => {},
+            .contended => {
+                @branchHint(.unlikely);
+                io.futexWake(State, &m.state.raw, 1);
+            },
+        }
     }
 };
 
 pub const Condition = struct {
-    state: u64 = 0,
+    state: std.atomic.Value(State),
+    /// Incremented whenever the condition is signaled
+    epoch: std.atomic.Value(u32),
+
+    const State = packed struct(u32) {
+        waiters: u16,
+        signals: u16,
+    };
+
+    pub const init: Condition = .{
+        .state = .init(.{ .waiters = 0, .signals = 0 }),
+        .epoch = .init(0),
+    };
 
     pub fn wait(cond: *Condition, io: Io, mutex: *Mutex) Cancelable!void {
-        return io.vtable.conditionWait(io.userdata, cond, mutex);
+        try waitInner(cond, io, mutex, false);
     }
 
+    /// Same as `wait`, except does not introduce a cancelation point.
+    ///
+    /// For a description of cancelation and cancelation points, see `Future.cancel`.
     pub fn waitUncancelable(cond: *Condition, io: Io, mutex: *Mutex) void {
-        return io.vtable.conditionWaitUncancelable(io.userdata, cond, mutex);
+        waitInner(cond, io, mutex, true) catch |err| switch (err) {
+            error.Canceled => unreachable,
+        };
+    }
+
+    fn waitInner(cond: *Condition, io: Io, mutex: *Mutex, uncancelable: bool) Cancelable!void {
+        var epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before state load
+
+        {
+            const prev_state = cond.state.fetchAdd(.{ .waiters = 1, .signals = 0 }, .monotonic);
+            assert(prev_state.waiters < math.maxInt(u16)); // overflow caused by too many waiters
+        }
+
+        mutex.unlock(io);
+        defer mutex.lockUncancelable(io);
+
+        while (true) {
+            const result = if (uncancelable)
+                io.futexWaitUncancelable(u32, &cond.epoch.raw, epoch)
+            else
+                io.futexWait(u32, &cond.epoch.raw, epoch);
+
+            epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before `state` laod
+
+            // Even on error, try to consume a pending signal first. Otherwise a race might
+            // cause a signal to get stuck in the state with no corresponding waiter.
+            {
+                var prev_state = cond.state.load(.monotonic);
+                while (prev_state.signals > 0) {
+                    prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                        .waiters = prev_state.waiters - 1,
+                        .signals = prev_state.signals - 1,
+                    }, .acquire, .monotonic) orelse {
+                        // We successfully consumed a signal.
+                        return;
+                    };
+                }
+            }
+
+            // There are no more signals available; this was a spurious wakeup or an error. If it
+            // was an error, we will remove ourselves as a waiter and return that error. Otherwise,
+            // we'll loop back to the futex wait.
+            result catch |err| {
+                const prev_state = cond.state.fetchSub(.{ .waiters = 1, .signals = 0 }, .monotonic);
+                assert(prev_state.waiters > 0); // underflow caused by illegal state
+                return err;
+            };
+        }
     }
 
     pub fn signal(cond: *Condition, io: Io) void {
-        io.vtable.conditionWake(io.userdata, cond, .one);
+        var prev_state = cond.state.load(.monotonic);
+        while (prev_state.waiters > prev_state.signals) {
+            @branchHint(.unlikely);
+            prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                .waiters = prev_state.waiters,
+                .signals = prev_state.signals + 1,
+            }, .release, .monotonic) orelse {
+                // Update the epoch to tell the waiting threads that there are new signals for them.
+                // Note that a waiting thread could miss a take if *exactly* (1<<32)-1 wakes happen
+                // between it observing the epoch and sleeping on it, but this is extraordinarily
+                // unlikely due to the precise number of calls required.
+                _ = cond.epoch.fetchAdd(1, .release); // `.release` to ensure ordered after `state` update
+                io.futexWake(u32, &cond.epoch.raw, 1);
+                return;
+            };
+        }
     }
 
     pub fn broadcast(cond: *Condition, io: Io) void {
-        io.vtable.conditionWake(io.userdata, cond, .all);
+        var prev_state = cond.state.load(.monotonic);
+        while (prev_state.waiters > prev_state.signals) {
+            @branchHint(.unlikely);
+            prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                .waiters = prev_state.waiters,
+                .signals = prev_state.waiters,
+            }, .release, .monotonic) orelse {
+                // Update the epoch to tell the waiting threads that there are new signals for them.
+                // Note that a waiting thread could miss a take if *exactly* (1<<32)-1 wakes happen
+                // between it observing the epoch and sleeping on it, but this is extraordinarily
+                // unlikely due to the precise number of calls required.
+                _ = cond.epoch.fetchAdd(1, .release); // `.release` to ensure ordered after `state` update
+                io.futexWake(u32, &cond.epoch.raw, prev_state.waiters - prev_state.signals);
+                return;
+            };
+        }
+    }
+};
+
+/// Logical boolean flag which can be set and unset and supports a "wait until set" operation.
+pub const Event = enum(u32) {
+    unset,
+    waiting,
+    is_set,
+
+    /// Returns whether the logical boolean is `true`.
+    pub fn isSet(event: *const Event) bool {
+        return switch (@atomicLoad(Event, event, .acquire)) {
+            .unset, .waiting => false,
+            .is_set => true,
+        };
     }
 
-    pub const Wake = enum {
-        /// Wake up only one thread.
-        one,
-        /// Wake up all threads.
-        all,
-    };
+    /// Blocks until the logical boolean is `true`.
+    pub fn wait(event: *Event, io: Io) Io.Cancelable!void {
+        if (@cmpxchgStrong(Event, event, .unset, .waiting, .acquire, .acquire)) |prev| switch (prev) {
+            .unset => unreachable,
+            .waiting => {},
+            .is_set => return,
+        };
+        errdefer {
+            // Ideally we would restore the event back to `.unset` instead of `.waiting`, but there
+            // might be other threads waiting on the event. In theory we could track the *number* of
+            // waiting threads in the unused bits of the `Event`, but that has its own problem: the
+            // waiters would wake up when a *new waiter* was added. So it's easiest to just leave
+            // the state at `.waiting`---at worst it causes one redundant call to `futexWake`.
+        }
+        while (true) {
+            try io.futexWait(Event, event, .waiting);
+            switch (@atomicLoad(Event, event, .acquire)) {
+                .unset => unreachable, // `reset` called before pending `wait` returned
+                .waiting => continue,
+                .is_set => return,
+            }
+        }
+    }
+
+    /// Same as `wait`, except does not introduce a cancelation point.
+    ///
+    /// For a description of cancelation and cancelation points, see `Future.cancel`.
+    pub fn waitUncancelable(event: *Event, io: Io) void {
+        if (@cmpxchgStrong(Event, event, .unset, .waiting, .acquire, .acquire)) |prev| switch (prev) {
+            .unset => unreachable,
+            .waiting => {},
+            .is_set => return,
+        };
+        while (true) {
+            io.futexWaitUncancelable(Event, event, .waiting);
+            switch (@atomicLoad(Event, event, .acquire)) {
+                .unset => unreachable, // `reset` called before pending `wait` returned
+                .waiting => continue,
+                .is_set => return,
+            }
+        }
+    }
+
+    pub const WaitTimeoutError = error{Timeout} || Cancelable;
+
+    /// Blocks the calling thread until either the logical boolean is set, the timeout expires, or a
+    /// spurious wakeup occurs. If the timeout expires or a spurious wakeup occurs, `error.Timeout`
+    /// is returned.
+    pub fn waitTimeout(event: *Event, io: Io, timeout: Timeout) WaitTimeoutError!void {
+        if (@cmpxchgStrong(Event, event, .unset, .waiting, .acquire, .acquire)) |prev| switch (prev) {
+            .unset => unreachable,
+            .waiting => {},
+            .is_set => return,
+        };
+        errdefer {
+            // Ideally we would restore the event back to `.unset` instead of `.waiting`, but there
+            // might be other threads waiting on the event. In theory we could track the *number* of
+            // waiting threads in the unused bits of the `Event`, but that has its own problem: the
+            // waiters would wake up when a *new waiter* was added. So it's easiest to just leave
+            // the state at `.waiting`---at worst it causes one redundant call to `futexWake`.
+        }
+        try io.futexWaitTimeout(Event, event, .waiting, timeout);
+        switch (@atomicLoad(Event, event, .acquire)) {
+            .unset => unreachable, // `reset` called before pending `wait` returned
+            .waiting => return error.Timeout,
+            .is_set => return,
+        }
+    }
+
+    /// Sets the logical boolean to true, and hence unblocks any pending calls to `wait`. The
+    /// logical boolean remains true until `reset` is called, so future calls to `set` have no
+    /// semantic effect.
+    ///
+    /// Any memory accesses prior to a `set` call are "released", so that if this `set` call causes
+    /// `isSet` to return `true` or a wait to finish, those tasks will be able to observe those
+    /// memory accesses.
+    pub fn set(e: *Event, io: Io) void {
+        switch (@atomicRmw(Event, e, .Xchg, .is_set, .release)) {
+            .unset, .is_set => {},
+            .waiting => io.futexWake(Event, e, math.maxInt(u32)),
+        }
+    }
+
+    /// Sets the logical boolean to false.
+    ///
+    /// Assumes that there is no pending call to `wait` or `waitUncancelable`.
+    ///
+    /// However, concurrent calls to `isSet`, `set`, and `reset` are allowed.
+    pub fn reset(e: *Event) void {
+        @atomicStore(Event, e, .unset, .monotonic);
+    }
 };
+
+pub const QueueClosedError = error{Closed};
 
 pub const TypeErasedQueue = struct {
     mutex: Mutex,
+    closed: bool,
 
     /// Ring buffer. This data is logically *after* queued getters.
     buffer: []u8,
@@ -1283,12 +1595,14 @@ pub const TypeErasedQueue = struct {
 
     const Put = struct {
         remaining: []const u8,
+        needed: usize,
         condition: Condition,
         node: std.DoublyLinkedList.Node,
     };
 
     const Get = struct {
         remaining: []u8,
+        needed: usize,
         condition: Condition,
         node: std.DoublyLinkedList.Node,
     };
@@ -1296,6 +1610,7 @@ pub const TypeErasedQueue = struct {
     pub fn init(buffer: []u8) TypeErasedQueue {
         return .{
             .mutex = .init,
+            .closed = false,
             .buffer = buffer,
             .start = 0,
             .len = 0,
@@ -1304,7 +1619,27 @@ pub const TypeErasedQueue = struct {
         };
     }
 
-    pub fn put(q: *TypeErasedQueue, io: Io, elements: []const u8, min: usize) Cancelable!usize {
+    pub fn close(q: *TypeErasedQueue, io: Io) void {
+        q.mutex.lockUncancelable(io);
+        defer q.mutex.unlock(io);
+        q.closed = true;
+        {
+            var it = q.getters.first;
+            while (it) |node| : (it = node.next) {
+                const getter: *Get = @alignCast(@fieldParentPtr("node", node));
+                getter.condition.signal(io);
+            }
+        }
+        {
+            var it = q.putters.first;
+            while (it) |node| : (it = node.next) {
+                const putter: *Put = @alignCast(@fieldParentPtr("node", node));
+                putter.condition.signal(io);
+            }
+        }
+    }
+
+    pub fn put(q: *TypeErasedQueue, io: Io, elements: []const u8, min: usize) (QueueClosedError || Cancelable)!usize {
         assert(elements.len >= min);
         if (elements.len == 0) return 0;
         try q.mutex.lock(io);
@@ -1312,14 +1647,17 @@ pub const TypeErasedQueue = struct {
         return q.putLocked(io, elements, min, false);
     }
 
-    /// Same as `put` but cannot be canceled.
-    pub fn putUncancelable(q: *TypeErasedQueue, io: Io, elements: []const u8, min: usize) usize {
+    /// Same as `put`, except does not introduce a cancelation point.
+    ///
+    /// For a description of cancelation and cancelation points, see `Future.cancel`.
+    pub fn putUncancelable(q: *TypeErasedQueue, io: Io, elements: []const u8, min: usize) QueueClosedError!usize {
         assert(elements.len >= min);
         if (elements.len == 0) return 0;
         q.mutex.lockUncancelable(io);
         defer q.mutex.unlock(io);
         return q.putLocked(io, elements, min, true) catch |err| switch (err) {
             error.Canceled => unreachable,
+            error.Closed => |e| return e,
         };
     }
 
@@ -1333,49 +1671,79 @@ pub const TypeErasedQueue = struct {
         return if (slice.len > 0) slice else null;
     }
 
-    fn putLocked(q: *TypeErasedQueue, io: Io, elements: []const u8, min: usize, uncancelable: bool) Cancelable!usize {
+    fn putLocked(q: *TypeErasedQueue, io: Io, elements: []const u8, target: usize, uncancelable: bool) (QueueClosedError || Cancelable)!usize {
+        // A closed queue cannot be added to, even if there is space in the buffer.
+        if (q.closed) return error.Closed;
+
         // Getters have first priority on the data, and only when the getters
         // queue is empty do we start populating the buffer.
 
-        var remaining = elements;
+        // The number of elements we add immediately, before possibly blocking.
+        var n: usize = 0;
+
         while (q.getters.popFirst()) |getter_node| {
             const getter: *Get = @alignCast(@fieldParentPtr("node", getter_node));
-            const copy_len = @min(getter.remaining.len, remaining.len);
+            const copy_len = @min(getter.remaining.len, elements.len - n);
             assert(copy_len > 0);
-            @memcpy(getter.remaining[0..copy_len], remaining[0..copy_len]);
-            remaining = remaining[copy_len..];
+            @memcpy(getter.remaining[0..copy_len], elements[n..][0..copy_len]);
             getter.remaining = getter.remaining[copy_len..];
-            if (getter.remaining.len == 0) {
+            getter.needed -|= copy_len;
+            n += copy_len;
+            if (getter.needed == 0) {
                 getter.condition.signal(io);
-                if (remaining.len > 0) continue;
-            } else q.getters.prepend(getter_node);
-            assert(remaining.len == 0);
-            return elements.len;
+            } else {
+                assert(n == elements.len); // we didn't have enough elements for the getter
+                q.getters.prepend(getter_node);
+            }
+            if (n == elements.len) return elements.len;
         }
 
         while (q.puttableSlice()) |slice| {
-            const copy_len = @min(slice.len, remaining.len);
+            const copy_len = @min(slice.len, elements.len - n);
             assert(copy_len > 0);
-            @memcpy(slice[0..copy_len], remaining[0..copy_len]);
+            @memcpy(slice[0..copy_len], elements[n..][0..copy_len]);
             q.len += copy_len;
-            remaining = remaining[copy_len..];
-            if (remaining.len == 0) return elements.len;
+            n += copy_len;
+            if (n == elements.len) return elements.len;
         }
 
-        const total_filled = elements.len - remaining.len;
-        if (total_filled >= min) return total_filled;
+        // Don't block if we hit the target.
+        if (n >= target) return n;
 
-        var pending: Put = .{ .remaining = remaining, .condition = .{}, .node = .{} };
+        var pending: Put = .{
+            .remaining = elements[n..],
+            .needed = target - n,
+            .condition = .init,
+            .node = .{},
+        };
         q.putters.append(&pending.node);
-        defer if (pending.remaining.len > 0) q.putters.remove(&pending.node);
-        while (pending.remaining.len > 0) if (uncancelable)
-            pending.condition.waitUncancelable(io, &q.mutex)
-        else
-            try pending.condition.wait(io, &q.mutex);
-        return elements.len;
+        defer if (pending.needed > 0) q.putters.remove(&pending.node);
+
+        while (pending.needed > 0 and !q.closed) {
+            if (uncancelable) {
+                pending.condition.waitUncancelable(io, &q.mutex);
+                continue;
+            }
+            pending.condition.wait(io, &q.mutex) catch |err| switch (err) {
+                error.Canceled => if (pending.remaining.len == elements.len) {
+                    // Canceled while waiting, and appended no elements.
+                    return error.Canceled;
+                } else {
+                    // Canceled while waiting, but appended some elements, so report those first.
+                    io.recancel();
+                    return elements.len - pending.remaining.len;
+                },
+            };
+        }
+        if (pending.remaining.len == elements.len) {
+            // The queue was closed while we were waiting. We appended no elements.
+            assert(q.closed);
+            return error.Closed;
+        }
+        return elements.len - pending.remaining.len;
     }
 
-    pub fn get(q: *@This(), io: Io, buffer: []u8, min: usize) Cancelable!usize {
+    pub fn get(q: *TypeErasedQueue, io: Io, buffer: []u8, min: usize) (QueueClosedError || Cancelable)!usize {
         assert(buffer.len >= min);
         if (buffer.len == 0) return 0;
         try q.mutex.lock(io);
@@ -1383,13 +1751,17 @@ pub const TypeErasedQueue = struct {
         return q.getLocked(io, buffer, min, false);
     }
 
-    pub fn getUncancelable(q: *@This(), io: Io, buffer: []u8, min: usize) usize {
+    /// Same as `get`, except does not introduce a cancelation point.
+    ///
+    /// For a description of cancelation and cancelation points, see `Future.cancel`.
+    pub fn getUncancelable(q: *TypeErasedQueue, io: Io, buffer: []u8, min: usize) QueueClosedError!usize {
         assert(buffer.len >= min);
         if (buffer.len == 0) return 0;
         q.mutex.lockUncancelable(io);
         defer q.mutex.unlock(io);
         return q.getLocked(io, buffer, min, true) catch |err| switch (err) {
             error.Canceled => unreachable,
+            error.Closed => |e| return e,
         };
     }
 
@@ -1399,21 +1771,23 @@ pub const TypeErasedQueue = struct {
         return if (slice.len > 0) slice else null;
     }
 
-    fn getLocked(q: *@This(), io: Io, buffer: []u8, min: usize, uncancelable: bool) Cancelable!usize {
+    fn getLocked(q: *TypeErasedQueue, io: Io, buffer: []u8, target: usize, uncancelable: bool) (QueueClosedError || Cancelable)!usize {
         // The ring buffer gets first priority, then data should come from any
         // queued putters, then finally the ring buffer should be filled with
         // data from putters so they can be resumed.
 
-        var remaining = buffer;
+        // The number of elements we received immediately, before possibly blocking.
+        var n: usize = 0;
+
         while (q.gettableSlice()) |slice| {
-            const copy_len = @min(slice.len, remaining.len);
+            const copy_len = @min(slice.len, buffer.len - n);
             assert(copy_len > 0);
-            @memcpy(remaining[0..copy_len], slice[0..copy_len]);
+            @memcpy(buffer[n..][0..copy_len], slice[0..copy_len]);
             q.start += copy_len;
             if (q.buffer.len - q.start == 0) q.start = 0;
             q.len -= copy_len;
-            remaining = remaining[copy_len..];
-            if (remaining.len == 0) {
+            n += copy_len;
+            if (n == buffer.len) {
                 q.fillRingBufferFromPutters(io);
                 return buffer.len;
             }
@@ -1422,33 +1796,64 @@ pub const TypeErasedQueue = struct {
         // Copy directly from putters into buffer.
         while (q.putters.popFirst()) |putter_node| {
             const putter: *Put = @alignCast(@fieldParentPtr("node", putter_node));
-            const copy_len = @min(putter.remaining.len, remaining.len);
+            const copy_len = @min(putter.remaining.len, buffer.len - n);
             assert(copy_len > 0);
-            @memcpy(remaining[0..copy_len], putter.remaining[0..copy_len]);
+            @memcpy(buffer[n..][0..copy_len], putter.remaining[0..copy_len]);
             putter.remaining = putter.remaining[copy_len..];
-            remaining = remaining[copy_len..];
-            if (putter.remaining.len == 0) {
+            putter.needed -|= copy_len;
+            n += copy_len;
+            if (putter.needed == 0) {
                 putter.condition.signal(io);
-                if (remaining.len > 0) continue;
-            } else q.putters.prepend(putter_node);
-            assert(remaining.len == 0);
-            q.fillRingBufferFromPutters(io);
-            return buffer.len;
+            } else {
+                assert(n == buffer.len); // we didn't have enough space for the putter
+                q.putters.prepend(putter_node);
+            }
+            if (n == buffer.len) {
+                q.fillRingBufferFromPutters(io);
+                return buffer.len;
+            }
         }
 
-        // Both ring buffer and putters queue is empty.
-        const total_filled = buffer.len - remaining.len;
-        if (total_filled >= min) return total_filled;
+        // No need to call `fillRingBufferFromPutters` from this point onwards,
+        // because we emptied the ring buffer *and* the putter queue!
 
-        var pending: Get = .{ .remaining = remaining, .condition = .{}, .node = .{} };
+        // Don't block if we hit the target or if the queue is closed. Return how
+        // many elements we could get immediately, unless the queue was closed and
+        // empty, in which case report `error.Closed`.
+        if (n == 0 and q.closed) return error.Closed;
+        if (n >= target or q.closed) return n;
+
+        var pending: Get = .{
+            .remaining = buffer[n..],
+            .needed = target - n,
+            .condition = .init,
+            .node = .{},
+        };
         q.getters.append(&pending.node);
-        defer if (pending.remaining.len > 0) q.getters.remove(&pending.node);
-        while (pending.remaining.len > 0) if (uncancelable)
-            pending.condition.waitUncancelable(io, &q.mutex)
-        else
-            try pending.condition.wait(io, &q.mutex);
-        q.fillRingBufferFromPutters(io);
-        return buffer.len;
+        defer if (pending.needed > 0) q.getters.remove(&pending.node);
+
+        while (pending.needed > 0 and !q.closed) {
+            if (uncancelable) {
+                pending.condition.waitUncancelable(io, &q.mutex);
+                continue;
+            }
+            pending.condition.wait(io, &q.mutex) catch |err| switch (err) {
+                error.Canceled => if (pending.remaining.len == buffer.len) {
+                    // Canceled while waiting, and received no elements.
+                    return error.Canceled;
+                } else {
+                    // Canceled while waiting, but received some elements, so report those first.
+                    io.recancel();
+                    return buffer.len - pending.remaining.len;
+                },
+            };
+        }
+        if (pending.remaining.len == buffer.len) {
+            // The queue was closed while we were waiting. We received no elements.
+            assert(q.closed);
+            return error.Closed;
+        }
+        return buffer.len - pending.remaining.len;
     }
 
     /// Called when there is nonzero space available in the ring buffer and
@@ -1464,7 +1869,8 @@ pub const TypeErasedQueue = struct {
                 @memcpy(slice[0..copy_len], putter.remaining[0..copy_len]);
                 q.len += copy_len;
                 putter.remaining = putter.remaining[copy_len..];
-                if (putter.remaining.len == 0) {
+                putter.needed -|= copy_len;
+                if (putter.needed == 0) {
                     putter.condition.signal(io);
                     break;
                 }
@@ -1487,59 +1893,112 @@ pub fn Queue(Elem: type) type {
             return .{ .type_erased = .init(@ptrCast(buffer)) };
         }
 
-        /// Appends elements to the end of the queue. The function returns when
-        /// at least `min` elements have been added to the buffer or sent
-        /// directly to a consumer.
+        pub fn close(q: *@This(), io: Io) void {
+            q.type_erased.close(io);
+        }
+
+        /// Appends elements to the end of the queue, potentially blocking if
+        /// there is insufficient capacity. Returns when any one of the
+        /// following conditions is satisfied:
         ///
-        /// Returns how many elements have been added to the queue.
+        /// * At least `target` elements have been added to the queue
+        /// * The queue is closed
+        /// * The current task is canceled
         ///
-        /// Asserts that `elements.len >= min`.
-        pub fn put(q: *@This(), io: Io, elements: []const Elem, min: usize) Cancelable!usize {
-            return @divExact(try q.type_erased.put(io, @ptrCast(elements), min * @sizeOf(Elem)), @sizeOf(Elem));
+        /// Returns how many of `elements` have been added to the queue, if any.
+        /// If an error is returned, no elements have been added.
+        ///
+        /// If the queue is closed or the task is canceled, but some items were
+        /// already added before the closure or cancelation, then `put` may
+        /// return a number lower than `target`, in which case future calls are
+        /// guaranteed to return `error.Canceled` or `error.Closed`.
+        ///
+        /// A return value of 0 is only possible if `target` is 0, in which case
+        /// the call is guaranteed to queue as many of `elements` as is possible
+        /// *without* blocking.
+        ///
+        /// Asserts that `elements.len >= target`.
+        pub fn put(q: *@This(), io: Io, elements: []const Elem, target: usize) (QueueClosedError || Cancelable)!usize {
+            return @divExact(try q.type_erased.put(io, @ptrCast(elements), target * @sizeOf(Elem)), @sizeOf(Elem));
         }
 
         /// Same as `put` but blocks until all elements have been added to the queue.
-        pub fn putAll(q: *@This(), io: Io, elements: []const Elem) Cancelable!void {
-            assert(try q.put(io, elements, elements.len) == elements.len);
+        ///
+        /// If the queue is closed or canceled, `error.Closed` or `error.Canceled`
+        /// is returned, and it is unspecified how many, if any, of `elements` were
+        /// added to the queue prior to cancelation or closure.
+        pub fn putAll(q: *@This(), io: Io, elements: []const Elem) (QueueClosedError || Cancelable)!void {
+            const n = try q.put(io, elements, elements.len);
+            if (n != elements.len) {
+                _ = try q.put(io, elements[n..], elements.len - n);
+                unreachable; // partial `put` implies queue was closed or we were canceled
+            }
         }
 
-        /// Same as `put` but cannot be interrupted.
-        pub fn putUncancelable(q: *@This(), io: Io, elements: []const Elem, min: usize) usize {
-            return @divExact(q.type_erased.putUncancelable(io, @ptrCast(elements), min * @sizeOf(Elem)), @sizeOf(Elem));
+        /// Same as `put`, except does not introduce a cancelation point.
+        ///
+        /// For a description of cancelation and cancelation points, see `Future.cancel`.
+        pub fn putUncancelable(q: *@This(), io: Io, elements: []const Elem, min: usize) QueueClosedError!usize {
+            return @divExact(try q.type_erased.putUncancelable(io, @ptrCast(elements), min * @sizeOf(Elem)), @sizeOf(Elem));
         }
 
-        pub fn putOne(q: *@This(), io: Io, item: Elem) Cancelable!void {
+        /// Appends `item` to the end of the queue, blocking if the queue is full.
+        pub fn putOne(q: *@This(), io: Io, item: Elem) (QueueClosedError || Cancelable)!void {
             assert(try q.put(io, &.{item}, 1) == 1);
         }
 
-        pub fn putOneUncancelable(q: *@This(), io: Io, item: Elem) void {
-            assert(q.putUncancelable(io, &.{item}, 1) == 1);
-        }
-
-        /// Receives elements from the beginning of the queue. The function
-        /// returns when at least `min` elements have been populated inside
-        /// `buffer`.
+        /// Same as `putOne`, except does not introduce a cancelation point.
         ///
-        /// Returns how many elements of `buffer` have been populated.
+        /// For a description of cancelation and cancelation points, see `Future.cancel`.
+        pub fn putOneUncancelable(q: *@This(), io: Io, item: Elem) QueueClosedError!void {
+            assert(try q.putUncancelable(io, &.{item}, 1) == 1);
+        }
+
+        /// Receives elements from the beginning of the queue, potentially blocking
+        /// if there are insufficient elements currently in the queue. Returns when
+        /// any one of the following conditions is satisfied:
         ///
-        /// Asserts that `buffer.len >= min`.
-        pub fn get(q: *@This(), io: Io, buffer: []Elem, min: usize) Cancelable!usize {
-            return @divExact(try q.type_erased.get(io, @ptrCast(buffer), min * @sizeOf(Elem)), @sizeOf(Elem));
+        /// * At least `target` elements have been received from the queue
+        /// * The queue is closed and contains no buffered elements
+        /// * The current task is canceled
+        ///
+        /// Returns how many elements of `buffer` have been populated, if any.
+        /// If an error is returned, no elements have been populated.
+        ///
+        /// If the queue is closed or the task is canceled, but some items were
+        /// already received before the closure or cancelation, then `get` may
+        /// return a number lower than `target`, in which case future calls are
+        /// guaranteed to return `error.Canceled` or `error.Closed`.
+        ///
+        /// A return value of 0 is only possible if `target` is 0, in which case
+        /// the call is guaranteed to fill as much of `buffer` as is possible
+        /// *without* blocking.
+        ///
+        /// Asserts that `buffer.len >= target`.
+        pub fn get(q: *@This(), io: Io, buffer: []Elem, target: usize) (QueueClosedError || Cancelable)!usize {
+            return @divExact(try q.type_erased.get(io, @ptrCast(buffer), target * @sizeOf(Elem)), @sizeOf(Elem));
         }
 
-        pub fn getUncancelable(q: *@This(), io: Io, buffer: []Elem, min: usize) usize {
-            return @divExact(q.type_erased.getUncancelable(io, @ptrCast(buffer), min * @sizeOf(Elem)), @sizeOf(Elem));
+        /// Same as `get`, except does not introduce a cancelation point.
+        ///
+        /// For a description of cancelation and cancelation points, see `Future.cancel`.
+        pub fn getUncancelable(q: *@This(), io: Io, buffer: []Elem, min: usize) QueueClosedError!usize {
+            return @divExact(try q.type_erased.getUncancelable(io, @ptrCast(buffer), min * @sizeOf(Elem)), @sizeOf(Elem));
         }
 
-        pub fn getOne(q: *@This(), io: Io) Cancelable!Elem {
+        /// Receives one element from the beginning of the queue, blocking if the queue is empty.
+        pub fn getOne(q: *@This(), io: Io) (QueueClosedError || Cancelable)!Elem {
             var buf: [1]Elem = undefined;
             assert(try q.get(io, &buf, 1) == 1);
             return buf[0];
         }
 
-        pub fn getOneUncancelable(q: *@This(), io: Io) Elem {
+        /// Same as `getOne`, except does not introduce a cancelation point.
+        ///
+        /// For a description of cancelation and cancelation points, see `Future.cancel`.
+        pub fn getOneUncancelable(q: *@This(), io: Io) QueueClosedError!Elem {
             var buf: [1]Elem = undefined;
-            assert(q.getUncancelable(io, &buf, 1) == 1);
+            assert(try q.getUncancelable(io, &buf, 1) == 1);
             return buf[0];
         }
 
@@ -1627,13 +2086,13 @@ pub fn concurrent(
     return future;
 }
 
-pub fn cancelRequested(io: Io) bool {
-    return io.vtable.cancelRequested(io.userdata);
-}
-
-pub const SleepError = error{UnsupportedClock} || UnexpectedError || Cancelable;
-
-pub fn sleep(io: Io, duration: Duration, clock: Clock) SleepError!void {
+/// Waits until a specified amount of time has passed on `clock`.
+///
+/// See also:
+/// * `Clock.Duration.sleep`
+/// * `Clock.Timestamp.wait`
+/// * `Timeout.sleep`
+pub fn sleep(io: Io, duration: Duration, clock: Clock) Cancelable!void {
     return io.vtable.sleep(io.userdata, .{ .duration = .{
         .raw = duration,
         .clock = clock,
@@ -1672,4 +2131,102 @@ pub fn select(io: Io, s: anytype) Cancelable!SelectUnion(@TypeOf(s)) {
         },
         else => unreachable,
     }
+}
+
+pub const LockedStderr = struct {
+    file_writer: *File.Writer,
+    terminal_mode: Terminal.Mode,
+
+    pub fn terminal(ls: LockedStderr) Terminal {
+        return .{
+            .writer = &ls.file_writer.interface,
+            .mode = ls.terminal_mode,
+        };
+    }
+
+    pub fn clear(ls: LockedStderr, buffer: []u8) Cancelable!void {
+        const fw = ls.file_writer;
+        std.Progress.clearWrittenWithEscapeCodes(fw) catch |err| switch (err) {
+            error.WriteFailed => switch (fw.err.?) {
+                error.Canceled => |e| return e,
+                else => {},
+            },
+        };
+        fw.interface.flush() catch |err| switch (err) {
+            error.WriteFailed => switch (fw.err.?) {
+                error.Canceled => |e| return e,
+                else => {},
+            },
+        };
+        fw.interface.buffer = buffer;
+    }
+};
+
+/// For doing application-level writes to the standard error stream.
+/// Coordinates also with debug-level writes that are ignorant of Io interface
+/// and implementations.
+///
+/// See also:
+/// * `tryLockStderr`
+pub fn lockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!LockedStderr {
+    const ls = try io.vtable.lockStderr(io.userdata, terminal_mode);
+    try ls.clear(buffer);
+    return ls;
+}
+
+/// Same as `lockStderr` but non-blocking.
+pub fn tryLockStderr(io: Io, buffer: []u8, terminal_mode: ?Terminal.Mode) Cancelable!?LockedStderr {
+    const ls = (try io.vtable.tryLockStderr(io.userdata, buffer, terminal_mode)) orelse return null;
+    try ls.clear(buffer);
+    return ls;
+}
+
+pub fn unlockStderr(io: Io) void {
+    return io.vtable.unlockStderr(io.userdata);
+}
+
+/// Obtains entropy from a cryptographically secure pseudo-random number
+/// generator.
+///
+/// The implementation *may* store RNG state in process memory and use it to
+/// fill `buffer`.
+///
+/// The randomness is seeded by `randomSecure`, or a less secure mechanism upon
+/// failure.
+///
+/// Threadsafe.
+///
+/// See also `randomSecure`.
+pub fn random(io: Io, buffer: []u8) void {
+    return io.vtable.random(io.userdata, buffer);
+}
+
+pub const RandomSecureError = error{EntropyUnavailable} || Cancelable;
+
+/// Obtains cryptographically secure entropy from outside the process.
+///
+/// Always makes a syscall, or otherwise avoids dependency on process memory,
+/// in order to obtain fresh randomness. Does not rely on stored RNG state.
+///
+/// Does not have any fallback mechanisms; returns `error.EntropyUnavailable`
+/// if any problems occur.
+///
+/// Threadsafe.
+///
+/// See also `random`.
+pub fn randomSecure(io: Io, buffer: []u8) RandomSecureError!void {
+    return io.vtable.randomSecure(io.userdata, buffer);
+}
+
+test {
+    _ = net;
+    _ = File;
+    _ = Dir;
+    _ = Reader;
+    _ = Writer;
+    _ = Evented;
+    _ = Threaded;
+    _ = RwLock;
+    _ = Semaphore;
+    _ = @import("Io/test.zig");
 }

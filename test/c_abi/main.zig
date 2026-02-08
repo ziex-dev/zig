@@ -3373,6 +3373,7 @@ test "bool simd vector" {
 comptime {
     skip: {
         if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch == .x86_64) break :skip;
+        if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isPowerPC64()) break :skip;
 
         _ = struct {
             export fn zig_vector_2_bool(vec: Vector2Bool) void {

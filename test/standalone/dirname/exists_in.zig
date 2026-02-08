@@ -11,16 +11,8 @@
 
 const std = @import("std");
 
-pub fn main() !void {
-    var arena_state = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const arena = arena_state.allocator();
-    defer arena_state.deinit();
-
-    try run(arena);
-}
-
-fn run(allocator: std.mem.Allocator) !void {
-    var args = try std.process.argsWithAllocator(allocator);
+pub fn main(init: std.process.Init) !void {
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
     defer args.deinit();
     _ = args.next() orelse unreachable; // skip binary name
 
@@ -34,8 +26,10 @@ fn run(allocator: std.mem.Allocator) !void {
         return error.BadUsage;
     };
 
-    var dir = try std.fs.cwd().openDir(dir_path, .{});
-    defer dir.close();
+    const io = std.Io.Threaded.global_single_threaded.ioBasic();
 
-    _ = try dir.statFile(relpath);
+    var dir = try std.Io.Dir.cwd().openDir(io, dir_path, .{});
+    defer dir.close(io);
+
+    _ = try dir.statFile(io, relpath, .{});
 }
