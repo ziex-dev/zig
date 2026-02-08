@@ -29,6 +29,7 @@ comptime {
     }
 
     if (builtin.target.isMinGW() or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
+        @export(&hypotf, .{ .name = "hypotf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&hypotl, .{ .name = "hypotl", .linkage = common.linkage, .visibility = common.visibility });
         @export(&nan, .{ .name = "nan", .linkage = common.linkage, .visibility = common.visibility });
         @export(&nanf, .{ .name = "nanf", .linkage = common.linkage, .visibility = common.visibility });
@@ -121,6 +122,10 @@ fn cbrtf(x: f32) callconv(.c) f32 {
 }
 
 fn hypot(x: f64, y: f64) callconv(.c) f64 {
+    return math.hypot(x, y);
+}
+
+fn hypotf(x: f32, y: f32) callconv(.c) f32 {
     return math.hypot(x, y);
 }
 
