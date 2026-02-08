@@ -724,8 +724,12 @@ pub const Clock = enum {
 
     /// This function is not cancelable because it does not block.
     ///
-    /// Resolution is determined by `resolution` which may be 0 if the
-    /// clock is unsupported.
+    /// Resolution is determined by `resolution` which may be infinite if the
+    /// clock is unsupported. If resolution is infinite, this function will
+    /// return a 0-value timestamp.
+    ///
+    /// Use `isSupported` for a convenient way to check if the clock is
+    /// supported.
     ///
     /// See also:
     /// * `Clock.Timestamp.now`
@@ -738,10 +742,17 @@ pub const Clock = enum {
         Unexpected,
     };
 
-    /// Reveals the granularity of `clock`. May be zero, indicating
-    /// unsupported clock.
+    /// Reveals the granularity of `clock`. May be infinte, indicating
+    /// unsupported clock. This function returns an error if resolution
+    /// is infinte.
     pub fn resolution(clock: Clock, io: Io) ResolutionError!Io.Duration {
         return io.vtable.clockResolution(io.userdata, clock);
+    }
+
+    /// Returns `true` if the clock is supported
+    pub fn isSupported(clock: Clock, io: Io) bool {
+        _ = clock.resolution(io) catch return false;
+        return true;
     }
 
     pub const Timestamp = struct {
@@ -750,8 +761,12 @@ pub const Clock = enum {
 
         /// This function is not cancelable because it does not block.
         ///
-        /// Resolution is determined by `resolution` which may be 0 if
-        /// the clock is unsupported.
+        /// Resolution is determined by `clock.resolution` which may be infinte if
+        /// the clock is unsupported. If resolution is infinite, this function will
+        /// return a 0-value timestamp.
+        ///
+        /// Use `clock.isSupported` for a convenient way to check if the clock is
+        /// supported.
         ///
         /// See also:
         /// * `Clock.now`
