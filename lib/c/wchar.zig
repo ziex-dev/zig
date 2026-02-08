@@ -189,3 +189,7 @@ fn wcsstr(noalias haystack: [*:0]const wchar_t, noalias needle: [*:0]const wchar
 fn wcswcs(noalias haystack: [*:0]const wchar_t, noalias needle: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
     return wcsstr(haystack, needle);
 }
+
+fn wcsdup(s: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
+    return std.heap.c_allocator.dupeZ(wchar_t, std.mem.span(s)) catch return null;
+}
