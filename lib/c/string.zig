@@ -292,11 +292,13 @@ fn mempcpy(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) c
 }
 
 fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
-    return std.heap.c_allocator.dupeZ(c_char, std.mem.span(s)) catch return null;
+    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(c_char, std.mem.span(s)) catch return null;
+    return null;
 }
 
 fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
-    return std.heap.c_allocator.dupeZ(c_char, std.mem.span(s)[0..strnlen(s, n)]) catch return null;
+    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(c_char, std.mem.span(s)[0..strnlen(s, n)]) catch return null;
+    return null;
 }
 
 test strncmp {
@@ -307,6 +309,7 @@ test strncmp {
 }
 
 test strdup {
+    if (!builtin.link_libc) return error.SkipZigTest;
     const s: []const u8 = "abcde";
     const s_dup = strdup(@ptrCast(s)).?;
     defer std.heap.c_allocator.free(std.mem.span(s_dup));
@@ -316,6 +319,7 @@ test strdup {
 }
 
 test strndup {
+    if (!builtin.link_libc) return error.SkipZigTest;
     // n < length of s
     const s: []const u8 = "abcde";
     const s_dup = strndup(@ptrCast(s), 2).?;

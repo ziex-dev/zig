@@ -191,5 +191,6 @@ fn wcswcs(noalias haystack: [*:0]const wchar_t, noalias needle: [*:0]const wchar
 }
 
 fn wcsdup(s: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
-    return std.heap.c_allocator.dupeZ(wchar_t, std.mem.span(s)) catch return null;
+    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(wchar_t, std.mem.span(s)) catch return null;
+    return null;
 }
