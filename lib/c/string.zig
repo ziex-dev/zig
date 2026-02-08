@@ -297,7 +297,7 @@ fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
 }
 
 fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
-    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(c_char, std.mem.span(s)[0..strnlen(s, n)]) catch return null;
+    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(c_char, s[0..strnlen(s, n)]) catch return null;
     return null;
 }
 
