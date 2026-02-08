@@ -17,9 +17,10 @@ const Io = @This();
 const builtin = @import("builtin");
 
 const std = @import("std.zig");
-const math = std.math;
 const assert = std.debug.assert;
-const Alignment = std.mem.Alignment;
+const math = std.math;
+const mem = std.mem;
+const Alignment = mem.Alignment;
 
 userdata: ?*anyopaque,
 vtable: *const VTable,
@@ -1742,9 +1743,9 @@ pub const TypeErasedQueue = struct {
         return elements.len - pending.remaining.len;
     }
 
-    pub fn get(q: *TypeErasedQueue, io: Io, buffer: []u8, min: usize) (QueueClosedError || Cancelable)!usize {
+    pub fn get(q: *TypeErasedQueue, io: Io, buffer: []u8, min: usize) (QueueClosedError || Cancelable)![]u8 {
         assert(buffer.len >= min);
-        if (buffer.len == 0) return 0;
+        if (buffer.len == 0) return buffer;
         try q.mutex.lock(io);
         defer q.mutex.unlock(io);
         return q.getLocked(io, buffer, min, false);
@@ -1753,9 +1754,9 @@ pub const TypeErasedQueue = struct {
     /// Same as `get`, except does not introduce a cancelation point.
     ///
     /// For a description of cancelation and cancelation points, see `Future.cancel`.
-    pub fn getUncancelable(q: *TypeErasedQueue, io: Io, buffer: []u8, min: usize) QueueClosedError!usize {
+    pub fn getUncancelable(q: *TypeErasedQueue, io: Io, buffer: []u8, min: usize) QueueClosedError![]u8 {
         assert(buffer.len >= min);
-        if (buffer.len == 0) return 0;
+        if (buffer.len == 0) return buffer;
         q.mutex.lockUncancelable(io);
         defer q.mutex.unlock(io);
         return q.getLocked(io, buffer, min, true) catch |err| switch (err) {
@@ -1770,7 +1771,7 @@ pub const TypeErasedQueue = struct {
         return if (slice.len > 0) slice else null;
     }
 
-    fn getLocked(q: *TypeErasedQueue, io: Io, buffer: []u8, target: usize, uncancelable: bool) (QueueClosedError || Cancelable)!usize {
+    fn getLocked(q: *TypeErasedQueue, io: Io, buffer: []u8, target: usize, uncancelable: bool) (QueueClosedError || Cancelable)![]u8 {
         // The ring buffer gets first priority, then data should come from any
         // queued putters, then finally the ring buffer should be filled with
         // data from putters so they can be resumed.
@@ -1788,7 +1789,7 @@ pub const TypeErasedQueue = struct {
             n += copy_len;
             if (n == buffer.len) {
                 q.fillRingBufferFromPutters(io);
-                return buffer.len;
+                return buffer;
             }
         }
 
@@ -1809,7 +1810,7 @@ pub const TypeErasedQueue = struct {
             }
             if (n == buffer.len) {
                 q.fillRingBufferFromPutters(io);
-                return buffer.len;
+                return buffer;
             }
         }
 
@@ -1820,7 +1821,7 @@ pub const TypeErasedQueue = struct {
         // many elements we could get immediately, unless the queue was closed and
         // empty, in which case report `error.Closed`.
         if (n == 0 and q.closed) return error.Closed;
-        if (n >= target or q.closed) return n;
+        if (n >= target or q.closed) return buffer[0..n];
 
         var pending: Get = .{
             .remaining = buffer[n..],
@@ -1843,7 +1844,7 @@ pub const TypeErasedQueue = struct {
                 } else {
                     // Canceled while waiting, but received some elements, so report those first.
                     io.recancel();
-                    return buffer.len - pending.remaining.len;
+                    return buffer[0 .. buffer.len - pending.remaining.len];
                 },
             };
         }
@@ -1852,7 +1853,7 @@ pub const TypeErasedQueue = struct {
             assert(q.closed);
             return error.Closed;
         }
-        return buffer.len - pending.remaining.len;
+        return buffer[0 .. buffer.len - pending.remaining.len];
     }
 
     /// Called when there is nonzero space available in the ring buffer and
@@ -1961,7 +1962,7 @@ pub fn Queue(Elem: type) type {
         /// * The queue is closed and contains no buffered elements
         /// * The current task is canceled
         ///
-        /// Returns how many elements of `buffer` have been populated, if any.
+        /// Returns a slice of the populated items in `buffer`, if any.
         /// If an error is returned, no elements have been populated.
         ///
         /// If the queue is closed or the task is canceled, but some items were
@@ -1969,27 +1970,28 @@ pub fn Queue(Elem: type) type {
         /// return a number lower than `target`, in which case future calls are
         /// guaranteed to return `error.Canceled` or `error.Closed`.
         ///
-        /// A return value of 0 is only possible if `target` is 0, in which case
-        /// the call is guaranteed to fill as much of `buffer` as is possible
+        /// An empty return slice is only possible if `target` is 0, in which case
+        /// the call is guaranteed to fill as much of `buffer` as possible
         /// *without* blocking.
         ///
         /// Asserts that `buffer.len >= target`.
-        pub fn get(q: *@This(), io: Io, buffer: []Elem, target: usize) (QueueClosedError || Cancelable)!usize {
-            return @divExact(try q.type_erased.get(io, @ptrCast(buffer), target * @sizeOf(Elem)), @sizeOf(Elem));
+        pub fn get(q: *@This(), io: Io, buffer: []Elem, target: usize) (QueueClosedError || Cancelable)![]Elem {
+            const bytes = try q.type_erased.get(io, @ptrCast(buffer), target * @sizeOf(Elem));
+            return @alignCast(mem.bytesAsSlice(Elem, bytes));
         }
 
         /// Same as `get`, except does not introduce a cancelation point.
         ///
         /// For a description of cancelation and cancelation points, see `Future.cancel`.
-        pub fn getUncancelable(q: *@This(), io: Io, buffer: []Elem, min: usize) QueueClosedError!usize {
-            return @divExact(try q.type_erased.getUncancelable(io, @ptrCast(buffer), min * @sizeOf(Elem)), @sizeOf(Elem));
+        pub fn getUncancelable(q: *@This(), io: Io, buffer: []Elem, min: usize) QueueClosedError![]Elem {
+            const bytes = try q.type_erased.getUncancelable(io, @ptrCast(buffer), min * @sizeOf(Elem));
+            return @alignCast(mem.bytesAsSlice(Elem, bytes));
         }
 
         /// Receives one element from the beginning of the queue, blocking if the queue is empty.
         pub fn getOne(q: *@This(), io: Io) (QueueClosedError || Cancelable)!Elem {
             var buf: [1]Elem = undefined;
-            assert(try q.get(io, &buf, 1) == 1);
-            return buf[0];
+            return (try q.get(io, &buf, 1))[0];
         }
 
         /// Same as `getOne`, except does not introduce a cancelation point.
@@ -1997,8 +1999,7 @@ pub fn Queue(Elem: type) type {
         /// For a description of cancelation and cancelation points, see `Future.cancel`.
         pub fn getOneUncancelable(q: *@This(), io: Io) QueueClosedError!Elem {
             var buf: [1]Elem = undefined;
-            assert(try q.getUncancelable(io, &buf, 1) == 1);
-            return buf[0];
+            return (try q.getUncancelable(io, &buf, 1))[0];
         }
 
         /// Returns buffer length in `Elem` units.

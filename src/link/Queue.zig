@@ -156,14 +156,14 @@ fn runLinkTasks(q: *Queue, comp: *Compilation) void {
     prelink_tasks: while (true) {
         var task_buf: [128]PrelinkTask = undefined;
         const limit: usize = if (have_idle_tasks) 0 else 1;
-        const n = q.prelink_queue.get(io, &task_buf, limit) catch |err| switch (err) {
+        const tasks = q.prelink_queue.get(io, &task_buf, limit) catch |err| switch (err) {
             error.Canceled => return,
             error.Closed => break :prelink_tasks,
         };
-        if (n == 0) {
+        if (tasks.len == 0) {
             assert(have_idle_tasks);
             have_idle_tasks = runIdleTask(comp, tid);
-        } else for (task_buf[0..n]) |task| {
+        } else for (tasks) |task| {
             link.doPrelinkTask(comp, task);
             have_idle_tasks = true;
         }
@@ -185,14 +185,14 @@ fn runLinkTasks(q: *Queue, comp: *Compilation) void {
     zcu_tasks: while (true) {
         var task_buf: [128]ZcuTask = undefined;
         const limit: usize = if (have_idle_tasks) 0 else 1;
-        const n = q.zcu_queue.get(io, &task_buf, limit) catch |err| switch (err) {
+        const tasks = q.zcu_queue.get(io, &task_buf, limit) catch |err| switch (err) {
             error.Canceled => return,
             error.Closed => break :zcu_tasks,
         };
-        if (n == 0) {
+        if (tasks.len == 0) {
             assert(have_idle_tasks);
             have_idle_tasks = runIdleTask(comp, tid);
-        } else for (task_buf[0..n]) |task| {
+        } else for (tasks) |task| {
             link.doZcuTask(comp, tid, task);
             have_idle_tasks = true;
         }
