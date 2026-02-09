@@ -1489,7 +1489,7 @@ pub fn connectUnix(client: *Client, path: HostName) ConnectUnixError!*Connection
     const ua = path.unix_addr orelse return error.FileNotFound;
     const unix_address = try Io.net.UnixAddress.init(ua);
     const handle = try io.vtable.netConnectUnix(io.userdata, &unix_address);
-    errdefer io.vtable.netClose(io.userdata, handle);
+    errdefer io.vtable.netClose(io.userdata, (&handle)[0..1]);
 
     const stream: std.Io.net.Stream = .{
         .socket = .{
