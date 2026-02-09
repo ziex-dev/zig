@@ -40,12 +40,23 @@ const Os = switch (builtin.os.tag) {
 
         /// Keyed differently but indexes correspond 1:1 with `dir_table`.
         handle_table: HandleTable,
-        /// fanotify file descriptors are keyed by mount id since marks
-        /// are limited to a single filesystem.
-        poll_fds: std.AutoArrayHashMapUnmanaged(MountId, posix.pollfd),
 
-        const MountId = i32;
-        const HandleTable = std.ArrayHashMapUnmanaged(FileHandle, struct { mount_id: MountId, reaction_set: ReactionSet }, FileHandle.Adapter, false);
+        /// Fanotify file descriptors are keyed by the file-system ID / to satisfy
+        // the fanotify rules
+        ///
+        /// Some file-system need to be added to their own fanotify group (BTRFS, FUSE)
+        /// due to the nature / of their `fsid` (see kernel's FSNOTIFY_MARK_FLAG_WEAK_FSID).
+        /// This keying also allows us to tell apart file handles from different FS.
+        poll_fds: std.AutoArrayHashMapUnmanaged(FsId, posix.pollfd),
+
+        /// File-system is uniquely identified by device number.
+        ///
+        /// In theory, `fsid` should be the correct identifier (and it is what fanotify also checks),
+        /// but to suport empty ids, additonal key is needed. BTRFS reports
+        /// different device numbers for its subvolumes, so it is sufficient key.
+        const FsId = std.os.linux.dev_t;
+
+        const HandleTable = std.ArrayHashMapUnmanaged(FileHandle, struct { fs_id: FsId, reaction_set: ReactionSet }, FileHandle.Adapter, false);
 
         const fan_mask: std.os.linux.fanotify.MarkMask = .{
             .CLOSE_WRITE = true,
@@ -101,6 +112,13 @@ const Os = switch (builtin.os.tag) {
             };
         };
 
+        /// Directory pending addition to fanotify with its identifying information
+        const PendingDirectory = struct {
+            fd: std.os.linux.fd_t,
+            fs_id: FsId,
+            handle: FileHandle,
+        };
+
         fn init(cwd_path: []const u8) !Watch {
             _ = cwd_path;
             return .{
@@ -117,17 +135,32 @@ const Os = switch (builtin.os.tag) {
             };
         }
 
-        fn getDirHandle(gpa: Allocator, path: std.Build.Cache.Path, mount_id: *MountId) !FileHandle {
-            var file_handle_buffer: [@sizeOf(std.os.linux.file_handle) + 128]u8 align(@alignOf(std.os.linux.file_handle)) = undefined;
-            var buf: [std.fs.max_path_bytes]u8 = undefined;
-            const adjusted_path = if (path.sub_path.len == 0) "./" else std.fmt.bufPrint(&buf, "{s}/", .{
-                path.sub_path,
-            }) catch return error.NameTooLong;
-            const stack_ptr: *std.os.linux.file_handle = @ptrCast(&file_handle_buffer);
-            stack_ptr.handle_bytes = file_handle_buffer.len - @sizeOf(std.os.linux.file_handle);
-            try posix.name_to_handle_at(path.root_dir.handle.handle, adjusted_path, stack_ptr, mount_id, std.os.linux.AT.HANDLE_FID);
+        /// Opens a directory FD an queries its fs_id and handle. The file descriptor is kept open.
+        fn queryDirectory(gpa: Allocator, path: std.Build.Cache.Path) !PendingDirectory {
+            const linux = std.os.linux;
+            const relative_path = if (path.sub_path.len == 0) "." else path.sub_path;
+            const dir_fd = try std.posix.openat(path.root_dir.handle.handle, relative_path, .{ .DIRECTORY = true, .PATH = true, .CLOEXEC = true }, 0);
+            errdefer std.posix.close(dir_fd);
+
+            var file_handle_buffer: [@sizeOf(linux.file_handle) + 128]u8 align(@alignOf(linux.file_handle)) = undefined;
+
+            const stack_ptr: *linux.file_handle = @ptrCast(&file_handle_buffer);
+            stack_ptr.handle_bytes = file_handle_buffer.len - @sizeOf(linux.file_handle);
+            var mount_id: i32 = undefined;
+            try posix.name_to_handle_at(dir_fd, ".", stack_ptr, &mount_id, linux.AT.HANDLE_FID);
             const stack_lfh: FileHandle = .{ .handle = stack_ptr };
-            return stack_lfh.clone(gpa);
+
+            var statx = std.mem.zeroes(linux.Statx);
+            // dev_major / dev_minor is always returned
+            const r = linux.errno(linux.statx(dir_fd, "", linux.AT.EMPTY_PATH, .{}, &statx));
+            switch (r) {
+                .SUCCESS => {},
+                .ACCES => return error.AccessDenied,
+                .LOOP => return error.SymLinkLoop,
+                .NOENT => return error.FileNotFound,
+                else => |err| return posix.unexpectedErrno(err),
+            }
+            return .{ .fd = dir_fd, .fs_id = (@as(u64, statx.dev_major) << 32 | statx.dev_minor), .handle = try stack_lfh.clone(gpa) };
         }
 
         fn markDirtySteps(w: *Watch, gpa: Allocator, fan_fd: posix.fd_t) !bool {
@@ -179,16 +212,16 @@ const Os = switch (builtin.os.tag) {
                     const reaction_set = rs: {
                         const gop = try w.dir_table.getOrPut(gpa, path);
                         if (!gop.found_existing) {
-                            var mount_id: MountId = undefined;
-                            const dir_handle = getDirHandle(gpa, path, &mount_id) catch |err| switch (err) {
+                            const dir = Os.queryDirectory(gpa, path) catch |err| switch (err) {
                                 error.FileNotFound => {
                                     std.debug.assert(w.dir_table.swapRemove(path));
                                     continue;
                                 },
                                 else => return err,
                             };
+                            defer posix.close(dir.fd);
                             const fan_fd = blk: {
-                                const fd_gop = try w.os.poll_fds.getOrPut(gpa, mount_id);
+                                const fd_gop = try w.os.poll_fds.getOrPut(gpa, dir.fs_id);
                                 if (!fd_gop.found_existing) {
                                     const fan_fd = std.posix.fanotify_init(.{
                                         .CLASS = .NOTIF,
@@ -216,12 +249,12 @@ const Os = switch (builtin.os.tag) {
                             // directory on the file system.
                             // In such case, we must revert adding this directory, but keep
                             // the additions to the step set.
-                            const dh_gop = try w.os.handle_table.getOrPut(gpa, dir_handle);
+                            const dh_gop = try w.os.handle_table.getOrPut(gpa, dir.handle);
                             if (dh_gop.found_existing) {
                                 _ = w.dir_table.pop();
                             } else {
                                 assert(dh_gop.index == gop.index);
-                                dh_gop.value_ptr.* = .{ .mount_id = mount_id, .reaction_set = .{} };
+                                dh_gop.value_ptr.* = .{ .fs_id = dir.fs_id, .reaction_set = .{} };
                                 posix.fanotify_mark(fan_fd, .{
                                     .ADD = true,
                                     .ONLYDIR = true,
@@ -273,8 +306,8 @@ const Os = switch (builtin.os.tag) {
 
                     const path = w.dir_table.keys()[i];
 
-                    const mount_id = w.os.handle_table.values()[i].mount_id;
-                    const fan_fd = w.os.poll_fds.getEntry(mount_id).?.value_ptr.fd;
+                    const fs_id = w.os.handle_table.values()[i].fs_id;
+                    const fan_fd = w.os.poll_fds.getEntry(fs_id).?.value_ptr.fd;
                     posix.fanotify_mark(fan_fd, .{
                         .REMOVE = true,
                         .ONLYDIR = true,
