@@ -299,7 +299,7 @@ fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
 fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
     if (!builtin.link_libc) return null;
     const l = strnlen(s, n);
-    const dest: [*:0]c_char = @ptrCast(std.c.malloc(l + 1) orelse return null);
+    const dest: [*:0]c_char = @ptrCast(std.c.malloc((l + 1) * @sizeOf(c_char)) orelse return null);
     @memcpy(dest, s[0..l]);
     dest[l] = 0;
     return dest;
