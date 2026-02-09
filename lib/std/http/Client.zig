@@ -1471,12 +1471,12 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     }
 }
 
-pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError;
+pub const ConnectUnixError = Allocator.Error || error{NameTooLong} || std.Io.net.UnixAddress.ConnectError;
 
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
 /// This function is threadsafe.
-pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connection {
+pub fn connectUnix(client: *Client, path: HostName) ConnectUnixError!*Connection {
     const io = client.io;
 
     if (client.connection_pool.findConnection(io, .{
@@ -1486,26 +1486,23 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     })) |node|
         return node;
 
-    const conn = try client.allocator.create(ConnectionPool.Node);
-    errdefer client.allocator.destroy(conn);
-    conn.* = .{ .data = undefined };
+    const ua = path.unix_addr orelse return error.FileNotFound;
+    const unix_address = try Io.net.UnixAddress.init(ua);
+    const handle = try io.vtable.netConnectUnix(io.userdata, &unix_address);
+    errdefer io.vtable.netClose(io.userdata, handle);
 
-    const stream = try Io.net.connectUnixSocket(path);
-    errdefer stream.close(io);
-
-    conn.data = .{
-        .stream = stream,
-        .tls_client = undefined,
-        .protocol = .plain,
-
-        .host = try client.allocator.dupe(u8, path),
-        .port = 0,
+    const stream: std.Io.net.Stream = .{
+        .socket = .{
+            .handle = handle,
+            .address = .{ .ip4 = .loopback(0) },
+        },
     };
-    errdefer client.allocator.free(conn.data.host);
 
-    client.connection_pool.addUsed(conn);
+    const pc = try Connection.Plain.create(client, path, 0, stream);
 
-    return &conn.data;
+    client.connection_pool.addUsed(io, &pc.connection);
+
+    return &pc.connection;
 }
 
 /// Connect to `proxied_host:proxied_port` using the specified proxy with HTTP

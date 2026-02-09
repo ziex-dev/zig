@@ -17,6 +17,11 @@ const Stream = Io.net.Stream;
 /// Externally managed memory. Already checked to be valid.
 bytes: []const u8,
 
+/// Optional Unix domain socket address path. Externally managed memory.
+/// When set, indicates this host should be reached via a Unix socket
+/// rather than a TCP/IP connection.
+unix_addr: ?[]const u8 = null,
+
 pub const max_len = 255;
 
 pub const ValidateError = error{

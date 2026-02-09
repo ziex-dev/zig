@@ -856,6 +856,15 @@ pub const UnixAddress = struct {
         kernel_backlog: u31 = default_kernel_backlog,
     };
 
+    pub fn hostname(ua: UnixAddress) HostName {
+        // On Unix, the hostname for a Unix domain socket is always
+        // "localhost" because it is only accessible from the local machine.
+        return HostName{
+            .bytes = "localhost",
+            .unix_addr = ua.path,
+        };
+    }
+
     pub fn listen(ua: *const UnixAddress, io: Io, options: ListenOptions) ListenError!Server {
         assert(ua.path.len <= max_len);
         return .{ .socket = .{
