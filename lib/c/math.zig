@@ -43,6 +43,8 @@ comptime {
         @export(&atanl, .{ .name = "atanl", .linkage = common.linkage, .visibility = common.visibility });
         @export(&cbrt, .{ .name = "cbrt", .linkage = common.linkage, .visibility = common.visibility });
         @export(&cbrtf, .{ .name = "cbrtf", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&exp10, .{ .name = "exp10", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&exp10f, .{ .name = "exp10f", .linkage = common.linkage, .visibility = common.visibility });
         @export(&hypot, .{ .name = "hypot", .linkage = common.linkage, .visibility = common.visibility });
         @export(&pow, .{ .name = "pow", .linkage = common.linkage, .visibility = common.visibility });
     }
@@ -119,6 +121,14 @@ fn cbrt(x: f64) callconv(.c) f64 {
 
 fn cbrtf(x: f32) callconv(.c) f32 {
     return math.cbrt(x);
+}
+
+fn exp10(x: f64) callconv(.c) f64 {
+    return math.pow(f64, 10.0, x);
+}
+
+fn exp10f(x: f32) callconv(.c) f32 {
+    return math.pow(f32, 10.0, x);
 }
 
 fn hypot(x: f64, y: f64) callconv(.c) f64 {
