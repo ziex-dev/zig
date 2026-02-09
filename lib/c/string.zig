@@ -292,13 +292,17 @@ fn mempcpy(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) c
 }
 
 fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
-    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(c_char, std.mem.span(s)) catch return null;
-    return null;
+    if (!builtin.link_libc) return null;
+    return strndup(s, std.mem.len(s));
 }
 
 fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
-    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(c_char, s[0..strnlen(s, n)]) catch return null;
-    return null;
+    if (!builtin.link_libc) return null;
+    const l = strnlen(s, n);
+    const dest: [*:0]c_char = @ptrCast(std.c.malloc(l + 1) orelse return null);
+    @memcpy(dest, s[0..l]);
+    dest[l] = 0;
+    return dest;
 }
 
 test strncmp {
@@ -310,24 +314,25 @@ test strncmp {
 
 test strdup {
     if (!builtin.link_libc) return error.SkipZigTest;
-    const s: []const u8 = "abcde";
-    const s_dup = strdup(@ptrCast(s)).?;
-    defer std.heap.c_allocator.free(std.mem.span(s_dup));
+    const s: [*:0]const c_char = &.{ 97, 98, 99, 100, 101 };
 
-    try std.testing.expectEqualSlices(c_char, @ptrCast(s), std.mem.span(s_dup));
-    try std.testing.expect(std.mem.span(@as([*:0]const c_char, @ptrCast(s))).ptr != std.mem.span(s_dup).ptr);
+    const s_dup = strdup(s).?;
+    defer std.c.free(s_dup);
+
+    try std.testing.expectEqualSlices(c_char, std.mem.span(s), std.mem.span(s_dup));
+    try std.testing.expect(std.mem.span(s).ptr != std.mem.span(s_dup).ptr);
 }
 
 test strndup {
     if (!builtin.link_libc) return error.SkipZigTest;
     // n < length of s
-    const s: []const u8 = "abcde";
-    const s_dup = strndup(@ptrCast(s), 2).?;
-    defer std.heap.c_allocator.free(std.mem.span(s_dup));
-    try std.testing.expectEqualSlices(c_char, @ptrCast(s[0..2]), std.mem.span(s_dup));
+    const s: [*:0]const c_char = &.{ 97, 98, 99, 100, 101 };
+    const s_dup = strndup(s, 2).?;
+    defer std.c.free(s_dup);
+    try std.testing.expectEqualSlices(c_char, s[0..2], std.mem.span(s_dup));
 
     // n > length of s
-    const s2_dup = strndup(@ptrCast(s), 6).?;
-    defer std.heap.c_allocator.free(std.mem.span(s2_dup));
-    try std.testing.expectEqualSlices(c_char, @ptrCast(s), std.mem.span(s2_dup));
+    const s2_dup = strndup(s, 6).?;
+    defer std.c.free(s2_dup);
+    try std.testing.expectEqualSlices(c_char, std.mem.span(s), std.mem.span(s2_dup));
 }

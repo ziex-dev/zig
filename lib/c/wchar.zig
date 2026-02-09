@@ -191,6 +191,18 @@ fn wcswcs(noalias haystack: [*:0]const wchar_t, noalias needle: [*:0]const wchar
 }
 
 fn wcsdup(s: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
-    if (builtin.link_libc) return std.heap.c_allocator.dupeZ(wchar_t, std.mem.span(s)) catch return null;
-    return null;
+    if (!builtin.link_libc) return null;
+    const l = std.mem.len(s);
+    const dest: [*:0]wchar_t = @ptrCast(@alignCast(std.c.malloc((l + 1) * @sizeOf(wchar_t)) orelse return null));
+    @memcpy(dest, s[0..l]);
+    dest[l] = 0;
+    return dest;
+}
+
+test wcsdup {
+    if (!builtin.link_libc) return error.SkipZigTest;
+    const w: [*:0]const wchar_t = &.{ 97, 98, 99, 100, 101 };
+    const w_dup = wcsdup(w).?;
+    try std.testing.expectEqualSlices(wchar_t, std.mem.span(w), std.mem.span(w_dup));
+    try std.testing.expect(std.mem.span(w).ptr != std.mem.span(w_dup).ptr);
 }
