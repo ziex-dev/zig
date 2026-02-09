@@ -426,7 +426,7 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
         .zig_lib_dir = null,
         .exec_cmd_args = null,
         .filters = options.filters,
-        .test_runner = null, // set below
+        .test_runner = options.test_runner,
         .rdynamic = false,
         .installed_path = null,
         .force_undefined_symbols = StringHashMap(void).init(owner.allocator),
