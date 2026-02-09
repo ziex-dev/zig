@@ -1162,6 +1162,10 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         /// Implements super-linear growth to achieve amortized O(1) append operations.
         /// Invalidates element pointers if additional memory is needed.
         pub fn ensureTotalCapacity(self: *Self, gpa: Allocator, new_capacity: usize) Allocator.Error!void {
+            if (@sizeOf(T) == 0) {
+                self.capacity = math.maxInt(usize);
+                return;
+            }
             if (self.capacity >= new_capacity) return;
             return self.ensureTotalCapacityPrecise(gpa, growCapacity(new_capacity));
         }
@@ -2245,6 +2249,26 @@ test "Managed(u0)" {
     try list.append(0);
     try list.append(0);
     try list.append(0);
+    try testing.expectEqual(list.items.len, 3);
+
+    var count: usize = 0;
+    for (list.items) |x| {
+        try testing.expectEqual(x, 0);
+        count += 1;
+    }
+    try testing.expectEqual(count, 3);
+}
+
+test "Aligned(u0)" {
+    // A Aligned of u0s shouldn't allocate either.
+    const a = testing.failing_allocator;
+
+    var list: ArrayList(u0) = .empty;
+    defer list.deinit(a);
+
+    try list.append(a, 0);
+    try list.append(a, 0);
+    try list.append(a, 0);
     try testing.expectEqual(list.items.len, 3);
 
     var count: usize = 0;
