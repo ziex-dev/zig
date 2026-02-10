@@ -47,6 +47,8 @@ comptime {
         @export(&exp10f, .{ .name = "exp10f", .linkage = common.linkage, .visibility = common.visibility });
         @export(&hypot, .{ .name = "hypot", .linkage = common.linkage, .visibility = common.visibility });
         @export(&pow, .{ .name = "pow", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&pow10, .{ .name = "pow10", .linkage = common.linkage, .visibility = common.visibility });
+        @export(&pow10f, .{ .name = "pow10f", .linkage = common.linkage, .visibility = common.visibility });
     }
 
     if (builtin.target.isMuslLibC()) {
@@ -145,4 +147,12 @@ fn hypotl(x: c_longdouble, y: c_longdouble) callconv(.c) c_longdouble {
 
 fn pow(x: f64, y: f64) callconv(.c) f64 {
     return math.pow(f64, x, y);
+}
+
+fn pow10(x: f64) callconv(.c) f64 {
+    return math.pow(f64, 10.0, x);
+}
+
+fn pow10f(x: f32) callconv(.c) f32 {
+    return math.pow(f32, 10.0, x);
 }
