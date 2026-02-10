@@ -34,7 +34,6 @@ comptime {
         @export(&nan, .{ .name = "nan", .linkage = common.linkage, .visibility = common.visibility });
         @export(&nanf, .{ .name = "nanf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&nanl, .{ .name = "nanl", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&rint, .{ .name = "rint", .linkage = common.linkage, .visibility = common.visibility });
     }
 
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
@@ -49,6 +48,7 @@ comptime {
     }
 
     if (builtin.target.isMuslLibC()) {
+        @export(&rint, .{ .name = "rint", .linkage = common.linkage, .visibility = common.visibility });
         @export(&copysignf, .{ .name = "copysignf", .linkage = common.linkage, .visibility = common.visibility });
         @export(&copysign, .{ .name = "copysign", .linkage = common.linkage, .visibility = common.visibility });
     }
