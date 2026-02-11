@@ -742,9 +742,9 @@ pub const Clock = enum {
         Unexpected,
     };
 
-    /// Reveals the granularity of `clock`. May be infinte, indicating
+    /// Reveals the granularity of `clock`. May be infinite, indicating
     /// unsupported clock. This function returns an error if resolution
-    /// is infinte.
+    /// is infinite.
     pub fn resolution(clock: Clock, io: Io) ResolutionError!Io.Duration {
         return io.vtable.clockResolution(io.userdata, clock);
     }
@@ -761,7 +761,7 @@ pub const Clock = enum {
 
         /// This function is not cancelable because it does not block.
         ///
-        /// Resolution is determined by `clock.resolution` which may be infinte if
+        /// Resolution is determined by `clock.resolution` which may be infinite if
         /// the clock is unsupported. If resolution is infinite, this function will
         /// return a 0-value timestamp.
         ///
