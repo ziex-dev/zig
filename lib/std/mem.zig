@@ -827,12 +827,15 @@ pub const indexOfDiff = findDiff;
 /// Compares two slices and returns the index of the first inequality.
 /// Returns null if the slices are equal.
 pub fn findDiff(comptime T: type, a: []const T, b: []const T) ?usize {
-    const shortest = @min(a.len, b.len);
-    if (a.ptr == b.ptr)
-        return if (a.len == b.len) null else shortest;
-    var index: usize = 0;
-    while (index < shortest) : (index += 1) if (a[index] != b[index]) return index;
-    return if (a.len == b.len) null else shortest;
+    if (!@inComptime() and @sizeOf(T) != 0 and std.meta.hasUniqueRepresentation(T) and use_vectors_for_comparison) {
+        return if (findBytesDiff(sliceAsBytes(a), sliceAsBytes(b))) |idx| idx / @sizeOf(T) else null;
+    }
+
+    const min_len = @min(a.len, b.len);
+    const end_res = if (a.len == b.len) null else min_len;
+    if (a.ptr == b.ptr) return end_res;
+    for (0..min_len) |i| if (a[i] != b[i]) return i;
+    return end_res;
 }
 
 test findDiff {
@@ -841,6 +844,192 @@ test findDiff {
     try testing.expectEqual(findDiff(u8, "one", "one two"), 3);
     try testing.expectEqual(findDiff(u8, "one twx", "one two"), 6);
     try testing.expectEqual(findDiff(u8, "xne", "one"), 0);
+}
+
+fn findBytesDiff(a: []const u8, b: []const u8) ?usize {
+    comptime assert(use_vectors_for_comparison);
+
+    const Vec = struct {
+        pub inline fn cmpOne(comptime vec_len: usize, x: []const u8, y: []const u8, idx: usize) @Vector(vec_len, bool) {
+            const vec_x: @Vector(vec_len, u8) = @bitCast(x[idx..][0..vec_len].*);
+            const vec_y: @Vector(vec_len, u8) = @bitCast(y[idx..][0..vec_len].*);
+            return vec_x != vec_y;
+        }
+
+        pub inline fn cmpTwo(comptime vec_len: usize, x: []const u8, y: []const u8, idxs: [2]usize) [2]@Vector(vec_len, bool) {
+            return .{ cmpOne(vec_len, x, y, idxs[0]), cmpOne(vec_len, x, y, idxs[1]) };
+        }
+    };
+    const Qword = struct {
+        pub inline fn cmpOne(x: []const u8, y: []const u8, idx: usize) u64 {
+            const qword_x = readInt(u64, x[idx..][0..8], .little);
+            const qword_y = readInt(u64, y[idx..][0..8], .little);
+            return qword_x ^ qword_y;
+        }
+
+        pub inline fn cmpTwo(x: []const u8, y: []const u8, idxs: [2]usize) [2]u64 {
+            return .{ cmpOne(x, y, idxs[0]), cmpOne(x, y, idxs[1]) };
+        }
+    };
+
+    const min_len = @min(a.len, b.len);
+    const end_res = if (a.len == b.len) null else min_len;
+    if (a.ptr == b.ptr) return end_res;
+
+    switch (min_len) {
+        0 => return end_res,
+        1 => return if (a[0] != b[0]) 0 else end_res,
+        inline 2...8 => |byte_count| {
+            const uint_a = readInt(@Int(.unsigned, byte_count * 8), a[0..byte_count], .little);
+            const uint_b = readInt(@Int(.unsigned, byte_count * 8), b[0..byte_count], .little);
+            const uint_c = uint_a ^ uint_b;
+            return if (uint_c == 0) end_res else @ctz(uint_c) / 8;
+        },
+        9...15 => {
+            const qword_c0, const qword_c1 = Qword.cmpTwo(a, b, .{ 0, min_len - 8 });
+            if ((qword_c0 | qword_c1) == 0) return end_res;
+            return if (qword_c0 != 0) @ctz(qword_c0) / 8 else min_len - 8 + @ctz(qword_c1) / 8;
+        },
+        inline 16, 32, 64 => |vec_len| if (std.simd.suggestVectorLength(u8)) |max_vec_len| {
+            if (max_vec_len >= vec_len) {
+                const vec_c = Vec.cmpOne(vec_len, a, b, 0);
+                return if (std.simd.firstTrue(vec_c)) |idx| @intCast(idx) else end_res;
+            }
+        },
+        17...31 => if (std.simd.suggestVectorLength(u8)) |max_vec_len| {
+            if (max_vec_len >= 16) {
+                const vec_c0, const vec_c1 = Vec.cmpTwo(16, a, b, .{ 0, min_len - 16 });
+                if (!@reduce(.Or, vec_c0 | vec_c1)) return end_res;
+                return if (std.simd.firstTrue(vec_c0)) |idx| @intCast(idx) else min_len - 16 + std.simd.firstTrue(vec_c1).?;
+            }
+        },
+        33...63 => if (std.simd.suggestVectorLength(u8)) |max_vec_len| {
+            if (max_vec_len >= 32) {
+                const vec_c0, const vec_c1 = Vec.cmpTwo(32, a, b, .{ 0, min_len - 32 });
+                if (!@reduce(.Or, vec_c0 | vec_c1)) return end_res;
+                return if (std.simd.firstTrue(vec_c0)) |idx| @intCast(idx) else min_len - 32 + std.simd.firstTrue(vec_c1).?;
+            }
+        },
+        65...127 => if (std.simd.suggestVectorLength(u8)) |max_vec_len| {
+            if (max_vec_len >= 64) {
+                const vec_c0, const vec_c1 = Vec.cmpTwo(64, a, b, .{ 0, min_len - 64 });
+                if (!@reduce(.Or, vec_c0 | vec_c1)) return end_res;
+                return if (std.simd.firstTrue(vec_c0)) |idx| @intCast(idx) else min_len - 64 + std.simd.firstTrue(vec_c1).?;
+            }
+        },
+        else => if (std.simd.suggestVectorLength(u8)) |max_vec_len| {
+            comptime var vec_len: usize = 128;
+            inline while (vec_len <= max_vec_len) : (vec_len *= 2) {
+                if (min_len == vec_len) {
+                    const vec_c0 = Vec.cmpOne(vec_len, a, b, 0);
+                    return if (std.simd.firstTrue(vec_c0)) |idx| @intCast(idx) else end_res;
+                } else if (min_len < vec_len * 2) {
+                    const vec_c0, const vec_c1 = Vec.cmpTwo(vec_len, a, b, .{ 0, min_len - vec_len });
+                    if (!@reduce(.Or, vec_c0 | vec_c1)) return end_res;
+                    if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
+                    return min_len - vec_len + std.simd.firstTrue(vec_c1).?;
+                }
+            }
+        },
+    }
+
+    if (std.simd.suggestVectorLength(u8)) |max_vec_len| {
+        switch (min_len) {
+            max_vec_len * 2 => {
+                const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ 0, max_vec_len });
+                if (!@reduce(.Or, vec_c0 | vec_c1)) return null;
+                if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
+                if (std.simd.firstTrue(vec_c1)) |idx| return max_vec_len + @as(usize, @intCast(idx));
+            },
+            max_vec_len * 2 + 1...max_vec_len * 3 => {
+                const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ 0, max_vec_len });
+                const vec_c2 = Vec.cmpOne(max_vec_len, a, b, min_len - max_vec_len);
+                if (!@reduce(.Or, vec_c0 | vec_c1 | vec_c2)) return null;
+                if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
+                if (std.simd.firstTrue(vec_c1)) |idx| return max_vec_len + @as(usize, @intCast(idx));
+                if (std.simd.firstTrue(vec_c2)) |idx| return min_len - max_vec_len + idx;
+            },
+            max_vec_len * 3 + 1...max_vec_len * 4 => {
+                const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ 0, max_vec_len });
+                const vec_c2, const vec_c3 = Vec.cmpTwo(max_vec_len, a, b, .{ max_vec_len * 2, min_len - max_vec_len });
+                if (!@reduce(.Or, vec_c0 | vec_c1 | vec_c2 | vec_c3)) return null;
+                if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
+                if (std.simd.firstTrue(vec_c1)) |idx| return max_vec_len + @as(usize, @intCast(idx));
+                if (std.simd.firstTrue(vec_c2)) |idx| return max_vec_len * 2 + @as(usize, @intCast(idx));
+                if (std.simd.firstTrue(vec_c3)) |idx| return min_len - max_vec_len + idx;
+            },
+            else => {
+                const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ 0, max_vec_len });
+                const vec_c2, const vec_c3 = Vec.cmpTwo(max_vec_len, a, b, .{ max_vec_len * 2, max_vec_len * 3 });
+                if (@reduce(.Or, vec_c0 | vec_c1 | vec_c2 | vec_c3)) {
+                    if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
+                    if (std.simd.firstTrue(vec_c1)) |idx| return max_vec_len + @as(usize, @intCast(idx));
+                    if (std.simd.firstTrue(vec_c2)) |idx| return max_vec_len * 2 + @as(usize, @intCast(idx));
+                    if (std.simd.firstTrue(vec_c3)) |idx| return max_vec_len * 3 + @as(usize, @intCast(idx));
+                }
+            },
+        }
+
+        var i: usize = max_vec_len * 4 - @intFromPtr(a.ptr) % max_vec_len;
+        while (i + max_vec_len * 4 <= min_len) : (i += max_vec_len * 4) {
+            const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ i, i + max_vec_len });
+            const vec_c2, const vec_c3 = Vec.cmpTwo(max_vec_len, a, b, .{ i + max_vec_len * 2, i + max_vec_len * 3 });
+            if (@reduce(.Or, vec_c0 | vec_c1 | vec_c2 | vec_c3)) {
+                if (std.simd.firstTrue(vec_c0)) |idx| return i + idx;
+                if (std.simd.firstTrue(vec_c1)) |idx| return i + max_vec_len + idx;
+                if (std.simd.firstTrue(vec_c2)) |idx| return i + max_vec_len * 2 + idx;
+                if (std.simd.firstTrue(vec_c3)) |idx| return i + max_vec_len * 3 + idx;
+            }
+        }
+        if (i + max_vec_len * 2 <= min_len) {
+            const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ i, i + max_vec_len });
+            if (@reduce(.Or, vec_c0 | vec_c1)) {
+                if (std.simd.firstTrue(vec_c0)) |idx| return i + idx;
+                if (std.simd.firstTrue(vec_c1)) |idx| return i + max_vec_len + idx;
+            }
+            i += max_vec_len * 2;
+        }
+        if (i + max_vec_len <= min_len) {
+            const vec_c0 = Vec.cmpOne(max_vec_len, a, b, i);
+            if (std.simd.firstTrue(vec_c0)) |idx| return i + idx;
+            i += max_vec_len;
+        }
+        if (i < min_len) {
+            const vec_c0 = Vec.cmpOne(max_vec_len, a, b, min_len - max_vec_len);
+            if (std.simd.firstTrue(vec_c0)) |idx| return min_len - max_vec_len + idx;
+        }
+    } else {
+        var i: usize = 0;
+        while (i + 32 <= min_len) : (i += 32) {
+            const qword_c0, const qword_c1 = Qword.cmpTwo(a, b, .{ i, i + 8 });
+            const qword_c2, const qword_c3 = Qword.cmpTwo(a, b, .{ i + 16, i + 24 });
+            if ((qword_c0 | qword_c1 | qword_c2 | qword_c3) != 0) {
+                if (qword_c0 != 0) return i + @ctz(qword_c0) / 8;
+                if (qword_c1 != 0) return i + 8 + @ctz(qword_c1) / 8;
+                if (qword_c2 != 0) return i + 16 + @ctz(qword_c2) / 8;
+                if (qword_c3 != 0) return i + 24 + @ctz(qword_c3) / 8;
+            }
+        }
+        if (i + 16 <= min_len) {
+            const qword_c0, const qword_c1 = Qword.cmpTwo(a, b, .{ i, i + 8 });
+            if ((qword_c0 | qword_c1) != 0) {
+                if (qword_c0 != 0) return i + @ctz(qword_c0) / 8;
+                if (qword_c1 != 0) return i + 8 + @ctz(qword_c1) / 8;
+            }
+            i += 16;
+        }
+        if (i + 8 <= min_len) {
+            const qword_c0 = Qword.cmpOne(a, b, i);
+            if (qword_c0 != 0) return i + @ctz(qword_c0) / 8;
+            i += 8;
+        }
+        if (i < min_len) {
+            const qword_c0 = Qword.cmpOne(a, b, min_len - 8);
+            if (qword_c0 != 0) return min_len - 8 + @ctz(qword_c0) / 8;
+        }
+    }
+
+    return end_res;
 }
 
 /// Takes a sentinel-terminated pointer and returns a slice preserving pointer attributes.
