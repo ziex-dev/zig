@@ -45,8 +45,12 @@ comptime {
         symbol(&atanl, "atanl");
         symbol(&cbrt, "cbrt");
         symbol(&cbrtf, "cbrtf");
+        symbol(&exp10, "exp10");
+        symbol(&exp10f, "exp10f");
         symbol(&hypot, "hypot");
         symbol(&pow, "pow");
+        symbol(&pow10, "pow10");
+        symbol(&pow10f, "pow10f");
     }
 
     if (builtin.target.isMuslLibC()) {
@@ -148,9 +152,9 @@ fn pow(x: f64, y: f64) callconv(.c) f64 {
 }
 
 fn pow10(x: f64) callconv(.c) f64 {
-    return math.pow(f64, 10.0, x);
+    return exp10(x);
 }
 
 fn pow10f(x: f32) callconv(.c) f32 {
-    return math.pow(f32, 10.0, x);
+    return exp10f(x);
 }
