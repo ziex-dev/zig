@@ -879,11 +879,17 @@ fn findBytesDiff(a: []const u8, b: []const u8) ?usize {
     switch (min_len) {
         0 => return end_res,
         1 => return if (a[0] != b[0]) 0 else end_res,
-        inline 2...8 => |byte_count| {
-            const uint_a = readInt(@Int(.unsigned, byte_count * 8), a[0..byte_count], .little);
-            const uint_b = readInt(@Int(.unsigned, byte_count * 8), b[0..byte_count], .little);
-            const uint_c = uint_a ^ uint_b;
-            return if (uint_c == 0) end_res else @ctz(uint_c) / 8;
+        inline 2...7 => |byte_count| {
+            var buf_a: [8]u8 = @splat(0);
+            buf_a[0..byte_count].* = a[0..byte_count].*;
+            var buf_b: [8]u8 = @splat(0);
+            buf_b[0..byte_count].* = b[0..byte_count].*;
+            const qword_c = Qword.cmpOne(buf_a[0..], buf_b[0..], 0);
+            return if (qword_c == 0) end_res else @ctz(qword_c) / 8;
+        },
+        8 => {
+            const qword_c = Qword.cmpOne(a, b, 0);
+            return if (qword_c == 0) end_res else @ctz(qword_c) / 8;
         },
         9...15 => {
             const qword_c0, const qword_c1 = Qword.cmpTwo(a, b, .{ 0, min_len - 8 });
@@ -937,14 +943,14 @@ fn findBytesDiff(a: []const u8, b: []const u8) ?usize {
         switch (min_len) {
             max_vec_len * 2 => {
                 const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ 0, max_vec_len });
-                if (!@reduce(.Or, vec_c0 | vec_c1)) return null;
+                if (!@reduce(.Or, vec_c0 | vec_c1)) return end_res;
                 if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
                 if (std.simd.firstTrue(vec_c1)) |idx| return max_vec_len + @as(usize, @intCast(idx));
             },
             max_vec_len * 2 + 1...max_vec_len * 3 => {
                 const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ 0, max_vec_len });
                 const vec_c2 = Vec.cmpOne(max_vec_len, a, b, min_len - max_vec_len);
-                if (!@reduce(.Or, vec_c0 | vec_c1 | vec_c2)) return null;
+                if (!@reduce(.Or, vec_c0 | vec_c1 | vec_c2)) return end_res;
                 if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
                 if (std.simd.firstTrue(vec_c1)) |idx| return max_vec_len + @as(usize, @intCast(idx));
                 if (std.simd.firstTrue(vec_c2)) |idx| return min_len - max_vec_len + idx;
@@ -952,7 +958,7 @@ fn findBytesDiff(a: []const u8, b: []const u8) ?usize {
             max_vec_len * 3 + 1...max_vec_len * 4 => {
                 const vec_c0, const vec_c1 = Vec.cmpTwo(max_vec_len, a, b, .{ 0, max_vec_len });
                 const vec_c2, const vec_c3 = Vec.cmpTwo(max_vec_len, a, b, .{ max_vec_len * 2, min_len - max_vec_len });
-                if (!@reduce(.Or, vec_c0 | vec_c1 | vec_c2 | vec_c3)) return null;
+                if (!@reduce(.Or, vec_c0 | vec_c1 | vec_c2 | vec_c3)) return end_res;
                 if (std.simd.firstTrue(vec_c0)) |idx| return @intCast(idx);
                 if (std.simd.firstTrue(vec_c1)) |idx| return max_vec_len + @as(usize, @intCast(idx));
                 if (std.simd.firstTrue(vec_c2)) |idx| return max_vec_len * 2 + @as(usize, @intCast(idx));
