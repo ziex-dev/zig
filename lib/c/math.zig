@@ -43,6 +43,7 @@ comptime {
         symbol(&atanf, "atanf");
         symbol(&atan, "atan");
         symbol(&atanl, "atanl");
+        symbol(&atan2, "atan2");
         symbol(&cbrt, "cbrt");
         symbol(&cbrtf, "cbrtf");
         symbol(&exp10, "exp10");
