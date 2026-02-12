@@ -6349,6 +6349,7 @@ pub const Alpha = enum(usize) {
     open_tree_attr = 577,
     file_getattr = 578,
     file_setattr = 579,
+    listns = 580,
 };
 
 pub const Arm64 = enum(usize) {
