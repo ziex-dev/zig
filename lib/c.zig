@@ -62,4 +62,5 @@ comptime {
     _ = @import("c/sys/utsname.zig");
 
     _ = @import("c/unistd.zig");
+    _ = @import("c/search.zig");
 }
