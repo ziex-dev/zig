@@ -43,6 +43,7 @@ comptime {
         symbol(&atanf, "atanf");
         symbol(&atan, "atan");
         symbol(&atanl, "atanl");
+        symbol(&atan2, "atan2");
         symbol(&cbrt, "cbrt");
         symbol(&cbrtf, "cbrtf");
         symbol(&exp10, "exp10");
@@ -82,6 +83,10 @@ fn atanl(x: c_longdouble) callconv(.c) c_longdouble {
         128 => math.atan(@as(f128, @floatCast(x))),
         else => unreachable,
     };
+}
+
+fn atan2(y: f64, x: f64) callconv(.c) f64 {
+    return math.atan2(y, x);
 }
 
 fn isnan(x: f64) callconv(.c) c_int {
