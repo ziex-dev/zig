@@ -185,7 +185,6 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     }
     const linux_path = args[1];
-    std.debug.print("{s}\n", .{linux_path});
 
     var stdout_buffer: [2048]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
