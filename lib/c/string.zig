@@ -1,6 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const symbol = @import("../c.zig").symbol;
+const alloc = @import("../c/malloc.zig");
 
 comptime {
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
@@ -295,14 +296,12 @@ fn mempcpy(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) c
 }
 
 fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
-    if (!builtin.link_libc) return null;
     return strndup(s, std.mem.len(s));
 }
 
 fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
-    if (!builtin.link_libc) return null;
     const l = strnlen(s, n);
-    const dest: [*:0]c_char = @ptrCast(std.c.malloc((l + 1) * @sizeOf(c_char)) orelse return null);
+    const dest: [*:0]c_char = @ptrCast(alloc.malloc_inner((l + 1) * @sizeOf(c_char)) orelse return null);
     @memcpy(dest, s[0..l]);
     dest[l] = 0;
     return dest;
@@ -316,26 +315,24 @@ test strncmp {
 }
 
 test strdup {
-    if (!builtin.link_libc) return error.SkipZigTest;
     const s: [*:0]const c_char = &.{ 97, 98, 99, 100, 101 };
 
     const s_dup = strdup(s).?;
-    defer std.c.free(s_dup);
+    defer alloc.free(@ptrCast(@alignCast(s_dup)));
 
     try std.testing.expectEqualSlices(c_char, std.mem.span(s), std.mem.span(s_dup));
     try std.testing.expect(std.mem.span(s).ptr != std.mem.span(s_dup).ptr);
 }
 
 test strndup {
-    if (!builtin.link_libc) return error.SkipZigTest;
     // n < length of s
     const s: [*:0]const c_char = &.{ 97, 98, 99, 100, 101 };
     const s_dup = strndup(s, 2).?;
-    defer std.c.free(s_dup);
+    defer alloc.free(@ptrCast(@alignCast(s_dup)));
     try std.testing.expectEqualSlices(c_char, s[0..2], std.mem.span(s_dup));
 
     // n > length of s
     const s2_dup = strndup(s, 6).?;
-    defer std.c.free(s2_dup);
+    defer alloc.free(@ptrCast(@alignCast(s2_dup)));
     try std.testing.expectEqualSlices(c_char, std.mem.span(s), std.mem.span(s2_dup));
 }

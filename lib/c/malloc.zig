@@ -87,9 +87,13 @@ const Header = packed struct(u64) {
 };
 
 fn malloc(n: usize) callconv(.c) ?[*]align(alignment_bytes) u8 {
-    const size = std.math.cast(Header.Size, n) orelse return nomem();
+    return malloc_inner(n) orelse return nomem();
+}
+
+pub fn malloc_inner(n: usize) ?[*]align(alignment_bytes) u8 {
+    const size = std.math.cast(Header.Size, n) orelse return null;
     const ptr: [*]align(alignment_bytes) u8 = @alignCast(
-        vtable.alloc(no_context, n + alignment_bytes, alignment, no_ra) orelse return nomem(),
+        vtable.alloc(no_context, n + alignment_bytes, alignment, no_ra) orelse return null,
     );
     const base = ptr + alignment_bytes;
     return Header.set(base, alignment, size);
@@ -156,7 +160,7 @@ fn reallocarray(opt_base: ?[*]align(alignment_bytes) u8, elems: usize, len: usiz
     return realloc(opt_base, n);
 }
 
-fn free(opt_old_base: ?[*]align(alignment_bytes) u8) callconv(.c) void {
+pub fn free(opt_old_base: ?[*]align(alignment_bytes) u8) callconv(.c) void {
     const old_base = opt_old_base orelse return;
     const old_header: Header = .get(old_base);
     const old_size = old_header.size;
