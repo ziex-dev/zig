@@ -31,6 +31,7 @@ comptime {
         symbol(&wcstok, "wcstok");
         symbol(&wcsstr, "wcsstr");
         symbol(&wcswcs, "wcswcs");
+        symbol(&wcsdup, "wcsdup");
     }
 
     if (builtin.target.isMinGW()) {

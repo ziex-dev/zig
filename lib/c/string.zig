@@ -44,6 +44,9 @@ comptime {
         symbol(&memrchr, "memrchr");
         symbol(&mempcpy, "mempcpy");
 
+        symbol(&strdup, "strdup");
+        symbol(&strndup, "strndup");
+
         symbol(&__strcoll_l, "__strcoll_l");
         symbol(&__strxfrm_l, "__strxfrm_l");
         symbol(&__strcoll_l, "strcoll_l");
