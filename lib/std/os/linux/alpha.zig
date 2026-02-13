@@ -35,12 +35,15 @@ pub fn syscall0(number: SYS) u64 {
 }
 
 pub fn syscall1(number: SYS, arg1: u64) u64 {
+    // These registers are both inputs and clobbers.
+    var r16_out: u64 = undefined;
     return asm volatile (
         \\ callsys
         \\ beq $19, 1f
         \\ negq $0, $0
         \\1:
         : [ret] "={$0}" (-> u64),
+          [r16_out] "={$16}" (r16_out),
         : [number] "{$0}" (number),
           [arg1] "{$16}" (arg1),
         : .{
@@ -67,12 +70,17 @@ pub fn syscall1(number: SYS, arg1: u64) u64 {
 }
 
 pub fn syscall2(number: SYS, arg1: u64, arg2: u64) u64 {
+    // These registers are both inputs and clobbers.
+    var r16_out: u64 = undefined;
+    var r17_out: u64 = undefined;
     return asm volatile (
         \\ callsys
         \\ beq $19, 1f
         \\ negq $0, $0
         \\1:
         : [ret] "={$0}" (-> u64),
+          [r16_out] "={$16}" (r16_out),
+          [r17_out] "={$17}" (r17_out),
         : [number] "{$0}" (number),
           [arg1] "{$16}" (arg1),
           [arg2] "{$17}" (arg2),
@@ -99,12 +107,19 @@ pub fn syscall2(number: SYS, arg1: u64, arg2: u64) u64 {
 }
 
 pub fn syscall3(number: SYS, arg1: u64, arg2: u64, arg3: u64) u64 {
+    // These registers are both inputs and clobbers.
+    var r16_out: u64 = undefined;
+    var r17_out: u64 = undefined;
+    var r18_out: u64 = undefined;
     return asm volatile (
         \\ callsys
         \\ beq $19, 1f
         \\ negq $0, $0
         \\1:
         : [ret] "={$0}" (-> u64),
+          [r16_out] "={$16}" (r16_out),
+          [r17_out] "={$17}" (r17_out),
+          [r18_out] "={$18}" (r18_out),
         : [number] "{$0}" (number),
           [arg1] "{$16}" (arg1),
           [arg2] "{$17}" (arg2),
@@ -131,12 +146,21 @@ pub fn syscall3(number: SYS, arg1: u64, arg2: u64, arg3: u64) u64 {
 }
 
 pub fn syscall4(number: SYS, arg1: u64, arg2: u64, arg3: u64, arg4: u64) u64 {
+    // These registers are both inputs and clobbers.
+    var r16_out: u64 = undefined;
+    var r17_out: u64 = undefined;
+    var r18_out: u64 = undefined;
+    var r19_out: u64 = undefined;
     return asm volatile (
         \\ callsys
         \\ beq $19, 1f
         \\ negq $0, $0
         \\1:
         : [ret] "={$0}" (-> u64),
+          [r16_out] "={$16}" (r16_out),
+          [r17_out] "={$17}" (r17_out),
+          [r18_out] "={$18}" (r18_out),
+          [r19_out] "={$19}" (r19_out),
         : [number] "{$0}" (number),
           [arg1] "{$16}" (arg1),
           [arg2] "{$17}" (arg2),
@@ -164,12 +188,23 @@ pub fn syscall4(number: SYS, arg1: u64, arg2: u64, arg3: u64, arg4: u64) u64 {
 }
 
 pub fn syscall5(number: SYS, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) u64 {
+    // These registers are both inputs and clobbers.
+    var r16_out: u64 = undefined;
+    var r17_out: u64 = undefined;
+    var r18_out: u64 = undefined;
+    var r19_out: u64 = undefined;
+    var r20_out: u64 = undefined;
     return asm volatile (
         \\ callsys
         \\ beq $19, 1f
         \\ negq $0, $0
         \\1:
         : [ret] "={$0}" (-> u64),
+          [r16_out] "={$16}" (r16_out),
+          [r17_out] "={$17}" (r17_out),
+          [r18_out] "={$18}" (r18_out),
+          [r19_out] "={$19}" (r19_out),
+          [r20_out] "={$20}" (r20_out),
         : [number] "{$0}" (number),
           [arg1] "{$16}" (arg1),
           [arg2] "{$17}" (arg2),
@@ -205,12 +240,25 @@ pub fn syscall6(
     arg5: u64,
     arg6: u64,
 ) u64 {
+    // These registers are both inputs and clobbers.
+    var r16_out: u64 = undefined;
+    var r17_out: u64 = undefined;
+    var r18_out: u64 = undefined;
+    var r19_out: u64 = undefined;
+    var r20_out: u64 = undefined;
+    var r21_out: u64 = undefined;
     return asm volatile (
         \\ callsys
         \\ beq $19, 1f
         \\ negq $0, $0
         \\1:
         : [ret] "={$0}" (-> u64),
+          [r16_out] "={$16}" (r16_out),
+          [r17_out] "={$17}" (r17_out),
+          [r18_out] "={$18}" (r18_out),
+          [r19_out] "={$19}" (r19_out),
+          [r20_out] "={$20}" (r20_out),
+          [r21_out] "={$21}" (r21_out),
         : [number] "{$0}" (number),
           [arg1] "{$16}" (arg1),
           [arg2] "{$17}" (arg2),
