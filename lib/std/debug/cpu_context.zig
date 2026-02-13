@@ -360,6 +360,7 @@ const Alpha = extern struct {
             64 => return @ptrCast(&ctx.pc),
 
             32...63 => return error.UnsupportedRegister, // f0 - f31
+            66 => return error.UnsupportedRegister, // uniq
 
             else => return error.InvalidRegister,
         }
