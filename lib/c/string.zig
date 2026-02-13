@@ -296,7 +296,11 @@ fn mempcpy(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) c
 }
 
 fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
-    return strndup(s, std.mem.len(s));
+    const l = std.mem.len(s);
+    const dest: [*:0]c_char = @ptrCast(alloc.malloc_inner((l + 1) * @sizeOf(c_char)) orelse return null);
+    @memcpy(dest, s[0..l]);
+    dest[l] = 0;
+    return dest;
 }
 
 fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
