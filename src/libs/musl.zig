@@ -352,8 +352,7 @@ const Ext = enum {
 fn addSrcFile(arena: Allocator, source_table: *std.StringArrayHashMap(Ext), file_path: []const u8) !void {
     const ext: Ext = ext: {
         if (mem.endsWith(u8, file_path, ".c")) {
-            if (mem.startsWith(u8, file_path, "musl/src/malloc/") or
-                mem.startsWith(u8, file_path, "musl/src/string/") or
+            if (mem.startsWith(u8, file_path, "musl/src/string/") or
                 mem.startsWith(u8, file_path, "musl/src/internal/"))
             {
                 break :ext .o3;
@@ -786,24 +785,6 @@ const src_files = [_][]const u8{
     "musl/src/locale/uselocale.c",
     "musl/src/locale/wcscoll.c",
     "musl/src/locale/wcsxfrm.c",
-    "musl/src/malloc/calloc.c",
-    "musl/src/malloc/free.c",
-    "musl/src/malloc/libc_calloc.c",
-    "musl/src/malloc/lite_malloc.c",
-    "musl/src/malloc/mallocng/aligned_alloc.c",
-    "musl/src/malloc/mallocng/donate.c",
-    "musl/src/malloc/mallocng/free.c",
-    "musl/src/malloc/mallocng/malloc.c",
-    "musl/src/malloc/mallocng/malloc_usable_size.c",
-    "musl/src/malloc/mallocng/realloc.c",
-    "musl/src/malloc/memalign.c",
-    "musl/src/malloc/oldmalloc/aligned_alloc.c",
-    "musl/src/malloc/oldmalloc/malloc.c",
-    "musl/src/malloc/oldmalloc/malloc_usable_size.c",
-    "musl/src/malloc/posix_memalign.c",
-    "musl/src/malloc/reallocarray.c",
-    "musl/src/malloc/realloc.c",
-    "musl/src/malloc/replaced.c",
     "musl/src/math/aarch64/fma.c",
     "musl/src/math/aarch64/fmaf.c",
     "musl/src/math/aarch64/llrint.c",
@@ -816,7 +797,6 @@ const src_files = [_][]const u8{
     "musl/src/math/aarch64/lroundf.c",
     "musl/src/math/aarch64/nearbyint.c",
     "musl/src/math/aarch64/nearbyintf.c",
-    "musl/src/math/aarch64/rint.c",
     "musl/src/math/aarch64/rintf.c",
     "musl/src/math/acosf.c",
     "musl/src/math/acosh.c",
@@ -906,7 +886,6 @@ const src_files = [_][]const u8{
     "musl/src/math/i386/remquof.s",
     "musl/src/math/i386/remquol.s",
     "musl/src/math/i386/remquo.s",
-    "musl/src/math/i386/rint.c",
     "musl/src/math/i386/rintf.c",
     "musl/src/math/i386/rintl.c",
     "musl/src/math/i386/scalblnf.s",
@@ -1000,7 +979,6 @@ const src_files = [_][]const u8{
     "musl/src/math/remquo.c",
     "musl/src/math/remquof.c",
     "musl/src/math/remquol.c",
-    "musl/src/math/rint.c",
     "musl/src/math/rintf.c",
     "musl/src/math/rintl.c",
     "musl/src/math/riscv32/fma.c",
@@ -1012,7 +990,6 @@ const src_files = [_][]const u8{
     "musl/src/math/s390x/nearbyint.c",
     "musl/src/math/s390x/nearbyintf.c",
     "musl/src/math/s390x/nearbyintl.c",
-    "musl/src/math/s390x/rint.c",
     "musl/src/math/s390x/rintf.c",
     "musl/src/math/s390x/rintl.c",
     "musl/src/math/scalb.c",
@@ -1315,7 +1292,6 @@ const src_files = [_][]const u8{
     "musl/src/sched/sched_setscheduler.c",
     "musl/src/sched/sched_yield.c",
     "musl/src/search/hsearch.c",
-    "musl/src/search/insque.c",
     "musl/src/search/lsearch.c",
     "musl/src/search/tdelete.c",
     "musl/src/search/tdestroy.c",
