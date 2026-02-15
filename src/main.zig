@@ -2391,7 +2391,11 @@ fn buildOutputType(
                         try linker_args.append(it.only_arg);
                     },
                     .lib_dir => try create_module.lib_dir_args.append(arena, it.only_arg),
-                    .mcpu => target_mcpu = it.only_arg,
+                    .mcpu => {
+                        const buf = try arena.dupe(u8, it.only_arg);
+                        mem.replaceScalar(u8, buf, '-', '_');
+                        target_mcpu = if (mem.eql(u8, buf, "generic")) "baseline" else buf;
+                    },
                     .m => try create_module.llvm_m_args.append(arena, it.only_arg),
                     .dep_file => {
                         disable_c_depfile = true;
