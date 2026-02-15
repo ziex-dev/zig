@@ -15,6 +15,9 @@ pub const Style = union(enum) {
     /// The configure format supported by CMake. It uses `@FOO@`, `${}` and
     /// `#cmakedefine` for template substitution.
     cmake: std.Build.LazyPath,
+    /// The configure format supported by Meson. It uses `@FOO@` and
+    /// `#mesondefine` for template substitution.
+    meson: std.Build.LazyPath,
     /// Instead of starting with an input file, start with nothing.
     blank,
     /// Start with nothing, like blank, and output a nasm .asm file.
@@ -22,7 +25,7 @@ pub const Style = union(enum) {
 
     pub fn getPath(style: Style) ?std.Build.LazyPath {
         switch (style) {
-            .autoconf_undef, .autoconf_at, .cmake => |s| return s,
+            .autoconf_undef, .autoconf_at, .cmake, .meson => |s| return s,
             .blank, .nasm => return null,
         }
     }
@@ -205,29 +208,22 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     const asm_generated_line = "; " ++ header_text ++ "\n";
 
     switch (config_header.style) {
-        .autoconf_undef, .autoconf_at => |file_source| {
+        .autoconf_undef, .autoconf_at, .cmake, .meson => |file_source| {
             try bw.writeAll(c_generated_line);
             const src_path = file_source.getPath2(b, step);
             const contents = Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(config_header.max_bytes)) catch |err| {
-                return step.fail("unable to read autoconf input file '{s}': {s}", .{
-                    src_path, @errorName(err),
+                return step.fail("unable to read '{s}' input file '{s}': {s}", .{
+                    @tagName(config_header.style), src_path, @errorName(err),
                 });
             };
+
             switch (config_header.style) {
                 .autoconf_undef => try render_autoconf_undef(step, contents, bw, config_header.values, src_path),
                 .autoconf_at => try render_autoconf_at(step, contents, &aw, config_header.values, src_path),
+                .cmake => try render_cmake(step, contents, bw, config_header.values, src_path),
+                .meson => try render_meson(step, contents, &aw, config_header.values, src_path),
                 else => unreachable,
             }
-        },
-        .cmake => |file_source| {
-            try bw.writeAll(c_generated_line);
-            const src_path = file_source.getPath2(b, step);
-            const contents = Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(config_header.max_bytes)) catch |err| {
-                return step.fail("unable to read cmake input file '{s}': {s}", .{
-                    src_path, @errorName(err),
-                });
-            };
-            try render_cmake(step, contents, bw, config_header.values, src_path);
         },
         .blank => {
             try bw.writeAll(c_generated_line);
@@ -346,6 +342,75 @@ fn render_autoconf_at(
     var line_it = std.mem.splitScalar(u8, contents, '\n');
     while (line_it.next()) |line| : (line_index += 1) {
         const last_line = line_it.index == line_it.buffer.len;
+
+        const old_len = aw.written().len;
+        expand_variables_autoconf_at(bw, line, values, used) catch |err| switch (err) {
+            error.MissingValue => {
+                const name = aw.written()[old_len..];
+                defer aw.shrinkRetainingCapacity(old_len);
+                try step.addError("{s}:{d}: error: unspecified config header value: '{s}'", .{
+                    src_path, line_index + 1, name,
+                });
+                any_errors = true;
+                continue;
+            },
+            else => {
+                try step.addError("{s}:{d}: unable to substitute variable: error: {s}", .{
+                    src_path, line_index + 1, @errorName(err),
+                });
+                any_errors = true;
+                continue;
+            },
+        };
+        if (!last_line) try bw.writeByte('\n');
+    }
+
+    for (values.unmanaged.entries.slice().items(.key), used) |name, u| {
+        if (!u) {
+            try step.addError("{s}: error: config header value unused: '{s}'", .{ src_path, name });
+            any_errors = true;
+        }
+    }
+
+    if (any_errors) return error.MakeFailed;
+}
+
+fn render_meson(
+    step: *Step,
+    contents: []const u8,
+    aw: *Writer.Allocating,
+    values: std.StringArrayHashMap(Value),
+    src_path: []const u8,
+) !void {
+    const allocator = step.owner.allocator;
+    const bw = &aw.writer;
+
+    const used = allocator.alloc(bool, values.count()) catch @panic("OOM");
+    for (used) |*u| u.* = false;
+    defer allocator.free(used);
+
+    var any_errors = false;
+    var line_index: u32 = 0;
+    var line_it = std.mem.splitScalar(u8, contents, '\n');
+    while (line_it.next()) |line| : (line_index += 1) {
+        const last_line = line_it.index == line_it.buffer.len;
+
+        if (std.mem.startsWith(u8, line, "#")) mesondefine: {
+            var it = std.mem.tokenizeAny(u8, line[1..], " \t\r");
+            if (!std.mem.eql(u8, it.next() orelse "", "mesondefine")) break :mesondefine;
+            const name = it.next() orelse {
+                try step.addError("{s}:{d}: error: missing define name", .{ src_path, line_index + 1 });
+                any_errors = true;
+                continue;
+            };
+            if (values.getIndex(name)) |index| {
+                used[index] = true;
+                try renderValueMeson(bw, name, values.values()[index]);
+            } else {
+                try renderValueMeson(bw, name, .undef);
+            }
+            continue;
+        }
 
         const old_len = aw.written().len;
         expand_variables_autoconf_at(bw, line, values, used) catch |err| switch (err) {
@@ -566,6 +631,23 @@ fn renderValueNasm(bw: *Writer, name: []const u8, value: Value) !void {
         .ident => |ident| try bw.print("%define {s} {s}\n", .{ name, ident }),
         // TODO: use nasm-specific escaping instead of zig string literals
         .string => |string| try bw.print("%define {s} \"{f}\"\n", .{ name, std.zig.fmtString(string) }),
+    }
+}
+
+fn renderValueMeson(bw: *Writer, name: []const u8, value: Value) !void {
+    switch (value) {
+        .undef => try bw.print("/* #undef {s} */\n", .{name}),
+        .defined => try bw.print("#define {s}\n", .{name}),
+        .boolean => |b| {
+            if (b) {
+                try bw.print("#define {s}\n", .{name});
+            } else {
+                try bw.print("#undef {s}\n", .{name});
+            }
+        },
+        .int => |i| try bw.print("#define {s} {d}\n", .{ name, i }),
+        .ident => |ident| try bw.print("#define {s} {s}\n", .{ name, ident }),
+        .string => |string| try bw.print("#define {s} {s}\n", .{ name, string }),
     }
 }
 
@@ -1057,4 +1139,41 @@ test "expand_variables_cmake escaped characters" {
 
     // backslash is skipped when checking for invalid characters, yet it mangles the key
     try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${string\\}", "", values));
+}
+
+fn testRenderMeson(
+    expected: []const u8,
+    name: []const u8,
+    value: Value,
+) !void {
+    var aw: Writer.Allocating = .init(std.testing.allocator);
+    defer aw.deinit();
+    try renderValueMeson(&aw.writer, name, value);
+    try std.testing.expectEqualStrings(expected, aw.written());
+}
+
+test "renderValueMeson" {
+    // undef renders as commented-out #undef
+    try testRenderMeson("/* #undef FOO */\n", "FOO", .undef);
+
+    // defined renders as bare #define
+    try testRenderMeson("#define FOO\n", "FOO", .defined);
+
+    // boolean true renders as bare #define (no value)
+    try testRenderMeson("#define FOO\n", "FOO", .{ .boolean = true });
+
+    // boolean false renders as bare #undef (not commented out)
+    try testRenderMeson("#undef FOO\n", "FOO", .{ .boolean = false });
+
+    // integer renders as #define with numeric value
+    try testRenderMeson("#define FOO 42\n", "FOO", .{ .int = 42 });
+    try testRenderMeson("#define FOO 0\n", "FOO", .{ .int = 0 });
+    try testRenderMeson("#define FOO -1\n", "FOO", .{ .int = -1 });
+
+    // ident renders as #define with identifier value
+    try testRenderMeson("#define FOO bar\n", "FOO", .{ .ident = "bar" });
+
+    // string renders as #define with unquoted string value
+    try testRenderMeson("#define FOO hello\n", "FOO", .{ .string = "hello" });
+    try testRenderMeson("#define FOO hello world\n", "FOO", .{ .string = "hello world" });
 }

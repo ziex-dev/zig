@@ -1,0 +1,31 @@
+// mesondefine boolean true
+#mesondefine trueval
+
+// mesondefine boolean false
+#mesondefine falseval
+
+// mesondefine undefined (not in values)
+#mesondefine unsetval
+
+// mesondefine null (explicit undef)
+#mesondefine noval
+
+// mesondefine integer
+#mesondefine intval
+
+// mesondefine zero integer
+#mesondefine zeroval
+
+// mesondefine string
+#mesondefine stringval
+
+// mesondefine defined (void)
+#mesondefine defval
+
+// mesondefine ident
+#mesondefine identval
+
+// @ substitution
+// @intval@
+// @stringval@
+// @trueval@.@falseval@

@@ -150,6 +150,9 @@
         .cmakedefine = .{
             .path = "cmakedefine",
         },
+        .mesondefine = .{
+            .path = "mesondefine",
+        },
         .zerolength_check = .{
             .path = "zerolength_check",
         },
