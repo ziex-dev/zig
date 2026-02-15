@@ -5635,26 +5635,34 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
             try argv.appendSlice(c_object.src.extra_flags);
             try argv.appendSlice(c_object.src.cache_exempt_flags);
 
-            const out_obj_path = if (comp.bin_file) |lf|
+            const out_obj_path = if (comp.emit_asm) |path|
+                path
+            else if (comp.emit_llvm_ir) |path|
+                path
+            else if (comp.emit_llvm_bc) |path|
+                path
+            else if (comp.bin_file) |lf|
                 try lf.emit.root_dir.join(arena, &.{lf.emit.sub_path})
             else
                 "/dev/null";
 
             try argv.ensureUnusedCapacity(6);
             switch (comp.clang_preprocessor_mode) {
-                .no => argv.appendSliceAssumeCapacity(&.{ "-c", "-o", out_obj_path }),
+                .no => {
+                    if (comp.emit_asm != null) {
+                        argv.appendSliceAssumeCapacity(&.{ "-S", "-o", out_obj_path });
+                    } else if (comp.emit_llvm_ir != null) {
+                        argv.appendSliceAssumeCapacity(&.{ "-emit-llvm", "-S", "-o", out_obj_path });
+                    } else if (comp.emit_llvm_bc != null) {
+                        argv.appendSliceAssumeCapacity(&.{ "-emit-llvm", "-o", out_obj_path });
+                    } else {
+                        argv.appendSliceAssumeCapacity(&.{ "-c", "-o", out_obj_path });
+                    }
+                },
                 .yes => argv.appendSliceAssumeCapacity(&.{ "-E", "-o", out_obj_path }),
                 .pch => argv.appendSliceAssumeCapacity(&.{ "-Xclang", "-emit-pch", "-o", out_obj_path }),
                 .stdout => argv.appendAssumeCapacity("-E"),
                 .version => argv.appendAssumeCapacity("--version"),
-            }
-
-            if (comp.emit_asm != null) {
-                argv.appendAssumeCapacity("-S");
-            } else if (comp.emit_llvm_ir != null) {
-                argv.appendSliceAssumeCapacity(&[_][]const u8{ "-emit-llvm", "-S" });
-            } else if (comp.emit_llvm_bc != null) {
-                argv.appendAssumeCapacity("-emit-llvm");
             }
 
             if (comp.verbose_cc) {
@@ -5686,7 +5694,21 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
 
         try argv.ensureUnusedCapacity(6);
         switch (comp.clang_preprocessor_mode) {
-            .no => argv.appendSliceAssumeCapacity(&.{ "-c", "-o", out_obj_path }),
+            .no => {
+                if (comp.clang_passthrough_mode) {
+                    if (comp.emit_asm != null) {
+                        argv.appendSliceAssumeCapacity(&.{ "-S", "-o", out_obj_path });
+                    } else if (comp.emit_llvm_ir != null) {
+                        argv.appendSliceAssumeCapacity(&.{ "-emit-llvm", "-S", "-o", out_obj_path });
+                    } else if (comp.emit_llvm_bc != null) {
+                        argv.appendSliceAssumeCapacity(&.{ "-emit-llvm", "-o", out_obj_path });
+                    } else {
+                        argv.appendSliceAssumeCapacity(&.{ "-c", "-o", out_obj_path });
+                    }
+                } else {
+                    argv.appendSliceAssumeCapacity(&.{ "-c", "-o", out_obj_path });
+                }
+            },
             .yes => argv.appendSliceAssumeCapacity(&.{ "-E", "-o", out_obj_path }),
             .pch => argv.appendSliceAssumeCapacity(&.{ "-Xclang", "-emit-pch", "-o", out_obj_path }),
             .stdout => argv.appendAssumeCapacity("-E"),
@@ -5694,14 +5716,6 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
         }
         if (out_diag_path) |diag_file_path| {
             argv.appendSliceAssumeCapacity(&.{ "--serialize-diagnostics", diag_file_path });
-        } else if (comp.clang_passthrough_mode) {
-            if (comp.emit_asm != null) {
-                argv.appendAssumeCapacity("-S");
-            } else if (comp.emit_llvm_ir != null) {
-                argv.appendSliceAssumeCapacity(&.{ "-emit-llvm", "-S" });
-            } else if (comp.emit_llvm_bc != null) {
-                argv.appendAssumeCapacity("-emit-llvm");
-            }
         }
 
         if (comp.verbose_cc) {

@@ -2415,6 +2415,34 @@ pub fn addCliTests(b: *std.Build) *Step {
         step.dependOn(&check6.step);
     }
 
+    // Test `zig cc -S` with `-Wp,-MD,<depfile>`.
+    {
+        const src = b.addWriteFiles().add("add.c",
+            \\int add(int a, int b) {
+            \\    return a + b;
+            \\}
+        );
+
+        const run = b.addSystemCommand(&.{ b.graph.zig_exe, "cc", "-S", "-Werror" });
+        const depfile = run.addPrefixedOutputFileArg("-Wp,-MD,", "add.d");
+        run.addArg("-o");
+        const asm_out = run.addOutputFileArg("add.s");
+        run.addFileArg(src);
+
+        const check_asm = b.addCheckFile(asm_out, .{
+            .expected_matches = &.{"add"},
+        });
+        check_asm.setName("check zig cc -S -Wp,-MD produces assembly");
+
+        const check_dep = b.addCheckFile(depfile, .{
+            .expected_matches = &.{"add.c"},
+        });
+        check_dep.setName("check zig cc -S -Wp,-MD produces depfile");
+
+        step.dependOn(&check_asm.step);
+        step.dependOn(&check_dep.step);
+    }
+
     {
         const run_test = b.addSystemCommand(&.{
             b.graph.zig_exe,
