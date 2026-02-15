@@ -333,6 +333,10 @@ const known_options = [_]KnownOpt{
         .ident = "mcpu",
     },
     .{
+        .name = "mcmodel",
+        .ident = "mcmodel",
+    },
+    .{
         .name = "mred-zone",
         .ident = "red_zone",
     },

@@ -169,6 +169,9 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
 
     const pic = b: {
         if (target_util.requiresPIC(target, options.global.link_libc)) {
+            // The kernel code model is incompatible with PIC.
+            if (options.inherited.code_model == .kernel)
+                break :b false;
             if (options.inherited.pic == false)
                 return error.TargetRequiresPic;
             break :b true;

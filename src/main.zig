@@ -2392,6 +2392,10 @@ fn buildOutputType(
                     },
                     .lib_dir => try create_module.lib_dir_args.append(arena, it.only_arg),
                     .mcpu => target_mcpu = it.only_arg,
+                    .mcmodel => {
+                        mod_opts.code_model = parseCodeModel(it.only_arg);
+                        if (mod_opts.code_model == .kernel) mod_opts.pic = false;
+                    },
                     .m => try create_module.llvm_m_args.append(arena, it.only_arg),
                     .dep_file => {
                         disable_c_depfile = true;
@@ -6082,6 +6086,7 @@ pub const ClangArgIterator = struct {
         linker_input_z,
         lib_dir,
         mcpu,
+        mcmodel,
         dep_file,
         dep_file_to_stdout,
         framework_dir,
