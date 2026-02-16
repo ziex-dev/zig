@@ -19,12 +19,12 @@ var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
 
 pub var allocator_instance: std.heap.SafeAllocator = undefined;
 pub const allocator = if (builtin.is_test)
-    allocator_instance.allocator()
+    (if (std.os_options.testing) |testing| testing.allocator else allocator_instance.allocator())
 else
     @compileError("not testing");
 
 pub var io_instance: Io.Threaded = undefined;
-pub const io = if (builtin.is_test) io_instance.io() else @compileError("not testing");
+pub const io = if (builtin.is_test) (if (std.os_options.testing) |testing| testing.io else io_instance.io()) else @compileError("not testing");
 
 pub var environ: Environ = if (builtin.is_test) undefined else @compileError("not testing");
 

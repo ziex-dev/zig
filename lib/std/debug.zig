@@ -63,6 +63,8 @@ pub const cpu_context = @import("debug/cpu_context.zig");
 /// ```
 pub const SelfInfo = if (@hasDecl(root, "debug") and @hasDecl(root.debug, "SelfInfo"))
     root.debug.SelfInfo
+else if (std.os_options.debug) |dbg|
+    dbg.SelfInfo
 else switch (std.Target.ObjectFormat.default(native_os, native_arch)) {
     .coff => if (native_os == .windows) @import("debug/SelfInfo/Windows.zig") else void,
     .elf => switch (native_os) {
@@ -498,6 +500,7 @@ const use_trap_panic = switch (builtin.zig_backend) {
 pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
     @branchHint(.cold);
 
+    if (std.os_options.debug) |dbg| dbg.defaultPanic(msg, first_trace_addr);
     if (use_trap_panic) @trap();
 
     switch (builtin.os.tag) {
@@ -1313,6 +1316,8 @@ fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !
         return root.debug.printLineFromFile(io, writer, source_location);
     }
 
+    if (std.os_options.debug) |dbg| return try dbg.printLineFromFile(io, writer, source_location);
+
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
     const cwd: Io.Dir = .cwd();
@@ -1475,6 +1480,9 @@ pub fn getDebugInfoAllocator() Allocator {
     if (@hasDecl(root, "debug") and @hasDecl(root.debug, "getDebugInfoAllocator")) {
         return root.debug.getDebugInfoAllocator();
     }
+
+    if (std.os_options.debug) |dbg| return dbg.getDebugInfoAllocator();
+
     // Otherwise, use a global arena backed by the page allocator
     const S = struct {
         var arena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);

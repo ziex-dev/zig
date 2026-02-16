@@ -3,6 +3,7 @@ const native_os = builtin.os.tag;
 const std = @import("../std.zig");
 const Io = std.Io;
 const assert = std.debug.assert;
+const override: ?type = if (std.os_options.Io) |io| (if (@hasDecl(io, "net")) io.net else null) else null;
 
 pub const HostName = @import("net/HostName.zig");
 
@@ -46,7 +47,7 @@ pub const Protocol = enum(u32) {
 
 /// Windows 10 added support for unix sockets in build 17063, redstone 4 is the
 /// first release to support them.
-pub const has_unix_sockets = switch (native_os) {
+pub const has_unix_sockets = if (override) |net| net.has_unix_sockets else switch (native_os) {
     .windows => builtin.os.version_range.windows.isAtLeast(.win10_rs4) orelse false,
     .wasi => false,
     else => true,
@@ -1076,7 +1077,7 @@ pub const Socket = struct {
 
     /// Underlying platform-defined type which may or may not be
     /// interchangeable with a file system file descriptor.
-    pub const Handle = std.posix.fd_t;
+    pub const Handle = if (override) |net| net.Socket.Handle else std.posix.fd_t;
 
     /// Leaves `address` in a valid state.
     pub fn close(s: *const Socket, io: Io) void {

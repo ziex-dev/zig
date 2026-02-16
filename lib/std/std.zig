@@ -115,10 +115,37 @@ pub const start = @import("start.zig");
 
 const root = @import("root");
 
+/// Compile-time known OS settings overridable by the root source file.
+pub const os_options: Options.OperatingSystem = if (@hasDecl(root, "std_os_options")) root.std_os_options else .{};
+
 /// Compile-time known settings overridable by the root source file.
 pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options else .{};
 
 pub const Options = struct {
+    /// Provides overrides for underlying system-specific APIs without replacing them.
+    pub const OperatingSystem = struct {
+        /// Will be evaluated automagically by `std`
+        start: ?type = null,
+
+        /// `std.debug` overrides.
+        debug: ?type = null,
+
+        /// `std.Thread.Impl` overrides.
+        Thread: ?type = null,
+
+        /// `std.heap` overrides.
+        heap: ?type = null,
+
+        /// `std.process` overrides.
+        process: ?type = null,
+
+        /// `std.Io` overrides.
+        Io: ?type = null,
+
+        /// `std.testing` overrides.
+        testing: ?type = null,
+    };
+
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
     /// If set, `std.start` and `std.Thread` will configure an per-thread alternative signal stack
@@ -142,13 +169,6 @@ pub const Options = struct {
         comptime format: []const u8,
         args: anytype,
     ) void = log.defaultLog,
-
-    /// Overrides `std.heap.page_size_min`.
-    page_size_min: ?usize = null,
-    /// Overrides `std.heap.page_size_max`.
-    page_size_max: ?usize = null,
-    /// Overrides default implementation for determining OS page size at runtime.
-    queryPageSize: fn () usize = heap.defaultQueryPageSize,
 
     fmt_max_depth: usize = fmt.default_max_depth,
 
@@ -225,10 +245,7 @@ pub const Options = struct {
     /// implementation based on coroutines, one likely wants `std.debug.print`
     /// to directly write to stderr without trying to interact with the code
     /// being debugged.
-    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.io();
-
-    /// Overrides `std.Io.File.Permissions`.
-    pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;
+    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else (if (os_options.Io) |io| io.debug_io else debug_threaded_io.?.io());
 
     /// Overrides `std.Io.Dir.cwd`.
     pub const cwd: ?fn () Io.Dir = if (@hasDecl(root, "std_options_cwd")) root.std_options_cwd else null;

@@ -19,61 +19,65 @@ comptime {
     // decls there get run.
     _ = root;
 
-    if (builtin.zig_backend == .stage2_spirv) {
-        // Do nothing
-    } else if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
-        const dll_main_crt_startup = if (builtin.abi.isGnu()) "DllMainCRTStartup" else "_DllMainCRTStartup";
-        if (native_os == .windows and !builtin.link_libc and !@hasDecl(root, dll_main_crt_startup)) {
-            @export(&DllMainCRTStartup, .{ .name = dll_main_crt_startup });
-        } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "DllMain")) {
-            if (!@typeInfo(@TypeOf(root.DllMain)).@"fn".attrs.@"callconv".eql(.winapi)) {
-                @export(&DllMain, .{ .name = "DllMain" });
+    if (std.os_options.start) |start| {
+        _ = start;
+    } else {
+        if (builtin.zig_backend == .stage2_spirv) {
+            // Do nothing
+        } else if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
+            const dll_main_crt_startup = if (builtin.abi.isGnu()) "DllMainCRTStartup" else "_DllMainCRTStartup";
+            if (native_os == .windows and !builtin.link_libc and !@hasDecl(root, dll_main_crt_startup)) {
+                @export(&DllMainCRTStartup, .{ .name = dll_main_crt_startup });
+            } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "DllMain")) {
+                if (!@typeInfo(@TypeOf(root.DllMain)).@"fn".attrs.@"callconv".eql(.winapi)) {
+                    @export(&DllMain, .{ .name = "DllMain" });
+                }
             }
-        }
-    } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
-        if (builtin.link_libc and @hasDecl(root, "main")) {
-            if (is_wasm) {
-                @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
-            } else if (!@typeInfo(@TypeOf(root.main)).@"fn".attrs.@"callconv".eql(.c)) {
-                @export(&main, .{ .name = "main" });
-            }
-        } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
-            if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".attrs.@"callconv".eql(.c)) {
-                @export(&wWinMain, .{ .name = "wWinMain" });
-            }
-        } else if (native_os == .windows) {
-            if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-            {
-                @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
-            } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
-                !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
-            {
-                @compileError("WinMain not supported; declare wWinMain or main instead");
-            } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
-                !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
-            {
-                @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
-            }
-        } else if (native_os == .uefi) {
-            if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
-        } else if (native_os == .wasi) {
-            const wasm_start_sym = switch (builtin.wasi_exec_model) {
-                .reactor => "_initialize",
-                .command => "_start",
-            };
-            if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
+        } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
+            if (builtin.link_libc and @hasDecl(root, "main")) {
+                if (is_wasm) {
+                    @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
+                } else if (!@typeInfo(@TypeOf(root.main)).@"fn".attrs.@"callconv".eql(.c)) {
+                    @export(&main, .{ .name = "main" });
+                }
+            } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
+                if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".attrs.@"callconv".eql(.c)) {
+                    @export(&wWinMain, .{ .name = "wWinMain" });
+                }
+            } else if (native_os == .windows) {
+                if (!@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+                {
+                    @export(&WinStartup, .{ .name = "wWinMainCRTStartup" });
+                } else if (@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup") and
+                    !@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup"))
+                {
+                    @compileError("WinMain not supported; declare wWinMain or main instead");
+                } else if (@hasDecl(root, "wWinMain") and !@hasDecl(root, "wWinMainCRTStartup") and
+                    !@hasDecl(root, "WinMain") and !@hasDecl(root, "WinMainCRTStartup"))
+                {
+                    @export(&wWinMainCRTStartup, .{ .name = "wWinMainCRTStartup" });
+                }
+            } else if (native_os == .uefi) {
+                if (!@hasDecl(root, "EfiMain")) @export(&EfiMain, .{ .name = "EfiMain" });
+            } else if (native_os == .wasi) {
+                const wasm_start_sym = switch (builtin.wasi_exec_model) {
+                    .reactor => "_initialize",
+                    .command => "_start",
+                };
+                if (!@hasDecl(root, wasm_start_sym) and @hasDecl(root, "main")) {
+                    // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
+                    // case it's not required to provide an entrypoint such as main.
+                    @export(&startWasi, .{ .name = wasm_start_sym });
+                }
+            } else if (is_wasm and native_os == .freestanding) {
                 // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
                 // case it's not required to provide an entrypoint such as main.
-                @export(&startWasi, .{ .name = wasm_start_sym });
+                if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
+            } else switch (native_os) {
+                .other, .freestanding, .@"3ds", .psp, .vita => {},
+                else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
             }
-        } else if (is_wasm and native_os == .freestanding) {
-            // Only call main when defined. For WebAssembly it's allowed to pass `-fno-entry` in which
-            // case it's not required to provide an entrypoint such as main.
-            if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
-        } else switch (native_os) {
-            .other, .freestanding, .@"3ds", .psp, .vita => {},
-            else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
         }
     }
 }
