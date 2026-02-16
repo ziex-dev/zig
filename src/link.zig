@@ -461,6 +461,7 @@ pub const File = struct {
         print_gc_sections: bool,
         print_icf_sections: bool,
         print_map: bool,
+        strip_debug: bool,
 
         /// Use a wrapper function for symbol. Any undefined reference to symbol
         /// will be resolved to __wrap_symbol. Any undefined reference to

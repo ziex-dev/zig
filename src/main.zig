@@ -892,6 +892,7 @@ fn buildOutputType(
     var linker_print_gc_sections: bool = false;
     var linker_print_icf_sections: bool = false;
     var linker_print_map: bool = false;
+    var linker_strip_debug: bool = false;
     var llvm_opt_bisect_limit: c_int = -1;
     var linker_z_nocopyreloc = false;
     var linker_z_nodelete = false;
@@ -2744,12 +2745,12 @@ fn buildOutputType(
                     mem.eql(u8, arg, "--color-diagnostics=never"))
                 {
                     color = .off;
-                } else if (mem.eql(u8, arg, "-s") or mem.eql(u8, arg, "--strip-all") or
-                    mem.eql(u8, arg, "-S") or mem.eql(u8, arg, "--strip-debug"))
-                {
+                } else if (mem.eql(u8, arg, "-s") or mem.eql(u8, arg, "--strip-all")) {
                     // -s, --strip-all             Strip all symbols
-                    // -S, --strip-debug           Strip debugging symbols
                     mod_opts.strip = true;
+                } else if (mem.eql(u8, arg, "-S") or mem.eql(u8, arg, "--strip-debug")) {
+                    // -S, --strip-debug           Strip debugging symbols
+                    linker_strip_debug = true;
                 } else if (mem.eql(u8, arg, "--start-group") or
                     mem.eql(u8, arg, "--end-group"))
                 {
@@ -3564,6 +3565,7 @@ fn buildOutputType(
         .linker_print_gc_sections = linker_print_gc_sections,
         .linker_print_icf_sections = linker_print_icf_sections,
         .linker_print_map = linker_print_map,
+        .linker_strip_debug = linker_strip_debug,
         .llvm_opt_bisect_limit = llvm_opt_bisect_limit,
         .linker_global_base = linker_global_base,
         .linker_export_symbol_names = linker_export_symbol_names.items,
