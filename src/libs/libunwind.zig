@@ -59,6 +59,7 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .inherited = .{
             .resolved_target = comp.root_mod.resolved_target,
             .strip = comp.compilerRtStrip(),
+            .function_sections = true,
             .stack_check = false,
             .stack_protector = 0,
             .red_zone = comp.root_mod.red_zone,
@@ -155,7 +156,6 @@ pub fn buildStaticLib(comp: *Compilation, prog_node: std.Progress.Node) BuildErr
         .main_mod = null,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = true,
         .data_sections = true,
         .c_source_files = &c_source_files,
         .verbose_cc = comp.verbose_cc,

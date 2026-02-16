@@ -103,10 +103,6 @@ build_id: ?std.zig.BuildId = null,
 link_eh_frame_hdr: bool = false,
 link_emit_relocs: bool = false,
 
-/// Place every function in its own section so that unused ones may be
-/// safely garbage-collected during the linking phase.
-link_function_sections: bool = false,
-
 /// Place every data in its own section so that unused ones may be
 /// safely garbage-collected during the linking phase.
 link_data_sections: bool = false,
@@ -1407,9 +1403,6 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
     }
     if (compile.link_emit_relocs) {
         try zig_args.append("--emit-relocs");
-    }
-    if (compile.link_function_sections) {
-        try zig_args.append("-ffunction-sections");
     }
     if (compile.link_data_sections) {
         try zig_args.append("-fdata-sections");

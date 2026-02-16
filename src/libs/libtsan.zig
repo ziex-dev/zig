@@ -88,6 +88,7 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .inherited = .{
             .resolved_target = comp.root_mod.resolved_target,
             .strip = strip,
+            .function_sections = true,
             .stack_check = false,
             .stack_protector = 0,
             .sanitize_c = .off,
@@ -288,7 +289,6 @@ pub fn buildTsan(comp: *Compilation, prog_node: std.Progress.Node) BuildError!vo
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = true,
         .data_sections = true,
         .c_source_files = c_source_files.items,
         .verbose_cc = comp.verbose_cc,

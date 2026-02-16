@@ -490,8 +490,6 @@ const usage_build_generic =
     \\  -fno-dll-export-fns       Force-disable marking exported functions as DLL exports
     \\  -freference-trace[=num]   Show num lines of reference trace per compile error
     \\  -fno-reference-trace      Disable reference trace
-    \\  -ffunction-sections       Places each function in a separate section
-    \\  -fno-function-sections    All functions go into same section
     \\  -fdata-sections           Places each data in a separate section
     \\  -fno-data-sections        All data go into same section
     \\  -fformatted-panics        Enable formatted safety panics
@@ -563,6 +561,8 @@ const usage_build_generic =
     \\  -fno-single-threaded      Code may not assume there is only one thread
     \\  -fstrip                   Omit debug symbols
     \\  -fno-strip                Keep debug symbols
+    \\  -ffunction-sections       Places each function in a separate section
+    \\  -fno-function-sections    All functions go into same section
     \\  -idirafter [dir]          Add directory to AFTER include search path
     \\  -isystem  [dir]           Add directory to SYSTEM include search path
     \\  -I[dir]                   Add directory to include search path
@@ -838,7 +838,6 @@ fn buildOutputType(
     var version: std.SemanticVersion = .{ .major = 0, .minor = 0, .patch = 0 };
     var have_version = false;
     var compatibility_version: ?std.SemanticVersion = null;
-    var function_sections = false;
     var data_sections = false;
     var listen: Listen = .none;
     var debug_compile_errors = false;
@@ -1608,9 +1607,9 @@ fn buildOutputType(
                     } else if (mem.eql(u8, arg, "-fno-single-threaded")) {
                         mod_opts.single_threaded = false;
                     } else if (mem.eql(u8, arg, "-ffunction-sections")) {
-                        function_sections = true;
+                        mod_opts.function_sections = true;
                     } else if (mem.eql(u8, arg, "-fno-function-sections")) {
-                        function_sections = false;
+                        mod_opts.function_sections = false;
                     } else if (mem.eql(u8, arg, "-fdata-sections")) {
                         data_sections = true;
                     } else if (mem.eql(u8, arg, "-fno-data-sections")) {
@@ -2038,8 +2037,8 @@ fn buildOutputType(
                     .no_red_zone => mod_opts.red_zone = false,
                     .omit_frame_pointer => mod_opts.omit_frame_pointer = true,
                     .no_omit_frame_pointer => mod_opts.omit_frame_pointer = false,
-                    .function_sections => function_sections = true,
-                    .no_function_sections => function_sections = false,
+                    .function_sections => mod_opts.function_sections = true,
+                    .no_function_sections => mod_opts.function_sections = false,
                     .data_sections => data_sections = true,
                     .no_data_sections => data_sections = false,
                     .builtin => mod_opts.no_builtin = false,
@@ -3064,6 +3063,8 @@ fn buildOutputType(
             create_module.opts.any_non_single_threaded = true;
         if (mod_opts.sanitize_thread == true)
             create_module.opts.any_sanitize_thread = true;
+        if (mod_opts.function_sections == true)
+            create_module.opts.any_function_sections = true;
         if (mod_opts.sanitize_c) |sc| switch (sc) {
             .off => {},
             .trap => if (create_module.opts.any_sanitize_c == .off) {
@@ -3589,7 +3590,6 @@ fn buildOutputType(
         .force_undefined_symbols = force_undefined_symbols,
         .stack_size = stack_size,
         .image_base = image_base,
-        .function_sections = function_sections,
         .data_sections = data_sections,
         .clang_passthrough_mode = clang_passthrough_mode,
         .clang_preprocessor_mode = clang_preprocessor_mode,
@@ -7732,6 +7732,8 @@ fn handleModArg(
         create_module.opts.any_non_single_threaded = true;
     if (mod_opts.sanitize_thread == true)
         create_module.opts.any_sanitize_thread = true;
+    if (mod_opts.function_sections == true)
+        create_module.opts.any_function_sections = true;
     if (mod_opts.sanitize_c) |sc| switch (sc) {
         .off => {},
         .trap => if (create_module.opts.any_sanitize_c == .off) {

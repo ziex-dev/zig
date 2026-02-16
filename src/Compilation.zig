@@ -92,7 +92,6 @@ windows_libs: std.StringArrayHashMapUnmanaged(void),
 version: ?std.SemanticVersion,
 libc_installation: ?*const LibCInstallation,
 skip_linker_dependencies: bool,
-function_sections: bool,
 data_sections: bool,
 link_eh_frame_hdr: bool,
 native_system_include_paths: []const []const u8,
@@ -1693,7 +1692,6 @@ pub const CreateOptions = struct {
     /// executable this field is ignored.
     want_compiler_rt: ?bool = null,
     want_ubsan_rt: ?bool = null,
-    function_sections: bool = false,
     data_sections: bool = false,
     time_report: bool = false,
     stack_report: bool = false,
@@ -2118,7 +2116,9 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 },
                 .fully_qualified_name = "zigc",
                 .cc_argv = &.{},
-                .inherited = .{},
+                .inherited = .{
+                    .function_sections = true,
+                },
                 .global = options.config,
                 .parent = options.root_mod,
             }) catch |err| switch (err) {
@@ -2153,6 +2153,8 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 };
             }
         }
+
+        const any_function_sections = options.config.any_function_sections or options.root_mod.function_sections or zigc_strat == .zcu;
 
         const error_limit = options.error_limit orelse (std.math.maxInt(u16) - 1);
 
@@ -2191,7 +2193,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         cache.hash.add(options.config.any_sanitize_thread);
         cache.hash.add(options.config.any_sanitize_c);
         cache.hash.add(options.config.any_fuzz);
-        cache.hash.add(options.function_sections);
+        cache.hash.add(options.config.any_function_sections);
         cache.hash.add(options.data_sections);
         cache.hash.add(link_libc);
         cache.hash.add(options.config.link_libcpp);
@@ -2340,7 +2342,6 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .llvm_opt_bisect_limit = options.llvm_opt_bisect_limit,
             .skip_linker_dependencies = options.skip_linker_dependencies,
             .queued_jobs = .{},
-            .function_sections = options.function_sections,
             .data_sections = options.data_sections,
             .native_system_include_paths = options.native_system_include_paths,
             .force_undefined_symbols = options.force_undefined_symbols,
@@ -2373,6 +2374,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         comp.config.any_sanitize_thread = any_sanitize_thread;
         comp.config.any_sanitize_c = any_sanitize_c;
         comp.config.any_fuzz = any_fuzz;
+        comp.config.any_function_sections = any_function_sections;
 
         if (opt_zcu) |zcu| {
             // Populate `zcu.module_roots`.
@@ -7469,7 +7471,7 @@ pub fn addCCArgs(
 
         try argv.append(if (mod.no_builtin) "-fno-builtin" else "-fbuiltin");
 
-        try argv.append(if (comp.function_sections) "-ffunction-sections" else "-fno-function-sections");
+        try argv.append(if (mod.function_sections) "-ffunction-sections" else "-fno-function-sections");
         try argv.append(if (comp.data_sections) "-fdata-sections" else "-fno-data-sections");
 
         switch (mod.unwind_tables) {
@@ -8048,6 +8050,7 @@ fn buildOutputFromZig(
         .link_libc = comp.config.link_libc,
         .any_unwind_tables = comp.root_mod.unwind_tables != .none,
         .any_error_tracing = false,
+        .any_function_sections = comp.config.any_function_sections,
         .root_error_tracing = false,
         .lto = if (options.allow_lto) comp.config.lto else .none,
     }) catch |err| {
@@ -8074,6 +8077,7 @@ fn buildOutputFromZig(
             .structured_cfg = comp.root_mod.structured_cfg,
             .no_builtin = true,
             .code_model = comp.root_mod.code_model,
+            .function_sections = true,
             .error_tracing = false,
             .valgrind = if (options.checks_valgrind) comp.root_mod.valgrind else null,
         },
@@ -8111,7 +8115,6 @@ fn buildOutputFromZig(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = true,
         .data_sections = true,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
@@ -8207,6 +8210,7 @@ pub fn build_crt_file(
         .inherited = .{
             .resolved_target = comp.root_mod.resolved_target,
             .strip = comp.compilerRtStrip(),
+            .function_sections = options.function_sections,
             .stack_check = false,
             .stack_protector = 0,
             .sanitize_c = .off,
@@ -8248,7 +8252,6 @@ pub fn build_crt_file(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .function_sections = options.function_sections,
         .data_sections = options.data_sections,
         .c_source_files = c_source_files,
         .verbose_cc = comp.verbose_cc,

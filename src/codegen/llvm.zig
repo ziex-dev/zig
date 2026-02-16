@@ -1073,7 +1073,7 @@ pub const Object = struct {
             opt_level,
             reloc_mode,
             code_model,
-            comp.function_sections,
+            comp.config.any_function_sections,
             comp.data_sections,
             float_abi,
             if (target_util.llvmMachineAbi(&comp.root_mod.resolved_target.result)) |s| s.ptr else null,

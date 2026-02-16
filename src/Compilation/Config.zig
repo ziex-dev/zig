@@ -33,6 +33,7 @@ any_non_single_threaded: bool,
 any_error_tracing: bool,
 any_sanitize_thread: bool,
 any_sanitize_c: std.zig.SanitizeC,
+any_function_sections: bool,
 any_fuzz: bool,
 /// If this is true then linker code is responsible for making an LLVM IR
 /// Module, outputting it to an object file, and then linking that together
@@ -87,6 +88,7 @@ pub const Options = struct {
     ensure_libc_on_non_freestanding: bool = false,
     ensure_libcpp_on_non_freestanding: bool = false,
     any_non_single_threaded: bool = false,
+    any_function_sections: bool = false,
     any_sanitize_thread: bool = false,
     any_sanitize_c: std.zig.SanitizeC = .off,
     any_fuzz: bool = false,
@@ -561,6 +563,7 @@ pub fn resolve(options: Options) ResolveError!Config {
         .any_sanitize_thread = options.any_sanitize_thread,
         .any_sanitize_c = options.any_sanitize_c,
         .any_fuzz = options.any_fuzz,
+        .any_function_sections = options.any_function_sections,
         .san_cov_trace_pc_guard = options.san_cov_trace_pc_guard,
         .root_error_tracing = root_error_tracing,
         .use_new_linker = use_new_linker,

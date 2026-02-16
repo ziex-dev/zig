@@ -1222,7 +1222,7 @@ fn testGcSections(b: *Build, opts: Options) *Step {
         \\}
         ,
     });
-    obj.link_function_sections = true;
+    obj.root_module.function_sections = true;
     obj.link_data_sections = true;
     obj.root_module.link_libc = true;
     obj.root_module.link_libcpp = true;
@@ -1311,7 +1311,7 @@ fn testGcSectionsZig(b: *Build, opts: Options) *Step {
         \\void dead_fn2() { dead_fn1(); }
         ,
     });
-    obj.link_function_sections = true;
+    obj.root_module.function_sections = true;
     obj.link_data_sections = true;
 
     {
@@ -1977,7 +1977,7 @@ fn testLargeAlignmentDso(b: *Build, opts: Options) *Step {
         \\  world();
         \\}
     , &.{});
-    dso.link_function_sections = true;
+    dso.root_module.function_sections = true;
     dso.root_module.link_libc = true;
 
     const check = dso.checkObject();
@@ -2028,7 +2028,7 @@ fn testLargeAlignmentExe(b: *Build, opts: Options) *Step {
         \\  world();
         \\}
     , &.{});
-    exe.link_function_sections = true;
+    exe.root_module.function_sections = true;
     exe.root_module.link_libc = true;
 
     const check = exe.checkObject();
