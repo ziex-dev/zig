@@ -272,7 +272,7 @@ pub fn searchSymtab(ef: *ElfFile, gpa: Allocator, vaddr: u64) error{
                 swap_endian: bool,
                 target: u64,
                 symbols: []align(1) const Sym,
-                fn predicate(ctx: @This(), sym_index: usize) bool {
+                fn predicate(sym_index: usize, ctx: @This()) bool {
                     // We need to return `true` for the first N items, then `false` for the rest --
                     // the index we'll get out is the first `false` one. So, we'll return `true` iff
                     // the target address is after the *end* of this symbol. This synchronizes with
