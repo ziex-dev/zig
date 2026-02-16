@@ -2072,10 +2072,10 @@ fn buildOutputType(
                     .no_asynchronous_unwind_tables => if (mod_opts.unwind_tables) |uwt| switch (uwt) {
                         .none, .sync => {},
                         .async => {
-                            mod_opts.unwind_tables = .sync;
+                            mod_opts.unwind_tables = .none;
                         },
                     } else {
-                        mod_opts.unwind_tables = .sync;
+                        mod_opts.unwind_tables = .none;
                     },
                     .nostdlib => {
                         create_module.opts.ensure_libc_on_non_freestanding = false;
