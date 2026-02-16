@@ -1260,6 +1260,25 @@ pub const Cpu = struct {
                 }
             }
 
+            /// Inverse of `populateDependencies`: disables features whose
+            /// dependencies are not fully satisfied by the set.
+            pub fn removeDependents(set: *Set, all_features_list: []const Cpu.Feature) void {
+                @setEvalBranchQuota(1000000);
+
+                var old = set.ints;
+                while (true) {
+                    for (all_features_list, 0..) |feature, index_usize| {
+                        const index: Index = @intCast(index_usize);
+                        if (set.isEnabled(index) and !set.isSuperSetOf(feature.dependencies)) {
+                            set.removeFeature(index);
+                        }
+                    }
+                    const nothing_changed = std.mem.eql(usize, &old, &set.ints);
+                    if (nothing_changed) return;
+                    old = set.ints;
+                }
+            }
+
             pub fn asBytes(set: *const Set) *const [byte_count]u8 {
                 return std.mem.sliceAsBytes(&set.ints)[0..byte_count];
             }
