@@ -536,6 +536,7 @@ fn updateCpuFeatures(
     set.addFeatureSet(add_set);
     set.populateDependencies(all_features_list);
     set.removeFeatureSet(sub_set);
+    set.removeDependents(all_features_list);
 }
 
 fn detectNativeCpuAndFeatures(io: Io, cpu_arch: Target.Cpu.Arch, os: Target.Os, query: Target.Query) ?Target.Cpu {
