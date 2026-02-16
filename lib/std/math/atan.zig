@@ -35,9 +35,9 @@ pub fn atan(x: anytype) @TypeOf(x) {
         .vector => |info| switch (info.child) {
             f32 => return atanBinary32Vec(info.len, x),
             f64 => return atanBinary64Vec(info.len, x),
-            else => @compileError("unimplemented"),
+            else => @compileError("unimplemented vector element: " ++ @typeName(info.child)),
         },
-        else => comptime unreachable,
+        else => @compileError("atan not implemented for " ++ @typeName(T)),
     }
 }
 

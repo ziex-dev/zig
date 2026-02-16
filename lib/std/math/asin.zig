@@ -37,9 +37,9 @@ pub fn asin(x: anytype) @TypeOf(x) {
         .vector => |info| switch (info.child) {
             f32 => return asinBinary32Vec(info.len, x),
             f64 => return asinBinary64Vec(info.len, x),
-            else => @compileError("unimplemented"),
+            else => @compileError("unimplemented vector element: " ++ @typeName(info.child)),
         },
-        else => comptime unreachable,
+        else => @compileError("asin not implemented for " ++ @typeName(T)),
     }
 }
 
