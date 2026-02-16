@@ -7521,8 +7521,13 @@ pub fn addCCArgs(
 
                 if (feature.llvm_name) |llvm_name| {
                     // We communicate these to Clang through the dedicated options.
+                    // x86 mode bits are implicit in the target triple; passing
+                    // them explicitly overrides the -code16 environment from -m16.
                     if (std.mem.startsWith(u8, llvm_name, "soft-float") or
                         std.mem.startsWith(u8, llvm_name, "hard-float") or
+                        std.mem.startsWith(u8, llvm_name, "16bit") or
+                        std.mem.startsWith(u8, llvm_name, "32bit") or
+                        std.mem.startsWith(u8, llvm_name, "64bit") or
                         (target.cpu.arch == .s390x and std.mem.eql(u8, llvm_name, "backchain")))
                         continue;
 

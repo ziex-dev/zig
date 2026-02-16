@@ -867,6 +867,7 @@ fn buildOutputType(
     var emit_implib_arg_provided = false;
     var target_arch_os_abi: ?[]const u8 = null;
     var target_mcpu: ?[]const u8 = null;
+    var target_width_bits: ?u8 = null;
     var emit_h: Emit = .no;
     var soname: SOName = undefined;
     var want_compiler_rt: ?bool = null;
@@ -2392,6 +2393,16 @@ fn buildOutputType(
                     },
                     .lib_dir => try create_module.lib_dir_args.append(arena, it.only_arg),
                     .mcpu => target_mcpu = it.only_arg,
+                    .target_width => {
+                        try cc_argv.appendSlice(arena, it.other_args);
+                        if (mem.eql(u8, it.only_arg, "m16")) {
+                            target_width_bits = 16;
+                        } else if (mem.eql(u8, it.only_arg, "m32")) {
+                            target_width_bits = 32;
+                        } else if (mem.eql(u8, it.only_arg, "m64")) {
+                            target_width_bits = 64;
+                        }
+                    },
                     .m => try create_module.llvm_m_args.append(arena, it.only_arg),
                     .dep_file => {
                         disable_c_depfile = true;
@@ -3086,6 +3097,57 @@ fn buildOutputType(
             .zig_test => "test",
             .build, .cc, .cpp, .translate_c, .zig_test_obj, .run => fs.path.stem(fs.path.basename(src_path)),
         };
+
+        // Match clang's -m16/-m32/-m64 target arch rewriting.
+        if (target_width_bits) |bits| {
+            if (target_arch_os_abi) |arch_os_abi| {
+                const dash_pos = mem.indexOfScalar(u8, arch_os_abi, '-');
+                const arch_name = if (dash_pos) |d| arch_os_abi[0..d] else arch_os_abi;
+
+                if (std.meta.stringToEnum(std.Target.Cpu.Arch, arch_name)) |arch| {
+                    const new_arch: ?std.Target.Cpu.Arch = switch (bits) {
+                        16 => switch (arch) {
+                            .x86_64 => .x86,
+                            else => null,
+                        },
+                        32 => switch (arch) {
+                            .x86_64 => .x86,
+                            .aarch64 => .arm,
+                            .aarch64_be => .armeb,
+                            .mips64 => .mips,
+                            .mips64el => .mipsel,
+                            .powerpc64 => .powerpc,
+                            .powerpc64le => .powerpcle,
+                            .sparc64 => .sparc,
+                            .riscv64 => .riscv32,
+                            .loongarch64 => .loongarch32,
+                            else => null,
+                        },
+                        64 => switch (arch) {
+                            .x86 => .x86_64,
+                            .arm, .thumb => .aarch64,
+                            .armeb, .thumbeb => .aarch64_be,
+                            .mips => .mips64,
+                            .mipsel => .mips64el,
+                            .powerpc => .powerpc64,
+                            .powerpcle => .powerpc64le,
+                            .sparc => .sparc64,
+                            .riscv32 => .riscv64,
+                            .loongarch32 => .loongarch64,
+                            else => null,
+                        },
+                        else => null,
+                    };
+
+                    if (new_arch) |na| {
+                        target_arch_os_abi = if (dash_pos) |d|
+                            try std.fmt.allocPrint(arena, "{s}{s}", .{ @tagName(na), arch_os_abi[d..] })
+                        else
+                            @tagName(na);
+                    }
+                }
+            }
+        }
 
         try create_module.modules.put(arena, name, .{
             .root_path = fs.path.dirname(src_path) orelse ".",
@@ -6123,6 +6185,7 @@ pub const ClangArgIterator = struct {
         rtlib,
         static,
         dynamic,
+        target_width,
     };
 
     const Args = struct {

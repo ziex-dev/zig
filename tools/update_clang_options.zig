@@ -588,6 +588,18 @@ const known_options = [_]KnownOpt{
         .name = "dynamic",
         .ident = "dynamic",
     },
+    .{
+        .name = "m16",
+        .ident = "target_width",
+    },
+    .{
+        .name = "m32",
+        .ident = "target_width",
+    },
+    .{
+        .name = "m64",
+        .ident = "target_width",
+    },
 };
 
 const blacklisted_options = [_][]const u8{};
