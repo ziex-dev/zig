@@ -314,7 +314,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .alpha => packed struct (u32) {
+    .alpha => packed struct(u32) {
         TYPE: MAP_TYPE,
         ANONYMOUS: bool = false,
         _3: u1 = 0,
@@ -547,7 +547,7 @@ pub const O = switch (native_arch) {
         PATH: bool = false,
         _22: u10 = 0,
     },
-    .alpha => packed struct (u32) {
+    .alpha => packed struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         NONBLOCK: bool = false,
         APPEND: bool = false,
@@ -2222,7 +2222,7 @@ pub fn getpid() pid_t {
     // Casts result to a pid_t, safety-checking >= 0, because getpid() cannot fail
     return @intCast(@as(u32, @truncate(syscall0(comptime switch (native_arch) {
         .alpha => .getxpid,
-        else => .getpid
+        else => .getpid,
     }))));
 }
 
