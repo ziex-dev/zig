@@ -82,6 +82,7 @@ pub const Elf = struct {
     print_map: bool,
     nmagic: bool,
     fatal_warnings: bool,
+    strip_debug: bool,
     emit_relocs: bool,
     z_nodelete: bool,
     z_notext: bool,
@@ -141,6 +142,7 @@ pub const Elf = struct {
             .print_map = options.print_map,
             .nmagic = options.nmagic,
             .fatal_warnings = options.fatal_warnings,
+            .strip_debug = options.strip_debug,
             .emit_relocs = options.emit_relocs,
             .z_nodelete = options.z_nodelete,
             .z_notext = options.z_notext,
@@ -968,6 +970,8 @@ fn elfLink(lld: *Lld, arena: Allocator) !void {
 
         if (comp.config.debug_format == .strip) {
             try argv.append("-s");
+        } else if (elf.strip_debug) {
+            try argv.append("--strip-debug");
         }
 
         if (elf.z_nodelete) {

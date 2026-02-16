@@ -463,6 +463,7 @@ pub const File = struct {
         print_map: bool,
         nmagic: bool,
         fatal_warnings: bool,
+        strip_debug: bool,
 
         /// Use a wrapper function for symbol. Any undefined reference to symbol
         /// will be resolved to __wrap_symbol. Any undefined reference to
