@@ -2909,6 +2909,11 @@ fn buildOutputType(
                 }
             }
 
+            // Match clang behavior: don't enable UBSAN unless explicitly requested.
+            if (mod_opts.sanitize_c == null) {
+                mod_opts.sanitize_c = .off;
+            }
+
             if (mod_opts.sanitize_c) |wsc| {
                 if (wsc != .off and mod_opts.optimize_mode == .ReleaseFast) {
                     mod_opts.optimize_mode = .ReleaseSafe;
