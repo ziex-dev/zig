@@ -880,6 +880,11 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
                 .fp = @intFromPtr(ev),
                 .pc = @intFromPtr(&mainIdleEntry),
             },
+            .riscv64 => .{
+                .sp = @intFromPtr(allocated_slice[idle_stack_end_offset..].ptr),
+                .fp = @intFromPtr(ev),
+                .pc = @intFromPtr(&mainIdleEntry),
+            },
             .x86_64 => .{
                 .rsp = @intFromPtr(allocated_slice[idle_stack_end_offset..].ptr),
                 .rbp = @intFromPtr(ev),
@@ -1114,6 +1119,13 @@ fn mainIdleEntry() callconv(.naked) void {
             \\ mov x0, fp
             \\ mov fp, #0
             \\ b %[mainIdle]
+            :
+            : [mainIdle] "X" (&mainIdle),
+        ),
+        .riscv64 => asm volatile (
+            \\ mv a0, fp
+            \\ mv fp, zero
+            \\ tail %[mainIdle]@plt
             :
             : [mainIdle] "X" (&mainIdle),
         ),
@@ -1390,6 +1402,12 @@ const AsyncClosure = struct {
                 :
                 : [call] "X" (&call),
             ),
+            .riscv64 => asm volatile (
+                \\ mv a0, sp
+                \\ tail %[call]@plt
+                :
+                : [call] "X" (&call),
+            ),
             .x86_64 => asm volatile (
                 \\ leaq 8(%%rsp), %%rdi
                 \\ jmp %[call:P]
@@ -1456,6 +1474,11 @@ fn concurrent(
         .required_align = {},
         .context = switch (builtin.cpu.arch) {
             .aarch64 => .{
+                .sp = @intFromPtr(closure),
+                .fp = 0,
+                .pc = @intFromPtr(&AsyncClosure.entry),
+            },
+            .riscv64 => .{
                 .sp = @intFromPtr(closure),
                 .fp = 0,
                 .pc = @intFromPtr(&AsyncClosure.entry),
@@ -1757,6 +1780,12 @@ const Group = struct {
                     :
                     : [call] "X" (&call),
                 ),
+                .riscv64 => asm volatile (
+                    \\ mv a0, sp
+                    \\ tail %[call]@plt
+                    :
+                    : [call] "X" (&call),
+                ),
                 .x86_64 => asm volatile (
                     \\ leaq 8(%%rsp), %%rdi
                     \\ jmp %[call:P]
@@ -1840,6 +1869,11 @@ fn groupConcurrent(
         .required_align = {},
         .context = switch (builtin.cpu.arch) {
             .aarch64 => .{
+                .sp = @intFromPtr(closure),
+                .fp = 0,
+                .pc = @intFromPtr(&Group.AsyncClosure.entry),
+            },
+            .riscv64 => .{
                 .sp = @intFromPtr(closure),
                 .fp = 0,
                 .pc = @intFromPtr(&Group.AsyncClosure.entry),
