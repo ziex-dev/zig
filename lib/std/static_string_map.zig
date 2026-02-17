@@ -37,225 +37,289 @@ pub fn StaticStringMapWithEql(
     comptime eql: fn (a: []const u8, b: []const u8) bool,
 ) type {
     return struct {
-        kvs: *const KVs = &empty_kvs,
-        len_indexes: [*]const u32 = &empty_len_indexes,
-        len_indexes_len: u32 = 0,
-        min_len: u32 = std.math.maxInt(u32),
-        max_len: u32 = 0,
+        /// sorted ascending by length
+        ks: [*]const []const u8,
+        vs: [*]const V,
+        chunks: [*]const u32,
+        shortest: u32,
+        longest: u32,
 
-        pub const KV = struct {
-            key: []const u8,
-            value: V,
-        };
+        pub const KV = struct { key: []const u8, value: V };
 
-        const Self = @This();
-        const KVs = struct {
-            keys: [*]const []const u8,
-            values: [*]const V,
-            len: u32,
-        };
-        const empty_kvs = KVs{
-            .keys = &empty_keys,
-            .values = &empty_vals,
-            .len = 0,
-        };
-        const empty_len_indexes = [0]u32{};
-        const empty_keys = [0][]const u8{};
-        const empty_vals = [0]V{};
-
-        /// Returns a map backed by static, comptime allocated memory.
+        /// Creates a map backed by static, `comptime`-allocated memory.
         ///
         /// `kvs_list` must be either a list of `struct { []const u8, V }`
-        /// (key-value pair) tuples, or a list of `struct { []const u8 }`
-        /// (only keys) tuples if `V` is `void`.
+        /// (key-value pairs), or a list of `struct { []const u8 }` (only
+        /// keys) if `V` is `void`.
         pub inline fn initComptime(comptime kvs_list: anytype) Self {
             comptime {
-                var self = Self{};
-                if (kvs_list.len == 0)
-                    return self;
+                if (kvs_list.len == 0) return empty;
+                if (kvs_list.len > std.math.maxInt(u32)) @compileError("too many entries");
 
-                // Since the KVs are sorted, a linearly-growing bound will never
-                // be sufficient for extreme cases. So we grow proportional to
-                // N*log2(N).
+                // because the keys are sorted, we grow proportionally to `n log(n)``
                 @setEvalBranchQuota(10 * kvs_list.len * std.math.log2_int_ceil(usize, kvs_list.len));
 
-                var sorted_keys: [kvs_list.len][]const u8 = undefined;
-                var sorted_vals: [kvs_list.len]V = undefined;
+                const shortest, const longest, const chunks_len = lengthBounds(kvs_list) orelse
+                    @compileError("keys too long");
+                var ks: [kvs_list.len][]const u8 = undefined;
+                var vs: [kvs_list.len]V = undefined;
+                var chunks: [chunks_len]u32 = undefined;
+                populate(kvs_list, &ks, &vs, &chunks, shortest);
 
-                self.initSortedKVs(kvs_list, &sorted_keys, &sorted_vals);
-                const final_keys = sorted_keys;
-                const final_vals = sorted_vals;
-                self.kvs = &.{
-                    .keys = &final_keys,
-                    .values = &final_vals,
-                    .len = @intCast(kvs_list.len),
+                const frozen_ks = ks;
+                const frozen_vs = vs;
+                const frozen_chunks = chunks;
+                return .{
+                    .ks = &frozen_ks,
+                    .vs = &frozen_vs,
+                    .chunks = &frozen_chunks,
+                    .shortest = shortest,
+                    .longest = longest,
                 };
-
-                var len_indexes: [self.max_len + 1]u32 = undefined;
-                self.initLenIndexes(&len_indexes);
-                const final_len_indexes = len_indexes;
-                self.len_indexes = &final_len_indexes;
-                self.len_indexes_len = @intCast(len_indexes.len);
-                return self;
             }
         }
 
-        /// Returns a map backed by memory allocated with `allocator`.
+        /// Creates a map backed by memory allocated with `allocator`.
         ///
-        /// Handles `kvs_list` the same way as `initComptime()`.
-        pub fn init(kvs_list: anytype, allocator: mem.Allocator) !Self {
-            var self = Self{};
-            if (kvs_list.len == 0)
-                return self;
-
-            const sorted_keys = try allocator.alloc([]const u8, kvs_list.len);
-            errdefer allocator.free(sorted_keys);
-            const sorted_vals = try allocator.alloc(V, kvs_list.len);
-            errdefer allocator.free(sorted_vals);
-            const kvs = try allocator.create(KVs);
-            errdefer allocator.destroy(kvs);
-
-            self.initSortedKVs(kvs_list, sorted_keys, sorted_vals);
-            kvs.* = .{
-                .keys = sorted_keys.ptr,
-                .values = sorted_vals.ptr,
-                .len = @intCast(kvs_list.len),
-            };
-            self.kvs = kvs;
-
-            const len_indexes = try allocator.alloc(u32, self.max_len + 1);
-            self.initLenIndexes(len_indexes);
-            self.len_indexes = len_indexes.ptr;
-            self.len_indexes_len = @intCast(len_indexes.len);
-            return self;
-        }
-
-        /// this method should only be used with init() and not with initComptime().
-        pub fn deinit(self: Self, allocator: mem.Allocator) void {
-            allocator.free(self.len_indexes[0..self.len_indexes_len]);
-            allocator.free(self.kvs.keys[0..self.kvs.len]);
-            allocator.free(self.kvs.values[0..self.kvs.len]);
-            allocator.destroy(self.kvs);
-        }
-
-        const SortContext = struct {
-            keys: [][]const u8,
-            vals: []V,
-
-            pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-                return ctx.keys[a].len < ctx.keys[b].len;
-            }
-
-            pub fn swap(ctx: @This(), a: usize, b: usize) void {
-                std.mem.swap([]const u8, &ctx.keys[a], &ctx.keys[b]);
-                std.mem.swap(V, &ctx.vals[a], &ctx.vals[b]);
-            }
-        };
-
-        fn initSortedKVs(
-            self: *Self,
-            kvs_list: anytype,
-            sorted_keys: [][]const u8,
-            sorted_vals: []V,
-        ) void {
-            for (kvs_list, 0..) |kv, i| {
-                sorted_keys[i] = kv.@"0";
-                sorted_vals[i] = if (V == void) {} else kv.@"1";
-                self.min_len = @intCast(@min(self.min_len, kv.@"0".len));
-                self.max_len = @intCast(@max(self.max_len, kv.@"0".len));
-            }
-            mem.sortUnstableContext(0, sorted_keys.len, SortContext{
-                .keys = sorted_keys,
-                .vals = sorted_vals,
-            });
-        }
-
-        fn initLenIndexes(self: Self, len_indexes: []u32) void {
-            var len: usize = 0;
-            var i: u32 = 0;
-            while (len <= self.max_len) : (len += 1) {
-                // find the first keyword len == len
-                while (len > self.kvs.keys[i].len) {
-                    i += 1;
-                }
-                len_indexes[len] = i;
-            }
-        }
-
-        /// Checks if the map has a value for the key.
-        pub fn has(self: Self, str: []const u8) bool {
-            return self.get(str) != null;
-        }
-
-        /// Returns the value for the key if any, else null.
-        pub fn get(self: Self, str: []const u8) ?V {
-            if (self.kvs.len == 0)
-                return null;
-
-            return self.kvs.values[self.getIndex(str) orelse return null];
-        }
-
-        pub fn getIndex(self: Self, str: []const u8) ?usize {
-            const kvs = self.kvs.*;
-            if (kvs.len == 0)
-                return null;
-
-            if (str.len < self.min_len or str.len > self.max_len)
-                return null;
-
-            var i = self.len_indexes[str.len];
-            while (true) {
-                const key = kvs.keys[i];
-                if (key.len != str.len)
-                    return null;
-                if (eql(key, str))
-                    return i;
-                i += 1;
-                if (i >= kvs.len)
-                    return null;
-            }
-        }
-
-        /// Returns the key-value pair where key is the longest prefix of `str`
-        /// else null.
+        /// Keys are kept as pointers to externally-owned memory.
         ///
-        /// This is effectively an O(N) algorithm which loops from `max_len` to
-        /// `min_len` and calls `getIndex()` to check all keys with the given
-        /// len.
-        pub fn getLongestPrefix(self: Self, str: []const u8) ?KV {
-            if (self.kvs.len == 0)
-                return null;
-            const i = self.getLongestPrefixIndex(str) orelse return null;
-            const kvs = self.kvs.*;
+        /// Handles `kvs_list` the same way as `initComptime`.
+        pub fn init(kvs_list: anytype, allocator: mem.Allocator) mem.Allocator.Error!Self {
+            if (kvs_list.len == 0) return empty;
+            if (kvs_list.len > std.math.maxInt(u32)) return error.OutOfMemory;
+
+            const shortest, const longest, const chunks_len = lengthBounds(kvs_list) orelse
+                return error.OutOfMemory;
+            const kvs_len = kvs_list.len;
+            const size = allocSize(kvs_len, chunks_len);
+            const data = try allocator.alignedAlloc(u8, .fromByteUnits(alignment), size);
+            const ks, const vs, const chunks = partitionsFromAlloc(data, kvs_len, chunks_len);
+            populate(kvs_list, ks, vs, chunks, shortest);
+
             return .{
-                .key = kvs.keys[i],
-                .value = kvs.values[i],
+                .ks = ks.ptr,
+                .vs = vs.ptr,
+                .chunks = chunks.ptr,
+                .shortest = shortest,
+                .longest = longest,
             };
         }
 
-        pub fn getLongestPrefixIndex(self: Self, str: []const u8) ?usize {
-            if (self.kvs.len == 0)
-                return null;
+        /// Frees the memory allocated by the map.
+        ///
+        /// This method should only be used with maps got from `init`
+        /// and not from `initComptime`.
+        pub fn deinit(self: Self, allocator: mem.Allocator) void {
+            if (self.shortest > self.longest) return;
 
-            if (str.len < self.min_len)
-                return null;
+            const data = allocFromPartitions(
+                self.keys(),
+                self.values(),
+                self.chunks[0 .. self.longest - self.shortest + @as(usize, 1)],
+            );
+            allocator.free(data);
+        }
 
-            var len = @min(self.max_len, str.len);
-            while (len >= self.min_len) : (len -= 1) {
-                if (self.getIndex(str[0..len])) |i|
-                    return i;
+        /// Returns whether the map contains the given key.
+        pub fn has(self: Self, key: []const u8) bool {
+            return self.getIndex(key) != null;
+        }
+
+        /// Returns the corresponding value for the key if one exists,
+        /// else `null`.
+        ///
+        /// If the key appears multiple times in the map, an arbitrary one
+        /// of those is chosen.
+        pub fn get(self: Self, key: []const u8) ?V {
+            return if (self.getIndex(key)) |i| self.vs[i] else null;
+        }
+
+        /// Returns the index where the key is situated if one exists,
+        /// else `null`.
+        ///
+        /// If the key appears multiple times in the map, an arbitrary one
+        /// of those is chosen.
+        pub fn getIndex(self: Self, key: []const u8) ?usize {
+            if (key.len < self.shortest or key.len > self.longest) return null;
+
+            const c = key.len - self.shortest;
+            const start = if (c == 0) 0 else self.chunks[c - 1];
+            const end = self.chunks[c];
+
+            for (start..end) |i| {
+                if (eql(self.ks[i], key)) return i;
             }
             return null;
         }
 
-        pub fn keys(self: Self) []const []const u8 {
-            const kvs = self.kvs.*;
-            return kvs.keys[0..kvs.len];
+        /// Returns the key-value pair corresponding to a key which is a longest
+        /// prefix of `str`.
+        ///
+        /// If multiple longest prefixes exist, an arbitrary one of those is
+        /// chosen.
+        pub fn getLongestPrefix(self: Self, str: []const u8) ?KV {
+            return if (self.getLongestPrefixIndex(str)) |i| .{
+                .key = self.ks[i],
+                .value = self.vs[i],
+            } else null;
         }
 
+        /// Returns the index of a key-value pair whose key is a longest
+        /// prefix of `str`.
+        ///
+        /// If multiple longest prefixes exist, an arbitrary one of those is
+        /// chosen.
+        pub fn getLongestPrefixIndex(self: Self, str: []const u8) ?usize {
+            if (self.longest < self.shortest) return null;
+            if (str.len < self.shortest) return null;
+
+            const c = @min(str.len, self.longest) - self.shortest;
+            var i = self.chunks[c];
+            while (i > 0) {
+                i -= 1;
+                const key = self.ks[i];
+                if (eql(key, str[0..key.len])) return i;
+            }
+            return null;
+        }
+
+        /// Keys of the map. Valid until `deinit` call.
+        pub fn keys(self: Self) []const []const u8 {
+            return self.ks[0..self.count()];
+        }
+
+        /// Values of the map. Valid until `deinit` call.
         pub fn values(self: Self) []const V {
-            const kvs = self.kvs.*;
-            return kvs.values[0..kvs.len];
+            return self.vs[0..self.count()];
+        }
+
+        /// Number of entries in the map.
+        pub fn count(self: Self) u32 {
+            if (self.longest < self.shortest) return 0;
+            return self.chunks[self.longest - self.shortest];
+        }
+
+        const Self = @This();
+
+        const empty: Self = .{
+            .ks = @ptrCast(&stub),
+            .vs = @ptrCast(&stub),
+            .chunks = @ptrCast(&stub),
+            .shortest = 1,
+            .longest = 0,
+        };
+
+        /// Pointers to `stub` are definitely non-`null`, non-`undefined`,
+        /// well-aligned, and derefencable - so they can be cast to
+        /// `[*]const T`s (where `T`'s alignment is not greater than
+        /// `alignment`) and be sliced with `0..0` bounds.
+        ///
+        /// The simpler `&.{}` does not seem to currently guarantee all
+        /// the points above.
+        const stub: u8 align(alignment) = 0;
+
+        fn lengthBounds(kvs_list: anytype) ?struct { u32, u32, usize } {
+            var min = kvs_list[0][0].len;
+            var max = kvs_list[0][0].len;
+            for (kvs_list) |kv| {
+                min = @min(min, kv[0].len);
+                max = @max(max, kv[0].len);
+            }
+            if (max > std.math.maxInt(u32)) return null;
+            return .{ @intCast(min), @intCast(max), max - min + 1 };
+        }
+
+        fn populate(
+            kvs_list: anytype,
+            ks: [][]const u8,
+            vs: []V,
+            chunks: []u32,
+            shortest: u32,
+        ) void {
+            @memset(chunks, 0);
+            for (kvs_list, ks, vs) |kv, *k, *v| {
+                k.* = kv[0];
+                v.* = if (V == void) {} else kv[1];
+                chunks[kv[0].len - shortest] += 1;
+            }
+            var tot: u32 = 0;
+            for (chunks) |*c| {
+                tot += c.*;
+                c.* = tot;
+            }
+            const Context = struct {
+                keys: [][]const u8,
+                vals: []V,
+
+                pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+                    return ctx.keys[a].len < ctx.keys[b].len;
+                }
+
+                pub fn swap(ctx: @This(), a: usize, b: usize) void {
+                    std.mem.swap([]const u8, &ctx.keys[a], &ctx.keys[b]);
+                    std.mem.swap(V, &ctx.vals[a], &ctx.vals[b]);
+                }
+            };
+            const ctx: Context = .{ .keys = ks, .vals = vs };
+            mem.sortUnstableContext(0, ks.len, ctx);
+        }
+
+        const alignment = @max(@alignOf([]const u8), @alignOf(V), @alignOf(u32));
+
+        fn allocSize(kvs_len: usize, chunks_len: usize) usize {
+            return kvs_len * (@sizeOf([]const u8) + @sizeOf(V)) + chunks_len * @sizeOf(u32);
+        }
+
+        /// Partition an allocation into `ks`, `vs`, and `chunks`.
+        fn partitionsFromAlloc(
+            data: []align(alignment) u8,
+            kvs_len: usize,
+            chunks_len: usize,
+        ) struct { [][]const u8, []V, []u32 } {
+            std.debug.assert(data.len == allocSize(kvs_len, chunks_len));
+
+            const ks_sz = kvs_len * @sizeOf([]const u8);
+            const vs_sz = kvs_len * @sizeOf(V);
+            const ch_sz = chunks_len * @sizeOf(u32);
+
+            const ks_al = @alignOf([]const u8);
+            const vs_al = @alignOf(V);
+            const ch_al = @alignOf(u32);
+
+            // partitions' ordering:
+            // - primary: descending alignment
+            // - secondary: `ks`, `vs`, `chunks`
+            const ks_offset, const vs_offset, const ch_offset = if (ks_al == alignment)
+                if (vs_al >= ch_al) .{ 0, ks_sz, ks_sz + vs_sz } else .{ 0, ks_sz + ch_sz, ks_sz }
+            else if (vs_al == alignment)
+                if (ks_al >= ch_al) .{ vs_sz, 0, vs_sz + ks_sz } else .{ vs_sz + ch_sz, 0, vs_sz }
+            else if (ks_al >= vs_al)
+                .{ ch_sz, ch_sz + ks_sz, 0 }
+            else
+                .{ ch_sz + vs_sz, ch_sz, 0 };
+
+            return .{
+                @ptrCast(@alignCast(data[ks_offset..][0..ks_sz])),
+                @ptrCast(@alignCast(data[vs_offset..][0..vs_sz])),
+                @ptrCast(@alignCast(data[ch_offset..][0..ch_sz])),
+            };
+        }
+
+        /// Reconstruct an allocation from `ks`, `vs`, and `chunks`.
+        fn allocFromPartitions(
+            ks: []const []const u8,
+            vs: []const V,
+            chunks: []const u32,
+        ) []align(alignment) const u8 {
+            std.debug.assert(ks.len == vs.len);
+
+            const ptr: [*]align(alignment) const u8 = if (@alignOf([]const u8) == alignment)
+                @ptrCast(@alignCast(ks.ptr))
+            else if (@alignOf(V) == alignment)
+                @ptrCast(@alignCast(vs.ptr))
+            else
+                @ptrCast(@alignCast(chunks.ptr));
+            return ptr[0..allocSize(ks.len, chunks.len)];
         }
     };
 }
