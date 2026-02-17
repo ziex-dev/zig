@@ -1223,7 +1223,7 @@ fn testGcSections(b: *Build, opts: Options) *Step {
         ,
     });
     obj.root_module.function_sections = true;
-    obj.link_data_sections = true;
+    obj.root_module.data_sections = true;
     obj.root_module.link_libc = true;
     obj.root_module.link_libcpp = true;
 
@@ -1312,7 +1312,7 @@ fn testGcSectionsZig(b: *Build, opts: Options) *Step {
         ,
     });
     obj.root_module.function_sections = true;
-    obj.link_data_sections = true;
+    obj.root_module.data_sections = true;
 
     {
         const exe = addExecutable(b, opts, .{

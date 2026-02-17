@@ -768,7 +768,7 @@ fn addCompilerStep(b: *std.Build, options: AddCompilerModOptions) *std.Build.Ste
     const function_data_sections = options.target.result.cpu.arch.isPowerPC();
 
     exe.root_module.function_sections = function_data_sections;
-    exe.link_data_sections = function_data_sections;
+    exe.root_module.data_sections = function_data_sections;
 
     return exe;
 }

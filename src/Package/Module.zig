@@ -23,6 +23,7 @@ valgrind: bool,
 pic: bool,
 strip: bool,
 function_sections: bool,
+data_sections: bool,
 omit_frame_pointer: bool,
 stack_check: bool,
 stack_protector: u32,
@@ -70,6 +71,7 @@ pub const CreateOptions = struct {
         pic: ?bool = null,
         strip: ?bool = null,
         function_sections: ?bool = null,
+        data_sections: ?bool = null,
         omit_frame_pointer: ?bool = null,
         stack_check: ?bool = null,
         /// null means default.
@@ -132,6 +134,12 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
     const function_sections = b: {
         if (options.inherited.function_sections) |s| break :b s;
         if (options.parent) |p| break :b p.function_sections;
+        break :b false;
+    };
+
+    const data_sections = b: {
+        if (options.inherited.data_sections) |s| break :b s;
+        if (options.parent) |p| break :b p.data_sections;
         break :b false;
     };
 
@@ -397,6 +405,7 @@ pub fn create(arena: Allocator, options: CreateOptions) !*Package.Module {
         .pic = pic,
         .strip = strip,
         .function_sections = function_sections,
+        .data_sections = data_sections,
         .omit_frame_pointer = omit_frame_pointer,
         .stack_check = stack_check,
         .stack_protector = stack_protector,
@@ -438,6 +447,7 @@ pub fn createLimited(gpa: Allocator, options: LimitedOptions) Allocator.Error!*P
         .pic = undefined,
         .strip = undefined,
         .function_sections = undefined,
+        .data_sections = undefined,
         .omit_frame_pointer = undefined,
         .stack_check = undefined,
         .stack_protector = undefined,
@@ -476,6 +486,7 @@ pub fn createBuiltin(arena: Allocator, opts: Builtin, dirs: Compilation.Director
         .pic = opts.pic,
         .strip = opts.strip,
         .function_sections = opts.function_sections,
+        .data_sections = opts.data_sections,
         .omit_frame_pointer = opts.omit_frame_pointer,
         .code_model = opts.code_model,
         .sanitize_thread = opts.sanitize_thread,
@@ -515,6 +526,7 @@ pub fn getBuiltinOptions(m: Module, global: Compilation.Config) Builtin {
         .pie = global.pie,
         .strip = m.strip,
         .function_sections = m.function_sections,
+        .data_sections = m.data_sections,
         .code_model = m.code_model,
         .omit_frame_pointer = m.omit_frame_pointer,
         .wasi_exec_model = global.wasi_exec_model,

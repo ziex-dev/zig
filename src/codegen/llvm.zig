@@ -1074,7 +1074,7 @@ pub const Object = struct {
             reloc_mode,
             code_model,
             comp.config.any_function_sections,
-            comp.data_sections,
+            comp.config.any_data_sections,
             float_abi,
             if (target_util.llvmMachineAbi(&comp.root_mod.resolved_target.result)) |s| s.ptr else null,
             target_util.useEmulatedTls(&comp.root_mod.resolved_target.result),

@@ -35,6 +35,7 @@ link_libc: ?bool,
 link_libcpp: ?bool,
 no_builtin: ?bool,
 function_sections: ?bool,
+data_sections: ?bool,
 
 /// Symbols to be exported when compiling to WebAssembly.
 export_symbol_names: []const []const u8 = &.{},
@@ -260,6 +261,9 @@ pub const CreateOptions = struct {
     /// Place every function in its own section so that unused ones may be
     /// safely garbage-collected during the linking phase.
     function_sections: ?bool = null,
+    /// Place every data in its own section so that unused ones may be
+    /// safely garbage-collected during the linking phase.
+    data_sections: ?bool = null,
 };
 
 pub const Import = struct {
@@ -308,6 +312,7 @@ pub fn init(
                 .export_symbol_names = &.{},
                 .no_builtin = options.no_builtin,
                 .function_sections = options.function_sections,
+                .data_sections = options.data_sections,
             };
 
             m.import_table.ensureUnusedCapacity(allocator, options.imports.len) catch @panic("OOM");
@@ -560,6 +565,7 @@ pub fn appendZigProcessFlags(
     try addFlag(zig_args, m.red_zone, "-mred-zone", "-mno-red-zone");
     try addFlag(zig_args, m.no_builtin, "-fno-builtin", "-fbuiltin");
     try addFlag(zig_args, m.function_sections, "-ffunction-sections", "-fno-function-sections");
+    try addFlag(zig_args, m.data_sections, "-fdata-sections", "-fno-data-sections");
 
     if (m.sanitize_c) |sc| switch (sc) {
         .off => try zig_args.append("-fno-sanitize-c"),

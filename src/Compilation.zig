@@ -92,7 +92,6 @@ windows_libs: std.StringArrayHashMapUnmanaged(void),
 version: ?std.SemanticVersion,
 libc_installation: ?*const LibCInstallation,
 skip_linker_dependencies: bool,
-data_sections: bool,
 link_eh_frame_hdr: bool,
 native_system_include_paths: []const []const u8,
 /// List of symbols forced as undefined in the symbol table
@@ -1692,7 +1691,6 @@ pub const CreateOptions = struct {
     /// executable this field is ignored.
     want_compiler_rt: ?bool = null,
     want_ubsan_rt: ?bool = null,
-    data_sections: bool = false,
     time_report: bool = false,
     stack_report: bool = false,
     link_eh_frame_hdr: bool = false,
@@ -2118,6 +2116,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 .cc_argv = &.{},
                 .inherited = .{
                     .function_sections = true,
+                    .data_sections = true,
                 },
                 .global = options.config,
                 .parent = options.root_mod,
@@ -2155,6 +2154,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         }
 
         const any_function_sections = options.config.any_function_sections or options.root_mod.function_sections or zigc_strat == .zcu;
+        const any_data_sections = options.config.any_data_sections or options.root_mod.data_sections or zigc_strat == .zcu;
 
         const error_limit = options.error_limit orelse (std.math.maxInt(u16) - 1);
 
@@ -2194,7 +2194,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         cache.hash.add(options.config.any_sanitize_c);
         cache.hash.add(options.config.any_fuzz);
         cache.hash.add(options.config.any_function_sections);
-        cache.hash.add(options.data_sections);
+        cache.hash.add(options.config.any_data_sections);
         cache.hash.add(link_libc);
         cache.hash.add(options.config.link_libcpp);
         cache.hash.add(options.config.link_libunwind);
@@ -2342,7 +2342,6 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .llvm_opt_bisect_limit = options.llvm_opt_bisect_limit,
             .skip_linker_dependencies = options.skip_linker_dependencies,
             .queued_jobs = .{},
-            .data_sections = options.data_sections,
             .native_system_include_paths = options.native_system_include_paths,
             .force_undefined_symbols = options.force_undefined_symbols,
             .link_eh_frame_hdr = link_eh_frame_hdr,
@@ -2375,6 +2374,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         comp.config.any_sanitize_c = any_sanitize_c;
         comp.config.any_fuzz = any_fuzz;
         comp.config.any_function_sections = any_function_sections;
+        comp.config.any_data_sections = any_data_sections;
 
         if (opt_zcu) |zcu| {
             // Populate `zcu.module_roots`.
@@ -7472,7 +7472,7 @@ pub fn addCCArgs(
         try argv.append(if (mod.no_builtin) "-fno-builtin" else "-fbuiltin");
 
         try argv.append(if (mod.function_sections) "-ffunction-sections" else "-fno-function-sections");
-        try argv.append(if (comp.data_sections) "-fdata-sections" else "-fno-data-sections");
+        try argv.append(if (mod.data_sections) "-fdata-sections" else "-fno-data-sections");
 
         switch (mod.unwind_tables) {
             .none => {
@@ -8078,6 +8078,7 @@ fn buildOutputFromZig(
             .no_builtin = true,
             .code_model = comp.root_mod.code_model,
             .function_sections = true,
+            .data_sections = true,
             .error_tracing = false,
             .valgrind = if (options.checks_valgrind) comp.root_mod.valgrind else null,
         },
@@ -8115,7 +8116,6 @@ fn buildOutputFromZig(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .data_sections = true,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
         .verbose_air = comp.verbose_air,
@@ -8211,6 +8211,7 @@ pub fn build_crt_file(
             .resolved_target = comp.root_mod.resolved_target,
             .strip = comp.compilerRtStrip(),
             .function_sections = options.function_sections,
+            .data_sections = options.data_sections,
             .stack_check = false,
             .stack_protector = 0,
             .sanitize_c = .off,
@@ -8252,7 +8253,6 @@ pub fn build_crt_file(
         .root_name = root_name,
         .libc_installation = comp.libc_installation,
         .emit_bin = .yes_cache,
-        .data_sections = options.data_sections,
         .c_source_files = c_source_files,
         .verbose_cc = comp.verbose_cc,
         .verbose_link = comp.verbose_link,
