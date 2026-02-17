@@ -873,6 +873,124 @@ test "ArgsTuple forwarding" {
     }
 }
 
+/// Given a backing integer and a set of named power-of-two values,
+/// return a packed struct with a bool field corresponding to each value.
+pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T }) type {
+    if (@typeInfo(T) != .int)
+        @compileError("expected backing integer, found " ++ @typeName(T));
+    for (bits) |bit| {
+        const name, const value = bit;
+        // Wrapping subtraction accounts for the valid minInt(T)
+        if (value == 0 or ( value & (value-%1) != 0 )) {
+            @compileError(std.fmt.comptimePrint("cannot create Bitfield with non-power-of-two value {d} ('{s}')", .{ value, name }));
+        }
+    }
+
+    var bits_sort = bits[0..bits.len].*;
+    mem.sort(struct { []const u8, T }, &bits_sort, {}, struct {
+        fn lessThan(_: void, lhs: struct { []const u8, T }, rhs: struct { []const u8, T }) bool {
+            return @ctz(lhs[1]) < @ctz(rhs[1]);
+        }
+    }.lessThan);
+
+    // Padding is potentially needed behind every bit field, plus a final leading.
+    const fields_max_count = bits.len * 2 + 1;
+    var field_names: [fields_max_count][]const u8 = undefined;
+    var field_types: [fields_max_count]type = undefined;
+    var field_attrs: [fields_max_count]Type.StructField.Attributes = undefined;
+    var field_idx: usize = 0;
+    var padding_idx: usize = 0;
+    var bit_idx: @TypeOf(@ctz(@as(T, 0))) = 0;
+    for (bits_sort, 0..) |bit, i| {
+        const name, const value = bit;
+        const trail = @ctz(value);
+        if (bit_idx == trail+1) {
+            @compileError(std.fmt.comptimePrint(
+                "cannot create Bitfield with equal bits '{s}' and '{s}' ({d})",
+                .{ bits_sort[i-1][0], name, value },
+            ));
+        }
+        const padding_bits = trail - bit_idx;
+        bit_idx = trail + 1;
+        if (padding_bits != 0) {
+            const Padding = @Int(.unsigned, padding_bits);
+            field_names[field_idx] = std.fmt.comptimePrint("_{d}", .{ padding_idx });
+            field_types[field_idx] = Padding;
+            field_attrs[field_idx] = .{ .default_value_ptr = &@as(Padding, 0) };
+            field_idx += 1;
+            padding_idx += 1;
+        }
+        field_names[field_idx] = name;
+        field_types[field_idx] = bool;
+        field_attrs[field_idx] = .{ .default_value_ptr = &false };
+        field_idx += 1;
+    }
+    if (bit_idx != @bitSizeOf(T)) {
+        const Padding = @Int(.unsigned, @bitSizeOf(T) - bit_idx);
+        field_names[field_idx] = std.fmt.comptimePrint("_{d}", .{ padding_idx });
+        field_types[field_idx] = Padding;
+        field_attrs[field_idx] = .{ .default_value_ptr = &@as(Padding, 0) };
+        field_idx += 1;
+    }
+    return @Struct(.@"packed", T, field_names[0..field_idx], field_types[0..field_idx], field_attrs[0..field_idx]);
+}
+
+test Bitfield {
+    const actual_1 = @typeInfo(Bitfield(u32, &.{
+        .{ "b", 0b00000000000000000000000001000000 },
+        .{ "d", 0b00000000000000000000001000000000 },
+        .{ "a", 0b00000000000000000000000000000100 },
+        .{ "c", 0b00000000000000000000000010000000 },
+        .{ "e", 0b10000000000000000000000000000000 },
+    })).@"struct";
+    const expect_1 = @typeInfo(packed struct (u32) {
+        _0: u2 = 0,
+        a: bool = false,
+        _1: u3 = 0,
+        b: bool = false,
+        c: bool = false,
+        _2: u1 = 0,
+        d: bool = false,
+        _3: u21 = 0,
+        e: bool = false,
+    }).@"struct";
+    try testing.expectEqual(expect_1.layout, actual_1.layout);
+    try testing.expectEqual(expect_1.backing_integer, actual_1.backing_integer);
+    try testing.expectEqual(expect_1.is_tuple, actual_1.is_tuple);
+    try testing.expectEqual(expect_1.fields.len, actual_1.fields.len);
+    inline for (expect_1.fields, actual_1.fields) |expect_field, actual_field| {
+        try testing.expectEqualStrings(expect_field.name, actual_field.name);
+        try testing.expectEqual(expect_field.type, actual_field.type);
+        try testing.expectEqual(expect_field.defaultValue(), actual_field.defaultValue());
+        try testing.expectEqual(expect_field.is_comptime, actual_field.is_comptime);
+        try testing.expectEqual(expect_field.alignment, actual_field.alignment);
+    }
+
+    const actual_2 = @typeInfo(Bitfield(i4, &.{
+        .{ "d", -8 },
+        .{ "b", 2 },
+        .{ "a", 1 },
+        .{ "c", 4 },
+    })).@"struct";
+    const expect_2 = @typeInfo(packed struct (i4) {
+        a: bool = false,
+        b: bool = false,
+        c: bool = false,
+        d: bool = false,
+    }).@"struct";
+    try testing.expectEqual(expect_2.layout, actual_2.layout);
+    try testing.expectEqual(expect_2.backing_integer, actual_2.backing_integer);
+    try testing.expectEqual(expect_2.is_tuple, actual_2.is_tuple);
+    try testing.expectEqual(expect_2.fields.len, actual_2.fields.len);
+    inline for (expect_2.fields, actual_2.fields) |expect_field, actual_field| {
+        try testing.expectEqualStrings(expect_field.name, actual_field.name);
+        try testing.expectEqual(expect_field.type, actual_field.type);
+        try testing.expectEqual(expect_field.defaultValue(), actual_field.defaultValue());
+        try testing.expectEqual(expect_field.is_comptime, actual_field.is_comptime);
+        try testing.expectEqual(expect_field.alignment, actual_field.alignment);
+    }
+}
+
 /// Returns whether `error_union` contains an error.
 pub fn isError(error_union: anytype) bool {
     return if (error_union) |_| false else |_| true;
