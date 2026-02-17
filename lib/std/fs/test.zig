@@ -1897,7 +1897,7 @@ test "walker" {
         defer entry_dir.close(io);
         num_walked += 1;
     }
-    try expectEqual(expected_paths.kvs.len, num_walked);
+    try expectEqual(expected_paths.count(), num_walked);
 }
 
 test "selective walker, skip entries that start with ." {
@@ -1965,7 +1965,7 @@ test "selective walker, skip entries that start with ." {
         defer entry_dir.close(io);
         num_walked += 1;
     }
-    try expectEqual(expected_paths.kvs.len, num_walked);
+    try expectEqual(expected_paths.count(), num_walked);
 }
 
 test "walker without fully iterating" {
