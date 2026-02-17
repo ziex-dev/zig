@@ -881,7 +881,7 @@ pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T 
     for (bits) |bit| {
         const name, const value = bit;
         // Wrapping subtraction accounts for the valid minInt(T)
-        if (value == 0 or ( value & (value-%1) != 0 )) {
+        if (value == 0 or (value & (value -% 1) != 0)) {
             @compileError(std.fmt.comptimePrint("cannot create Bitfield with non-power-of-two value {d} ('{s}')", .{ value, name }));
         }
     }
@@ -904,17 +904,17 @@ pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T 
     for (bits_sort, 0..) |bit, i| {
         const name, const value = bit;
         const trail = @ctz(value);
-        if (bit_idx == trail+1) {
+        if (bit_idx == trail + 1) {
             @compileError(std.fmt.comptimePrint(
                 "cannot create Bitfield with equal bits '{s}' and '{s}' ({d})",
-                .{ bits_sort[i-1][0], name, value },
+                .{ bits_sort[i - 1][0], name, value },
             ));
         }
         const padding_bits = trail - bit_idx;
         bit_idx = trail + 1;
         if (padding_bits != 0) {
             const Padding = @Int(.unsigned, padding_bits);
-            field_names[field_idx] = std.fmt.comptimePrint("_{d}", .{ padding_idx });
+            field_names[field_idx] = std.fmt.comptimePrint("_{d}", .{padding_idx});
             field_types[field_idx] = Padding;
             field_attrs[field_idx] = .{ .default_value_ptr = &@as(Padding, 0) };
             field_idx += 1;
@@ -927,7 +927,7 @@ pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T 
     }
     if (bit_idx != @bitSizeOf(T)) {
         const Padding = @Int(.unsigned, @bitSizeOf(T) - bit_idx);
-        field_names[field_idx] = std.fmt.comptimePrint("_{d}", .{ padding_idx });
+        field_names[field_idx] = std.fmt.comptimePrint("_{d}", .{padding_idx});
         field_types[field_idx] = Padding;
         field_attrs[field_idx] = .{ .default_value_ptr = &@as(Padding, 0) };
         field_idx += 1;
@@ -943,7 +943,7 @@ test Bitfield {
         .{ "c", 0b00000000000000000000000010000000 },
         .{ "e", 0b10000000000000000000000000000000 },
     })).@"struct";
-    const expect_1 = @typeInfo(packed struct (u32) {
+    const expect_1 = @typeInfo(packed struct(u32) {
         _0: u2 = 0,
         a: bool = false,
         _1: u3 = 0,
@@ -972,7 +972,7 @@ test Bitfield {
         .{ "a", 1 },
         .{ "c", 4 },
     })).@"struct";
-    const expect_2 = @typeInfo(packed struct (i4) {
+    const expect_2 = @typeInfo(packed struct(i4) {
         a: bool = false,
         b: bool = false,
         c: bool = false,
