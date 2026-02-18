@@ -641,6 +641,7 @@ pub fn discardShort(r: *Reader, n: usize) ShortError!usize {
             error.EndOfStream => return n - remaining,
             error.ReadFailed => return error.ReadFailed,
         };
+        if (discard_len == 0) return n - remaining;
         remaining -= discard_len;
         if (remaining == 0) return n;
     }
@@ -1819,6 +1820,23 @@ test "discardAll that has to call discard multiple times on an indirect reader" 
     var remaining_buf: [16]u8 = undefined;
     try r.readSliceAll(&remaining_buf);
     try std.testing.expectEqualStrings(fr.buffer[10..], remaining_buf[0..]);
+}
+
+test "discardShort when discard returns 0" {
+    var r: Reader = .{
+        .vtable = &.{
+            .stream = endingStream,
+            .discard = struct {
+                fn discard(_: *Reader, _: Limit) Error!usize {
+                    return 0;
+                }
+            }.discard,
+        },
+        .buffer = &.{},
+        .seek = 0,
+        .end = 0,
+    };
+    try testing.expectEqual(0, try r.discardShort(1));
 }
 
 test "readAlloc when the backing reader provides one byte at a time" {
