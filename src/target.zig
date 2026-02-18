@@ -53,8 +53,7 @@ pub fn libCxxNeedsLibUnwind(target: *const std.Target) bool {
 }
 
 /// This function returns whether non-pic code is completely invalid on the given target.
-pub fn requiresPIC(target: *const std.Target, linking_libc: bool) bool {
-    _ = linking_libc;
+pub fn requiresPIC(target: *const std.Target) bool {
     return target.abi.isAndroid() or
         ((target.os.tag == .windows or target.os.tag == .uefi) and (target.cpu.arch == .aarch64 or target.cpu.arch == .x86_64)) or
         target.requiresLibC();
