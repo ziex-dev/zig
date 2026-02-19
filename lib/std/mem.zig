@@ -1123,7 +1123,8 @@ pub const indexOfSentinel = findSentinel;
 pub fn findSentinel(comptime T: type, comptime sentinel: T, p: [*:sentinel]const T) usize {
     var i: usize = 0;
 
-    if (use_vectors_for_comparison and
+    if (false and // https://github.com/ziglang/zig/issues/23184
+        use_vectors_for_comparison and
         !std.debug.inValgrind() and // https://github.com/ziglang/zig/issues/17717
         !@inComptime() and
         (@typeInfo(T) == .int or @typeInfo(T) == .float) and std.math.isPowerOfTwo(@bitSizeOf(T)))
