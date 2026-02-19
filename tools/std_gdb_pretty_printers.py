@@ -101,16 +101,16 @@ class HashMapPrinter:
                 return 'map'
         return 'array'
 
-# Handles both ArrayHashMap and ArrayHashMapUnmanaged.
+# Handles both ArrayHashMap and array_hash_map.Managed.
 class ArrayHashMapPrinter:
     def __init__(self, val):
         self.type = val.type
-        is_managed = re.search(r'^std\.array_hash_map\.ArrayHashMap\(', self.type.name)
+        is_managed = re.search(r'^std\.array_hash_map\.Managed\(', self.type.name)
         self.val = val['unmanaged'] if is_managed else val
 
     def to_string(self):
         type = self.type.name[len('std.array_hash_map.'):]
-        type = re.sub(r'^ArrayHashMap(Unmanaged)?\((.*),std.array_hash_map.AutoContext\(.*$', r'AutoArrayHashMap\1(\2)', type)
+        type = re.sub(r'^(ArrayHashMap|Managed)\((.*),std.array_hash_map.AutoContext\(.*$', r'AutoArrayHashMap(\2)', type)
         return '%s of length %s' % (type, self.val['entries']['len'])
 
     def children(self):
@@ -138,5 +138,5 @@ pp = gdb.printing.RegexpCollectionPrettyPrinter('Zig standard library')
 pp.add_printer('ArrayList', r'^std\.array_list\.ArrayListAligned(Unmanaged)?\(.*\)$', ArrayListPrinter)
 pp.add_printer('MultiArrayList', r'^std\.multi_array_list\.MultiArrayList\(.*\)$', MultiArrayListPrinter)
 pp.add_printer('HashMap', r'^std\.hash_map\.HashMap(Unmanaged)?\(.*\)$', HashMapPrinter)
-pp.add_printer('ArrayHashMap', r'^std\.array_hash_map\.ArrayHashMap(Unmanaged)?\(.*\)$', ArrayHashMapPrinter)
+pp.add_printer('ArrayHashMap', r'^std\.array_hash_map\.(ArrayHashMap|Managed)\(.*\)$', ArrayHashMapPrinter)
 gdb.printing.register_pretty_printer(gdb.current_objfile(), pp)
