@@ -123,7 +123,7 @@ module_roots: std.AutoArrayHashMapUnmanaged(*Package.Module, File.Index.Optional
 ///
 /// Not serialized. This state is reconstructed during the first call to
 /// `Compilation.update` of the process for a given `Compilation`.
-import_table: std.ArrayHashMapUnmanaged(
+import_table: std.ArrayHashMap(
     File.Index,
     void,
     struct {
@@ -160,7 +160,7 @@ multi_module_err: ?struct {
 /// on the `Compilation.Path` of the `EmbedFile`.
 ///
 /// This table owns all of the `*EmbedFile` memory, which is allocated into gpa.
-embed_table: std.ArrayHashMapUnmanaged(
+embed_table: std.ArrayHashMap(
     *EmbedFile,
     void,
     struct {
@@ -822,9 +822,9 @@ pub const Namespace = struct {
     /// Will be a struct, enum, union, or opaque.
     owner_type: InternPool.Index,
     /// Members of the namespace which are marked `pub`.
-    pub_decls: std.ArrayHashMapUnmanaged(InternPool.Nav.Index, void, NavNameContext, true) = .empty,
+    pub_decls: std.ArrayHashMap(InternPool.Nav.Index, void, NavNameContext, true) = .empty,
     /// Members of the namespace which are *not* marked `pub`.
-    priv_decls: std.ArrayHashMapUnmanaged(InternPool.Nav.Index, void, NavNameContext, true) = .empty,
+    priv_decls: std.ArrayHashMap(InternPool.Nav.Index, void, NavNameContext, true) = .empty,
     /// All `comptime` declarations in this namespace. We store these purely so that incremental
     /// compilation can re-use the existing `ComptimeUnit`s when a namespace changes.
     comptime_decls: std.ArrayList(InternPool.ComptimeUnit.Id) = .empty,

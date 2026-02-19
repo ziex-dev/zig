@@ -44,7 +44,7 @@ const StringPairContext = struct {
     }
 };
 
-const OperandKindMap = std.ArrayHashMap(StringPair, OperandKind, StringPairContext, true);
+const OperandKindMap = std.array_hash_map.Managed(StringPair, OperandKind, StringPairContext, true);
 
 /// Khronos made it so that these names are not defined explicitly, so
 /// we need to hardcode it (like they did).

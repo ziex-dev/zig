@@ -438,7 +438,7 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
     const symtab_raw: []align(1) const macho.nlist_64 = @ptrCast(mapped_ofile[symtab_cmd.symoff..][0..n_sym_bytes]);
 
     // TODO handle tentative (common) symbols
-    var symbols_by_name: std.ArrayHashMapUnmanaged(u32, void, void, true) = .empty;
+    var symbols_by_name: std.ArrayHashMap(u32, void, void, true) = .empty;
     defer symbols_by_name.deinit(gpa);
     try symbols_by_name.ensureUnusedCapacity(gpa, @intCast(symtab_raw.len));
     for (symtab_raw, 0..) |sym_raw, sym_index| {

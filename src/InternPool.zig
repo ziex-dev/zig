@@ -1678,7 +1678,7 @@ fn getIndexMask(ip: *const InternPool, comptime BackingInt: type) u32 {
     return @as(u32, std.math.maxInt(BackingInt)) >> ip.tid_width;
 }
 
-const FieldMap = std.ArrayHashMapUnmanaged(void, void, std.array_hash_map.AutoContext(void), false);
+const FieldMap = std.ArrayHashMap(void, void, std.array_hash_map.AutoContext(void), false);
 
 /// An index into `maps` which might be `none`.
 pub const OptionalMapIndex = enum(u32) {

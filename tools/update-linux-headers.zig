@@ -138,7 +138,7 @@ const Contents = struct {
 };
 
 const HashToContents = std.StringHashMap(Contents);
-const TargetToHash = std.ArrayHashMap(DestTarget, []const u8, DestTarget.HashContext, true);
+const TargetToHash = std.array_hash_map.Managed(DestTarget, []const u8, DestTarget.HashContext, true);
 const PathTable = std.StringHashMap(*TargetToHash);
 
 pub fn main(init: std.process.Init) !void {

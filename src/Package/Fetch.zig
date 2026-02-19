@@ -156,7 +156,7 @@ pub const JobQueue = struct {
     };
     pub const Table = std.AutoArrayHashMapUnmanaged(Package.Hash, *Fetch);
     pub const UnlazySet = std.AutoArrayHashMapUnmanaged(Package.Hash, void);
-    pub const ForkSet = std.ArrayHashMapUnmanaged(Fork, void, Fork.Context, false);
+    pub const ForkSet = std.ArrayHashMap(Fork, void, Fork.Context, false);
 
     pub const Fork = struct {
         path: Cache.Path,

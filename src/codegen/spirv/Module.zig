@@ -58,8 +58,8 @@ cache: struct {
     float_types: std.AutoHashMapUnmanaged(std.builtin.Type.Float, Id) = .empty,
     vector_types: std.AutoHashMapUnmanaged(struct { Id, u32 }, Id) = .empty,
     array_types: std.AutoHashMapUnmanaged(struct { Id, Id }, Id) = .empty,
-    struct_types: std.ArrayHashMapUnmanaged(StructType, Id, StructType.HashContext, true) = .empty,
-    fn_types: std.ArrayHashMapUnmanaged(FnType, Id, FnType.HashContext, true) = .empty,
+    struct_types: std.ArrayHashMap(StructType, Id, StructType.HashContext, true) = .empty,
+    fn_types: std.ArrayHashMap(FnType, Id, FnType.HashContext, true) = .empty,
 
     capabilities: std.AutoHashMapUnmanaged(spec.Capability, void) = .empty,
     extensions: std.StringHashMapUnmanaged(void) = .empty,
@@ -69,7 +69,7 @@ cache: struct {
     strings: std.StringArrayHashMapUnmanaged(Id) = .empty,
 
     bool_const: [2]?Id = .{ null, null },
-    constants: std.ArrayHashMapUnmanaged(Constant, Id, Constant.HashContext, true) = .empty,
+    constants: std.ArrayHashMap(Constant, Id, Constant.HashContext, true) = .empty,
 } = .{},
 /// Module layout, according to SPIR-V Spec section 2.4, "Logical Layout of a Module".
 sections: struct {

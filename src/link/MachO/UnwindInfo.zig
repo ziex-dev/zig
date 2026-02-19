@@ -173,7 +173,7 @@ pub fn generate(info: *UnwindInfo, macho_file: *MachO) !void {
             }
         };
 
-        var common_encodings_counts = std.ArrayHashMap(
+        var common_encodings_counts = std.array_hash_map.Managed(
             Encoding,
             CommonEncWithCount,
             Context,

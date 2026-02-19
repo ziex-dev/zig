@@ -439,9 +439,9 @@ pub const ResourceDataEntry = extern struct {
 
 /// type -> name -> language
 const ResourceTree = struct {
-    type_to_name_map: std.ArrayHashMapUnmanaged(NameOrOrdinal, NameToLanguageMap, NameOrOrdinalHashContext, true),
-    rsrc_string_table: std.ArrayHashMapUnmanaged(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
-    deduplicated_data: std.StringArrayHashMapUnmanaged(u32),
+    type_to_name_map: std.ArrayHashMap(NameOrOrdinal, NameToLanguageMap, NameOrOrdinalHashContext, true),
+    rsrc_string_table: std.ArrayHashMap(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
+    deduplicated_data: std.StringArrayHashMap(u32),
     data_offsets: std.ArrayList(u32),
     rsrc02_len: u32,
     coff_options: CoffOptions,
@@ -451,8 +451,8 @@ const ResourceTree = struct {
         resource: *const Resource,
         original_index: usize,
     };
-    const LanguageToResourceMap = std.AutoArrayHashMapUnmanaged(Language, RelocatableResource);
-    const NameToLanguageMap = std.ArrayHashMapUnmanaged(NameOrOrdinal, LanguageToResourceMap, NameOrOrdinalHashContext, true);
+    const LanguageToResourceMap = std.AutoArrayHashMap(Language, RelocatableResource);
+    const NameToLanguageMap = std.ArrayHashMap(NameOrOrdinal, LanguageToResourceMap, NameOrOrdinalHashContext, true);
 
     const NameOrOrdinalHashContext = struct {
         pub fn hash(self: @This(), v: NameOrOrdinal) u32 {

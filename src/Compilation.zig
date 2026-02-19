@@ -4073,7 +4073,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) error{OutOfMemory}!ErrorBundle {
 
         // Before iterating `failed_files`, we need to sort it into a consistent order so that error
         // messages appear consistently despite different ordering from the AstGen worker pool. File
-        // paths are a great key for this sort! We are using sorting the `ArrayHashMap` itself to
+        // paths are a great key for this sort! We are sorting the `ArrayHashMap` itself to
         // make sure it reindexes; that's important because these entries need to be retained for
         // future updates.
         const FileSortCtx = struct {
@@ -4530,7 +4530,7 @@ pub fn addModuleErrorMsg(
 
     // De-duplicate error notes. The main use case in mind for this is
     // too many "note: called from here" notes when eval branch quota is reached.
-    var notes: std.ArrayHashMapUnmanaged(ErrorBundle.ErrorMessage, void, ErrorNoteHashContext, true) = .empty;
+    var notes: std.ArrayHashMap(ErrorBundle.ErrorMessage, void, ErrorNoteHashContext, true) = .empty;
     defer notes.deinit(gpa);
 
     var last_note_loc: ?std.zig.Loc = null;

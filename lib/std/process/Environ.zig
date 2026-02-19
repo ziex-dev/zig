@@ -100,7 +100,7 @@ pub const Map = struct {
     array_hash_map: ArrayHashMap,
     allocator: Allocator,
 
-    const ArrayHashMap = std.ArrayHashMapUnmanaged([]const u8, []const u8, EnvNameHashContext, false);
+    const ArrayHashMap = std.ArrayHashMap([]const u8, []const u8, EnvNameHashContext, false);
 
     pub const Size = usize;
 

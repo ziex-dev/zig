@@ -1,6 +1,6 @@
 mutex: Io.Mutex,
 /// Accessed through `Module.Adapter`.
-modules: std.ArrayHashMapUnmanaged(Module, void, Module.Context, false),
+modules: std.ArrayHashMap(Module, void, Module.Context, false),
 
 pub const init: SelfInfo = .{
     .mutex = .init,
