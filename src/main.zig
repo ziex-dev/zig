@@ -7143,6 +7143,7 @@ fn cmdFetch(
     defer http_client.deinit();
 
     try http_client.initDefaultProxies(arena, environ_map);
+    try http_client.parseNetrc(environ_map);
 
     var root_prog_node = std.Progress.start(io, .{
         .root_name = "Fetch",

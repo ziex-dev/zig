@@ -558,12 +558,27 @@ pub fn run(f: *Fetch) RunError!void {
                     } else |err| break :e err;
                 } else dir_err;
 
-                const uri = std.Uri.parse(path_or_url) catch |uri_err| {
+                var uri = std.Uri.parse(path_or_url) catch |uri_err| {
                     return f.fail(0, try eb.printString(
                         "'{s}' could not be recognized as a file path ({t}) or an URL ({t})",
                         .{ path_or_url, file_err, uri_err },
                     ));
                 };
+
+                if (uri.user == null and uri.password == null) {
+                    if (uri.host) |uri_host| {
+                        const netrc_host = try std.fmt.allocPrint(arena, "{f}", .{
+                            std.fmt.alt(uri_host, .formatHost),
+                        });
+
+                        const netrc_parser = &job_queue.http_client.netrc_parser;
+                        if (netrc_parser.hosts.get(netrc_host)) |user| {
+                            uri.user = .{ .raw = user.login };
+                            uri.password = .{ .raw = user.password };
+                        }
+                    }
+                }
+
                 var resource: Resource = undefined;
                 try f.initResource(uri, &resource, &server_header_buffer);
                 return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, null, false);

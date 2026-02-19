@@ -21,6 +21,7 @@ const assert = std.debug.assert;
 const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
 const HostName = std.Io.net.HostName;
+const NetrcParser = @import("./NetrcParser.zig");
 
 pub const disable_tls = std.options.http_disable_tls;
 
@@ -62,6 +63,13 @@ http_proxy: ?*Proxy = null,
 /// This field cannot be modified while the client has active connections.
 /// Pointer to externally-owned memory.
 https_proxy: ?*Proxy = null,
+
+/// When a client is initialized, it parses `$HOME/.netrc`.
+/// On windows, it additionally searches for `$HOME/_netrc` if `.netrc` is not
+/// found.
+/// The credentials stored in `.netrc` will be used by requests whose uri does
+/// not already specify credentials, for hosts with a match in `.netrc`.
+netrc_parser: NetrcParser = .empty,
 
 /// A Least-Recently-Used cache of open connections to be reused.
 pub const ConnectionPool = struct {
@@ -1306,6 +1314,7 @@ pub fn deinit(client: *Client) void {
 
     client.connection_pool.deinit(io);
     if (!disable_tls) client.ca_bundle.deinit(client.allocator);
+    client.netrc_parser.deinit(client.allocator);
 
     client.* = undefined;
 }
@@ -1333,6 +1342,34 @@ pub fn initDefaultProxies(client: *Client, arena: Allocator, environ_map: *std.p
         client.https_proxy = try createProxyFromEnvVar(arena, environ_map, &.{
             "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY",
         });
+    }
+}
+
+/// Initializes `netrc_parser` by reading `$HOME/.netrc`.
+/// On windows, it also looks for `$HOME/_netrc`.
+pub fn parseNetrc(client: *Client, environ_map: *std.process.Environ.Map) !void {
+    const gpa = client.allocator;
+    const io = client.io;
+
+    if (std.zig.EnvVar.HOME.get(environ_map)) |home| {
+        var in_buf: [4096]u8 = undefined;
+
+        const netrc_path = try std.fs.path.join(gpa, &.{ home, ".netrc" });
+        defer gpa.free(netrc_path);
+
+        const netrc_file = Io.Dir.openFileAbsolute(io, netrc_path, .{}) catch blk: {
+            if (builtin.os.tag != .windows) {
+                return;
+            }
+
+            const alt_netrc_path = try std.fs.path.join(gpa, &.{ home, "_netrc" });
+            defer gpa.free(alt_netrc_path);
+
+            break :blk try Io.Dir.openFileAbsolute(io, alt_netrc_path, .{});
+        };
+
+        var netrc_reader = netrc_file.reader(io, &in_buf);
+        try client.netrc_parser.parse(gpa, &netrc_reader.interface);
     }
 }
 
