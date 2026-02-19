@@ -377,6 +377,7 @@ pub const Reader = struct {
         /// The client sent 0 bytes of headers before closing the stream. This
         /// happens when a keep-alive connection is finally closed.
         HttpConnectionClosing,
+        HttpUnauthorized,
         /// Transitive error occurred reading from `in`.
         ReadFailed,
     };

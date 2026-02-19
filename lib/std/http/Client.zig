@@ -1135,6 +1135,10 @@ pub const Request = struct {
             };
             const head = &response.head;
 
+            if (head.status == .unauthorized) {
+                return error.HttpUnauthorized;
+            }
+
             if (head.status == .@"continue") {
                 if (r.handle_continue) continue;
                 r.response_transfer_encoding = head.transfer_encoding;
