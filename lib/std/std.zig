@@ -1,5 +1,6 @@
 pub const ArrayHashMap = array_hash_map.ArrayHashMap;
-pub const ArrayHashMapUnmanaged = array_hash_map.ArrayHashMapUnmanaged;
+/// Deprecated; use `ArrayHashMap`.
+pub const ArrayHashMapUnmanaged = array_hash_map.ArrayHashMap;
 pub const AutoArrayHashMap = array_hash_map.AutoArrayHashMap;
 pub const AutoArrayHashMapUnmanaged = array_hash_map.AutoArrayHashMapUnmanaged;
 pub const AutoHashMap = hash_map.AutoHashMap;

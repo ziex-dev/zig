@@ -13,24 +13,24 @@ const hash_map = @This();
 ///
 /// See `AutoContext` for a description of the hash and equal implementations.
 pub fn AutoArrayHashMap(comptime K: type, comptime V: type) type {
-    return ArrayHashMap(K, V, AutoContext(K), !autoEqlIsCheap(K));
+    return Managed(K, V, AutoContext(K), !autoEqlIsCheap(K));
 }
 
-/// An `ArrayHashMapUnmanaged` with default hash and equal functions.
+/// An `ArrayHashMap` with default hash and equal functions.
 ///
 /// See `AutoContext` for a description of the hash and equal implementations.
 pub fn AutoArrayHashMapUnmanaged(comptime K: type, comptime V: type) type {
-    return ArrayHashMapUnmanaged(K, V, AutoContext(K), !autoEqlIsCheap(K));
+    return ArrayHashMap(K, V, AutoContext(K), !autoEqlIsCheap(K));
 }
 
 /// An `ArrayHashMap` with strings as keys.
 pub fn StringArrayHashMap(comptime V: type) type {
-    return ArrayHashMap([]const u8, V, StringContext, true);
+    return Managed([]const u8, V, StringContext, true);
 }
 
-/// An `ArrayHashMapUnmanaged` with strings as keys.
+/// An `ArrayHashMap` with strings as keys.
 pub fn StringArrayHashMapUnmanaged(comptime V: type) type {
-    return ArrayHashMapUnmanaged([]const u8, V, StringContext, true);
+    return ArrayHashMap([]const u8, V, StringContext, true);
 }
 
 pub const StringContext = struct {
@@ -53,28 +53,10 @@ pub fn hashString(s: []const u8) u32 {
     return @truncate(std.hash.Wyhash.hash(0, s));
 }
 
-/// Deprecated in favor of `ArrayHashMapWithAllocator` (no code changes needed)
-/// or `ArrayHashMapUnmanaged` (will need to update callsites to pass an
-/// allocator). After Zig 0.14.0 is released, `ArrayHashMapWithAllocator` will
-/// be removed and `ArrayHashMapUnmanaged` will be a deprecated alias. After
-/// Zig 0.15.0 is released, the deprecated alias `ArrayHashMapUnmanaged` will
-/// be removed.
-pub const ArrayHashMap = ArrayHashMapWithAllocator;
+/// Deprecated.
+pub const Managed = ArrayHashMapWithAllocator;
 
-/// A hash table of keys and values, each stored sequentially.
-///
-/// Insertion order is preserved. In general, this data structure supports the same
-/// operations as `std.ArrayList`.
-///
-/// Deletion operations:
-/// * `swapRemove` - O(1)
-/// * `orderedRemove` - O(N)
-///
-/// Modifying the hash map while iterating is allowed, however, one must understand
-/// the (well defined) behavior when mixing insertions and deletions with iteration.
-///
-/// See `ArrayHashMapUnmanaged` for a variant of this data structure that accepts an
-/// `Allocator` as a parameter when needed rather than storing it.
+/// Deprecated.
 pub fn ArrayHashMapWithAllocator(
     comptime K: type,
     comptime V: type,
@@ -97,8 +79,8 @@ pub fn ArrayHashMapWithAllocator(
         allocator: Allocator,
         ctx: Context,
 
-        /// The ArrayHashMapUnmanaged type using the same settings as this managed map.
-        pub const Unmanaged = ArrayHashMapUnmanaged(K, V, Context, store_hash);
+        /// The ArrayHashMap type using the same settings as this managed map.
+        pub const Unmanaged = ArrayHashMap(K, V, Context, store_hash);
 
         /// Pointers to a key and value in the backing store of this map.
         /// Modifying the key is allowed only if it does not change the hash.
@@ -132,7 +114,7 @@ pub fn ArrayHashMapWithAllocator(
 
         const Self = @This();
 
-        /// Create an ArrayHashMap instance which will use a specified allocator.
+        /// Create a managed ArrayHashMap instance which will use a specified allocator.
         pub fn init(allocator: Allocator) Self {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call initContext instead.");
@@ -514,19 +496,15 @@ pub fn ArrayHashMapWithAllocator(
 /// Modifying the hash map while iterating is allowed, however, one must understand
 /// the (well defined) behavior when mixing insertions and deletions with iteration.
 ///
-/// This type does not store an `Allocator` field - the `Allocator` must be passed in
-/// with each function call that requires it. See `ArrayHashMap` for a type that stores
-/// an `Allocator` field for convenience.
-///
 /// Can be initialized directly using the default field values.
 ///
 /// This type is designed to have low overhead for small numbers of entries. When
 /// `store_hash` is `false` and the number of entries in the map is less than 9,
-/// the overhead cost of using `ArrayHashMapUnmanaged` rather than `std.ArrayList` is
+/// the overhead cost of using `ArrayHashMap` rather than `std.ArrayList` is
 /// only a single pointer-sized integer.
 ///
 /// Default initialization of this struct is deprecated; use `.empty` instead.
-pub fn ArrayHashMapUnmanaged(
+pub fn ArrayHashMap(
     comptime K: type,
     comptime V: type,
     /// A namespace that provides these two functions:
@@ -605,8 +583,8 @@ pub fn ArrayHashMapUnmanaged(
             index: usize,
         };
 
-        /// The ArrayHashMap type using the same settings as this managed map.
-        pub const Managed = ArrayHashMap(K, V, Context, store_hash);
+        /// The managed type using the same settings as this ArrayHashMap.
+        pub const ArrayHashMapManaged = Managed(K, V, Context, store_hash);
 
         /// Some functions require a context only if hashes are not stored.
         /// To keep the api simple, this type is only used internally.
@@ -628,12 +606,12 @@ pub fn ArrayHashMapUnmanaged(
 
         /// Convert from an unmanaged map to a managed map.  After calling this,
         /// the promoted map should no longer be used.
-        pub fn promote(self: Self, gpa: Allocator) Managed {
+        pub fn promote(self: Self, gpa: Allocator) ArrayHashMapManaged {
             if (@sizeOf(Context) != 0)
                 @compileError("Cannot infer context " ++ @typeName(Context) ++ ", call promoteContext instead.");
             return self.promoteContext(gpa, undefined);
         }
-        pub fn promoteContext(self: Self, gpa: Allocator, ctx: Context) Managed {
+        pub fn promoteContext(self: Self, gpa: Allocator, ctx: Context) ArrayHashMapManaged {
             return .{
                 .unmanaged = self,
                 .allocator = gpa,
@@ -2479,7 +2457,7 @@ test "pop()" {
 }
 
 test "reIndex" {
-    var map = ArrayHashMap(i32, i32, AutoContext(i32), true).init(std.testing.allocator);
+    var map = Managed(i32, i32, AutoContext(i32), true).init(std.testing.allocator);
     defer map.deinit();
 
     // Populate via the API.
@@ -2580,7 +2558,7 @@ test "0 sized key and 0 sized value" {
 test "setKey storehash true" {
     const gpa = std.testing.allocator;
 
-    var map: ArrayHashMapUnmanaged(i32, i32, AutoContext(i32), true) = .empty;
+    var map: ArrayHashMap(i32, i32, AutoContext(i32), true) = .empty;
     defer map.deinit(gpa);
 
     try map.put(gpa, 12, 34);
@@ -2596,7 +2574,7 @@ test "setKey storehash true" {
 test "setKey storehash false" {
     const gpa = std.testing.allocator;
 
-    var map: ArrayHashMapUnmanaged(i32, i32, AutoContext(i32), false) = .empty;
+    var map: ArrayHashMap(i32, i32, AutoContext(i32), false) = .empty;
     defer map.deinit(gpa);
 
     try map.put(gpa, 12, 34);
