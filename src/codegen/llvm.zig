@@ -11370,6 +11370,40 @@ pub const FuncGen = struct {
         return fg.wip.conv(.unneeded, shifted, payload_llvm_ty, "");
     }
 
+    fn storeExtended(
+        fg: *FuncGen,
+        access_kind: Builder.MemoryAccessKind,
+        elem: Builder.Value,
+        elem_ty: Type,
+        ptr: Builder.Value,
+        ordering: Builder.AtomicOrdering,
+        alignment: Builder.Alignment,
+    ) error{OutOfMemory}!Builder.Function.Instruction.Index {
+        const o = fg.ng.object;
+        const pt = fg.ng.pt;
+        const zcu = pt.zcu;
+        const payload_llvm_ty = try o.lowerType(pt, elem_ty);
+        const abi_size = elem_ty.abiSize(zcu);
+
+        const load_llvm_ty = if (elem_ty.isAbiInt(zcu))
+            try o.builder.intType(@intCast(abi_size * 8))
+        else
+            payload_llvm_ty;
+
+        const extended = if (payload_llvm_ty != load_llvm_ty)
+            try fg.wip.cast(.zext, elem, load_llvm_ty, "")
+        else
+            elem;
+        const shifted = if (payload_llvm_ty != load_llvm_ty and o.target.cpu.arch.endian() == .big)
+            try fg.wip.bin(.shl, extended, try o.builder.intValue(
+                load_llvm_ty,
+                (elem_ty.abiSize(zcu) - (std.math.divCeil(u64, elem_ty.bitSize(zcu), 8) catch unreachable)) * 8,
+            ), "")
+        else
+            extended;
+        return fg.wip.storeAtomic(access_kind, shifted, ptr, fg.sync_scope, ordering, alignment);
+    }
+
     /// Load a by-ref type by constructing a new alloca and performing a memcpy.
     fn loadByRef(
         fg: *FuncGen,
@@ -11540,11 +11574,11 @@ pub const FuncGen = struct {
             return;
         }
         if (!isByRef(elem_ty, zcu)) {
-            _ = try self.wip.storeAtomic(
+            _ = try self.storeExtended(
                 access_kind,
                 elem,
+                elem_ty,
                 ptr,
-                self.sync_scope,
                 ordering,
                 ptr_alignment,
             );
