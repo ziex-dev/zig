@@ -1295,108 +1295,32 @@ pub fn takeLeb128(r: *Reader, comptime T: type) TakeLeb128Error!T {
         else => @compileError(@typeName(T) ++ " not supported"),
     };
     const Byte = packed struct { bits: u7, more: bool };
+    const Unsigned = @Int(.unsigned, info.bits);
 
     if (info.bits <= 7) {
-        var byte: Byte = undefined;
-        const Bits = @Int(info.signedness, 7);
+        const byte: Byte = @bitCast(try r.takeByte());
 
-        byte = @bitCast(try r.takeByte());
-        const val = std.math.cast(T, @as(Bits, @bitCast(byte.bits))) orelse error.Overflow;
+        if (byte.more) return error.Overflow;
 
-        const allowed_bits: u7 = switch (info.signedness) {
-            .unsigned => 0,
-            .signed => @bitCast(@as(i7, @bitCast(byte.bits)) >> 6),
-        };
-
-        var fits = true;
-        while (byte.more) {
-            byte = @bitCast(try r.takeByte());
-
-            if (byte.bits != allowed_bits) fits = false;
-        }
-
-        return if (fits) blk: {
-            @branchHint(.likely);
-            break :blk val;
-        } else error.Overflow;
+        return @bitCast(std.math.cast(Unsigned, byte.bits) orelse return error.Overflow);
     }
 
-    const Unsigned = @Int(.unsigned, info.bits);
-    const UInt = std.math.ByteAlignedInt(Unsigned);
-    const Int = std.math.ByteAlignedInt(T);
+    var result: Unsigned = 0;
+    const max_bytes = @divFloor(info.bits + 1, 7) + 1;
+    inline for (0..max_bytes) |iter| {
+        const shift = iter * 7;
+        const allowed_bits: u7 = comptime @truncate(std.math.maxInt(Unsigned) >> shift);
 
-    const uint_bits = @typeInfo(UInt).int.bits;
+        const byte: Byte = @bitCast(try r.takeByte());
+        if (byte.bits & allowed_bits != byte.bits or
+            comptime shift > (info.bits - 7)) return error.Overflow;
 
-    var byte: Byte = undefined;
-    var val: UInt = 0;
-    const max_bytes = @divFloor(info.bits - 1, 7) + 1;
-    inline for (0..max_bytes) |iteration| {
-        const shift = iteration * 7;
+        result |= @as(Unsigned, byte.bits) << shift;
 
-        byte = @bitCast(try r.takeByte());
-
-        const extended: UInt = byte.bits;
-        val |= extended << shift;
-
-        const bits_written = shift + 7;
-
-        if (bits_written >= info.bits) {
-            const bits_overflowed = bits_written - info.bits;
-            const bits_remaining = @mod(info.bits, 7);
-
-            const allowed_bits: u7, var fits: bool = switch (info.signedness) {
-                .unsigned => blk: {
-                    const fits = bits_remaining == 0 or byte.bits >> bits_remaining == 0;
-
-                    break :blk .{ 0, fits };
-                },
-                .signed => blk: {
-                    const bits: i7 = @bitCast(byte.bits);
-
-                    // Move the sign bit into the MSB
-                    const shifted_bits: i7 = bits << bits_overflowed;
-
-                    const value_sign: i7 = shifted_bits >> 6; // sign extends
-                    const bits_sign: i7 = bits >> bits_remaining; // sign extends
-
-                    const fits = bits_remaining == 0 or bits_sign == value_sign;
-
-                    if (uint_bits != info.bits and value_sign != 0) {
-                        const sign_extend_mask = @as(UInt, std.math.maxInt(UInt)) << info.bits;
-                        val |= sign_extend_mask;
-                    }
-
-                    break :blk .{ @bitCast(value_sign), fits };
-                },
-            };
-
-            switch (info.signedness) {
-                .signed => assert(allowed_bits == 0 or allowed_bits == 0x7F),
-                .unsigned => comptime assert(allowed_bits == 0),
-            }
-
-            while (byte.more) {
-                byte = @bitCast(try r.takeByte());
-                if (byte.bits != allowed_bits) fits = false;
-            }
-
-            return if (fits) blk: {
-                @branchHint(.likely);
-                break :blk std.math.cast(T, @as(Int, @bitCast(val))) orelse error.Overflow;
-            } else error.Overflow;
-        }
-
-        comptime assert(bits_written < info.bits);
-        if (!byte.more) {
-            if (info.signedness == .signed and // can be negative
-                byte.bits & 0x40 != 0) // is negative
-            {
-                const sign_extend_mask = @as(UInt, std.math.maxInt(UInt)) << bits_written;
-                val |= sign_extend_mask;
-            }
-            return std.math.cast(T, @as(Int, @bitCast(val))) orelse error.Overflow;
-        }
+        if (!byte.more) return @bitCast(result);
     }
+
+    return error.Overflow;
 }
 
 /// Ensures `capacity` data can be buffered without rebasing.
