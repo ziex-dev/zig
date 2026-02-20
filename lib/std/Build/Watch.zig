@@ -23,7 +23,7 @@ pub const have_impl = Os != void;
 /// interested in noticing changes to.
 ///
 /// Value is generation.
-const DirTable = std.ArrayHashMapUnmanaged(Cache.Path, void, Cache.Path.TableAdapter, false);
+const DirTable = std.ArrayHashMap(Cache.Path, void, Cache.Path.TableAdapter, false);
 
 /// Special key of "." means any changes in this directory trigger the steps.
 const ReactionSet = std.StringArrayHashMapUnmanaged(StepSet);
@@ -45,7 +45,7 @@ const Os = switch (builtin.os.tag) {
         poll_fds: std.AutoArrayHashMapUnmanaged(MountId, posix.pollfd),
 
         const MountId = i32;
-        const HandleTable = std.ArrayHashMapUnmanaged(FileHandle, struct { mount_id: MountId, reaction_set: ReactionSet }, FileHandle.Adapter, false);
+        const HandleTable = std.ArrayHashMap(FileHandle, struct { mount_id: MountId, reaction_set: ReactionSet }, FileHandle.Adapter, false);
 
         const fan_mask: std.os.linux.fanotify.MarkMask = .{
             .CLOSE_WRITE = true,
@@ -307,7 +307,7 @@ const Os = switch (builtin.os.tag) {
         const windows = std.os.windows;
 
         /// Keyed differently but indexes correspond 1:1 with `dir_table`.
-        handle_table: std.ArrayHashMapUnmanaged(*Directory, void, Directory.TableAdapter, false),
+        handle_table: std.ArrayHashMap(*Directory, void, Directory.TableAdapter, false),
         ready_dirs: std.DoublyLinkedList,
 
         const FileId = struct {

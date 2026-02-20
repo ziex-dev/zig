@@ -218,7 +218,7 @@ pub fn serveSourcesTar(fuzz: *Fuzz, req: *std.http.Server.Request) !void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const DedupTable = std.ArrayHashMapUnmanaged(Build.Cache.Path, void, Build.Cache.Path.TableAdapter, false);
+    const DedupTable = std.ArrayHashMap(Build.Cache.Path, void, Build.Cache.Path.TableAdapter, false);
     var dedup_table: DedupTable = .empty;
     defer dedup_table.deinit(fuzz.gpa);
 

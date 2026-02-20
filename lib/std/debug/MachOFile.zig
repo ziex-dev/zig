@@ -283,7 +283,7 @@ const OFile = struct {
     symtab_raw: []align(1) const macho.nlist_64,
     /// All named symbols in `symtab_raw`. Stored `u32` key is the index into `symtab_raw`. Accessed
     /// through `SymbolAdapter`, so that the symbol name is used as the logical key.
-    symbols_by_name: std.ArrayHashMapUnmanaged(u32, void, void, true),
+    symbols_by_name: std.ArrayHashMap(u32, void, void, true),
 
     const SymbolAdapter = struct {
         strtab: []const u8,

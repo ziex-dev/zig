@@ -208,7 +208,7 @@ pub const Inputs = struct {
         .table = .{},
     };
 
-    pub const Table = std.ArrayHashMapUnmanaged(Build.Cache.Path, Files, Build.Cache.Path.TableAdapter, false);
+    pub const Table = std.ArrayHashMap(Build.Cache.Path, Files, Build.Cache.Path.TableAdapter, false);
     /// The special file name "." means any changes inside the directory.
     pub const Files = ArrayList([]const u8);
 
