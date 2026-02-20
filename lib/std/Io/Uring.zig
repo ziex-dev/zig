@@ -39,6 +39,7 @@ const recoverableOsBugDetected = Io.Threaded.recoverableOsBugDetected;
 const setTimestampToPosix = Io.Threaded.setTimestampToPosix;
 const splat_buffer_size = Io.Threaded.splat_buffer_size;
 const statFromLinux = Io.Threaded.statFromLinux;
+const statxKind = Io.Threaded.statxKind;
 const std = @import("../std.zig");
 const timestampFromPosix = Io.Threaded.timestampFromPosix;
 const unexpectedErrno = std.posix.unexpectedErrno;
@@ -52,6 +53,14 @@ const tracy = if (@hasDecl(@import("root"), "tracy")) @import("root").tracy else
     inline fn fiberLeave() void {}
 };
 
+/// Empirically saw >128KB being used by the self-hosted backend to panic.
+/// Empirically saw glibc complain about 256KB.
+const idle_stack_size = 512 * 1024;
+
+const max_idle_search = 1;
+const max_steal_ready_search = 2;
+const max_steal_free_search = 4;
+
 backing_allocator_needs_mutex: bool,
 backing_allocator_mutex: Io.Mutex,
 /// Does not need to be thread-safe if not used elsewhere.
@@ -63,6 +72,7 @@ log2_ring_entries: u4,
 threads: Thread.List,
 sync_limit: ?Io.Semaphore,
 
+stderr_writer_initialized: bool = false,
 stderr_mutex: Io.Mutex,
 stderr_writer: File.Writer = .{
     .io = undefined,
@@ -71,9 +81,9 @@ stderr_writer: File.Writer = .{
     .mode = .streaming,
 },
 stderr_mode: Io.Terminal.Mode = .no_color,
-stderr_writer_initialized: bool = false,
 
 environ_mutex: Io.Mutex,
+environ_initialized: bool,
 environ: Environ,
 
 null_fd: CachedFd,
@@ -82,19 +92,11 @@ random_fd: CachedFd,
 csprng_mutex: Io.Mutex,
 csprng: Csprng,
 
-/// Empirically saw >128KB being used by the self-hosted backend to panic.
-/// Empirically saw glibc complain about 256KB.
-const idle_stack_size = 512 * 1024;
-
-const max_idle_search = 1;
-const max_steal_ready_search = 2;
-const max_steal_free_search = 4;
-
 const Thread = struct {
     required_align: void align(4),
     thread: std.Thread,
-    idle_context: Context,
-    current_context: *Context,
+    idle_context: Io.fiber.Context,
+    current_context: *Io.fiber.Context,
     ready_queue: ?*Fiber,
     free_queue: ?*Fiber,
     io_uring: IoUring,
@@ -147,8 +149,7 @@ const Thread = struct {
 
 const Fiber = struct {
     required_align: void align(4),
-    context: Context,
-    await_count: i32,
+    context: Io.fiber.Context,
     link: union {
         awaiter: ?*Fiber,
         group: struct { prev: ?*Fiber, next: ?*Fiber },
@@ -173,7 +174,6 @@ const Fiber = struct {
         const Awaiting = enum(u31) {
             nothing = std.math.maxInt(u31),
             group = std.math.maxInt(u31) - 1,
-            select = std.math.maxInt(u31) - 2,
             /// An io_uring fd.
             _,
 
@@ -184,7 +184,7 @@ const Fiber = struct {
             fn fromIoUringFd(fd: fd_t) Awaiting {
                 const awaiting: Awaiting = @enumFromInt(fd);
                 switch (awaiting) {
-                    .nothing, .group, .select => unreachable,
+                    .nothing, .group => unreachable,
                     _ => return awaiting,
                 }
             }
@@ -361,7 +361,7 @@ const Fiber = struct {
             &fiber.cancel_status,
             .Or,
             .{ .requested = true, .awaiting = @enumFromInt(0) },
-            .acq_rel,
+            .acquire,
         );
         assert(!cancel_status.requested);
         switch (cancel_status.awaiting) {
@@ -374,12 +374,10 @@ const Fiber = struct {
                     _ = ev.schedule(.current(), .{ .head = fiber, .tail = fiber });
                 }
             },
-            .select => if (@atomicRmw(i32, &fiber.await_count, .Add, 1, .monotonic) == -1) {
-                _ = ev.schedule(.current(), .{ .head = fiber, .tail = fiber });
-            },
-            _ => |cancel_io_uring_fd| {
+            _ => |awaiting| {
+                const awaiting_io_uring_fd = awaiting.toIoUringFd();
                 const thread: *Thread = .current();
-                thread.enqueue().* = if (thread.io_uring.fd == @intFromEnum(cancel_io_uring_fd)) .{
+                thread.enqueue().* = if (thread.io_uring.fd == awaiting_io_uring_fd) .{
                     .opcode = .ASYNC_CANCEL,
                     .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
                     .ioprio = 0,
@@ -388,7 +386,7 @@ const Fiber = struct {
                     .addr = @intFromPtr(fiber),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.UserData.wakeup),
+                    .user_data = @intFromEnum(Completion.Userdata.wakeup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -398,12 +396,12 @@ const Fiber = struct {
                     .opcode = .MSG_RING,
                     .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
                     .ioprio = 0,
-                    .fd = @intFromEnum(cancel_io_uring_fd),
+                    .fd = awaiting_io_uring_fd,
                     .off = @intFromPtr(fiber) | 0b01,
                     .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.UserData.cleanup),
+                    .user_data = @intFromEnum(Completion.Userdata.cleanup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -435,19 +433,26 @@ const CancelRegion = struct {
         };
     }
     fn deinit(cancel_region: *CancelRegion) void {
-        if (cancel_region.status.requested) _ = cancel_region.fiber.cancel_status.changeAwaiting(
-            cancel_region.status.awaiting,
-            .nothing,
-        );
+        if (cancel_region.status.requested) {
+            @branchHint(.likely);
+            _ = cancel_region.fiber.cancel_status.changeAwaiting(
+                cancel_region.status.awaiting,
+                .nothing,
+            );
+        }
         cancel_region.* = undefined;
     }
     fn await(cancel_region: *CancelRegion, awaiting: Fiber.CancelStatus.Awaiting) Io.Cancelable!void {
-        if (!cancel_region.status.requested) return;
+        if (!cancel_region.status.requested) {
+            @branchHint(.unlikely);
+            return;
+        }
         const status: Fiber.CancelStatus = .{ .requested = true, .awaiting = awaiting };
         if (cancel_region.fiber.cancel_status.changeAwaiting(
             cancel_region.status.awaiting,
             status.awaiting,
         )) {
+            @branchHint(.unlikely);
             cancel_region.fiber.cancel_protection.acknowledge();
             cancel_region.status = .unrequested;
             return error.Canceled;
@@ -549,7 +554,7 @@ const CachedFd = struct {
             .initializing => unreachable,
             _ => |fd| {
                 assert(@intFromEnum(fd) >= 0);
-                _ = std.os.linux.close(@intFromEnum(fd));
+                _ = linux.close(@intFromEnum(fd));
                 cached_fd.* = .init;
             },
         }
@@ -658,6 +663,8 @@ pub fn io(ev: *Evented) Io {
     return .{
         .userdata = ev,
         .vtable = &.{
+            .crashHandler = crashHandler,
+
             .async = async,
             .concurrent = concurrent,
             .await = await,
@@ -671,8 +678,6 @@ pub fn io(ev: *Evented) Io {
             .recancel = recancel,
             .swapCancelProtection = swapCancelProtection,
             .checkCancel = checkCancel,
-
-            .select = select,
 
             .futexWait = futexWait,
             .futexWaitUncancelable = futexWaitUncancelable,
@@ -784,54 +789,6 @@ pub fn io(ev: *Evented) Io {
     };
 }
 
-fn fileMemoryMapSetLength(
-    userdata: ?*anyopaque,
-    mm: *File.MemoryMap,
-    new_len: usize,
-) File.MemoryMap.SetLengthError!void {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-
-    const page_size = std.heap.pageSize();
-    const alignment: Alignment = .fromByteUnits(page_size);
-    const page_align = std.heap.page_size_min;
-    const old_memory = mm.memory;
-
-    if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
-        mm.memory.len = new_len;
-        return;
-    }
-    const flags: linux.MREMAP = .{ .MAYMOVE = true };
-    const addr_hint: ?[*]const u8 = null;
-    var sync: CancelRegion.Sync = try .init(ev);
-    defer sync.deinit(ev);
-    const new_memory = while (true) {
-        try sync.cancel_region.await(.nothing);
-        const rc = linux.mremap(old_memory.ptr, old_memory.len, new_len, flags, addr_hint);
-        switch (linux.errno(rc)) {
-            .SUCCESS => break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..new_len],
-            .INTR => continue,
-            .AGAIN => return error.LockedMemoryLimitExceeded,
-            .NOMEM => return error.OutOfMemory,
-            .INVAL => |err| return errnoBug(err),
-            .FAULT => |err| return errnoBug(err),
-            else => |err| return unexpectedErrno(err),
-        }
-    };
-    mm.memory = new_memory;
-}
-
-fn fileMemoryMapRead(userdata: ?*anyopaque, mm: *File.MemoryMap) File.ReadPositionalError!void {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = mm;
-}
-
-fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePositionalError!void {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = mm;
-}
-
 pub const InitOptions = struct {
     backing_allocator_needs_mutex: bool = true,
 
@@ -858,7 +815,7 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
     else
         @max(std.Thread.getCpuCount() catch 1, 1);
     const idle_stack_end_offset =
-        std.mem.alignForward(usize, threads_size + idle_stack_size, std.heap.page_size_max);
+        std.mem.alignForward(usize, threads_size + idle_stack_size, std.heap.pageSize());
     const allocated_slice = try backing_allocator.alignedAlloc(u8, .of(Thread), idle_stack_end_offset);
     errdefer backing_allocator.free(allocated_slice);
     ev.* = .{
@@ -874,6 +831,7 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
         },
         .sync_limit = if (options.sync_limit.toInt()) |sync_limit| .{ .permits = sync_limit } else null,
 
+        .stderr_writer_initialized = false,
         .stderr_mutex = .init,
         .stderr_writer = .{
             .io = ev.io(),
@@ -882,9 +840,9 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
             .mode = .streaming,
         },
         .stderr_mode = .no_color,
-        .stderr_writer_initialized = false,
 
         .environ_mutex = .init,
+        .environ_initialized = options.environ.block.isEmpty(),
         .environ = .{ .process_environ = options.environ },
 
         .null_fd = .init,
@@ -897,7 +855,6 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
     main_fiber.* = .{
         .required_align = {},
         .context = undefined,
-        .await_count = 0,
         .link = .{ .awaiter = null },
         .status = .{ .queue_next = null },
         .cancel_status = .unrequested,
@@ -906,21 +863,23 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
     };
     const main_thread = &ev.threads.allocated[0];
     Thread.self = main_thread;
-    const idle_stack_end: [*]align(16) usize =
-        @ptrCast(@alignCast(allocated_slice[idle_stack_end_offset..].ptr));
-    (idle_stack_end - 1)[0..1].* = .{@intFromPtr(ev)};
     main_thread.* = .{
         .required_align = {},
         .thread = undefined,
         .idle_context = switch (builtin.cpu.arch) {
             .aarch64 => .{
-                .sp = @intFromPtr(idle_stack_end),
-                .fp = 0,
+                .sp = @intFromPtr(allocated_slice[idle_stack_end_offset..].ptr),
+                .fp = @intFromPtr(ev),
+                .pc = @intFromPtr(&mainIdleEntry),
+            },
+            .riscv64 => .{
+                .sp = @intFromPtr(allocated_slice[idle_stack_end_offset..].ptr),
+                .fp = @intFromPtr(ev),
                 .pc = @intFromPtr(&mainIdleEntry),
             },
             .x86_64 => .{
-                .rsp = @intFromPtr(idle_stack_end - 1),
-                .rbp = 0,
+                .rsp = @intFromPtr(allocated_slice[idle_stack_end_offset..].ptr),
+                .rbp = @intFromPtr(ev),
                 .rip = @intFromPtr(&mainIdleEntry),
             },
             else => @compileError("unimplemented architecture"),
@@ -943,13 +902,14 @@ pub fn init(ev: *Evented, backing_allocator: Allocator, options: InitOptions) !v
 }
 
 pub fn deinit(ev: *Evented) void {
+    const main_fiber: *Fiber = @ptrCast(&ev.main_fiber_buffer);
+    assert(Thread.current().currentFiber() == main_fiber);
     const active_threads = @atomicLoad(u32, &ev.threads.active, .acquire);
     for (ev.threads.allocated[0..active_threads]) |*thread| {
         const ready_fiber = @atomicLoad(?*Fiber, &thread.ready_queue, .monotonic);
         assert(ready_fiber == null or ready_fiber == Fiber.finished); // pending async
     }
     ev.yield(null, .exit);
-    ev.threads.allocated[0].deinit(ev.allocator());
     ev.null_fd.close();
     ev.random_fd.close();
     const allocated_ptr: [*]align(@alignOf(Thread)) u8 = @ptrCast(@alignCast(ev.threads.allocated.ptr));
@@ -959,6 +919,7 @@ pub fn deinit(ev: *Evented) void {
         std.heap.page_size_max,
     );
     for (ev.threads.allocated[1..active_threads]) |*thread| thread.thread.join();
+    for (ev.threads.allocated[0..active_threads]) |*thread| thread.deinit(ev.backing_allocator);
     assert(active_threads == ev.threads.active); // spawned threads while there was no pending async?
     ev.backing_allocator.free(allocated_ptr[0..idle_stack_end_offset]);
     ev.* = undefined;
@@ -1006,8 +967,8 @@ fn yield(ev: *Evented, maybe_ready_fiber: ?*Fiber, pending_task: SwitchMessage.P
         &thread.idle_context;
     const message: SwitchMessage = .{
         .contexts = .{
-            .prev = thread.current_context,
-            .ready = ready_context,
+            .old = thread.current_context,
+            .new = ready_context,
         },
         .pending_task = pending_task,
     };
@@ -1035,11 +996,11 @@ fn schedule(ev: *Evented, thread: *Thread, ready_queue: Fiber.Queue) bool {
             .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
             .ioprio = 0,
             .fd = idle_search_thread.io_uring.fd,
-            .off = @intFromEnum(Completion.UserData.wakeup),
+            .off = @intFromEnum(Completion.Userdata.wakeup),
             .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
             .len = 0,
             .rw_flags = 0,
-            .user_data = @intFromEnum(Completion.UserData.wakeup),
+            .user_data = @intFromEnum(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -1114,20 +1075,9 @@ fn schedule(ev: *Evented, thread: *Thread, ready_queue: Fiber.Queue) bool {
     return false;
 }
 
-fn mainIdle(
-    ev: *Evented,
-    message: *const SwitchMessage,
-) callconv(.withStackAlign(.c, @max(@alignOf(Thread), @alignOf(Context)))) noreturn {
-    message.handle(ev);
-    ev.idle(&ev.threads.allocated[0]);
-    ev.yield(@ptrCast(&ev.main_fiber_buffer), .nothing);
-    unreachable; // switched to dead fiber
-}
-
 fn threadEntry(ev: *Evented, index: u32) void {
     const thread: *Thread = &ev.threads.allocated[index];
     Thread.self = thread;
-    defer thread.deinit(ev.allocator());
     switch (linux.errno(linux.io_uring_register(thread.io_uring.fd, .REGISTER_ENABLE_RINGS, null, 0))) {
         .SUCCESS => ev.idle(thread),
         else => |err| @panic(@tagName(err)),
@@ -1138,10 +1088,11 @@ const Completion = struct {
     result: i32,
     flags: u32,
 
-    const UserData = enum(usize) {
+    const Userdata = enum(usize) {
         unused,
         wakeup,
         futex_wake,
+        close,
         cleanup,
         exit,
         /// If bit 0 is 1, a pointer to the `context` field of `Io.Batch.Storage.Pending`.
@@ -1153,6 +1104,43 @@ const Completion = struct {
         return linux.errno(@bitCast(@as(isize, completion.result)));
     }
 };
+
+fn mainIdleEntry() callconv(.naked) void {
+    switch (builtin.cpu.arch) {
+        .aarch64 => asm volatile (
+            \\ mov x0, fp
+            \\ mov fp, #0
+            \\ b %[mainIdle]
+            :
+            : [mainIdle] "X" (&mainIdle),
+        ),
+        .riscv64 => asm volatile (
+            \\ mv a0, fp
+            \\ mv fp, zero
+            \\ tail %[mainIdle]@plt
+            :
+            : [mainIdle] "X" (&mainIdle),
+        ),
+        .x86_64 => asm volatile (
+            \\ movq %%rbp, %%rdi
+            \\ xor %%ebp, %%ebp
+            \\ jmp %[mainIdle:P]
+            :
+            : [mainIdle] "X" (&mainIdle),
+        ),
+        else => |arch| @compileError("unimplemented architecture: " ++ @tagName(arch)),
+    }
+}
+
+fn mainIdle(
+    ev: *Evented,
+    message: *const SwitchMessage,
+) callconv(.withStackAlign(.c, @max(@alignOf(Thread), @alignOf(Io.fiber.Context)))) noreturn {
+    message.handle(ev);
+    ev.idle(&ev.threads.allocated[0]);
+    ev.yield(@ptrCast(&ev.main_fiber_buffer), .nothing);
+    unreachable; // switched to dead fiber
+}
 
 fn idle(ev: *Evented, thread: *Thread) void {
     var maybe_ready_fiber: ?*Fiber = null;
@@ -1174,7 +1162,7 @@ fn idle(ev: *Evented, thread: *Thread) void {
             }];
             if (cqes.len == 0) break;
             for (cqes) |cqe| if (cqe.flags & linux.IORING_CQE_F_SKIP == 0) switch (@as(
-                Completion.UserData,
+                Completion.Userdata,
                 @enumFromInt(cqe.user_data),
             )) {
                 .unused => unreachable, // bad submission queued?
@@ -1182,9 +1170,14 @@ fn idle(ev: *Evented, thread: *Thread) void {
                 .futex_wake => switch (Completion.errno(.{ .result = cqe.res, .flags = cqe.flags })) {
                     .SUCCESS => recoverableOsBugDetected(), // success is skipped
                     .INVAL => {}, // invalid futex_wait() on ptr done elsewhere
-                    .INTR, .CANCELED => recoverableOsBugDetected(), // `Completion.UserData.futex_wake` is not cancelable
+                    .INTR, .CANCELED => recoverableOsBugDetected(), // `Completion.Userdata.futex_wake` is not cancelable
                     .FAULT => {}, // pointer became invalid while doing the wake
                     else => recoverableOsBugDetected(), // deadlock due to operating system bug
+                },
+                .close => switch (Completion.errno(.{ .result = cqe.res, .flags = cqe.flags })) {
+                    .BADF => recoverableOsBugDetected(), // Always a race condition.
+                    .INTR => {}, // This is still a success. See https://github.com/ziglang/zig/issues/2425
+                    else => {},
                 },
                 .cleanup => @panic("failed to notify other threads that we are exiting"),
                 .exit => {
@@ -1210,7 +1203,7 @@ fn idle(ev: *Evented, thread: *Thread) void {
                             .addr = cqe.user_data & ~@as(usize, 0b11),
                             .len = 0,
                             .rw_flags = 0,
-                            .user_data = @intFromEnum(Completion.UserData.wakeup),
+                            .user_data = @intFromEnum(Completion.Userdata.wakeup),
                             .buf_index = 0,
                             .personality = 0,
                             .splice_fd_in = 0,
@@ -1220,21 +1213,21 @@ fn idle(ev: *Evented, thread: *Thread) void {
                         break :ready_fiber null;
                     },
                     0b10 => {
-                        const context: *Io.Operation.Storage.Pending.Context =
+                        const batch_userdata: *Io.Operation.Storage.Pending.Userdata =
                             @ptrFromInt(cqe.user_data & ~@as(usize, 0b11));
-                        const batch: *Io.Batch = @ptrFromInt(context[0]);
+                        const batch: *Io.Batch = @ptrFromInt(batch_userdata[0]);
                         var next: usize = 0b00;
-                        context[0..3].* = .{ next, @as(u32, @bitCast(cqe.res)), cqe.flags };
+                        batch_userdata[0..3].* = .{ next, @as(u32, @bitCast(cqe.res)), cqe.flags };
                         while (true) {
                             next = @cmpxchgWeak(
                                 usize,
-                                @as(*usize, @ptrCast(&batch.context)),
+                                @as(*usize, @ptrCast(&batch.userdata)),
                                 next,
                                 cqe.user_data,
                                 .release,
                                 .acquire,
                             ) orelse break;
-                            context[0] = next;
+                            batch_userdata[0] = next;
                         }
                         break :ready_fiber switch (@as(u2, @truncate(next))) {
                             0b00, 0b01 => @ptrFromInt(next & ~@as(usize, 0b11)),
@@ -1271,16 +1264,13 @@ fn idle(ev: *Evented, thread: *Thread) void {
 }
 
 const SwitchMessage = struct {
-    contexts: extern struct {
-        prev: *Context,
-        ready: *Context,
-    },
+    contexts: Io.fiber.Switch,
     pending_task: PendingTask,
 
     const PendingTask = union(enum) {
         nothing,
         reschedule,
-        await: u31,
+        await: *Fiber,
         group_await: Group,
         group_cancel: Group,
         batch_await: *Io.Batch,
@@ -1290,40 +1280,41 @@ const SwitchMessage = struct {
 
     fn handle(message: *const SwitchMessage, ev: *Evented) void {
         const thread: *Thread = .current();
-        thread.current_context = message.contexts.ready;
+        thread.current_context = message.contexts.new;
         if (tracy.enable) {
-            if (message.contexts.ready != &thread.idle_context) {
-                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.ready));
+            if (message.contexts.new != &thread.idle_context) {
+                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.new));
                 tracy.fiberEnter(fiber.name);
             } else tracy.fiberLeave();
         }
         switch (message.pending_task) {
             .nothing => {},
-            .reschedule => if (message.contexts.prev != &thread.idle_context) {
-                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.prev));
+            .reschedule => if (message.contexts.old != &thread.idle_context) {
+                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.old));
                 assert(fiber.status.queue_next == null);
                 _ = ev.schedule(thread, .{ .head = fiber, .tail = fiber });
             },
-            .await => |count| {
-                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.prev));
-                if (@atomicRmw(i32, &fiber.await_count, .Sub, count, .monotonic) > 0)
-                    _ = ev.schedule(thread, .{ .head = fiber, .tail = fiber });
+            .await => |awaiting| {
+                const awaiter: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.old));
+                assert(awaiter.status.queue_next == null);
+                if (@atomicRmw(?*Fiber, &awaiting.link.awaiter, .Xchg, awaiter, .acq_rel) ==
+                    Fiber.finished) _ = ev.schedule(thread, .{ .head = awaiter, .tail = awaiter });
             },
             .group_await => |group| {
-                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.prev));
+                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.old));
                 if (group.await(ev, fiber))
                     _ = ev.schedule(thread, .{ .head = fiber, .tail = fiber });
             },
             .group_cancel => |group| {
-                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.prev));
+                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.old));
                 if (group.cancel(ev, fiber))
                     _ = ev.schedule(thread, .{ .head = fiber, .tail = fiber });
             },
             .batch_await => |batch| {
-                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.prev));
+                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.old));
                 if (@cmpxchgStrong(
                     ?*anyopaque,
-                    &batch.context,
+                    &batch.userdata,
                     null,
                     fiber,
                     .release,
@@ -1334,7 +1325,7 @@ const SwitchMessage = struct {
                 }
             },
             .destroy => {
-                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.prev));
+                const fiber: *Fiber = @alignCast(@fieldParentPtr("context", message.contexts.old));
                 fiber.destroy();
             },
             .exit => for (
@@ -1345,11 +1336,11 @@ const SwitchMessage = struct {
                     .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
                     .ioprio = 0,
                     .fd = each_thread.io_uring.fd,
-                    .off = @intFromEnum(Completion.UserData.exit),
+                    .off = @intFromEnum(Completion.Userdata.exit),
                     .addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA),
                     .len = 0,
                     .rw_flags = 0,
-                    .user_data = @intFromEnum(Completion.UserData.cleanup),
+                    .user_data = @intFromEnum(Completion.Userdata.cleanup),
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -1361,217 +1352,27 @@ const SwitchMessage = struct {
     }
 };
 
-const Context = switch (builtin.cpu.arch) {
-    .aarch64 => extern struct {
-        sp: u64,
-        fp: u64,
-        pc: u64,
-    },
-    .x86_64 => extern struct {
-        rsp: u64,
-        rbp: u64,
-        rip: u64,
-    },
-    else => |arch| @compileError("unimplemented architecture: " ++ @tagName(arch)),
-};
-
 inline fn contextSwitch(message: *const SwitchMessage) *const SwitchMessage {
-    return @fieldParentPtr("contexts", switch (builtin.cpu.arch) {
-        .aarch64 => asm volatile (
-            \\ ldp x0, x2, [x1]
-            \\ ldr x3, [x2, #16]
-            \\ mov x4, sp
-            \\ stp x4, fp, [x0]
-            \\ adr x5, 0f
-            \\ ldp x4, fp, [x2]
-            \\ str x5, [x0, #16]
-            \\ mov sp, x4
-            \\ br x3
-            \\0:
-            : [received_message] "={x1}" (-> *const @FieldType(SwitchMessage, "contexts")),
-            : [message_to_send] "{x1}" (&message.contexts),
-            : .{
-              .x0 = true,
-              .x1 = true,
-              .x2 = true,
-              .x3 = true,
-              .x4 = true,
-              .x5 = true,
-              .x6 = true,
-              .x7 = true,
-              .x8 = true,
-              .x9 = true,
-              .x10 = true,
-              .x11 = true,
-              .x12 = true,
-              .x13 = true,
-              .x14 = true,
-              .x15 = true,
-              .x16 = true,
-              .x17 = true,
-              .x19 = true,
-              .x20 = true,
-              .x21 = true,
-              .x22 = true,
-              .x23 = true,
-              .x24 = true,
-              .x25 = true,
-              .x26 = true,
-              .x27 = true,
-              .x28 = true,
-              .x30 = true,
-              .z0 = true,
-              .z1 = true,
-              .z2 = true,
-              .z3 = true,
-              .z4 = true,
-              .z5 = true,
-              .z6 = true,
-              .z7 = true,
-              .z8 = true,
-              .z9 = true,
-              .z10 = true,
-              .z11 = true,
-              .z12 = true,
-              .z13 = true,
-              .z14 = true,
-              .z15 = true,
-              .z16 = true,
-              .z17 = true,
-              .z18 = true,
-              .z19 = true,
-              .z20 = true,
-              .z21 = true,
-              .z22 = true,
-              .z23 = true,
-              .z24 = true,
-              .z25 = true,
-              .z26 = true,
-              .z27 = true,
-              .z28 = true,
-              .z29 = true,
-              .z30 = true,
-              .z31 = true,
-              .p0 = true,
-              .p1 = true,
-              .p2 = true,
-              .p3 = true,
-              .p4 = true,
-              .p5 = true,
-              .p6 = true,
-              .p7 = true,
-              .p8 = true,
-              .p9 = true,
-              .p10 = true,
-              .p11 = true,
-              .p12 = true,
-              .p13 = true,
-              .p14 = true,
-              .p15 = true,
-              .fpcr = true,
-              .fpsr = true,
-              .ffr = true,
-              .memory = true,
-            }),
-        .x86_64 => asm volatile (
-            \\ movq 0(%%rsi), %%rax
-            \\ movq 8(%%rsi), %%rcx
-            \\ leaq 0f(%%rip), %%rdx
-            \\ movq %%rsp, 0(%%rax)
-            \\ movq %%rbp, 8(%%rax)
-            \\ movq %%rdx, 16(%%rax)
-            \\ movq 0(%%rcx), %%rsp
-            \\ movq 8(%%rcx), %%rbp
-            \\ jmpq *16(%%rcx)
-            \\0:
-            : [received_message] "={rsi}" (-> *const @FieldType(SwitchMessage, "contexts")),
-            : [message_to_send] "{rsi}" (&message.contexts),
-            : .{
-              .rax = true,
-              .rcx = true,
-              .rdx = true,
-              .rbx = true,
-              .rsi = true,
-              .rdi = true,
-              .r8 = true,
-              .r9 = true,
-              .r10 = true,
-              .r11 = true,
-              .r12 = true,
-              .r13 = true,
-              .r14 = true,
-              .r15 = true,
-              .mm0 = true,
-              .mm1 = true,
-              .mm2 = true,
-              .mm3 = true,
-              .mm4 = true,
-              .mm5 = true,
-              .mm6 = true,
-              .mm7 = true,
-              .zmm0 = true,
-              .zmm1 = true,
-              .zmm2 = true,
-              .zmm3 = true,
-              .zmm4 = true,
-              .zmm5 = true,
-              .zmm6 = true,
-              .zmm7 = true,
-              .zmm8 = true,
-              .zmm9 = true,
-              .zmm10 = true,
-              .zmm11 = true,
-              .zmm12 = true,
-              .zmm13 = true,
-              .zmm14 = true,
-              .zmm15 = true,
-              .zmm16 = true,
-              .zmm17 = true,
-              .zmm18 = true,
-              .zmm19 = true,
-              .zmm20 = true,
-              .zmm21 = true,
-              .zmm22 = true,
-              .zmm23 = true,
-              .zmm24 = true,
-              .zmm25 = true,
-              .zmm26 = true,
-              .zmm27 = true,
-              .zmm28 = true,
-              .zmm29 = true,
-              .zmm30 = true,
-              .zmm31 = true,
-              .fpsr = true,
-              .fpcr = true,
-              .mxcsr = true,
-              .rflags = true,
-              .dirflag = true,
-              .memory = true,
-            }),
-        else => |arch| @compileError("unimplemented architecture: " ++ @tagName(arch)),
-    });
+    return @fieldParentPtr("contexts", Io.fiber.contextSwitch(&message.contexts));
 }
 
-fn mainIdleEntry() callconv(.naked) void {
-    switch (builtin.cpu.arch) {
-        .aarch64 => asm volatile (
-            \\ ldr x0, [sp, #-8]
-            \\ b %[mainIdle]
-            :
-            : [mainIdle] "X" (&mainIdle),
-        ),
-        .x86_64 => asm volatile (
-            \\ movq (%%rsp), %%rdi
-            \\ jmp %[mainIdle:P]
-            :
-            : [mainIdle] "X" (&mainIdle),
-        ),
-        else => |arch| @compileError("unimplemented architecture: " ++ @tagName(arch)),
-    }
+fn crashHandler(userdata: ?*anyopaque) void {
+    const ev: *Evented = @ptrCast(@alignCast(userdata));
+    _ = ev;
+    const thread = Thread.self orelse std.process.abort();
+    if (thread.current_context == &thread.idle_context) std.process.abort();
+    const fiber = thread.currentFiber();
+    @atomicStore(
+        Fiber.CancelStatus,
+        &fiber.cancel_status,
+        .{ .requested = true, .awaiting = .nothing },
+        .monotonic,
+    );
+    fiber.cancel_protection = .{ .user = .blocked, .acknowledged = true };
 }
 
 const AsyncClosure = struct {
-    ev: *Evented,
+    evented: *Evented,
     fiber: *Fiber,
     start: *const fn (context: *const anyopaque, result: *anyopaque) void,
     result_align: Alignment,
@@ -1594,6 +1395,12 @@ const AsyncClosure = struct {
                 :
                 : [call] "X" (&call),
             ),
+            .riscv64 => asm volatile (
+                \\ mv a0, sp
+                \\ tail %[call]@plt
+                :
+                : [call] "X" (&call),
+            ),
             .x86_64 => asm volatile (
                 \\ leaq 8(%%rsp), %%rdi
                 \\ jmp %[call:P]
@@ -1608,16 +1415,11 @@ const AsyncClosure = struct {
         closure: *AsyncClosure,
         message: *const SwitchMessage,
     ) callconv(.withStackAlign(.c, @alignOf(AsyncClosure))) noreturn {
-        message.handle(closure.ev);
+        const ev = closure.evented;
         const fiber = closure.fiber;
+        message.handle(ev);
         closure.start(closure.contextPointer(), fiber.resultBytes(closure.result_align));
-        closure.ev.yield(
-            if (@atomicRmw(?*Fiber, &fiber.link.awaiter, .Xchg, Fiber.finished, .acq_rel)) |awaiter|
-                if (@atomicRmw(i32, &awaiter.await_count, .Add, 1, .monotonic) == -1) awaiter else null
-            else
-                null,
-            .nothing,
-        );
+        ev.yield(@atomicRmw(?*Fiber, &fiber.link.awaiter, .Xchg, Fiber.finished, .acq_rel), .nothing);
         unreachable; // switched to dead fiber
     }
 };
@@ -1664,14 +1466,18 @@ fn concurrent(
                 .fp = 0,
                 .pc = @intFromPtr(&AsyncClosure.entry),
             },
+            .riscv64 => .{
+                .sp = @intFromPtr(closure),
+                .fp = 0,
+                .pc = @intFromPtr(&AsyncClosure.entry),
+            },
             .x86_64 => .{
-                .rsp = @intFromPtr(closure) - @sizeOf(usize),
+                .rsp = @intFromPtr(closure) - 8,
                 .rbp = 0,
                 .rip = @intFromPtr(&AsyncClosure.entry),
             },
             else => |arch| @compileError("unimplemented architecture: " ++ @tagName(arch)),
         },
-        .await_count = 0,
         .link = .{ .awaiter = null },
         .status = .{ .queue_next = null },
         .cancel_status = .unrequested,
@@ -1689,7 +1495,7 @@ fn concurrent(
         },
     };
     closure.* = .{
-        .ev = ev,
+        .evented = ev,
         .fiber = fiber,
         .start = start,
         .result_align = result_alignment,
@@ -1708,18 +1514,11 @@ fn await(
     result_alignment: Alignment,
 ) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    const fiber = Thread.current().currentFiber();
-    const future_fiber: *Fiber = @ptrCast(@alignCast(future));
-    if (@atomicRmw(?*Fiber, &future_fiber.link.awaiter, .Xchg, fiber, .acq_rel)) |awaiter| {
-        assert(awaiter == Fiber.finished);
-    } else while (true) {
-        ev.yield(null, .{ .await = 1 });
-        const awaiter = @atomicLoad(?*Fiber, &future_fiber.link.awaiter, .acquire);
-        if (awaiter == Fiber.finished) break;
-        assert(awaiter == fiber); // spurious wakeup
-    }
-    @memcpy(result, future_fiber.resultBytes(result_alignment));
-    future_fiber.destroy();
+    const awaiting: *Fiber = @ptrCast(@alignCast(future));
+    if (@atomicLoad(?*Fiber, &awaiting.link.awaiter, .acquire) != Fiber.finished)
+        ev.yield(null, .{ .await = awaiting });
+    @memcpy(result, awaiting.resultBytes(result_alignment));
+    awaiting.destroy();
 }
 
 fn cancel(
@@ -1936,7 +1735,7 @@ const Group = struct {
     }
 
     const AsyncClosure = struct {
-        ev: *Evented,
+        evented: *Evented,
         group: Group,
         fiber: *Fiber,
         start: *const fn (context: *const anyopaque) Io.Cancelable!void,
@@ -1961,6 +1760,12 @@ const Group = struct {
                     :
                     : [call] "X" (&call),
                 ),
+                .riscv64 => asm volatile (
+                    \\ mv a0, sp
+                    \\ tail %[call]@plt
+                    :
+                    : [call] "X" (&call),
+                ),
                 .x86_64 => asm volatile (
                     \\ leaq 8(%%rsp), %%rdi
                     \\ jmp %[call:P]
@@ -1975,19 +1780,16 @@ const Group = struct {
             closure: *Group.AsyncClosure,
             message: *const SwitchMessage,
         ) callconv(.withStackAlign(.c, @alignOf(Group.AsyncClosure))) noreturn {
-            message.handle(closure.ev);
-            assert(closure.fiber.status.queue_next == null);
-            const result = closure.start(closure.contextPointer());
-            const ev = closure.ev;
-            const group = closure.group;
+            const ev = closure.evented;
             const fiber = closure.fiber;
-            const cancel_acknowledged = fiber.cancel_protection.acknowledged;
-            if (result) {
-                assert(!cancel_acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
+            message.handle(ev);
+            assert(fiber.status.queue_next == null);
+            if (closure.start(closure.contextPointer())) {
+                assert(!fiber.cancel_protection.acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
             } else |err| switch (err) {
-                error.Canceled => assert(cancel_acknowledged), // group task returned `error.Canceled` but was never canceled
+                error.Canceled => assert(fiber.cancel_protection.acknowledged), // group task returned `error.Canceled` but was never canceled
             }
-            ev.yield(group.removeFiber(ev, fiber), .destroy);
+            ev.yield(closure.group.removeFiber(ev, fiber), .destroy);
             unreachable; // switched to dead fiber
         }
     };
@@ -2017,7 +1819,7 @@ fn groupAsync(
             error.Canceled => {
                 assert(!pre_acknowledged); // group task called `recancel` but was not canceled
                 assert(post_acknowledged); // group task returned `error.Canceled` but was never canceled
-                recancel(userdata);
+                fiber.cancel_protection.recancel();
             },
         }
     };
@@ -2048,14 +1850,18 @@ fn groupConcurrent(
                 .fp = 0,
                 .pc = @intFromPtr(&Group.AsyncClosure.entry),
             },
+            .riscv64 => .{
+                .sp = @intFromPtr(closure),
+                .fp = 0,
+                .pc = @intFromPtr(&Group.AsyncClosure.entry),
+            },
             .x86_64 => .{
-                .rsp = @intFromPtr(closure) - @sizeOf(usize),
+                .rsp = @intFromPtr(closure) - 8,
                 .rbp = 0,
                 .rip = @intFromPtr(&Group.AsyncClosure.entry),
             },
             else => |arch| @compileError("unimplemented architecture: " ++ @tagName(arch)),
         },
-        .await_count = 0,
         .link = .{ .group = .{ .prev = null, .next = null } },
         .status = .{ .queue_next = null },
         .cancel_status = .unrequested,
@@ -2073,7 +1879,7 @@ fn groupConcurrent(
         },
     };
     closure.* = .{
-        .ev = ev,
+        .evented = ev,
         .group = group,
         .fiber = fiber,
         .start = start,
@@ -2103,9 +1909,7 @@ fn groupCancel(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *an
 fn recancel(userdata: ?*anyopaque) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     _ = ev;
-    const cancel_protection = &Thread.current().currentFiber().cancel_protection;
-    assert(cancel_protection.acknowledged);
-    cancel_protection.acknowledged = false;
+    Thread.current().currentFiber().cancel_protection.recancel();
 }
 
 fn swapCancelProtection(userdata: ?*anyopaque, new: Io.CancelProtection) Io.CancelProtection {
@@ -2121,63 +1925,17 @@ fn checkCancel(userdata: ?*anyopaque) Io.Cancelable!void {
     _ = ev;
     const fiber = Thread.current().currentFiber();
     switch (fiber.cancel_protection.check()) {
-        .blocked => {},
-        .unblocked => if (@atomicLoad(Fiber.CancelStatus, &fiber.cancel_status, .monotonic).requested) {
-            fiber.cancel_protection.acknowledge();
-            return error.Canceled;
+        .unblocked => {
+            const cancel_status = @atomicLoad(Fiber.CancelStatus, &fiber.cancel_status, .monotonic);
+            assert(cancel_status.awaiting == .nothing);
+            if (cancel_status.requested) {
+                @branchHint(.unlikely);
+                fiber.cancel_protection.acknowledge();
+                return error.Canceled;
+            }
         },
+        .blocked => {},
     }
-}
-
-fn select(userdata: ?*anyopaque, futures: []const *Io.AnyFuture) Io.Cancelable!usize {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    var cancel_region: CancelRegion = .init();
-    defer cancel_region.deinit();
-    var await_count: u31, var result = for (futures, 0..) |future, future_index| {
-        const future_fiber: *Fiber = @ptrCast(@alignCast(future));
-        if (@atomicRmw(
-            ?*Fiber,
-            &future_fiber.link.awaiter,
-            .Xchg,
-            cancel_region.fiber,
-            .acq_rel,
-        )) |awaiter| {
-            assert(awaiter == Fiber.finished);
-            break .{ @intCast(future_index), future_index };
-        }
-    } else result: {
-        const await_count: u31 = @intCast(futures.len);
-        cancel_region.await(.select) catch |err| switch (err) {
-            error.Canceled => |e| break :result .{ await_count + 1, e },
-        };
-        ev.yield(null, .{ .await = 1 });
-        cancel_region.await(.nothing) catch |err| switch (err) {
-            error.Canceled => |e| break :result .{ await_count, e },
-        };
-        break :result .{ await_count - 1, futures.len };
-    };
-    for (futures[0 .. result catch futures.len], 0..) |future, future_index| {
-        const future_fiber: *Fiber = @ptrCast(@alignCast(future));
-        const awaiter = @atomicRmw(?*Fiber, &future_fiber.link.awaiter, .Xchg, null, .monotonic);
-        if (awaiter == Fiber.finished) {
-            @atomicStore(?*Fiber, &future_fiber.link.awaiter, Fiber.finished, .monotonic);
-            result = if (result) |finished_index| @min(future_index, finished_index) else |e| e;
-        } else {
-            assert(awaiter == cancel_region.fiber);
-            await_count -= 1;
-        }
-    }
-    // Equivalent to `ev.yield(null, .{ .await = await_count });`,
-    // but avoiding a context switch in the common case.
-    switch (std.math.order(
-        @atomicRmw(i32, &cancel_region.fiber.await_count, .Sub, await_count, .monotonic),
-        await_count,
-    )) {
-        .lt => ev.yield(null, .{ .await = 0 }),
-        .eq => {},
-        .gt => unreachable,
-    }
-    return result;
 }
 
 fn futexWait(
@@ -2248,7 +2006,7 @@ fn futexWait(
             else => 0,
             .boot => linux.IORING_TIMEOUT_BOOTTIME,
         }),
-        .user_data = @intFromEnum(Completion.UserData.wakeup),
+        .user_data = @intFromEnum(Completion.Userdata.wakeup),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -2314,7 +2072,7 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
         .addr = @intFromPtr(ptr),
         .len = 0,
         .rw_flags = 0,
-        .user_data = @intFromEnum(Completion.UserData.futex_wake),
+        .user_data = @intFromEnum(Completion.Userdata.futex_wake),
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
@@ -2367,7 +2125,7 @@ fn fileReadStreaming(
     var i: usize = 0;
     for (data) |buf| {
         if (iovecs_buffer.len - i == 0) break;
-        if (buf.len != 0) {
+        if (buf.len > 0) {
             iovecs_buffer[i] = .{ .base = buf.ptr, .len = buf.len };
             i += 1;
         }
@@ -2392,13 +2150,13 @@ fn fileWriteStreaming(
     addBuf(&iovecs, &iovlen, header);
     for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
     const pattern = data[data.len - 1];
+    var backup_buffer: [splat_buffer_size]u8 = undefined;
     if (iovecs.len - iovlen != 0) switch (splat) {
         0 => {},
         1 => addBuf(&iovecs, &iovlen, pattern),
         else => switch (pattern.len) {
             0 => {},
             1 => {
-                var backup_buffer: [splat_buffer_size]u8 = undefined;
                 const splat_buffer = &backup_buffer;
                 const memset_len = @min(splat_buffer.len, splat);
                 const buf = splat_buffer[0..memset_len];
@@ -2431,7 +2189,7 @@ fn deviceIoControl(
         const rc = linux.ioctl(o.file.handle, @bitCast(o.code), @intFromPtr(o.arg));
         switch (linux.errno(rc)) {
             .SUCCESS => return @bitCast(@as(u32, @truncate(rc))),
-            .INTR => continue,
+            .INTR => {},
             else => |err| return -@as(i32, @intFromEnum(err)),
         }
     }
@@ -2443,14 +2201,14 @@ fn batchAwaitAsync(userdata: ?*anyopaque, batch: *Io.Batch) Io.Cancelable!void {
     defer maybe_sync.deinit(ev);
     ev.batchDrainSubmitted(&maybe_sync, batch, false) catch |err| switch (err) {
         error.ConcurrencyUnavailable => unreachable, // passed concurrency=false
-        else => |e| return e,
+        error.Canceled => |e| return e,
     };
     maybe_sync.leaveSync(ev);
     while (true) {
         batchDrainReady(batch) catch |err| switch (err) {
             error.Timeout => unreachable, // no timeout
         };
-        if (batch.completed.head != .none) return;
+        if (batch.completed.head != .none or batch.pending.head == .none) return;
         ev.yield(null, .{ .batch_await = batch });
     }
 }
@@ -2469,7 +2227,7 @@ fn batchAwaitConcurrent(
         batchDrainReady(batch) catch |err| switch (err) {
             error.Timeout => unreachable, // no timeout
         };
-        if (batch.completed.head != .none) return;
+        if (batch.completed.head != .none or batch.pending.head == .none) return;
         switch (timeout) {
             .none => ev.yield(null, .{ .batch_await = batch }),
             .duration => |duration| {
@@ -2511,7 +2269,7 @@ fn batchAwaitConcurrent(
                 else => 0,
                 .boot => linux.IORING_TIMEOUT_BOOTTIME,
             }),
-            .user_data = @intFromPtr(&batch.context) | 0b11,
+            .user_data = @intFromPtr(&batch.userdata) | 0b11,
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -2519,12 +2277,12 @@ fn batchAwaitConcurrent(
             .resv = 0,
         };
     }
-    while (batch.completed.head == .none) {
+    while (batch.completed.head == .none and batch.pending.head != .none) {
         ev.yield(null, .{ .batch_await = batch });
         batchDrainReady(batch) catch |err| switch (err) {
-            error.Timeout => |e| return if (batch.completed.head == .none) e,
+            error.Timeout => |e| return if (batch.completed.head == .none and
+                batch.pending.head != .none) e,
         };
-        if (batch.completed.head == .none) continue;
     }
     const thread = try maybe_sync.cancel_region.awaitIoUring();
     thread.enqueue().* = .{
@@ -2533,7 +2291,7 @@ fn batchAwaitConcurrent(
         .ioprio = 0,
         .fd = 0,
         .off = 0,
-        .addr = @intFromPtr(&batch.context) | 0b11,
+        .addr = @intFromPtr(&batch.userdata) | 0b11,
         .len = 0,
         .rw_flags = 0,
         .user_data = @intFromPtr(maybe_sync.cancel_region.fiber),
@@ -2566,21 +2324,21 @@ fn batchDrainSubmitted(
 ) (Io.ConcurrentError || Io.Cancelable)!void {
     var index = batch.submitted.head;
     if (index == .none) return;
-    errdefer batch.submitted.head = index;
     const thread = try maybe_sync.cancelRegion().awaitIoUring();
+    errdefer batch.submitted.head = index;
     while (index != .none) {
         const storage = &batch.storage[index.toIndex()];
         const next_index = storage.submission.node.next;
         if (@as(?Io.Operation.Result, result: switch (storage.submission.operation) {
             .file_read_streaming => |o| {
                 const buffer = for (o.data) |buffer| {
-                    if (buffer.len != 0) break buffer;
+                    if (buffer.len > 0) break buffer;
                 } else break :result .{ .file_read_streaming = 0 };
                 const fd = o.file.handle;
                 storage.* = .{ .pending = .{
                     .node = .{ .prev = batch.pending.tail, .next = .none },
                     .tag = .file_read_streaming,
-                    .context = undefined,
+                    .userdata = undefined,
                 } };
                 thread.enqueue().* = .{
                     .opcode = .READ,
@@ -2591,7 +2349,7 @@ fn batchDrainSubmitted(
                     .addr = @intFromPtr(buffer.ptr),
                     .len = @min(buffer.len, 0xfffff000),
                     .rw_flags = 0,
-                    .user_data = @intFromPtr(&storage.pending.context) | 0b10,
+                    .user_data = @intFromPtr(&storage.pending.userdata) | 0b10,
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -2604,7 +2362,7 @@ fn batchDrainSubmitted(
                 const buffer = buffer: {
                     if (o.header.len != 0) break :buffer o.header;
                     for (o.data[0 .. o.data.len - 1]) |buffer| {
-                        if (buffer.len != 0) break :buffer buffer;
+                        if (buffer.len > 0) break :buffer buffer;
                     }
                     if (o.splat > 0) break :buffer o.data[o.data.len - 1];
                     break :result .{ .file_write_streaming = 0 };
@@ -2613,7 +2371,7 @@ fn batchDrainSubmitted(
                 storage.* = .{ .pending = .{
                     .node = .{ .prev = batch.pending.tail, .next = .none },
                     .tag = .file_write_streaming,
-                    .context = undefined,
+                    .userdata = undefined,
                 } };
                 thread.enqueue().* = .{
                     .opcode = .WRITE,
@@ -2624,7 +2382,7 @@ fn batchDrainSubmitted(
                     .addr = @intFromPtr(buffer.ptr),
                     .len = @min(buffer.len, 0xfffff000),
                     .rw_flags = 0,
-                    .user_data = @intFromPtr(&storage.pending.context) | 0b10,
+                    .user_data = @intFromPtr(&storage.pending.userdata) | 0b10,
                     .buf_index = 0,
                     .personality = 0,
                     .splice_fd_in = 0,
@@ -2650,7 +2408,7 @@ fn batchDrainSubmitted(
                 else => |tail_index| batch.storage[tail_index.toIndex()].pending.node.next = index,
             }
             batch.pending.tail = index;
-            storage.pending.context[0] = @intFromPtr(batch);
+            storage.pending.userdata[0] = @intFromPtr(batch);
         }
         index = next_index;
     }
@@ -2658,7 +2416,7 @@ fn batchDrainSubmitted(
 }
 
 fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
-    while (@atomicRmw(?*anyopaque, &batch.context, .Xchg, null, .acquire)) |head| {
+    while (@atomicRmw(?*anyopaque, &batch.userdata, .Xchg, null, .acquire)) |head| {
         var next: usize = @intFromPtr(head);
         var timeout = false;
         while (cond: switch (@as(u2, @truncate(next))) {
@@ -2674,13 +2432,15 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                 break :cond true;
             },
         }) {
-            var context: *Io.Operation.Storage.Pending.Context = @ptrFromInt(next & ~@as(usize, 0b11));
-            next = context[0];
+            var operation_userdata: *Io.Operation.Storage.Pending.Userdata =
+                @ptrFromInt(next & ~@as(usize, 0b11));
+            next = operation_userdata[0];
             const completion: Completion = .{
-                .result = @bitCast(@as(u32, @intCast(context[1]))),
-                .flags = @intCast(context[2]),
+                .result = @bitCast(@as(u32, @intCast(operation_userdata[1]))),
+                .flags = @intCast(operation_userdata[2]),
             };
-            const pending: *Io.Operation.Storage.Pending = @fieldParentPtr("context", context);
+            const pending: *Io.Operation.Storage.Pending =
+                @fieldParentPtr("userdata", operation_userdata);
             const storage: *Io.Operation.Storage = @fieldParentPtr("pending", pending);
             const index: Io.Operation.OptionalIndex = .fromIndex(storage - batch.storage.ptr);
             assert(completion.flags & linux.IORING_CQE_F_SKIP == 0);
@@ -2776,10 +2536,10 @@ fn batchCancel(userdata: ?*anyopaque, batch: *Io.Batch) void {
             .ioprio = 0,
             .fd = 0,
             .off = 0,
-            .addr = @intFromPtr(&pending.context) | 0b10,
+            .addr = @intFromPtr(&pending.userdata) | 0b10,
             .len = 0,
             .rw_flags = 0,
-            .user_data = @intFromEnum(Completion.UserData.wakeup),
+            .user_data = @intFromEnum(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -2827,7 +2587,7 @@ fn dirCreateDir(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .ACCES => return error.AccessDenied,
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .PERM => return error.PermissionDenied,
@@ -2842,8 +2602,6 @@ fn dirCreateDir(
             .NOSPC => return error.NoSpaceLeft,
             .NOTDIR => return error.NotDir,
             .ROFS => return error.ReadOnlyFileSystem,
-            // dragonfly: when dir_fd is unlinked from filesystem
-            .NOTCONN => return error.FileNotFound,
             .ILSEQ => return error.BadPathName,
             else => |err| return unexpectedErrno(err),
         }
@@ -2869,8 +2627,8 @@ fn dirCreateDirPath(
                 // stat the file and return an error if it's not a directory
                 // this is important because otherwise a dangling symlink
                 // could cause an infinite loop
-                const fstat = try dirStatFile(ev, dir, component.path, .{});
-                if (fstat.kind != .directory) return error.NotDir;
+                const kind = try ev.filePathKind(dir, component.path);
+                if (kind != .directory) return error.NotDir;
             },
             error.FileNotFound => |e| {
                 component = it.previous() orelse return e;
@@ -2879,6 +2637,51 @@ fn dirCreateDirPath(
             else => |e| return e,
         }
         component = it.next() orelse return status;
+    }
+}
+
+fn filePathKind(ev: *Evented, dir: Dir, sub_path: []const u8) !File.Kind {
+    var path_buffer: [PATH_MAX]u8 = undefined;
+    const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
+    var cancel_region: CancelRegion = .init();
+    defer cancel_region.deinit();
+    while (true) {
+        var statx_buf = std.mem.zeroes(linux.Statx);
+        const thread = try cancel_region.awaitIoUring();
+        thread.enqueue().* = .{
+            .opcode = .STATX,
+            .flags = 0,
+            .ioprio = 0,
+            .fd = dir.handle,
+            .off = @intFromPtr(&statx_buf),
+            .addr = @intFromPtr(sub_path_posix.ptr),
+            .len = @bitCast(linux.STATX{ .TYPE = true }),
+            .rw_flags = linux.AT.NO_AUTOMOUNT | linux.AT.SYMLINK_NOFOLLOW,
+            .user_data = @intFromPtr(cancel_region.fiber),
+            .buf_index = 0,
+            .personality = 0,
+            .splice_fd_in = 0,
+            .addr3 = 0,
+            .resv = 0,
+        };
+        ev.yield(null, .nothing);
+        switch (cancel_region.errno()) {
+            .SUCCESS => {
+                if (!statx_buf.mask.TYPE) return error.Unexpected;
+                return statxKind(statx_buf.mode);
+            },
+            .INTR, .CANCELED => {},
+            .ACCES => |err| return errnoBug(err),
+            .BADF => |err| return errnoBug(err), // File descriptor used after closed.
+            .FAULT => |err| return errnoBug(err),
+            .INVAL => |err| return errnoBug(err),
+            .LOOP => |err| return errnoBug(err),
+            .NAMETOOLONG => |err| return errnoBug(err),
+            .NOENT => |err| return errnoBug(err),
+            .NOMEM => return error.SystemResources,
+            .NOTDIR => |err| return errnoBug(err),
+            else => |err| return unexpectedErrno(err),
+        }
     }
 }
 
@@ -2980,7 +2783,7 @@ fn dirAccess(
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.faccessat(dir.handle, sub_path_posix, mode, flags))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .ACCES => return error.AccessDenied,
             .PERM => return error.PermissionDenied,
             .ROFS => return error.ReadOnlyFileSystem,
@@ -3019,7 +2822,7 @@ fn dirCreateFile(
         .EXCL = flags.exclusive,
         .CLOEXEC = true,
     }, flags.permissions.toMode());
-    errdefer ev.close(maybe_sync.cancelRegion(), fd);
+    errdefer ev.closeAsync(fd);
 
     switch (flags.lock) {
         .none => {},
@@ -3207,7 +3010,7 @@ fn dirOpenFile(
         .CLOEXEC = true,
         .PATH = flags.path_only,
     }, 0);
-    errdefer ev.close(maybe_sync.cancelRegion(), fd);
+    errdefer ev.closeAsync(fd);
 
     if (!flags.allow_directory) {
         const is_dir = is_dir: {
@@ -3236,9 +3039,7 @@ fn dirOpenFile(
 
 fn dirClose(userdata: ?*anyopaque, dirs: []const Dir) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    var cancel_region: CancelRegion = .init();
-    defer cancel_region.deinit();
-    for (dirs) |dir| ev.close(&cancel_region, dir.handle);
+    for (dirs) |dir| ev.close(dir.handle);
 }
 
 fn dirRead(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Reader.Error!usize {
@@ -3263,7 +3064,7 @@ fn dirRead(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Read
                 const rc = linux.getdents64(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
                 switch (linux.errno(rc)) {
                     .SUCCESS => break rc,
-                    .INTR => continue,
+                    .INTR => {},
                     .BADF => |err| return errnoBug(err), // Dir is invalid or was opened without iteration ability.
                     .FAULT => |err| return errnoBug(err),
                     .NOTDIR => |err| return errnoBug(err),
@@ -3356,7 +3157,7 @@ fn dirRealPathFile(
         error.FileLocksUnsupported => return errnoBug(.OPNOTSUPP), // Not asking for locks.
         else => |e| return e,
     };
-    defer ev.close(maybe_sync.cancelRegion(), fd);
+    defer ev.closeAsync(fd);
     return ev.realPath(try maybe_sync.enterSync(ev), fd, out_buffer);
 }
 
@@ -3389,7 +3190,7 @@ fn dirDeleteFile(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.Dele
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .PERM => return error.PermissionDenied,
             .ACCES => return error.AccessDenied,
             .BUSY => return error.FileBusy,
@@ -3441,7 +3242,7 @@ fn dirDeleteDir(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.Delet
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .ACCES => return error.AccessDenied,
             .PERM => return error.PermissionDenied,
             .BUSY => return error.FileBusy,
@@ -3557,7 +3358,7 @@ fn dirSymLink(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .FAULT => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err),
             .ACCES => return error.AccessDenied,
@@ -3595,11 +3396,8 @@ fn dirReadLink(
         try sync.cancel_region.await(.nothing);
         const rc = linux.readlinkat(dir.handle, sub_path_posix, buffer.ptr, buffer.len);
         switch (linux.errno(rc)) {
-            .SUCCESS => {
-                const len: usize = @bitCast(rc);
-                return len;
-            },
-            .INTR => continue,
+            .SUCCESS => return @bitCast(rc),
+            .INTR => {},
             .ACCES => return error.AccessDenied,
             .FAULT => |err| return errnoBug(err),
             .INVAL => return error.NotLink,
@@ -3789,7 +3587,7 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
                 if (!statx_buf.mask.SIZE) return error.Unexpected;
                 return statx_buf.size;
             },
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .ACCES => |err| return errnoBug(err),
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .FAULT => |err| return errnoBug(err),
@@ -3808,7 +3606,7 @@ fn fileClose(userdata: ?*anyopaque, files: []const File) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     var cancel_region: CancelRegion = .init();
     defer cancel_region.deinit();
-    for (files) |file| ev.close(&cancel_region, file.handle);
+    for (files) |file| ev.close(file.handle);
 }
 
 fn fileWritePositional(
@@ -3826,13 +3624,13 @@ fn fileWritePositional(
     addBuf(&iovecs, &iovlen, header);
     for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &iovlen, bytes);
     const pattern = data[data.len - 1];
+    var backup_buffer: [splat_buffer_size]u8 = undefined;
     if (iovecs.len - iovlen != 0) switch (splat) {
         0 => {},
         1 => addBuf(&iovecs, &iovlen, pattern),
         else => switch (pattern.len) {
             0 => {},
             1 => {
-                var backup_buffer: [splat_buffer_size]u8 = undefined;
                 const splat_buffer = &backup_buffer;
                 const memset_len = @min(splat_buffer.len, splat);
                 const buf = splat_buffer[0..memset_len];
@@ -3915,7 +3713,7 @@ fn fileReadPositional(
     var i: usize = 0;
     for (data) |buf| {
         if (iovecs_buffer.len - i == 0) break;
-        if (buf.len != 0) {
+        if (buf.len > 0) {
             iovecs_buffer[i] = .{ .base = buf.ptr, .len = buf.len };
             i += 1;
         }
@@ -3927,9 +3725,9 @@ fn fileReadPositional(
     var cancel_region: CancelRegion = .init();
     defer cancel_region.deinit();
     return ev.preadv(&cancel_region, file.handle, dest, offset) catch |err| switch (err) {
-        error.SocketUnconnected => errnoBug(.NOTCONN), // not a socket
-        error.ConnectionResetByPeer => errnoBug(.CONNRESET), // not a socket
-        else => |e| e,
+        error.SocketUnconnected => return errnoBug(.NOTCONN), // not a socket
+        error.ConnectionResetByPeer => return errnoBug(.CONNRESET), // not a socket
+        else => |e| return e,
     };
 }
 
@@ -3972,7 +3770,7 @@ fn fileSync(userdata: ?*anyopaque, file: File) File.SyncError!void {
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .BADF => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err),
             .ROFS => |err| return errnoBug(err),
@@ -3994,7 +3792,7 @@ fn fileIsTty(userdata: ?*anyopaque, file: File) Io.Cancelable!bool {
         const rc = linux.ioctl(file.handle, linux.T.IOCGWINSZ, @intFromPtr(&wsz));
         switch (linux.errno(rc)) {
             .SUCCESS => return true,
-            .INTR => continue,
+            .INTR => {},
             else => return false,
         }
     }
@@ -4030,7 +3828,7 @@ fn fileSetLength(userdata: ?*anyopaque, file: File, length: u64) File.SetLengthE
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .FBIG => return error.FileTooBig,
             .IO => return error.InputOutput,
             .PERM => return error.PermissionDenied,
@@ -4212,7 +4010,7 @@ fn fileMemoryMapCreate(
         const rc = linux.mmap(null, options.len, prot, flags, file.handle, casted_offset);
         switch (linux.errno(rc)) {
             .SUCCESS => break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..options.len],
-            .INTR => continue,
+            .INTR => {},
             .ACCES => return error.AccessDenied,
             .AGAIN => return error.LockedMemoryLimitExceeded,
             .MFILE => return error.ProcessFdQuotaExceeded,
@@ -4245,6 +4043,54 @@ fn fileMemoryMapDestroy(userdata: ?*anyopaque, mm: *File.MemoryMap) void {
             std.log.err("failed to unmap {d} bytes at {*}: {t}", .{ memory.len, memory.ptr, err }),
     }
     mm.* = undefined;
+}
+
+fn fileMemoryMapSetLength(
+    userdata: ?*anyopaque,
+    mm: *File.MemoryMap,
+    new_len: usize,
+) File.MemoryMap.SetLengthError!void {
+    const ev: *Evented = @ptrCast(@alignCast(userdata));
+
+    const page_size = std.heap.pageSize();
+    const alignment: Alignment = .fromByteUnits(page_size);
+    const page_align = std.heap.page_size_min;
+    const old_memory = mm.memory;
+
+    if (alignment.forward(new_len) == alignment.forward(old_memory.len)) {
+        mm.memory.len = new_len;
+        return;
+    }
+    const flags: linux.MREMAP = .{ .MAYMOVE = true };
+    const addr_hint: ?[*]const u8 = null;
+    var sync: CancelRegion.Sync = try .init(ev);
+    defer sync.deinit(ev);
+    const new_memory = while (true) {
+        try sync.cancel_region.await(.nothing);
+        const rc = linux.mremap(old_memory.ptr, old_memory.len, new_len, flags, addr_hint);
+        switch (linux.errno(rc)) {
+            .SUCCESS => break @as([*]align(page_align) u8, @ptrFromInt(rc))[0..new_len],
+            .INTR => {},
+            .AGAIN => return error.LockedMemoryLimitExceeded,
+            .NOMEM => return error.OutOfMemory,
+            .INVAL => |err| return errnoBug(err),
+            .FAULT => |err| return errnoBug(err),
+            else => |err| return unexpectedErrno(err),
+        }
+    };
+    mm.memory = new_memory;
+}
+
+fn fileMemoryMapRead(userdata: ?*anyopaque, mm: *File.MemoryMap) File.ReadPositionalError!void {
+    const ev: *Evented = @ptrCast(@alignCast(userdata));
+    _ = ev;
+    _ = mm;
+}
+
+fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePositionalError!void {
+    const ev: *Evented = @ptrCast(@alignCast(userdata));
+    _ = ev;
+    _ = mm;
 }
 
 fn processExecutableOpen(
@@ -4287,11 +4133,21 @@ fn tryLockStderr(
 fn initLockedStderr(ev: *Evented, terminal_mode: ?Io.Terminal.Mode) Io.Cancelable!Io.LockedStderr {
     if (!ev.stderr_writer_initialized) {
         const ev_io = ev.io();
-        try ev.scanEnviron();
+        const cancel_protection = swapCancelProtection(ev, .blocked);
+        defer assert(swapCancelProtection(ev, cancel_protection) == .blocked);
+        ev.scanEnviron() catch |err| switch (err) {
+            error.Canceled => unreachable, // blocked
+        };
         const NO_COLOR = ev.environ.exist.NO_COLOR;
         const CLICOLOR_FORCE = ev.environ.exist.CLICOLOR_FORCE;
-        ev.stderr_mode = terminal_mode orelse
-            try .detect(ev_io, ev.stderr_writer.file, NO_COLOR, CLICOLOR_FORCE);
+        ev.stderr_mode = Io.Terminal.Mode.detect(
+            ev_io,
+            ev.stderr_writer.file,
+            NO_COLOR,
+            CLICOLOR_FORCE,
+        ) catch |err| switch (err) {
+            error.Canceled => unreachable, // blocked
+        };
         ev.stderr_writer_initialized = true;
     }
     return .{
@@ -4302,12 +4158,14 @@ fn initLockedStderr(ev: *Evented, terminal_mode: ?Io.Terminal.Mode) Io.Cancelabl
 
 fn unlockStderr(userdata: ?*anyopaque) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    ev.stderr_writer.interface.flush() catch |err| switch (err) {
-        error.WriteFailed => switch (ev.stderr_writer.err.?) {
-            error.Canceled => recancel(ev),
+    if (ev.stderr_writer.err == null) ev.stderr_writer.interface.flush() catch {};
+    if (ev.stderr_writer.err) |err| {
+        switch (err) {
+            error.Canceled => Thread.current().currentFiber().cancel_protection.recancel(),
             else => {},
-        },
-    };
+        }
+        ev.stderr_writer.err = null;
+    }
     ev.stderr_writer.interface.end = 0;
     ev.stderr_writer.interface.buffer = &.{};
     ev.stderr_mutex.unlock(ev.io());
@@ -4321,7 +4179,7 @@ fn processCurrentPath(userdata: ?*anyopaque, buffer: []u8) process.CurrentPathEr
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.getcwd(buffer.ptr, buffer.len))) {
             .SUCCESS => return std.mem.findScalar(u8, buffer, 0).?,
-            .INTR => continue,
+            .INTR => {},
             .NOENT => return error.CurrentDirUnlinked,
             .RANGE => return error.NameTooLong,
             .FAULT => |err| return errnoBug(err),
@@ -4336,7 +4194,7 @@ fn processSetCurrentDir(userdata: ?*anyopaque, dir: Dir) process.SetCurrentDirEr
     if (dir.handle == linux.AT.FDCWD) return;
     var sync: CancelRegion.Sync = try .init(ev);
     defer sync.deinit(ev);
-    return ev.fchdir(&sync, dir.handle);
+    return fchdir(&sync, dir.handle);
 }
 
 fn processSetCurrentPath(userdata: ?*anyopaque, dir_path: []const u8) ChdirError!void {
@@ -4373,7 +4231,7 @@ fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) proces
 
     var sync: CancelRegion.Sync = try .init(ev);
     defer sync.deinit(ev);
-    return ev.execv(&sync, options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, env_block, PATH);
+    return execv(&sync, options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, env_block, PATH);
 }
 
 fn processReplacePath(
@@ -4393,7 +4251,7 @@ fn processSpawn(userdata: ?*anyopaque, options: process.SpawnOptions) process.Sp
     const spawned = try ev.spawn(options);
     var cancel_region: CancelRegion = .initBlocked();
     defer cancel_region.deinit();
-    defer ev.close(&cancel_region, spawned.err_fd);
+    defer ev.closeAsync(spawned.err_fd);
 
     // Wait for the child to report any errors in or before `execvpe`.
     var child_err: ForkBailError = undefined;
@@ -4434,7 +4292,7 @@ fn processSpawnPath(
     @panic("TODO processSpawnPath");
 }
 
-const prog_fileno = 3;
+const prog_fileno = @max(linux.STDIN_FILENO, linux.STDOUT_FILENO, linux.STDERR_FILENO);
 
 const Spawned = struct {
     pid: pid_t,
@@ -4461,17 +4319,17 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
 
     const stdin_pipe = if (options.stdin == .pipe) try pipe2(pipe_flags) else undefined;
     errdefer if (options.stdin == .pipe) {
-        ev.destroyPipe(&cancel_region, stdin_pipe);
+        ev.destroyPipe(stdin_pipe);
     };
 
     const stdout_pipe = if (options.stdout == .pipe) try pipe2(pipe_flags) else undefined;
     errdefer if (options.stdout == .pipe) {
-        ev.destroyPipe(&cancel_region, stdout_pipe);
+        ev.destroyPipe(stdout_pipe);
     };
 
     const stderr_pipe = if (options.stderr == .pipe) try pipe2(pipe_flags) else undefined;
     errdefer if (options.stderr == .pipe) {
-        ev.destroyPipe(&cancel_region, stderr_pipe);
+        ev.destroyPipe(stderr_pipe);
     };
 
     const any_ignore =
@@ -4486,7 +4344,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
         _ = linux.fcntl(pipe[0], linux.F.SETPIPE_SZ, @as(u32, std.Progress.max_packet_len * 2));
         break :pipe pipe;
     } else .{ -1, -1 };
-    errdefer ev.destroyPipe(&cancel_region, prog_pipe);
+    errdefer ev.destroyPipe(prog_pipe);
 
     var arena_allocator = std.heap.ArenaAllocator.init(ev.allocator());
     defer arena_allocator.deinit();
@@ -4504,8 +4362,6 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
     for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
 
-    comptime assert(@max(linux.STDIN_FILENO, linux.STDOUT_FILENO, linux.STDERR_FILENO) + 1 == prog_fileno);
-
     const env_block = env_block: {
         const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
         if (options.environ_map) |environ_map| break :env_block try environ_map.createPosixBlock(arena, .{
@@ -4519,7 +4375,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     // This pipe communicates to the parent errors in the child between `fork` and `execvpe`.
     // It is closed by the child (via CLOEXEC) without writing if `execvpe` succeeds.
     const err_pipe: [2]fd_t = try pipe2(.{ .CLOEXEC = true });
-    errdefer ev.destroyPipe(&cancel_region, err_pipe);
+    errdefer ev.destroyPipe(err_pipe);
 
     try ev.scanEnviron(); // for PATH
     const PATH = ev.environ.string.PATH orelse default_PATH;
@@ -4537,8 +4393,9 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
 
     if (pid_result == 0) {
         defer comptime unreachable; // We are the child.
+        // Note that the parent uring is no longer accessible, so we must no longer reference `ev`.
         var sync: CancelRegion.Sync = .{ .cancel_region = .initBlocked() };
-        const err = ev.setUpChild(&sync, .{
+        const err = setUpChild(&sync, .{
             .stdin_pipe = stdin_pipe[0],
             .stdout_pipe = stdout_pipe[1],
             .stderr_pipe = stderr_pipe[1],
@@ -4549,7 +4406,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
             .PATH = PATH,
             .spawn = options,
         });
-        ev.writeAll(&sync.cancel_region, err_pipe[1], @ptrCast(&err)) catch {};
+        writeAllSync(&sync, err_pipe[1], @ptrCast(&err)) catch {};
         const exit = if (builtin.single_threaded) linux.exit else linux.exit_group;
         exit(1);
     }
@@ -4557,13 +4414,13 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     const pid: pid_t = @intCast(pid_result); // We are the parent.
     errdefer comptime unreachable; // The child is forked; we must not error from now on
 
-    ev.close(&cancel_region, err_pipe[1]); // make sure only the child holds the write end open
+    ev.closeAsync(err_pipe[1]); // make sure only the child holds the write end open
 
-    if (options.stdin == .pipe) ev.close(&cancel_region, stdin_pipe[0]);
-    if (options.stdout == .pipe) ev.close(&cancel_region, stdout_pipe[1]);
-    if (options.stderr == .pipe) ev.close(&cancel_region, stderr_pipe[1]);
+    if (options.stdin == .pipe) ev.closeAsync(stdin_pipe[0]);
+    if (options.stdout == .pipe) ev.closeAsync(stdout_pipe[1]);
+    if (options.stderr == .pipe) ev.closeAsync(stderr_pipe[1]);
 
-    if (prog_pipe[1] != -1) ev.close(&cancel_region, prog_pipe[1]);
+    if (prog_pipe[1] != -1) ev.closeAsync(prog_pipe[1]);
 
     options.progress_node.setIpcFile(ev, .{ .handle = prog_pipe[0], .flags = .{ .nonblocking = true } });
 
@@ -4599,44 +4456,40 @@ pub fn pipe2(flags: linux.O) PipeError![2]fd_t {
         else => |err| return unexpectedErrno(err),
     }
 }
-fn destroyPipe(ev: *Evented, cancel_region: *CancelRegion, pipe: [2]fd_t) void {
-    if (pipe[0] != -1) ev.close(cancel_region, pipe[0]);
-    if (pipe[0] != pipe[1]) ev.close(cancel_region, pipe[1]);
+fn destroyPipe(ev: *Evented, pipe: [2]fd_t) void {
+    if (pipe[0] != -1) ev.closeAsync(pipe[0]);
+    if (pipe[0] != pipe[1]) ev.closeAsync(pipe[1]);
 }
 
 /// Errors that can occur between fork() and execv()
 const ForkBailError = process.SetCurrentDirError || ChdirError ||
     process.SpawnError || process.ReplaceError;
-fn setUpChild(
-    ev: *Evented,
-    sync: *CancelRegion.Sync,
-    options: struct {
-        stdin_pipe: fd_t,
-        stdout_pipe: fd_t,
-        stderr_pipe: fd_t,
-        dev_null_fd: fd_t,
-        prog_pipe: fd_t,
-        argv_buf: [:null]?[*:0]const u8,
-        env_block: process.Environ.Block,
-        PATH: []const u8,
-        spawn: process.SpawnOptions,
-    },
-) ForkBailError {
-    try ev.setUpChildIo(
+fn setUpChild(sync: *CancelRegion.Sync, options: struct {
+    stdin_pipe: fd_t,
+    stdout_pipe: fd_t,
+    stderr_pipe: fd_t,
+    dev_null_fd: fd_t,
+    prog_pipe: fd_t,
+    argv_buf: [:null]?[*:0]const u8,
+    env_block: process.Environ.Block,
+    PATH: []const u8,
+    spawn: process.SpawnOptions,
+}) ForkBailError {
+    try setUpChildIo(
         sync,
         options.spawn.stdin,
         options.stdin_pipe,
         linux.STDIN_FILENO,
         options.dev_null_fd,
     );
-    try ev.setUpChildIo(
+    try setUpChildIo(
         sync,
         options.spawn.stdout,
         options.stdout_pipe,
         linux.STDOUT_FILENO,
         options.dev_null_fd,
     );
-    try ev.setUpChildIo(
+    try setUpChildIo(
         sync,
         options.spawn.stderr,
         options.stderr_pipe,
@@ -4646,17 +4499,17 @@ fn setUpChild(
 
     switch (options.spawn.cwd) {
         .inherit => {},
-        .dir => |cwd_dir| try ev.fchdir(sync, cwd_dir.handle),
+        .dir => |cwd_dir| try fchdir(sync, cwd_dir.handle),
         .path => |cwd_path| {
             var cwd_path_buffer: [PATH_MAX]u8 = undefined;
             const cwd_path_posix = try pathToPosix(cwd_path, &cwd_path_buffer);
-            try ev.chdir(sync, cwd_path_posix);
+            try chdir(sync, cwd_path_posix);
         },
     }
 
     // Must happen after fchdir above, the cwd file descriptor might be
     // equal to prog_fileno and be clobbered by this dup2 call.
-    if (options.prog_pipe != -1) try ev.dup2(sync, options.prog_pipe, prog_fileno);
+    if (options.prog_pipe != -1) try dup2(sync, options.prog_pipe, prog_fileno);
 
     if (options.spawn.gid) |gid| {
         switch (linux.errno(linux.setregid(gid, gid))) {
@@ -4689,14 +4542,14 @@ fn setUpChild(
     }
 
     if (options.spawn.start_suspended) {
-        switch (linux.errno(linux.kill(linux.getpid(), .STOP))) {
+        switch (linux.errno(linux.kill(0, .STOP))) {
             .SUCCESS => {},
             .PERM => return error.PermissionDenied,
             else => return error.Unexpected,
         }
     }
 
-    return ev.execv(
+    return execv(
         sync,
         options.spawn.expand_arg0,
         options.argv_buf.ptr[0].?,
@@ -4707,7 +4560,6 @@ fn setUpChild(
 }
 
 fn setUpChildIo(
-    ev: *Evented,
     sync: *CancelRegion.Sync,
     stdio: process.SpawnOptions.StdIo,
     pipe_fd: fd_t,
@@ -4715,11 +4567,14 @@ fn setUpChildIo(
     dev_null_fd: fd_t,
 ) !void {
     switch (stdio) {
-        .pipe => try ev.dup2(sync, pipe_fd, std_fileno),
-        .close => ev.close(&sync.cancel_region, std_fileno),
+        .pipe => try dup2(sync, pipe_fd, std_fileno),
+        .close => _ = linux.close(std_fileno),
         .inherit => {},
-        .ignore => try ev.dup2(sync, dev_null_fd, std_fileno),
-        .file => |file| try ev.dup2(sync, file.handle, std_fileno),
+        .ignore => try dup2(sync, dev_null_fd, std_fileno),
+        .file => |file| {
+            if (file.flags.nonblocking) @panic("TODO implement setUpChildIo when nonblocking file is used");
+            try dup2(sync, file.handle, std_fileno);
+        },
     }
 }
 
@@ -4727,13 +4582,12 @@ pub const DupError = error{
     ProcessFdQuotaExceeded,
     SystemResources,
 } || Io.UnexpectedError || Io.Cancelable;
-pub fn dup2(ev: *Evented, sync: *CancelRegion.Sync, old_fd: fd_t, new_fd: fd_t) DupError!void {
-    _ = ev;
+pub fn dup2(sync: *CancelRegion.Sync, old_fd: fd_t, new_fd: fd_t) DupError!void {
     while (true) {
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.dup2(old_fd, new_fd))) {
             .SUCCESS => {},
-            .BUSY, .INTR => continue,
+            .BUSY, .INTR => {},
             .INVAL => |err| return errnoBug(err), // invalid parameters
             .BADF => |err| return errnoBug(err), // use after free
             .MFILE => return error.ProcessFdQuotaExceeded,
@@ -4744,7 +4598,6 @@ pub fn dup2(ev: *Evented, sync: *CancelRegion.Sync, old_fd: fd_t, new_fd: fd_t) 
 }
 
 fn execv(
-    ev: *Evented,
     sync: *CancelRegion.Sync,
     arg0_expand: process.ArgExpansion,
     file: [*:0]const u8,
@@ -4753,7 +4606,8 @@ fn execv(
     PATH: []const u8,
 ) process.ReplaceError {
     const file_slice = std.mem.sliceTo(file, 0);
-    if (std.mem.findScalar(u8, file_slice, '/') != null) return ev.execvPath(sync, file, child_argv, env_block);
+    if (std.mem.findScalar(u8, file_slice, '/') != null)
+        return execvPath(sync, file, child_argv, env_block);
 
     // Use of PATH_MAX here is valid as the path_buf will be passed
     // directly to the operating system in posixExecvPath.
@@ -4781,7 +4635,7 @@ fn execv(
             .expand => child_argv[0] = full_path,
             .no_expand => {},
         }
-        err = ev.execvPath(sync, full_path, child_argv, env_block);
+        err = execvPath(sync, full_path, child_argv, env_block);
         switch (err) {
             error.AccessDenied => seen_eacces = true,
             error.FileNotFound, error.NotDir => {},
@@ -4793,13 +4647,11 @@ fn execv(
 }
 /// This function ignores PATH environment variable.
 pub fn execvPath(
-    ev: *Evented,
     sync: *CancelRegion.Sync,
     path: [*:0]const u8,
     child_argv: [*:null]const ?[*:0]const u8,
     env_block: process.Environ.PosixBlock,
 ) process.ReplaceError {
-    _ = ev;
     try sync.cancel_region.await(.nothing);
     switch (linux.errno(linux.execve(path, child_argv, env_block.slice.ptr))) {
         .FAULT => |err| return errnoBug(err), // Bad pointer parameter.
@@ -4828,7 +4680,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
 
     var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
     defer maybe_sync.deinit(ev);
-    defer ev.childCleanup(maybe_sync.cancelRegion(), child);
+    defer ev.childCleanup(child);
 
     const pid = child.id.?;
     var info: linux.siginfo_t = undefined;
@@ -4870,7 +4722,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
                                 child.resource_usage_statistics.rusage = rusage;
                                 break;
                             },
-                            .INTR, .CANCELED => continue,
+                            .INTR, .CANCELED => {},
                             .CHILD => |err| return errnoBug(err), // Double-free.
                             else => |err| return unexpectedErrno(err),
                         }
@@ -4885,7 +4737,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
                     _, .CONTINUED => .{ .unknown = status },
                 };
             },
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .CHILD => |err| return errnoBug(err), // Double-free.
             else => |err| return unexpectedErrno(err),
         }
@@ -4897,12 +4749,12 @@ fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
 
     var maybe_sync: CancelRegion.Sync.Maybe = .{ .sync = .initBlocked(ev) };
     defer maybe_sync.deinit(ev);
-    defer ev.childCleanup(maybe_sync.cancelRegion(), child);
+    defer ev.childCleanup(child);
 
     const pid = child.id.?;
     while (true) switch (linux.errno(linux.kill(pid, .TERM))) {
         .SUCCESS => break,
-        .INTR => continue,
+        .INTR => {},
         .PERM => return,
         .INVAL => |err| return errnoBug(err) catch {},
         .SRCH => |err| return errnoBug(err) catch {},
@@ -4934,24 +4786,24 @@ fn childKill(userdata: ?*anyopaque, child: *process.Child) void {
         ev.yield(null, .nothing);
         switch (maybe_sync.cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .CHILD => |err| return errnoBug(err) catch {}, // Double-free.
             else => |err| return unexpectedErrno(err) catch {},
         }
     }
 }
 
-fn childCleanup(ev: *Evented, cancel_region: *CancelRegion, child: *process.Child) void {
+fn childCleanup(ev: *Evented, child: *process.Child) void {
     if (child.stdin) |*stdin| {
-        ev.close(cancel_region, stdin.handle);
+        ev.closeAsync(stdin.handle);
         child.stdin = null;
     }
     if (child.stdout) |*stdout| {
-        ev.close(cancel_region, stdout.handle);
+        ev.closeAsync(stdout.handle);
         child.stdout = null;
     }
     if (child.stderr) |*stderr| {
-        ev.close(cancel_region, stderr.handle);
+        ev.closeAsync(stderr.handle);
         child.stderr = null;
     }
     child.id = null;
@@ -4971,7 +4823,9 @@ fn scanEnviron(ev: *Evented) Io.Cancelable!void {
     const ev_io = ev.io();
     try ev.environ_mutex.lock(ev_io);
     defer ev.environ_mutex.unlock(ev_io);
+    if (ev.environ_initialized) return;
     ev.environ.scan(ev.allocator());
+    ev.environ_initialized = true;
 }
 
 fn clockResolution(userdata: ?*anyopaque, clock: Io.Clock) Io.Clock.ResolutionError!Io.Duration {
@@ -5055,14 +4909,10 @@ fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
         .resv = 0,
     };
     ev.yield(null, .nothing);
-    switch (cancel_region.errno()) {
-        // Handles SUCCESS as well as clock not available and unexpected
-        // errors. The user had a chance to check clock resolution before
-        // getting here, which would have reported 0, making this a legal
-        // amount of time to sleep.
-        else => return,
-        .INTR, .CANCELED => return error.Canceled,
-    }
+    // Handles SUCCESS as well as clock not available and unexpected
+    // errors. The user had a chance to check clock resolution before
+    // getting here, which would have reported 0, making this a legal
+    // amount of time to sleep.
 }
 
 fn random(userdata: ?*anyopaque, buffer: []u8) void {
@@ -5139,7 +4989,7 @@ fn netBindIp(
     var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
     defer maybe_sync.deinit(ev);
     const socket_fd = try ev.socket(&maybe_sync.cancel_region, family, options);
-    errdefer ev.close(maybe_sync.cancelRegion(), socket_fd);
+    errdefer ev.closeAsync(socket_fd);
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
     try ev.bind(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
@@ -5148,18 +4998,6 @@ fn netBindIp(
         .handle = socket_fd,
         .address = addressFromPosix(&storage),
     };
-}
-
-fn netBindIpUnavailable(
-    userdata: ?*anyopaque,
-    address: *const net.IpAddress,
-    options: net.IpAddress.BindOptions,
-) net.IpAddress.BindError!net.Socket {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = address;
-    _ = options;
-    return error.NetworkDown;
 }
 
 fn netConnectIpUnavailable(
@@ -5300,7 +5138,7 @@ fn netReceive(
                 else => 0,
                 .boot => linux.IORING_TIMEOUT_BOOTTIME,
             }),
-            .user_data = @intFromEnum(Completion.UserData.wakeup),
+            .user_data = @intFromEnum(Completion.Userdata.wakeup),
             .buf_index = 0,
             .personality = 0,
             .splice_fd_in = 0,
@@ -5318,23 +5156,19 @@ fn netReceive(
                     .data = data,
                     .control = if (msg.control) |ptr| @as([*]u8, @ptrCast(ptr))[0..msg.controllen] else message.control,
                     .flags = .{
-                        .eor = (msg.flags & linux.MSG.EOR) != 0,
-                        .trunc = (msg.flags & linux.MSG.TRUNC) != 0,
-                        .ctrunc = (msg.flags & linux.MSG.CTRUNC) != 0,
-                        .oob = (msg.flags & linux.MSG.OOB) != 0,
-                        .errqueue = if (@hasDecl(linux.MSG, "ERRQUEUE")) (msg.flags & linux.MSG.ERRQUEUE) != 0 else false,
+                        .eor = msg.flags & linux.MSG.EOR != 0,
+                        .trunc = msg.flags & linux.MSG.TRUNC != 0,
+                        .ctrunc = msg.flags & linux.MSG.CTRUNC != 0,
+                        .oob = msg.flags & linux.MSG.OOB != 0,
+                        .errqueue = msg.flags & linux.MSG.ERRQUEUE != 0,
                     },
                 };
                 message_i += 1;
                 continue;
             },
             .AGAIN => unreachable,
-            .INTR, .CANCELED => {
-                if (deadline) |d| {
-                    if (now(ev, d.clock).nanoseconds >= d.raw.nanoseconds) return .{ error.Timeout, message_i };
-                }
-                continue;
-            },
+            .INTR, .CANCELED => if (deadline) |d| if (now(ev, d.clock).nanoseconds >= d.raw.nanoseconds)
+                return .{ error.Timeout, message_i },
 
             .BADF => |err| return .{ errnoBug(err), message_i },
             .NFILE => return .{ error.SystemFdQuotaExceeded, message_i },
@@ -5353,24 +5187,6 @@ fn netReceive(
             else => |err| return .{ unexpectedErrno(err), message_i },
         }
     }
-}
-
-fn netReceiveUnavailable(
-    userdata: ?*anyopaque,
-    handle: net.Socket.Handle,
-    message_buffer: []net.IncomingMessage,
-    data_buffer: []u8,
-    flags: net.ReceiveFlags,
-    timeout: Io.Timeout,
-) struct { ?net.Socket.ReceiveTimeoutError, usize } {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = message_buffer;
-    _ = data_buffer;
-    _ = flags;
-    _ = timeout;
-    return .{ error.NetworkDown, 0 };
 }
 
 fn netReadUnavailable(
@@ -5419,16 +5235,7 @@ fn netWriteFileUnavailable(
 
 fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
-    var cancel_region: CancelRegion = .init();
-    defer cancel_region.deinit();
-    for (handles) |handle| ev.close(&cancel_region, handle);
-}
-
-fn netCloseUnavailable(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handles;
-    unreachable; // How you gonna close something that was impossible to open?
+    for (handles) |handle| ev.close(handle);
 }
 
 fn netShutdown(
@@ -5464,25 +5271,13 @@ fn netShutdown(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .BADF, .NOTSOCK, .INVAL => |err| return errnoBug(err),
             .NOTCONN => return error.SocketUnconnected,
             .NOBUFS => return error.SystemResources,
             else => |err| return unexpectedErrno(err),
         }
     }
-}
-
-fn netShutdownUnavailable(
-    userdata: ?*anyopaque,
-    handle: net.Socket.Handle,
-    how: net.ShutdownHow,
-) net.ShutdownError!void {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = how;
-    unreachable; // How you gonna shutdown something that was impossible to open?
 }
 
 fn netInterfaceNameResolveUnavailable(
@@ -5546,7 +5341,7 @@ fn bind(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .ADDRINUSE => return error.AddressInUse,
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -5560,13 +5355,12 @@ fn bind(
     }
 }
 
-fn chdir(ev: *Evented, sync: *CancelRegion.Sync, path: [*:0]const u8) ChdirError!void {
-    _ = ev;
+fn chdir(sync: *CancelRegion.Sync, path: [*:0]const u8) ChdirError!void {
     while (true) {
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.chdir(path))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .ACCES => return error.AccessDenied,
             .IO => return error.FileSystem,
             .LOOP => return error.SymLinkLoop,
@@ -5581,45 +5375,64 @@ fn chdir(ev: *Evented, sync: *CancelRegion.Sync, path: [*:0]const u8) ChdirError
     }
 }
 
-fn close(ev: *Evented, cancel_region: *CancelRegion, fd: fd_t) void {
-    while (true) {
-        const thread = cancel_region.awaitIoUring() catch |err| switch (err) {
-            error.Canceled => unreachable, // blocked
-        };
-        thread.enqueue().* = .{
-            .opcode = .CLOSE,
-            .flags = 0,
-            .ioprio = 0,
-            .fd = fd,
-            .off = 0,
-            .addr = 0,
-            .len = 0,
-            .rw_flags = 0,
-            .user_data = @intFromPtr(cancel_region.fiber),
-            .buf_index = 0,
-            .personality = 0,
-            .splice_fd_in = 0,
-            .addr3 = 0,
-            .resv = 0,
-        };
-        ev.yield(null, .nothing);
-        switch (cancel_region.errno()) {
-            .SUCCESS => return,
-            .INTR, .CANCELED => continue,
-            .BADF => unreachable, // Always a race condition.
-            else => break,
-        }
+fn close(ev: *Evented, fd: fd_t) void {
+    var cancel_region: CancelRegion = .initBlocked();
+    defer cancel_region.deinit();
+    const thread = cancel_region.awaitIoUring() catch |err| switch (err) {
+        error.Canceled => unreachable, // blocked
+    };
+    thread.enqueue().* = .{
+        .opcode = .CLOSE,
+        .flags = 0,
+        .ioprio = 0,
+        .fd = fd,
+        .off = 0,
+        .addr = 0,
+        .len = 0,
+        .rw_flags = 0,
+        .user_data = @intFromPtr(cancel_region.fiber),
+        .buf_index = 0,
+        .personality = 0,
+        .splice_fd_in = 0,
+        .addr3 = 0,
+        .resv = 0,
+    };
+    ev.yield(null, .nothing);
+    switch (cancel_region.errno()) {
+        .BADF => recoverableOsBugDetected(), // Always a race condition.
+        .INTR => {}, // This is still a success. See https://github.com/ziglang/zig/issues/2425
+        else => {},
     }
 }
 
-fn fchdir(ev: *Evented, sync: *CancelRegion.Sync, dir: fd_t) process.SetCurrentDirError!void {
+fn closeAsync(ev: *Evented, fd: fd_t) void {
     _ = ev;
+    const thread: *Thread = .current();
+    thread.enqueue().* = .{
+        .opcode = .CLOSE,
+        .flags = linux.IOSQE_CQE_SKIP_SUCCESS,
+        .ioprio = 0,
+        .fd = fd,
+        .off = 0,
+        .addr = 0,
+        .len = 0,
+        .rw_flags = 0,
+        .user_data = @intFromEnum(Completion.Userdata.close),
+        .buf_index = 0,
+        .personality = 0,
+        .splice_fd_in = 0,
+        .addr3 = 0,
+        .resv = 0,
+    };
+}
+
+fn fchdir(sync: *CancelRegion.Sync, dir: fd_t) process.SetCurrentDirError!void {
     if (dir == linux.AT.FDCWD) return;
     while (true) {
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.fchdir(dir))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .ACCES => return error.AccessDenied,
             .NOTDIR => return error.NotDir,
             .IO => return error.FileSystem,
@@ -5642,7 +5455,7 @@ fn fchmodat(
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.fchmodat2(dir, path, mode, flags))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .BADF => |err| return errnoBug(err),
             .FAULT => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err),
@@ -5674,7 +5487,7 @@ fn fchownat(
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.fchownat(dir, path, owner, group, flags))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .BADF => |err| return errnoBug(err), // likely fd refers to directory opened without `Dir.OpenOptions.iterate`
             .FAULT => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err),
@@ -5706,7 +5519,7 @@ fn flock(
             .exclusive => LOCK.EX,
         })))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .BADF => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err), // invalid parameters
             .NOLCK => return error.SystemResources,
@@ -5756,7 +5569,7 @@ fn getsockname(
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.getsockname(socket_fd, addr, addr_len))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .FAULT => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err), // invalid parameters
@@ -5797,7 +5610,7 @@ fn linkat(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .ACCES => return error.AccessDenied,
             .DQUOT => return error.DiskQuota,
             .EXIST => return error.PathAlreadyExists,
@@ -5837,7 +5650,7 @@ fn lseek(
             8 => linux.lseek(fd, @bitCast(offset), whence),
         })) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .INVAL => return error.Unseekable,
             .OVERFLOW => return error.Unseekable,
@@ -5880,7 +5693,7 @@ fn openat(
         const completion = cancel_region.completion();
         switch (completion.errno()) {
             .SUCCESS => return completion.result,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .FAULT => |err| return errnoBug(err),
             .INVAL => return error.BadPathName,
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
@@ -5942,7 +5755,7 @@ fn preadv(
         const completion = cancel_region.completion();
         switch (completion.errno()) {
             .SUCCESS => return @as(u32, @bitCast(completion.result)),
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .INVAL => |err| return errnoBug(err),
             .FAULT => |err| return errnoBug(err),
             .AGAIN => return error.WouldBlock,
@@ -5989,7 +5802,7 @@ fn pwritev(
         const completion = cancel_region.completion();
         switch (completion.errno()) {
             .SUCCESS => return @as(u32, @bitCast(completion.result)),
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .INVAL => |err| return errnoBug(err),
             .FAULT => |err| return errnoBug(err),
             .AGAIN => return error.WouldBlock,
@@ -6039,7 +5852,7 @@ fn realPath(
         const rc = linux.readlink(proc_path, out_buffer.ptr, out_buffer.len);
         switch (linux.errno(rc)) {
             .SUCCESS => return rc,
-            .INTR => continue,
+            .INTR => {},
             .ACCES => return error.AccessDenied,
             .FAULT => |err| return errnoBug(err),
             .IO => return error.FileSystem,
@@ -6084,7 +5897,7 @@ fn renameat(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .ACCES => return error.AccessDenied,
             .PERM => return error.PermissionDenied,
             .BUSY => return error.FileBusy,
@@ -6151,7 +5964,7 @@ fn setsockopt(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .NOTSOCK => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err),
@@ -6202,7 +6015,7 @@ fn socket(
         const completion = cancel_region.completion();
         switch (completion.errno()) {
             .SUCCESS => break completion.result,
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .AFNOSUPPORT => return error.AddressFamilyUnsupported,
             .INVAL => return error.ProtocolUnsupportedBySystem,
             .MFILE => return error.ProcessFdQuotaExceeded,
@@ -6214,7 +6027,7 @@ fn socket(
             else => |err| return unexpectedErrno(err),
         }
     };
-    errdefer ev.close(cancel_region, socket_fd);
+    errdefer ev.closeAsync(socket_fd);
 
     if (options.ip6_only) {
         if (linux.IPV6 == void) return error.OptionUnsupported;
@@ -6264,7 +6077,7 @@ fn statx(
         ev.yield(null, .nothing);
         switch (cancel_region.errno()) {
             .SUCCESS => return statFromLinux(&statx_buf),
-            .INTR, .CANCELED => continue,
+            .INTR, .CANCELED => {},
             .ACCES => return error.AccessDenied,
             .BADF => |err| return errnoBug(err), // File descriptor used after closed.
             .FAULT => |err| return errnoBug(err),
@@ -6303,7 +6116,7 @@ fn utimensat(
         try sync.cancel_region.await(.nothing);
         switch (linux.errno(linux.utimensat(dir, path, times, flags))) {
             .SUCCESS => return,
-            .INTR => continue,
+            .INTR => {},
             .BADF => |err| return errnoBug(err), // always a race condition
             .FAULT => |err| return errnoBug(err),
             .INVAL => |err| return errnoBug(err),
@@ -6315,19 +6128,33 @@ fn utimensat(
     }
 }
 
-fn writeAll(
-    ev: *Evented,
-    cancel_region: *CancelRegion,
-    fd: fd_t,
-    buffer: []const u8,
-) (File.Writer.Error || error{EndOfStream})!void {
+fn writeAllSync(sync: *CancelRegion.Sync, fd: fd_t, buffer: []const u8) File.Writer.Error!void {
     var index: usize = 0;
-    while (buffer.len - index != 0) {
-        const len = try ev.pwritev(cancel_region, fd, &.{
-            .{ .base = buffer[index..].ptr, .len = buffer.len - index },
-        }, null);
-        if (len == 0) return error.EndOfStream;
-        index += len;
+    while (buffer.len - index != 0) index += try writeSync(sync, fd, buffer[index..]);
+}
+
+fn writeSync(sync: *CancelRegion.Sync, fd: fd_t, buffer: []const u8) File.Writer.Error!usize {
+    while (true) {
+        try sync.cancel_region.await(.nothing);
+        const rc = linux.write(fd, buffer.ptr, buffer.len);
+        switch (linux.errno(rc)) {
+            .SUCCESS => return @intCast(rc),
+            .INTR => {},
+            .INVAL => |err| return errnoBug(err),
+            .FAULT => |err| return errnoBug(err),
+            .AGAIN => return error.WouldBlock,
+            .BADF => return error.NotOpenForWriting, // Can be a race condition.
+            .DESTADDRREQ => |err| return errnoBug(err), // `connect` was never called.
+            .DQUOT => return error.DiskQuota,
+            .FBIG => return error.FileTooBig,
+            .IO => return error.InputOutput,
+            .NOSPC => return error.NoSpaceLeft,
+            .PERM => return error.PermissionDenied,
+            .PIPE => return error.BrokenPipe,
+            .CONNRESET => |err| return errnoBug(err), // Not a socket handle.
+            .BUSY => return error.DeviceBusy,
+            else => |err| return unexpectedErrno(err),
+        }
     }
 }
 
