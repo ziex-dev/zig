@@ -241,27 +241,9 @@ pub const gcd = @import("math/gcd.zig").gcd;
 pub const lcm = @import("math/lcm.zig").lcm;
 pub const gamma = @import("math/gamma.zig").gamma;
 pub const lgamma = @import("math/gamma.zig").lgamma;
-
-/// Sine trigonometric function on a floating point number.
-/// Uses a dedicated hardware instruction when available.
-/// This is the same as calling the builtin @sin
-pub inline fn sin(value: anytype) @TypeOf(value) {
-    return @sin(value);
-}
-
-/// Cosine trigonometric function on a floating point number.
-/// Uses a dedicated hardware instruction when available.
-/// This is the same as calling the builtin @cos
-pub inline fn cos(value: anytype) @TypeOf(value) {
-    return @cos(value);
-}
-
-/// Tangent trigonometric function on a floating point number.
-/// Uses a dedicated hardware instruction when available.
-/// This is the same as calling the builtin @tan
-pub inline fn tan(value: anytype) @TypeOf(value) {
-    return @tan(value);
-}
+pub const cos = @import("math/cos.zig").cos;
+pub const sin = @import("math/sin.zig").sin;
+pub const tan = @import("math/tan.zig").tan;
 
 /// Converts an angle in radians to degrees. T must be a float or comptime number or a vector of floats.
 pub fn radiansToDegrees(ang: anytype) if (@TypeOf(ang) == comptime_int) comptime_float else @TypeOf(ang) {
@@ -402,6 +384,9 @@ test {
     _ = lcm;
     _ = gamma;
     _ = lgamma;
+    _ = cos;
+    _ = sin;
+    _ = tan;
 
     _ = complex;
     _ = Complex;
