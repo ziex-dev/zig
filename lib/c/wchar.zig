@@ -195,7 +195,7 @@ fn wcswcs(noalias haystack: [*:0]const wchar_t, noalias needle: [*:0]const wchar
 
 fn wcsdup(s: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
     const l = std.mem.len(s);
-    const dest: [*:0]wchar_t = @ptrCast(@alignCast(alloc.malloc_inner((l + 1) * @sizeOf(wchar_t)) orelse return null));
+    const dest: [*:0]wchar_t = @ptrCast(@alignCast(alloc.malloc((l + 1) * @sizeOf(wchar_t)) orelse return null));
     @memcpy(dest, s[0..l]);
     dest[l] = 0;
     return dest;
