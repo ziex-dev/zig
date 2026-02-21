@@ -20,27 +20,25 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
 
         items: []T,
         cap: usize,
-        allocator: Allocator,
         context: Context,
 
         /// Initialize and return a priority queue.
-        pub fn init(allocator: Allocator, context: Context) Self {
+        pub fn init(context: Context) Self {
             return Self{
                 .items = &[_]T{},
                 .cap = 0,
-                .allocator = allocator,
                 .context = context,
             };
         }
 
         /// Free memory used by the queue.
-        pub fn deinit(self: Self) void {
-            self.allocator.free(self.allocatedSlice());
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            allocator.free(self.allocatedSlice());
         }
 
         /// Insert a new element, maintaining priority.
-        pub fn add(self: *Self, elem: T) !void {
-            try self.ensureUnusedCapacity(1);
+        pub fn add(self: *Self, allocator: Allocator, elem: T) !void {
+            try self.ensureUnusedCapacity(allocator, 1);
             addUnchecked(self, elem);
         }
 
@@ -64,8 +62,8 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
         }
 
         /// Add each element in `items` to the queue.
-        pub fn addSlice(self: *Self, items: []const T) !void {
-            try self.ensureUnusedCapacity(items.len);
+        pub fn addSlice(self: *Self, allocator: Allocator, items: []const T) !void {
+            try self.ensureUnusedCapacity(allocator, items.len);
             for (items) |e| {
                 self.addUnchecked(e);
             }
@@ -158,11 +156,10 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
         /// PriorityQueue takes ownership of the passed in slice. The slice must have been
         /// allocated with `allocator`.
         /// Deinitialize with `deinit`.
-        pub fn fromOwnedSlice(allocator: Allocator, items: []T, context: Context) Self {
+        pub fn fromOwnedSlice(items: []T, context: Context) Self {
             var self = Self{
                 .items = items,
                 .cap = items.len,
-                .allocator = allocator,
                 .context = context,
             };
 
@@ -175,39 +172,39 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
         }
 
         /// Ensure that the queue can fit at least `new_capacity` items.
-        pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) !void {
+        pub fn ensureTotalCapacity(self: *Self, allocator: Allocator, new_capacity: usize) !void {
             var better_capacity = self.cap;
             if (better_capacity >= new_capacity) return;
             while (true) {
                 better_capacity += better_capacity / 2 + 8;
                 if (better_capacity >= new_capacity) break;
             }
-            try self.ensureTotalCapacityPrecise(better_capacity);
+            try self.ensureTotalCapacityPrecise(allocator, better_capacity);
         }
 
-        pub fn ensureTotalCapacityPrecise(self: *Self, new_capacity: usize) !void {
+        pub fn ensureTotalCapacityPrecise(self: *Self, allocator: Allocator, new_capacity: usize) !void {
             if (self.capacity() >= new_capacity) return;
 
             const old_memory = self.allocatedSlice();
-            const new_memory = try self.allocator.realloc(old_memory, new_capacity);
+            const new_memory = try allocator.realloc(old_memory, new_capacity);
             self.items.ptr = new_memory.ptr;
             self.cap = new_memory.len;
         }
 
         /// Ensure that the queue can fit at least `additional_count` **more** item.
-        pub fn ensureUnusedCapacity(self: *Self, additional_count: usize) !void {
-            return self.ensureTotalCapacity(self.items.len + additional_count);
+        pub fn ensureUnusedCapacity(self: *Self, allocator: Allocator, additional_count: usize) !void {
+            return self.ensureTotalCapacity(allocator, self.items.len + additional_count);
         }
 
         /// Reduce allocated capacity to `new_capacity`.
-        pub fn shrinkAndFree(self: *Self, new_capacity: usize) void {
+        pub fn shrinkAndFree(self: *Self, allocator: Allocator, new_capacity: usize) void {
             assert(new_capacity <= self.cap);
 
             // Cannot shrink to smaller than the current queue size without invalidating the heap property
             assert(new_capacity >= self.items.len);
 
             const old_memory = self.allocatedSlice();
-            const new_memory = self.allocator.realloc(old_memory, new_capacity) catch |e| switch (e) {
+            const new_memory = allocator.realloc(old_memory, new_capacity) catch |e| switch (e) {
                 error.OutOfMemory => { // no problem, capacity is still correct then.
                     return;
                 },
@@ -221,8 +218,8 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
             self.items.len = 0;
         }
 
-        pub fn clearAndFree(self: *Self) void {
-            self.allocator.free(self.allocatedSlice());
+        pub fn clearAndFree(self: *Self, allocator: Allocator) void {
+            allocator.free(self.allocatedSlice());
             self.items.len = 0;
             self.cap = 0;
         }
@@ -302,15 +299,17 @@ const PQlt = PriorityQueue(u32, void, lessThan);
 const PQgt = PriorityQueue(u32, void, greaterThan);
 
 test "add and remove min heap" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(54);
-    try queue.add(12);
-    try queue.add(7);
-    try queue.add(23);
-    try queue.add(25);
-    try queue.add(13);
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 54);
+    try queue.add(gpa, 12);
+    try queue.add(gpa, 7);
+    try queue.add(gpa, 23);
+    try queue.add(gpa, 25);
+    try queue.add(gpa, 13);
     try expectEqual(@as(u32, 7), queue.remove());
     try expectEqual(@as(u32, 12), queue.remove());
     try expectEqual(@as(u32, 13), queue.remove());
@@ -320,15 +319,17 @@ test "add and remove min heap" {
 }
 
 test "add and remove same min heap" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(1);
-    try queue.add(1);
-    try queue.add(2);
-    try queue.add(2);
-    try queue.add(1);
-    try queue.add(1);
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 1);
     try expectEqual(@as(u32, 1), queue.remove());
     try expectEqual(@as(u32, 1), queue.remove());
     try expectEqual(@as(u32, 1), queue.remove());
@@ -338,42 +339,51 @@ test "add and remove same min heap" {
 }
 
 test "removeOrNull on empty" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
+
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
 
     try expect(queue.removeOrNull() == null);
 }
 
 test "edge case 3 elements" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(9);
-    try queue.add(3);
-    try queue.add(2);
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 9);
+    try queue.add(gpa, 3);
+    try queue.add(gpa, 2);
     try expectEqual(@as(u32, 2), queue.remove());
     try expectEqual(@as(u32, 3), queue.remove());
     try expectEqual(@as(u32, 9), queue.remove());
 }
 
 test "peek" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
+
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
 
     try expect(queue.peek() == null);
-    try queue.add(9);
-    try queue.add(3);
-    try queue.add(2);
+    try queue.add(gpa, 9);
+    try queue.add(gpa, 3);
+    try queue.add(gpa, 2);
     try expectEqual(@as(u32, 2), queue.peek().?);
     try expectEqual(@as(u32, 2), queue.peek().?);
 }
 
 test "sift up with odd indices" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
+
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
     const items = [_]u32{ 15, 7, 21, 14, 13, 22, 12, 6, 7, 25, 5, 24, 11, 16, 15, 24, 2, 1 };
     for (items) |e| {
-        try queue.add(e);
+        try queue.add(gpa, e);
     }
 
     const sorted_items = [_]u32{ 1, 2, 5, 6, 7, 7, 11, 12, 13, 14, 15, 15, 16, 21, 22, 24, 24, 25 };
@@ -383,10 +393,13 @@ test "sift up with odd indices" {
 }
 
 test "addSlice" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
+
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
     const items = [_]u32{ 15, 7, 21, 14, 13, 22, 12, 6, 7, 25, 5, 24, 11, 16, 15, 24, 2, 1 };
-    try queue.addSlice(items[0..]);
+    try queue.addSlice(gpa, items[0..]);
 
     const sorted_items = [_]u32{ 1, 2, 5, 6, 7, 7, 11, 12, 13, 14, 15, 15, 16, 21, 22, 24, 24, 25 };
     for (sorted_items) |e| {
@@ -395,19 +408,26 @@ test "addSlice" {
 }
 
 test "fromOwnedSlice trivial case 0" {
+    const gpa = testing.allocator;
+
     const items = [0]u32{};
-    const queue_items = try testing.allocator.dupe(u32, &items);
-    var queue = PQlt.fromOwnedSlice(testing.allocator, queue_items[0..], {});
-    defer queue.deinit();
+    const queue_items = try gpa.dupe(u32, &items);
+
+    var queue = PQlt.fromOwnedSlice(queue_items[0..], {});
+    defer queue.deinit(gpa);
+
     try expectEqual(@as(usize, 0), queue.count());
     try expect(queue.removeOrNull() == null);
 }
 
 test "fromOwnedSlice trivial case 1" {
+    const gpa = testing.allocator;
+
     const items = [1]u32{1};
-    const queue_items = try testing.allocator.dupe(u32, &items);
-    var queue = PQlt.fromOwnedSlice(testing.allocator, queue_items[0..], {});
-    defer queue.deinit();
+    const queue_items = try gpa.dupe(u32, &items);
+
+    var queue = PQlt.fromOwnedSlice(queue_items[0..], {});
+    defer queue.deinit(gpa);
 
     try expectEqual(@as(usize, 1), queue.count());
     try expectEqual(items[0], queue.remove());
@@ -415,10 +435,13 @@ test "fromOwnedSlice trivial case 1" {
 }
 
 test "fromOwnedSlice" {
+    const gpa = testing.allocator;
+
     const items = [_]u32{ 15, 7, 21, 14, 13, 22, 12, 6, 7, 25, 5, 24, 11, 16, 15, 24, 2, 1 };
-    const heap_items = try testing.allocator.dupe(u32, items[0..]);
-    var queue = PQlt.fromOwnedSlice(testing.allocator, heap_items[0..], {});
-    defer queue.deinit();
+    const heap_items = try gpa.dupe(u32, items[0..]);
+
+    var queue = PQlt.fromOwnedSlice(heap_items[0..], {});
+    defer queue.deinit(gpa);
 
     const sorted_items = [_]u32{ 1, 2, 5, 6, 7, 7, 11, 12, 13, 14, 15, 15, 16, 21, 22, 24, 24, 25 };
     for (sorted_items) |e| {
@@ -427,15 +450,17 @@ test "fromOwnedSlice" {
 }
 
 test "add and remove max heap" {
-    var queue = PQgt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(54);
-    try queue.add(12);
-    try queue.add(7);
-    try queue.add(23);
-    try queue.add(25);
-    try queue.add(13);
+    var queue = PQgt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 54);
+    try queue.add(gpa, 12);
+    try queue.add(gpa, 7);
+    try queue.add(gpa, 23);
+    try queue.add(gpa, 25);
+    try queue.add(gpa, 13);
     try expectEqual(@as(u32, 54), queue.remove());
     try expectEqual(@as(u32, 25), queue.remove());
     try expectEqual(@as(u32, 23), queue.remove());
@@ -445,15 +470,17 @@ test "add and remove max heap" {
 }
 
 test "add and remove same max heap" {
-    var queue = PQgt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(1);
-    try queue.add(1);
-    try queue.add(2);
-    try queue.add(2);
-    try queue.add(1);
-    try queue.add(1);
+    var queue = PQgt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 1);
     try expectEqual(@as(u32, 2), queue.remove());
     try expectEqual(@as(u32, 2), queue.remove());
     try expectEqual(@as(u32, 1), queue.remove());
@@ -463,16 +490,18 @@ test "add and remove same max heap" {
 }
 
 test "iterator" {
-    var queue = PQlt.init(testing.allocator, {});
+    const gpa = testing.allocator;
+
+    var queue = PQlt.init({});
     var map = std.AutoHashMap(u32, void).init(testing.allocator);
     defer {
-        queue.deinit();
+        queue.deinit(gpa);
         map.deinit();
     }
 
     const items = [_]u32{ 54, 12, 7, 23, 25, 13 };
     for (items) |e| {
-        _ = try queue.add(e);
+        _ = try queue.add(gpa, e);
         try map.put(e, {});
     }
 
@@ -485,12 +514,14 @@ test "iterator" {
 }
 
 test "remove at index" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
+
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
 
     const items = [_]u32{ 2, 1, 8, 9, 3, 4, 5 };
     for (items) |e| {
-        _ = try queue.add(e);
+        _ = try queue.add(gpa, e);
     }
 
     var it = queue.iterator();
@@ -511,8 +542,10 @@ test "remove at index" {
 }
 
 test "iterator while empty" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
+
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
 
     var it = queue.iterator();
 
@@ -520,19 +553,21 @@ test "iterator while empty" {
 }
 
 test "shrinkAndFree" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.ensureTotalCapacity(4);
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.ensureTotalCapacity(gpa, 4);
     try expect(queue.capacity() >= 4);
 
-    try queue.add(1);
-    try queue.add(2);
-    try queue.add(3);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 3);
     try expect(queue.capacity() >= 4);
     try expectEqual(@as(usize, 3), queue.count());
 
-    queue.shrinkAndFree(3);
+    queue.shrinkAndFree(gpa, 3);
     try expectEqual(@as(usize, 3), queue.capacity());
     try expectEqual(@as(usize, 3), queue.count());
 
@@ -543,12 +578,14 @@ test "shrinkAndFree" {
 }
 
 test "update min heap" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(55);
-    try queue.add(44);
-    try queue.add(11);
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 55);
+    try queue.add(gpa, 44);
+    try queue.add(gpa, 11);
     try queue.update(55, 5);
     try queue.update(44, 4);
     try queue.update(11, 1);
@@ -558,13 +595,15 @@ test "update min heap" {
 }
 
 test "update same min heap" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(1);
-    try queue.add(1);
-    try queue.add(2);
-    try queue.add(2);
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 2);
     try queue.update(1, 5);
     try queue.update(2, 4);
     try expectEqual(@as(u32, 1), queue.remove());
@@ -574,12 +613,14 @@ test "update same min heap" {
 }
 
 test "update max heap" {
-    var queue = PQgt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(55);
-    try queue.add(44);
-    try queue.add(11);
+    var queue = PQgt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 55);
+    try queue.add(gpa, 44);
+    try queue.add(gpa, 11);
     try queue.update(55, 5);
     try queue.update(44, 1);
     try queue.update(11, 4);
@@ -589,13 +630,15 @@ test "update max heap" {
 }
 
 test "update same max heap" {
-    var queue = PQgt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(1);
-    try queue.add(1);
-    try queue.add(2);
-    try queue.add(2);
+    var queue = PQgt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 2);
     try queue.update(1, 5);
     try queue.update(2, 4);
     try expectEqual(@as(u32, 5), queue.remove());
@@ -605,19 +648,23 @@ test "update same max heap" {
 }
 
 test "update after remove" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.add(1);
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.add(gpa, 1);
     try expectEqual(@as(u32, 1), queue.remove());
     try expectError(error.ElementNotFound, queue.update(1, 1));
 }
 
 test "siftUp in remove" {
-    var queue = PQlt.init(testing.allocator, {});
-    defer queue.deinit();
+    const gpa = testing.allocator;
 
-    try queue.addSlice(&.{ 0, 1, 100, 2, 3, 101, 102, 4, 5, 6, 7, 103, 104, 105, 106, 8 });
+    var queue = PQlt.init({});
+    defer queue.deinit(gpa);
+
+    try queue.addSlice(gpa, &.{ 0, 1, 100, 2, 3, 101, 102, 4, 5, 6, 7, 103, 104, 105, 106, 8 });
 
     _ = queue.removeIndex(std.mem.findScalar(u32, queue.items[0..queue.count()], 102).?);
 
@@ -634,18 +681,20 @@ fn contextLessThan(context: []const u32, a: usize, b: usize) Order {
 const CPQlt = PriorityQueue(usize, []const u32, contextLessThan);
 
 test "add and remove min heap with context comparator" {
+    const gpa = testing.allocator;
+
     const context = [_]u32{ 5, 3, 4, 2, 2, 8, 0 };
 
-    var queue = CPQlt.init(testing.allocator, context[0..]);
-    defer queue.deinit();
+    var queue = CPQlt.init(context[0..]);
+    defer queue.deinit(gpa);
 
-    try queue.add(0);
-    try queue.add(1);
-    try queue.add(2);
-    try queue.add(3);
-    try queue.add(4);
-    try queue.add(5);
-    try queue.add(6);
+    try queue.add(gpa, 0);
+    try queue.add(gpa, 1);
+    try queue.add(gpa, 2);
+    try queue.add(gpa, 3);
+    try queue.add(gpa, 4);
+    try queue.add(gpa, 5);
+    try queue.add(gpa, 6);
     try expectEqual(@as(usize, 6), queue.remove());
     try expectEqual(@as(usize, 4), queue.remove());
     try expectEqual(@as(usize, 3), queue.remove());
