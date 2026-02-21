@@ -904,7 +904,7 @@ pub fn Bitfield(E: type) type {
     var field_idx: usize = 0;
     var padding_idx: usize = 0;
     var bit_idx: @TypeOf(@ctz(@as(T, 0))) = 0;
-    for (bits, 0..) |bit, i| {
+    for (bits) |bit| {
         const v: T = bit.value;
         const trail = @ctz(v);
         const padding_bits = trail - bit_idx;
