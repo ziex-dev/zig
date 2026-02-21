@@ -75,16 +75,10 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
             return if (self.items.len > 0) self.items[0] else null;
         }
 
-        /// Pop the highest priority element from the queue. Returns
-        /// `null` if empty.
-        pub fn popOrNull(self: *Self) ?T {
-            return if (self.items.len > 0) self.pop() else null;
-        }
-
-        /// Remove and return the highest priority element from the
-        /// queue.
-        pub fn pop(self: *Self) T {
-            return self.popIndex(0);
+        /// Remove and return the highest priority element from the queue.
+        /// Returns `null` if empty.
+        pub fn pop(self: *Self) ?T {
+            return if (self.items.len > 0) self.popIndex(0) else null;
         }
 
         /// Remove and return element at index. Indices are in the
@@ -344,7 +338,7 @@ test "removeOrNull on empty" {
     var queue = PQlt.init({});
     defer queue.deinit(gpa);
 
-    try expect(queue.popOrNull() == null);
+    try expect(queue.pop() == null);
 }
 
 test "edge case 3 elements" {
@@ -417,7 +411,7 @@ test "fromOwnedSlice trivial case 0" {
     defer queue.deinit(gpa);
 
     try expectEqual(@as(usize, 0), queue.count());
-    try expect(queue.popOrNull() == null);
+    try expect(queue.pop() == null);
 }
 
 test "fromOwnedSlice trivial case 1" {
@@ -431,7 +425,7 @@ test "fromOwnedSlice trivial case 1" {
 
     try expectEqual(@as(usize, 1), queue.count());
     try expectEqual(items[0], queue.pop());
-    try expect(queue.popOrNull() == null);
+    try expect(queue.pop() == null);
 }
 
 test "fromOwnedSlice" {
@@ -535,10 +529,10 @@ test "remove at index" {
     try expectEqual(queue.popIndex(two_idx), 2);
 
     var i: usize = 0;
-    while (queue.popOrNull()) |n| : (i += 1) {
+    while (queue.pop()) |n| : (i += 1) {
         try expectEqual(n, sorted_items[i]);
     }
-    try expectEqual(queue.popOrNull(), null);
+    try expectEqual(queue.pop(), null);
 }
 
 test "iterator while empty" {
@@ -574,7 +568,7 @@ test "shrinkAndFree" {
     try expectEqual(@as(u32, 1), queue.pop());
     try expectEqual(@as(u32, 2), queue.pop());
     try expectEqual(@as(u32, 3), queue.pop());
-    try expect(queue.popOrNull() == null);
+    try expect(queue.pop() == null);
 }
 
 test "update min heap" {
