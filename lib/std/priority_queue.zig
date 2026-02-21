@@ -296,13 +296,13 @@ fn greaterThan(context: void, a: u32, b: u32) Order {
     return lessThan(context, a, b).invert();
 }
 
-const PQlt = PriorityQueue(u32, void, lessThan);
-const PQgt = PriorityQueue(u32, void, greaterThan);
+const MinHeap = PriorityQueue(u32, void, lessThan);
+const MaxHeap = PriorityQueue(u32, void, greaterThan);
 
 test "add and remove min heap" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 54);
@@ -322,7 +322,7 @@ test "add and remove min heap" {
 test "add and remove same min heap" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 1);
@@ -342,7 +342,7 @@ test "add and remove same min heap" {
 test "removeOrNull on empty" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try expect(queue.pop() == null);
@@ -351,7 +351,7 @@ test "removeOrNull on empty" {
 test "edge case 3 elements" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 9);
@@ -365,7 +365,7 @@ test "edge case 3 elements" {
 test "peek" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try expect(queue.peek() == null);
@@ -379,7 +379,7 @@ test "peek" {
 test "sift up with odd indices" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     const items = [_]u32{ 15, 7, 21, 14, 13, 22, 12, 6, 7, 25, 5, 24, 11, 16, 15, 24, 2, 1 };
@@ -396,7 +396,7 @@ test "sift up with odd indices" {
 test "addSlice" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     const items = [_]u32{ 15, 7, 21, 14, 13, 22, 12, 6, 7, 25, 5, 24, 11, 16, 15, 24, 2, 1 };
@@ -414,7 +414,7 @@ test "fromOwnedSlice trivial case 0" {
     const items = [0]u32{};
     const queue_items = try gpa.dupe(u32, &items);
 
-    var queue = PQlt.fromOwnedSlice(queue_items[0..], {});
+    var queue: MinHeap = .fromOwnedSlice(queue_items[0..], {});
     defer queue.deinit(gpa);
 
     try expectEqual(@as(usize, 0), queue.count());
@@ -427,7 +427,7 @@ test "fromOwnedSlice trivial case 1" {
     const items = [1]u32{1};
     const queue_items = try gpa.dupe(u32, &items);
 
-    var queue = PQlt.fromOwnedSlice(queue_items[0..], {});
+    var queue: MinHeap = .fromOwnedSlice(queue_items[0..], {});
     defer queue.deinit(gpa);
 
     try expectEqual(@as(usize, 1), queue.count());
@@ -441,7 +441,7 @@ test "fromOwnedSlice" {
     const items = [_]u32{ 15, 7, 21, 14, 13, 22, 12, 6, 7, 25, 5, 24, 11, 16, 15, 24, 2, 1 };
     const heap_items = try gpa.dupe(u32, items[0..]);
 
-    var queue = PQlt.fromOwnedSlice(heap_items[0..], {});
+    var queue: MinHeap = .fromOwnedSlice(heap_items[0..], {});
     defer queue.deinit(gpa);
 
     const sorted_items = [_]u32{ 1, 2, 5, 6, 7, 7, 11, 12, 13, 14, 15, 15, 16, 21, 22, 24, 24, 25 };
@@ -453,7 +453,7 @@ test "fromOwnedSlice" {
 test "add and remove max heap" {
     const gpa = testing.allocator;
 
-    var queue: PQgt = .empty;
+    var queue: MaxHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 54);
@@ -473,7 +473,7 @@ test "add and remove max heap" {
 test "add and remove same max heap" {
     const gpa = testing.allocator;
 
-    var queue: PQgt = .empty;
+    var queue: MaxHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 1);
@@ -493,7 +493,7 @@ test "add and remove same max heap" {
 test "iterator" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     var map = std.AutoHashMap(u32, void).init(testing.allocator);
     defer {
         queue.deinit(gpa);
@@ -517,7 +517,7 @@ test "iterator" {
 test "remove at index" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     const items = [_]u32{ 2, 1, 8, 9, 3, 4, 5 };
@@ -545,7 +545,7 @@ test "remove at index" {
 test "iterator while empty" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     var it = queue.iterator();
@@ -556,7 +556,7 @@ test "iterator while empty" {
 test "shrinkAndFree" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.ensureTotalCapacity(gpa, 4);
@@ -581,7 +581,7 @@ test "shrinkAndFree" {
 test "update min heap" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 55);
@@ -598,7 +598,7 @@ test "update min heap" {
 test "update same min heap" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 1);
@@ -616,7 +616,7 @@ test "update same min heap" {
 test "update max heap" {
     const gpa = testing.allocator;
 
-    var queue: PQgt = .empty;
+    var queue: MaxHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 55);
@@ -633,7 +633,7 @@ test "update max heap" {
 test "update same max heap" {
     const gpa = testing.allocator;
 
-    var queue: PQgt = .empty;
+    var queue: MaxHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 1);
@@ -651,7 +651,7 @@ test "update same max heap" {
 test "update after remove" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 1);
@@ -662,7 +662,7 @@ test "update after remove" {
 test "siftUp in remove" {
     const gpa = testing.allocator;
 
-    var queue: PQlt = .empty;
+    var queue: MinHeap = .empty;
     defer queue.deinit(gpa);
 
     try queue.pushSlice(gpa, &.{ 0, 1, 100, 2, 3, 101, 102, 4, 5, 6, 7, 103, 104, 105, 106, 8 });
@@ -679,14 +679,14 @@ fn contextLessThan(context: []const u32, a: usize, b: usize) Order {
     return std.math.order(context[a], context[b]);
 }
 
-const CPQlt = PriorityQueue(usize, []const u32, contextLessThan);
+const MinHeapWithContext = PriorityQueue(usize, []const u32, contextLessThan);
 
 test "add and remove min heap with context comparator" {
     const gpa = testing.allocator;
 
     const context = [_]u32{ 5, 3, 4, 2, 2, 8, 0 };
 
-    var queue: CPQlt = .initContext(context[0..]);
+    var queue: MinHeapWithContext = .initContext(context[0..]);
     defer queue.deinit(gpa);
 
     try queue.push(gpa, 0);
