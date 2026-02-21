@@ -183,7 +183,7 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
             try self.ensureTotalCapacityPrecise(allocator, better_capacity);
         }
 
-        pub fn ensureTotalCapacityPrecise(self: *Self, allocator: Allocator, new_capacity: usize) !void {
+        fn ensureTotalCapacityPrecise(self: *Self, allocator: Allocator, new_capacity: usize) !void {
             if (self.capacity() >= new_capacity) return;
 
             const old_memory = self.allocatedSlice();
@@ -267,22 +267,6 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
                 .queue = self,
                 .count = 0,
             };
-        }
-
-        fn dump(self: *Self) void {
-            const print = std.debug.print;
-            print("{{ ", .{});
-            print("items: ", .{});
-            for (self.items) |e| {
-                print("{}, ", .{e});
-            }
-            print("array: ", .{});
-            for (self.items) |e| {
-                print("{}, ", .{e});
-            }
-            print("len: {} ", .{self.items.len});
-            print("capacity: {}", .{self.cap});
-            print(" }}\n", .{});
         }
     };
 }
