@@ -873,23 +873,26 @@ test "ArgsTuple forwarding" {
     }
 }
 
-/// Given a backing integer and a set of named power-of-two values,
-/// return a packed struct with a bool field corresponding to each value.
-pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T }) type {
-    if (@typeInfo(T) != .int)
-        @compileError("expected backing integer, found " ++ @typeName(T));
+/// Given an `enum` of exclusively power-of-two-valued fields,
+/// return a `packed struct` with `bool` fields corresponding to the same bits.
+pub fn Bitfield(E: type) type {
+    const enum_info = switch (@typeInfo(E)) {
+        .@"enum" => |info| info,
+        else => @compileError("expected enum type, found " ++ @typeName(E)),
+    };
+    const T = enum_info.tag_type;
+    var bits = enum_info.fields[0..enum_info.fields.len].*;
     for (bits) |bit| {
-        const name, const value = bit;
+        const v: T = bit.value;
         // Wrapping subtraction accounts for the valid minInt(T)
-        if (value == 0 or (value & (value -% 1) != 0)) {
-            @compileError(std.fmt.comptimePrint("cannot create Bitfield with non-power-of-two value {d} ('{s}')", .{ value, name }));
+        if (v == 0 or (v & (v -% 1) != 0)) {
+            @compileError(std.fmt.comptimePrint("cannot create Bitfield with non-power-of-two field {d} (.{s})", .{ v, bit.name }));
         }
     }
 
-    var bits_sort = bits[0..bits.len].*;
-    mem.sort(struct { []const u8, T }, &bits_sort, {}, struct {
-        fn lessThan(_: void, lhs: struct { []const u8, T }, rhs: struct { []const u8, T }) bool {
-            return @ctz(lhs[1]) < @ctz(rhs[1]);
+    mem.sort(Type.EnumField, &bits, {}, struct {
+        fn lessThan(_: void, lhs: Type.EnumField, rhs: Type.EnumField) bool {
+            return @ctz(@as(T, lhs.value)) < @ctz(@as(T, rhs.value));
         }
     }.lessThan);
 
@@ -901,15 +904,9 @@ pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T 
     var field_idx: usize = 0;
     var padding_idx: usize = 0;
     var bit_idx: @TypeOf(@ctz(@as(T, 0))) = 0;
-    for (bits_sort, 0..) |bit, i| {
-        const name, const value = bit;
-        const trail = @ctz(value);
-        if (bit_idx == trail + 1) {
-            @compileError(std.fmt.comptimePrint(
-                "cannot create Bitfield with equal bits '{s}' and '{s}' ({d})",
-                .{ bits_sort[i - 1][0], name, value },
-            ));
-        }
+    for (bits, 0..) |bit, i| {
+        const v: T = bit.value;
+        const trail = @ctz(v);
         const padding_bits = trail - bit_idx;
         bit_idx = trail + 1;
         if (padding_bits != 0) {
@@ -920,7 +917,7 @@ pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T 
             field_idx += 1;
             padding_idx += 1;
         }
-        field_names[field_idx] = name;
+        field_names[field_idx] = bit.name;
         field_types[field_idx] = bool;
         field_attrs[field_idx] = .{ .default_value_ptr = &false };
         field_idx += 1;
@@ -936,12 +933,12 @@ pub fn Bitfield(comptime T: type, comptime bits: []const struct { []const u8, T 
 }
 
 test Bitfield {
-    const actual_1 = @typeInfo(Bitfield(u32, &.{
-        .{ "b", 0b00000000000000000000000001000000 },
-        .{ "d", 0b00000000000000000000001000000000 },
-        .{ "a", 0b00000000000000000000000000000100 },
-        .{ "c", 0b00000000000000000000000010000000 },
-        .{ "e", 0b10000000000000000000000000000000 },
+    const actual_1 = @typeInfo(Bitfield(enum(u32) {
+        b = 0b00000000000000000000000001000000,
+        d = 0b00000000000000000000001000000000,
+        a = 0b00000000000000000000000000000100,
+        c = 0b00000000000000000000000010000000,
+        e = 0b10000000000000000000000000000000,
     })).@"struct";
     const expect_1 = @typeInfo(packed struct(u32) {
         _0: u2 = 0,
@@ -966,11 +963,11 @@ test Bitfield {
         try testing.expectEqual(expect_field.alignment, actual_field.alignment);
     }
 
-    const actual_2 = @typeInfo(Bitfield(i4, &.{
-        .{ "d", -8 },
-        .{ "b", 2 },
-        .{ "a", 1 },
-        .{ "c", 4 },
+    const actual_2 = @typeInfo(Bitfield(enum(i4) {
+        d = -8,
+        b = 2,
+        a = 1,
+        c = 4,
     })).@"struct";
     const expect_2 = @typeInfo(packed struct(i4) {
         a: bool = false,
