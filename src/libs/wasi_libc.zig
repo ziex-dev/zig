@@ -522,6 +522,7 @@ const libc_bottom_half_src_files = [_][]const u8{
     "wasi/libc-bottom-half/sources/complex-builtins.c",
     "wasi/libc-bottom-half/sources/environ.c",
     "wasi/libc-bottom-half/sources/errno.c",
+    "wasi/libc-bottom-half/sources/__errno_location.c",
     "wasi/libc-bottom-half/sources/getcwd.c",
     "wasi/libc-bottom-half/sources/getentropy.c",
     "wasi/libc-bottom-half/sources/isatty.c",

@@ -43,11 +43,6 @@ pub inline fn symbol(comptime func: *const anyopaque, comptime name: []const u8)
     });
 }
 
-pub threadlocal var errno_inner: c_int = 0;
-pub fn _errno() *c_int {
-    return &errno_inner;
-}
-
 /// Given a low-level syscall return value, sets errno and returns `-1`, or on
 /// success returns the result.
 pub fn errno(syscall_return_value: usize) c_int {
@@ -86,6 +81,4 @@ comptime {
 
     _ = @import("c/unistd.zig");
     _ = @import("c/wchar.zig");
-
-    _ = @import("c/errno.zig");
 }

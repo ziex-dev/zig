@@ -21,20 +21,22 @@ const alignment_bytes = @max(@alignOf(std.c.max_align_t), @sizeOf(Header));
 const alignment: Alignment = .fromByteUnits(alignment_bytes);
 
 const symbol = @import("../c.zig").symbol;
-const _errno = @import("../c.zig")._errno;
 
 comptime {
-    symbol(&malloc, "malloc");
-    symbol(&aligned_alloc, "aligned_alloc");
-    symbol(&posix_memalign, "posix_memalign");
-    symbol(&calloc, "calloc");
-    symbol(&realloc, "realloc");
-    symbol(&reallocarray, "reallocarray");
-    symbol(&free, "free");
-    symbol(&malloc_usable_size, "malloc_usable_size");
+    // Dependency on external errno location.
+    if (builtin.link_libc) {
+        symbol(&malloc, "malloc");
+        symbol(&aligned_alloc, "aligned_alloc");
+        symbol(&posix_memalign, "posix_memalign");
+        symbol(&calloc, "calloc");
+        symbol(&realloc, "realloc");
+        symbol(&reallocarray, "reallocarray");
+        symbol(&free, "free");
+        symbol(&malloc_usable_size, "malloc_usable_size");
 
-    symbol(&valloc, "valloc");
-    symbol(&memalign, "memalign");
+        symbol(&valloc, "valloc");
+        symbol(&memalign, "memalign");
+    }
 }
 
 const no_context: *anyopaque = undefined;
@@ -84,10 +86,14 @@ const Header = packed struct(u64) {
     }
 };
 
-pub fn malloc(n: usize) callconv(.c) ?[*]align(alignment_bytes) u8 {
-    const size = std.math.cast(Header.Size, n) orelse return nomem();
+fn malloc(n: usize) callconv(.c) ?[*]align(alignment_bytes) u8 {
+    return malloc_inner(n) orelse return nomem();
+}
+
+pub fn malloc_inner(n: usize) ?[*]align(alignment_bytes) u8 {
+    const size = std.math.cast(Header.Size, n) orelse return null;
     const ptr: [*]align(alignment_bytes) u8 = @alignCast(
-        vtable.alloc(no_context, n + alignment_bytes, alignment, no_ra) orelse return nomem(),
+        vtable.alloc(no_context, n + alignment_bytes, alignment, no_ra) orelse return null,
     );
     const base = ptr + alignment_bytes;
     return Header.set(base, alignment, size);
@@ -190,6 +196,6 @@ fn posix_memalign(result: *?[*]align(alignment_bytes) u8, alloc_alignment: usize
 /// `null`.
 fn nomem() ?[*]align(alignment_bytes) u8 {
     @branchHint(.cold);
-    _errno().* = @intFromEnum(std.c.E.NOMEM);
+    std.c._errno().* = @intFromEnum(std.c.E.NOMEM);
     return null;
 }
