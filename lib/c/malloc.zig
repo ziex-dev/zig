@@ -86,14 +86,10 @@ const Header = packed struct(u64) {
     }
 };
 
-fn malloc(n: usize) callconv(.c) ?[*]align(alignment_bytes) u8 {
-    return malloc_inner(n) orelse return nomem();
-}
-
-pub fn malloc_inner(n: usize) ?[*]align(alignment_bytes) u8 {
-    const size = std.math.cast(Header.Size, n) orelse return null;
+pub fn malloc(n: usize) callconv(.c) ?[*]align(alignment_bytes) u8 {
+    const size = std.math.cast(Header.Size, n) orelse return nomem();
     const ptr: [*]align(alignment_bytes) u8 = @alignCast(
-        vtable.alloc(no_context, n + alignment_bytes, alignment, no_ra) orelse return null,
+        vtable.alloc(no_context, n + alignment_bytes, alignment, no_ra) orelse return nomem(),
     );
     const base = ptr + alignment_bytes;
     return Header.set(base, alignment, size);

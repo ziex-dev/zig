@@ -45,9 +45,6 @@ comptime {
         symbol(&memrchr, "memrchr");
         symbol(&mempcpy, "mempcpy");
 
-        symbol(&strdup, "strdup");
-        symbol(&strndup, "strndup");
-
         symbol(&__strcoll_l, "__strcoll_l");
         symbol(&__strxfrm_l, "__strxfrm_l");
         symbol(&__strcoll_l, "strcoll_l");
@@ -58,6 +55,11 @@ comptime {
         symbol(&stpncpy, "__stpncpy");
         symbol(&strchrnul, "__strchrnul");
         symbol(&memrchr, "__memrchr");
+
+        if (builtin.link_libc) {
+            symbol(&strdup, "strdup");
+            symbol(&strndup, "strndup");
+        }
     }
 
     if (builtin.target.isMinGW()) {
@@ -295,17 +297,17 @@ fn mempcpy(noalias dst: *anyopaque, noalias src: *const anyopaque, len: usize) c
     return dst_bytes + len;
 }
 
-fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
+pub fn strdup(s: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
     const l = std.mem.len(s);
-    const dest: [*:0]c_char = @ptrCast(alloc.malloc_inner((l + 1) * @sizeOf(c_char)) orelse return null);
+    const dest: [*:0]c_char = @ptrCast(alloc.malloc((l + 1) * @sizeOf(c_char)) orelse return null);
     @memcpy(dest, s[0..l]);
     dest[l] = 0;
     return dest;
 }
 
-fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
+pub fn strndup(s: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
     const l = strnlen(s, n);
-    const dest: [*:0]c_char = @ptrCast(alloc.malloc_inner((l + 1) * @sizeOf(c_char)) orelse return null);
+    const dest: [*:0]c_char = @ptrCast(alloc.malloc((l + 1) * @sizeOf(c_char)) orelse return null);
     @memcpy(dest, s[0..l]);
     dest[l] = 0;
     return dest;
@@ -316,27 +318,4 @@ test strncmp {
     try std.testing.expect(strncmp(@ptrCast("a"), @ptrCast("c"), 1) < 0);
     try std.testing.expect(strncmp(@ptrCast("b"), @ptrCast("a"), 1) > 0);
     try std.testing.expect(strncmp(@ptrCast("\xff"), @ptrCast("\x02"), 1) > 0);
-}
-
-test strdup {
-    const s: [*:0]const c_char = &.{ 97, 98, 99, 100, 101 };
-
-    const s_dup = strdup(s).?;
-    defer alloc.free(@ptrCast(@alignCast(s_dup)));
-
-    try std.testing.expectEqualSlices(c_char, std.mem.span(s), std.mem.span(s_dup));
-    try std.testing.expect(std.mem.span(s).ptr != std.mem.span(s_dup).ptr);
-}
-
-test strndup {
-    // n < length of s
-    const s: [*:0]const c_char = &.{ 97, 98, 99, 100, 101 };
-    const s_dup = strndup(s, 2).?;
-    defer alloc.free(@ptrCast(@alignCast(s_dup)));
-    try std.testing.expectEqualSlices(c_char, s[0..2], std.mem.span(s_dup));
-
-    // n > length of s
-    const s2_dup = strndup(s, 6).?;
-    defer alloc.free(@ptrCast(@alignCast(s2_dup)));
-    try std.testing.expectEqualSlices(c_char, std.mem.span(s), std.mem.span(s2_dup));
 }

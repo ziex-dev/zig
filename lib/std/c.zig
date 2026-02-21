@@ -11595,3 +11595,9 @@ const private = struct {
         return &private.errno;
     }
 };
+
+test {
+    if (builtin.link_libc) {
+        _ = @import("c/test.zig");
+    }
+}
