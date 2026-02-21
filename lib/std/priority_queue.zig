@@ -215,16 +215,20 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
             self.cap = new_memory.len;
         }
 
+        /// Remove all elements from the items slice.
         pub fn clearRetainingCapacity(self: *Self) void {
             self.items.len = 0;
         }
 
+        /// Invalidates all element pointers.
         pub fn clearAndFree(self: *Self, allocator: Allocator) void {
             allocator.free(self.allocatedSlice());
             self.items.len = 0;
             self.cap = 0;
         }
 
+        /// Replace an element in the queue with a new element, maintaining priority.
+        /// If the element being updated doesn't exist, return `error.ElementNotFound`.
         pub fn update(self: *Self, elem: T, new_elem: T) !void {
             const update_index = blk: {
                 var idx: usize = 0;
