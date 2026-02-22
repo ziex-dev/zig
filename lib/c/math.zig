@@ -42,6 +42,9 @@ comptime {
         symbol(&acos, "acos");
         symbol(&atanf, "atanf");
         symbol(&atan, "atan");
+        symbol(&atan2, "atan2");
+        symbol(&atan2l, "atan2l");
+        symbol(&atan2f, "atan2f");
         symbol(&atanl, "atanl");
         symbol(&cbrt, "cbrt");
         symbol(&cbrtf, "cbrtf");
@@ -81,6 +84,24 @@ fn atanl(x: c_longdouble) callconv(.c) c_longdouble {
         64 => math.atan(@as(f64, @floatCast(x))),
         80 => math.atan(@as(f80, @floatCast(x))),
         128 => math.atan(@as(f128, @floatCast(x))),
+        else => unreachable,
+    };
+}
+
+fn atan2f(y: f32, x: f32) callconv(.c) f32 {
+    return math.atan2(y, x);
+}
+fn atan2(y: f64, x: f64) callconv(.c) f64 {
+    return math.atan2(y, x);
+}
+
+fn atan2l(y: c_longdouble, x: c_longdouble) callconv(.c) c_longdouble {
+    return switch (@typeInfo(@TypeOf(y)).float.bits) {
+        16 => math.atan2(@as(f16, @floatCast(y)), @as(f16, @floatCast(x))),
+        32 => math.atan2(@as(f32, @floatCast(y)), @as(f32, @floatCast(x))),
+        64 => math.atan2(@as(f64, @floatCast(y)), @as(f64, @floatCast(x))),
+        80 => math.atan2(@as(f80, @floatCast(y)), @as(f80, @floatCast(x))),
+        128 => math.atan2(@as(f128, @floatCast(y)), @as(f128, @floatCast(x))),
         else => unreachable,
     };
 }

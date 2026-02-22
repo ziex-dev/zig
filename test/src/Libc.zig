@@ -18,11 +18,13 @@ const TestCase = struct {
     name: []const u8,
     src_file: std.Build.LazyPath,
     additional_src_file: ?std.Build.LazyPath,
+    skip_arches: []const std.Target.Cpu.Arch,
     supports_wasi_libc: bool,
 };
 
 pub const LibcTestCaseOption = struct {
     additional_src_file: ?[]const u8 = null,
+    skip_arches: []const std.Target.Cpu.Arch = &.{},
 };
 
 pub fn addLibcTestCase(
@@ -37,6 +39,7 @@ pub fn addLibcTestCase(
         .name = name,
         .src_file = libc.libc_test_src_path.path(libc.b, path),
         .additional_src_file = if (options.additional_src_file) |additional_src_file| libc.libc_test_src_path.path(libc.b, additional_src_file) else null,
+        .skip_arches = options.skip_arches,
         .supports_wasi_libc = supports_wasi_libc,
     }) catch @panic("OOM");
 }
@@ -52,6 +55,7 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
     }
 
     const common = libc.libc_test_src_path.path(libc.b, "common");
+    const c_flags: []const []const u8 = &.{"-fno-builtin"};
 
     for (libc.options.optimize_modes) |optimize| {
         const libtest_mod = libc.b.createModule(.{
@@ -66,7 +70,7 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
         libtest_mod.addCSourceFiles(.{
             .root = common,
             .files = libtest_c_source_files[0..if (target.result.isMuslLibC()) 8 else 3],
-            .flags = &.{"-fno-builtin"},
+            .flags = c_flags,
         });
 
         const libtest = libc.b.addLibrary(.{
@@ -74,9 +78,14 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
             .root_module = libtest_mod,
         });
 
-        for (libc.test_cases.items) |*test_case| {
+        test_case_loop: for (libc.test_cases.items) |test_case| {
             if (target.result.isWasiLibC() and !test_case.supports_wasi_libc)
                 continue;
+
+            for (test_case.skip_arches) |skip_arch| {
+                if (target.result.cpu.arch == skip_arch)
+                    continue :test_case_loop;
+            }
 
             const annotated_case_name = libc.b.fmt("run libc-test {s} ({t})", .{ test_case.name, optimize });
             for (libc.options.test_filters) |test_filter| {
@@ -93,12 +102,12 @@ pub fn addTarget(libc: *const Libc, target: std.Build.ResolvedTarget) void {
                 mod.addCMacro("_WASI_EMULATED_SIGNAL", "");
             mod.addCSourceFile(.{
                 .file = test_case.src_file,
-                .flags = &.{"-fno-builtin"},
+                .flags = c_flags,
             });
             if (test_case.additional_src_file) |additional_src_file| {
                 mod.addCSourceFile(.{
                     .file = additional_src_file,
-                    .flags = &.{"-fno-builtin"},
+                    .flags = c_flags,
                 });
             }
             mod.linkLibrary(libtest);

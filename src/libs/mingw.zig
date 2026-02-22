@@ -940,7 +940,6 @@ const mingw32_x86_src = [_][]const u8{
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "acosl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "asinhl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "asinl.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atan2l.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atanhl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atanl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "cosl.c",
@@ -984,7 +983,6 @@ const mingw32_x86_32_src = [_][]const u8{
     "math" ++ path.sep_str ++ "tanhf.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "acosf.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "asinf.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atan2f.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atanf.c",
 };
 
