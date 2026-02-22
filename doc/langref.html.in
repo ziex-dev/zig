@@ -2998,7 +2998,7 @@ or
       {#header_open|Error Union Type#}
       <p>
       An error set type and normal type can be combined with the {#syntax#}!{#endsyntax#}
-      binary operator to form an error union type. You are likely to use an
+      type operator to form an error union type. You are likely to use an
       error union type more often than an error set type by itself.
       </p>
       <p>
@@ -3027,7 +3027,7 @@ or
         <li>You want to take a different action for each possible error.</li>
       </ul>
       {#header_open|catch#}
-      <p>If you want to provide a default value, you can use the {#syntax#}catch{#endsyntax#} binary operator:</p>
+      <p>If you want to provide a default value, you can use the {#syntax#}catch{#endsyntax#} operator:</p>
       {#code|catch.zig#}
 
       <p>
@@ -3175,7 +3175,7 @@ fn createFoo(param: i32) !Foo {
       </ul>
       {#see_also|defer|if|switch#}
 
-      <p>An error union is created with the {#syntax#}!{#endsyntax#} binary operator.
+      <p>An error union is created with the {#syntax#}!{#endsyntax#} type operator.
       You can use compile-time reflection to access the child type of an error union:</p>
       {#code|test_error_union.zig#}
 
