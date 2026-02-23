@@ -13,6 +13,7 @@ const testing = std.testing;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectError = std.testing.expectError;
+const expectEqualSlices = std.testing.expectEqualSlices;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const tmpDir = std.testing.tmpDir;
 
@@ -315,11 +316,7 @@ test "Queue.close single-threaded" {
     var get_buf: [4]u8 = undefined;
 
     // Receive some elements before closing
-    try expectEqual(4, try queue.get(io, &get_buf, 0));
-    try expectEqual(0, get_buf[0]);
-    try expectEqual(1, get_buf[1]);
-    try expectEqual(2, get_buf[2]);
-    try expectEqual(3, get_buf[3]);
+    try expectEqualSlices(u8, &.{ 0, 1, 2, 3 }, try queue.get(io, &get_buf, 0));
     try expectEqual(4, try queue.getOne(io));
 
     // ...and add a couple more now there's space
@@ -328,11 +325,7 @@ test "Queue.close single-threaded" {
     queue.close(io);
 
     // Receive more elements *after* closing
-    try expectEqual(4, try queue.get(io, &get_buf, 0));
-    try expectEqual(5, get_buf[0]);
-    try expectEqual(6, get_buf[1]);
-    try expectEqual(7, get_buf[2]);
-    try expectEqual(8, get_buf[3]);
+    try expectEqualSlices(u8, &.{ 5, 6, 7, 8 }, try queue.get(io, &get_buf, 0));
     try expectEqual(9, try queue.getOne(io));
 
     // Cannot put anything while closed, even if the buffer has space
@@ -341,9 +334,7 @@ test "Queue.close single-threaded" {
     try expectError(error.Closed, queue.putUncancelable(io, &.{ 103, 104 }, 0));
 
     // Even if we ask for 3 items, the queue is closed, so we only get the last 2
-    try expectEqual(2, try queue.get(io, &get_buf, 4));
-    try expectEqual(20, get_buf[0]);
-    try expectEqual(21, get_buf[1]);
+    try expectEqualSlices(u8, &.{ 20, 21 }, try queue.get(io, &get_buf, 4));
 
     // The queue is now empty, so `get` should return `error.Closed` too
     try expectError(error.Closed, queue.getOne(io));
@@ -845,6 +836,6 @@ test "Select" {
     select.async(.foo, S.foo, .{});
 
     var finished_buffer: [3]U = undefined;
-    const finished = finished_buffer[0..try select.awaitMany(&finished_buffer, 2)];
+    const finished = try select.awaitMany(&finished_buffer, 2);
     try testing.expectEqualSlices(U, &.{ .{ .foo = true }, .{ .foo = true } }, finished);
 }
