@@ -1949,6 +1949,53 @@ pub inline fn readInt(comptime T: type, buffer: *const [@divExact(@typeInfo(T).i
     return if (endian == native_endian) value else @byteSwap(value);
 }
 
+fn moreReadIntTests() !void {
+    {
+        const bytes = [_]u8{
+            0x12,
+            0x34,
+            0x56,
+            0x78,
+        };
+        try testing.expect(readInt(u32, &bytes, .big) == 0x12345678);
+        try testing.expect(readInt(u32, &bytes, .big) == 0x12345678);
+        try testing.expect(readInt(i32, &bytes, .big) == 0x12345678);
+        try testing.expect(readInt(u32, &bytes, .little) == 0x78563412);
+        try testing.expect(readInt(u32, &bytes, .little) == 0x78563412);
+        try testing.expect(readInt(i32, &bytes, .little) == 0x78563412);
+    }
+    {
+        const buf = [_]u8{
+            0x00,
+            0x00,
+            0x12,
+            0x34,
+        };
+        const answer = readInt(u32, &buf, .big);
+        try testing.expect(answer == 0x00001234);
+    }
+    {
+        const buf = [_]u8{
+            0x12,
+            0x34,
+            0x00,
+            0x00,
+        };
+        const answer = readInt(u32, &buf, .little);
+        try testing.expect(answer == 0x00003412);
+    }
+    {
+        const bytes = [_]u8{
+            0xff,
+            0xfe,
+        };
+        try testing.expect(readInt(u16, &bytes, .big) == 0xfffe);
+        try testing.expect(readInt(i16, &bytes, .big) == -0x0002);
+        try testing.expect(readInt(u16, &bytes, .little) == 0xfeff);
+        try testing.expect(readInt(i16, &bytes, .little) == -0x0101);
+    }
+}
+
 test readInt {
     try testing.expect(readInt(u0, &[_]u8{}, .big) == 0x0);
     try testing.expect(readInt(u0, &[_]u8{}, .little) == 0x0);
@@ -3709,51 +3756,40 @@ test concat {
     }
 }
 
-fn moreReadIntTests() !void {
-    {
-        const bytes = [_]u8{
-            0x12,
-            0x34,
-            0x56,
-            0x78,
-        };
-        try testing.expect(readInt(u32, &bytes, .big) == 0x12345678);
-        try testing.expect(readInt(u32, &bytes, .big) == 0x12345678);
-        try testing.expect(readInt(i32, &bytes, .big) == 0x12345678);
-        try testing.expect(readInt(u32, &bytes, .little) == 0x78563412);
-        try testing.expect(readInt(u32, &bytes, .little) == 0x78563412);
-        try testing.expect(readInt(i32, &bytes, .little) == 0x78563412);
+/// Repeat a slice a specified amount of time.
+pub fn repeat(allocator: std.mem.Allocator, comptime T: type, slice: []const T, amount: usize) Allocator.Error![]T {
+    if (amount == 0) return &[_]T{};
+
+    const buffer = try allocator.alloc(T, slice.len * amount);
+    @memcpy(buffer[0..slice.len], slice);
+
+    var repeated: usize = 1;
+    while (true) {
+        const to_repeat = @min(repeated, amount - repeated);
+        if (to_repeat == 0) break;
+
+        const write_offset = repeated * slice.len;
+        const read_length = to_repeat * slice.len;
+        @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
+
+        repeated += to_repeat;
     }
-    {
-        const buf = [_]u8{
-            0x00,
-            0x00,
-            0x12,
-            0x34,
-        };
-        const answer = readInt(u32, &buf, .big);
-        try testing.expect(answer == 0x00001234);
-    }
-    {
-        const buf = [_]u8{
-            0x12,
-            0x34,
-            0x00,
-            0x00,
-        };
-        const answer = readInt(u32, &buf, .little);
-        try testing.expect(answer == 0x00003412);
-    }
-    {
-        const bytes = [_]u8{
-            0xff,
-            0xfe,
-        };
-        try testing.expect(readInt(u16, &bytes, .big) == 0xfffe);
-        try testing.expect(readInt(i16, &bytes, .big) == -0x0002);
-        try testing.expect(readInt(u16, &bytes, .little) == 0xfeff);
-        try testing.expect(readInt(i16, &bytes, .little) == -0x0101);
-    }
+
+    return buffer;
+}
+
+test repeat {
+    const repeated_none = try repeat(std.testing.allocator, u8, "", 3);
+    defer std.testing.allocator.free(repeated_none);
+    try std.testing.expectEqualSlices(u8, "", repeated_none);
+
+    const repeated_zero = try repeat(std.testing.allocator, u8, "123", 0);
+    defer std.testing.allocator.free(repeated_zero);
+    try std.testing.expectEqualSlices(u8, "", repeated_zero);
+
+    const repeated_multiple = try repeat(std.testing.allocator, u8, "abc", 3);
+    defer std.testing.allocator.free(repeated_multiple);
+    try std.testing.expectEqualSlices(u8, "abcabcabc", repeated_multiple);
 }
 
 /// Returns the smallest number in a slice. O(n).
