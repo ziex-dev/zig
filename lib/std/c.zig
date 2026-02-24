@@ -11597,7 +11597,5 @@ const private = struct {
 };
 
 test {
-    if (builtin.link_libc) {
-        _ = @import("c/test.zig");
-    }
+    _ = @import("c/test.zig");
 }

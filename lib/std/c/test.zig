@@ -13,6 +13,7 @@ pub const wchar_t = switch (builtin.target.os.tag) {
 };
 
 test "strdup" {
+    if (!builtin.link_libc) return error.SkipZigTest;
     const s: [*:0]const u8 = &.{ 97, 98, 99, 100, 101 };
 
     const s_dup = c.strdup(@ptrCast(s)).?;
@@ -23,6 +24,8 @@ test "strdup" {
 }
 
 test "strndup" {
+    if (!builtin.link_libc) return error.SkipZigTest;
+
     // n < length of s
     const s: [*:0]const u8 = &.{ 97, 98, 99, 100, 101 };
     const s_dup = c.strndup(s, 2).?;
@@ -36,6 +39,7 @@ test "strndup" {
 }
 
 test "wcsdup" {
+    if (!builtin.link_libc) return error.SkipZigTest;
     const w: [*:0]const wchar_t = &.{ 97, 98, 99, 100, 101 };
     const w_dup = c.wcsdup(w).?;
     defer c.free(@ptrCast(@alignCast(w_dup)));
