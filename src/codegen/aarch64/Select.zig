@@ -1436,6 +1436,131 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                             try rhs_mat.finish(isel);
                             try lhs_mat.finish(isel);
                         },
+                        2...16 => |bits| {
+                            const res_ra = try res_vi.value.defReg(isel) orelse break :unused;
+                            const lhs_vi = try isel.use(bin_op.lhs);
+                            const rhs_vi = try isel.use(bin_op.rhs);
+                            const lhs_mat = try lhs_vi.matReg(isel);
+                            const rhs_mat = try rhs_vi.matReg(isel);
+
+                            try isel.emit(.madd(res_ra.w(), lhs_mat.ra.w(), rhs_mat.ra.w(), .wzr));
+                            const skip_label = isel.instructions.items.len;
+                            try isel.emitPanic(.integer_overflow);
+                            try isel.emit(.@"b."(
+                                .hs,
+                                @intCast((isel.instructions.items.len + 1 - skip_label) << 2),
+                            ));
+                            try isel.emit(.subs(
+                                res_ra.w(),
+                                res_ra.w(),
+                                .{ .immediate = @intCast(32 - bits) },
+                            ));
+                            try isel.emit(.cls(res_ra.w(), res_ra.w()));
+                            try isel.emit(.madd(res_ra.w(), lhs_mat.ra.w(), rhs_mat.ra.w(), .xzr));
+                            try rhs_mat.finish(isel);
+                            try lhs_mat.finish(isel);
+                        },
+                        17...32 => |bits| {
+                            const res_ra = try res_vi.value.defReg(isel) orelse break :unused;
+                            const lhs_vi = try isel.use(bin_op.lhs);
+                            const rhs_vi = try isel.use(bin_op.rhs);
+                            const lhs_mat = try lhs_vi.matReg(isel);
+                            const rhs_mat = try rhs_vi.matReg(isel);
+
+                            try isel.emit(.madd(res_ra.w(), lhs_mat.ra.w(), rhs_mat.ra.w(), .wzr));
+                            const skip_label = isel.instructions.items.len;
+                            try isel.emitPanic(.integer_overflow);
+                            try isel.emit(.@"b."(
+                                .hs,
+                                @intCast((isel.instructions.items.len + 1 - skip_label) << 2),
+                            ));
+                            try isel.emit(.subs(
+                                res_ra.w(),
+                                res_ra.w(),
+                                .{ .immediate = @intCast(64 - bits) },
+                            ));
+                            try isel.emit(.cls(res_ra.x(), res_ra.x()));
+                            try isel.emit(.smaddl(res_ra.x(), lhs_mat.ra.w(), rhs_mat.ra.w(), .xzr));
+                            try rhs_mat.finish(isel);
+                            try lhs_mat.finish(isel);
+                        },
+                        33...63 => |bits| {
+                            const res_ra = try res_vi.value.defReg(isel) orelse break :unused;
+                            const lhs_vi = try isel.use(bin_op.lhs);
+                            const rhs_vi = try isel.use(bin_op.rhs);
+                            const lhs_mat = try lhs_vi.matReg(isel);
+                            const rhs_mat = try rhs_vi.matReg(isel);
+                            const hi64_ra = hi64_ra: {
+                                const res_ra_lock = isel.tryLockReg(res_ra);
+                                defer res_ra_lock.unlock(isel);
+                                break :hi64_ra try isel.allocIntReg();
+                            };
+                            defer isel.freeReg(hi64_ra);
+                            const skip_label = isel.instructions.items.len;
+                            try isel.emitPanic(.integer_overflow);
+                            const overflow_label = isel.instructions.items.len;
+                            try isel.emit(.cbz(
+                                hi64_ra.x(),
+                                @intCast((isel.instructions.items.len + 1 - skip_label) << 2),
+                            ));
+                            try isel.emit(.csinc(hi64_ra.x(), hi64_ra.x(), hi64_ra.x(), .pl));
+                            try isel.emit(.add(
+                                hi64_ra.x(),
+                                hi64_ra.x(),
+                                .{
+                                    .shifted_register = .{
+                                        .register = res_ra.x(),
+                                        .shift = .{
+                                            .asr = @intCast(bits),
+                                        },
+                                    },
+                                },
+                            ));
+                            try isel.emit(.cbnz(
+                                hi64_ra.x(),
+                                @intCast((isel.instructions.items.len + 1 - overflow_label) << 2),
+                            ));
+                            try isel.emit(.csinc(hi64_ra.x(), hi64_ra.x(), hi64_ra.x(), .pl));
+                            try isel.emit(.madd(res_ra.x(), lhs_mat.ra.x(), rhs_mat.ra.x(), .xzr));
+                            try isel.emit(.smulh(hi64_ra.x(), lhs_mat.ra.x(), rhs_mat.ra.x()));
+                            try rhs_mat.finish(isel);
+                            try lhs_mat.finish(isel);
+                        },
+                        64 => {
+                            const res_ra = try res_vi.value.defReg(isel) orelse break :unused;
+                            const lhs_vi = try isel.use(bin_op.lhs);
+                            const rhs_vi = try isel.use(bin_op.rhs);
+                            const lhs_mat = try lhs_vi.matReg(isel);
+                            const rhs_mat = try rhs_vi.matReg(isel);
+                            const hi64_ra = hi64_ra: {
+                                const res_ra_lock = isel.tryLockReg(res_ra);
+                                defer res_ra_lock.unlock(isel);
+                                break :hi64_ra try isel.allocIntReg();
+                            };
+                            defer isel.freeReg(hi64_ra);
+                            const skip_label = isel.instructions.items.len;
+                            try isel.emitPanic(.integer_overflow);
+                            try isel.emit(.@"b."(
+                                .eq,
+                                @intCast((isel.instructions.items.len + 1 - skip_label) << 2),
+                            ));
+                            try isel.emit(.subs(
+                                hi64_ra.x(),
+                                hi64_ra.x(),
+                                .{ .shifted_register = .{
+                                    .register = res_ra.x(),
+                                    .shift = .{
+                                        .asr = 63,
+                                    },
+                                } },
+                            ));
+
+                            try isel.emit(.madd(res_ra.x(), lhs_mat.ra.x(), rhs_mat.ra.x(), .xzr));
+                            try isel.emit(.smulh(hi64_ra.x(), lhs_mat.ra.x(), rhs_mat.ra.x()));
+                            try rhs_mat.finish(isel);
+                            try lhs_mat.finish(isel);
+                        },
+                        65...128 => return isel.fail("bad {t} {f}", .{ air_tag, isel.fmtType(ty) }),
                         else => return isel.fail("too big {t} {f}", .{ air_tag, isel.fmtType(ty) }),
                     },
                     .unsigned => switch (int_info.bits) {
