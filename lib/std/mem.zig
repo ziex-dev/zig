@@ -3758,7 +3758,8 @@ test concat {
 
 /// Repeat a slice a specified amount of time.
 pub fn repeat(allocator: std.mem.Allocator, comptime T: type, slice: []const T, amount: usize) Allocator.Error![]T {
-    if (amount == 0) return &[_]T{};
+    if (amount == 0 or slice.len == 0) return &[_]T{};
+    if (amount == 1) return try allocator.dupe(T, slice);
 
     const buffer = try allocator.alloc(T, slice.len * amount);
     @memcpy(buffer[0..slice.len], slice);
@@ -3766,13 +3767,13 @@ pub fn repeat(allocator: std.mem.Allocator, comptime T: type, slice: []const T, 
     var repeated: usize = 1;
     while (true) {
         const to_repeat = @min(repeated, amount - repeated);
-        if (to_repeat == 0) break;
 
         const write_offset = repeated * slice.len;
         const read_length = to_repeat * slice.len;
         @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
 
         repeated += to_repeat;
+        if (repeated == amount) break;
     }
 
     return buffer;
@@ -3783,13 +3784,106 @@ test repeat {
     defer std.testing.allocator.free(repeated_none);
     try std.testing.expectEqualSlices(u8, "", repeated_none);
 
-    const repeated_zero = try repeat(std.testing.allocator, u8, "123", 0);
+    const repeated_zero = try repeat(std.testing.allocator, u8, "abc", 0);
     defer std.testing.allocator.free(repeated_zero);
     try std.testing.expectEqualSlices(u8, "", repeated_zero);
 
     const repeated_multiple = try repeat(std.testing.allocator, u8, "abc", 3);
     defer std.testing.allocator.free(repeated_multiple);
     try std.testing.expectEqualSlices(u8, "abcabcabc", repeated_multiple);
+}
+
+/// Repeat a slice a specified amount of time with a separator in between.
+pub fn repeatSeparated(allocator: std.mem.Allocator, comptime T: type, slice: []const T, separator: []const T, amount: usize) Allocator.Error![]T {
+    if (amount == 0 or slice.len == 0) return &[_]T{};
+    if (amount == 1) return try allocator.dupe(T, slice);
+
+    // The implementation assume the separator is not empty.
+    if (separator.len == 0) return try repeat(allocator, T, slice, amount);
+
+    const buffer = try allocator.alloc(T, (slice.len * amount) + (separator.len * (amount - 1)));
+    @memcpy(buffer[0..slice.len], slice);
+    @memcpy(buffer[slice.len .. slice.len + separator.len], separator);
+
+    var repeated: usize = 1;
+    while (true) {
+        const to_repeat = @min(repeated, amount - repeated);
+
+        if (repeated + to_repeat == amount) {
+            const write_offset = repeated * (slice.len + separator.len);
+            // Don't copy the ending separator when doing the last copy.
+            const read_length = (to_repeat * (slice.len + separator.len)) - separator.len;
+            @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
+            break;
+        } else {
+            const write_offset = repeated * (slice.len + separator.len);
+            const read_length = to_repeat * (slice.len + separator.len);
+            @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
+        }
+
+        repeated += to_repeat;
+    }
+
+    return buffer;
+}
+
+test repeatSeparated {
+    const repeated_none = try repeatSeparated(std.testing.allocator, u8, "", " | ", 3);
+    defer std.testing.allocator.free(repeated_none);
+    try std.testing.expectEqualSlices(u8, "", repeated_none);
+
+    const repeated_zero = try repeatSeparated(std.testing.allocator, u8, "123", " | ", 0);
+    defer std.testing.allocator.free(repeated_zero);
+    try std.testing.expectEqualSlices(u8, "", repeated_zero);
+
+    const repeated_multiple = try repeatSeparated(std.testing.allocator, u8, "abc", " | ", 3);
+    defer std.testing.allocator.free(repeated_multiple);
+    try std.testing.expectEqualSlices(u8, "abc | abc | abc", repeated_multiple);
+}
+
+/// Repeat a slice a specified amount of time with a scalar separator in between.
+pub fn repeatSeparatedScalar(allocator: std.mem.Allocator, comptime T: type, slice: []const T, separator: T, amount: usize) Allocator.Error![]T {
+    if (amount == 0 or slice.len == 0) return &[_]T{};
+    if (amount == 1) return try allocator.dupe(T, slice);
+
+    const buffer = try allocator.alloc(T, (slice.len * amount) + (amount - 1));
+    @memcpy(buffer[0..slice.len], slice);
+    buffer[slice.len] = separator;
+
+    var repeated: usize = 1;
+    while (true) {
+        const to_repeat = @min(repeated, amount - repeated);
+
+        if (repeated + to_repeat == amount) {
+            const write_offset = repeated * (slice.len + 1);
+            // Don't copy the ending separator when doing the last copy.
+            const read_length = (to_repeat * (slice.len + 1)) - 1;
+            @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
+            break;
+        } else {
+            const write_offset = repeated * (slice.len + 1);
+            const read_length = to_repeat * (slice.len + 1);
+            @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
+        }
+
+        repeated += to_repeat;
+    }
+
+    return buffer;
+}
+
+test repeatSeparatedScalar {
+    const repeated_none = try repeatSeparatedScalar(std.testing.allocator, u8, "", ',', 3);
+    defer std.testing.allocator.free(repeated_none);
+    try std.testing.expectEqualSlices(u8, "", repeated_none);
+
+    const repeated_zero = try repeatSeparatedScalar(std.testing.allocator, u8, "123", ',', 0);
+    defer std.testing.allocator.free(repeated_zero);
+    try std.testing.expectEqualSlices(u8, "", repeated_zero);
+
+    const repeated_multiple = try repeatSeparatedScalar(std.testing.allocator, u8, "abc", ',', 3);
+    defer std.testing.allocator.free(repeated_multiple);
+    try std.testing.expectEqualSlices(u8, "abc,abc,abc", repeated_multiple);
 }
 
 /// Returns the smallest number in a slice. O(n).
