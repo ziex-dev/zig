@@ -1792,12 +1792,12 @@ pub fn invalidFmtError(comptime fmt: []const u8, value: anytype) noreturn {
     @compileError("invalid format string '" ++ fmt ++ "' for type '" ++ @typeName(@TypeOf(value)) ++ "'");
 }
 
-pub fn printDurationSigned(w: *Writer, ns: i64) Error!void {
+pub fn printDurationSigned(w: *Writer, ns: anytype) Error!void {
     if (ns < 0) try w.writeByte('-');
     return w.printDurationUnsigned(@abs(ns));
 }
 
-pub fn printDurationUnsigned(w: *Writer, ns: u64) Error!void {
+pub fn printDurationUnsigned(w: *Writer, ns: anytype) Error!void {
     var ns_remaining = ns;
     inline for (.{
         .{ .ns = 365 * std.time.ns_per_day, .sep = 'y' },
@@ -1843,12 +1843,11 @@ pub fn printDurationUnsigned(w: *Writer, ns: u64) Error!void {
     try w.writeAll("ns");
 }
 
-/// Writes number of nanoseconds according to its signed magnitude:
-/// `[#y][#w][#d][#h][#m]#[.###][n|u|m]s`
-/// `nanoseconds` must be an integer that coerces into `u64` or `i64`.
-pub fn printDuration(w: *Writer, nanoseconds: anytype, options: std.fmt.Options) Error!void {
-    // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
-    var buf: [24]u8 = undefined;
+/// Prefer `printDuration` to avoid generic explosion.
+pub fn printDurationAny(w: *Writer, nanoseconds: anytype, options: std.fmt.Options) Error!void {
+    // worst case: "-yXXwXXdXXhXXmXX.XXXs".len = 21 (excluding year number)
+    const worst_case_len = 21 + comptime std.math.log10(@max(1, std.math.maxInt(@TypeOf(nanoseconds)) / (365 * std.time.ns_per_day))) + 1;
+    var buf: [worst_case_len]u8 = undefined;
     var sub_writer: Writer = .fixed(&buf);
     if (@TypeOf(nanoseconds) == comptime_int) {
         if (nanoseconds >= 0) {
@@ -1861,6 +1860,27 @@ pub fn printDuration(w: *Writer, nanoseconds: anytype, options: std.fmt.Options)
         .unsigned => sub_writer.printDurationUnsigned(nanoseconds) catch unreachable,
     }
     return w.alignBufferOptions(sub_writer.buffered(), options);
+}
+
+/// Writes number of nanoseconds according to its signed magnitude:
+/// `[#y][#w][#d][#h][#m]#[.###][n|u|m]s`
+///
+/// Wrapper around `printDurationAny` to prevent generic explosion.
+pub inline fn printDuration(w: *Writer, nanoseconds: anytype, options: std.fmt.Options) Error!void {
+    switch (@TypeOf(nanoseconds)) {
+        isize, usize => {},
+        comptime_int => {
+            if (comptime std.math.cast(usize, nanoseconds)) |ns| return w.printDurationAny(ns, options);
+            if (comptime std.math.cast(isize, nanoseconds)) |ns| return w.printDurationAny(ns, options);
+            const Int = std.math.IntFittingRange(nanoseconds, nanoseconds);
+            return w.printDurationAny(@as(Int, nanoseconds), options);
+        },
+        else => switch (@typeInfo(@TypeOf(nanoseconds)).int.signedness) {
+            .signed => if (std.math.cast(isize, nanoseconds)) |ns| return w.printDurationAny(ns, options),
+            .unsigned => if (std.math.cast(isize, nanoseconds)) |ns| return w.printDurationAny(ns, options),
+        },
+    }
+    return w.printDurationAny(nanoseconds, options);
 }
 
 pub fn printHex(w: *Writer, bytes: []const u8, case: std.fmt.Case) Error!void {
@@ -2160,6 +2180,8 @@ test printDuration {
     try testDurationCase("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms + 1);
     try testDurationCase("1y1m999ns", 365 * std.time.ns_per_day + std.time.ns_per_min + 999);
     try testDurationCase("584y49w23h34m33.709s", std.math.maxInt(u64));
+    try testDurationCase("2512308552583y11w2d6h39m53.543s", std.math.maxInt(u96));
+    try testDurationCase("1234567890y", @as(u96, 365 * std.time.ns_per_day) * 1234567890);
 
     try testing.expectFmt("=======0ns", "{D:=>10}", .{0});
     try testing.expectFmt("1ns=======", "{D:=<10}", .{1});
@@ -2227,6 +2249,7 @@ test printDurationSigned {
     try testDurationCaseSigned("292y24w3d23h47m16.854s", std.math.maxInt(i64));
     try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.minInt(i64) + 1);
     try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.minInt(i64));
+    try testDurationCaseSigned("-1256154276291y31w5d3h19m56.771s", std.math.minInt(i96));
 
     try testing.expectFmt("=======0ns", "{D:=>10}", .{0});
     try testing.expectFmt("1ns=======", "{D:=<10}", .{1});
@@ -2234,15 +2257,15 @@ test printDurationSigned {
     try testing.expectFmt("  -999ns  ", "{D:^10}", .{-(std.time.ns_per_us - 1)});
 }
 
-fn testDurationCase(expected: []const u8, input: u64) !void {
-    var buf: [24]u8 = undefined;
+fn testDurationCase(expected: []const u8, input: u96) !void {
+    var buf: [34]u8 = undefined;
     var w: Writer = .fixed(&buf);
     try w.printDurationUnsigned(input);
     try testing.expectEqualStrings(expected, w.buffered());
 }
 
-fn testDurationCaseSigned(expected: []const u8, input: i64) !void {
-    var buf: [24]u8 = undefined;
+fn testDurationCaseSigned(expected: []const u8, input: i96) !void {
+    var buf: [34]u8 = undefined;
     var w: Writer = .fixed(&buf);
     try w.printDurationSigned(input);
     try testing.expectEqualStrings(expected, w.buffered());
