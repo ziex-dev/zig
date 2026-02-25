@@ -43,6 +43,6 @@ test "wcsdup" {
     const w: [*:0]const wchar_t = &.{ 97, 98, 99, 100, 101 };
     const w_dup = c.wcsdup(@ptrCast(w)).?;
     defer c.free(@ptrCast(@alignCast(w_dup)));
-    try std.testing.expectEqualSlices(wchar_t, std.mem.span(w), std.mem.span(w_dup));
+    try std.testing.expectEqualSlices(wchar_t, std.mem.span(w), std.mem.span(@as([*:0]wchar_t, @ptrCast(w_dup))));
     try std.testing.expect(std.mem.span(w).ptr != std.mem.span(w_dup).ptr);
 }
