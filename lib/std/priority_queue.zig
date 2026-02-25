@@ -183,7 +183,10 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
             try self.ensureTotalCapacityPrecise(allocator, better_capacity);
         }
 
-        fn ensureTotalCapacityPrecise(self: *Self, allocator: Allocator, new_capacity: usize) !void {
+        /// If the current capacity is less than `new_capacity`, this function will
+        /// modify the array so that it can hold exactly `new_capacity` items.
+        /// Invalidates element pointers if additional memory is needed.
+        pub fn ensureTotalCapacityPrecise(self: *Self, allocator: Allocator, new_capacity: usize) !void {
             if (self.capacity() >= new_capacity) return;
 
             const old_memory = self.allocatedSlice();
