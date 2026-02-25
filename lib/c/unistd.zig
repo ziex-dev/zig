@@ -22,6 +22,11 @@ comptime {
         symbol(&ctermidLinux, "ctermid");
         symbol(&dupLinux, "dup");
 
+        symbol(&read, "read");
+        symbol(&write, "write");
+        symbol(&pread, "pread");
+        symbol(&pwrite, "pwrite");
+
         symbol(&getegidLinux, "getegid");
         symbol(&geteuidLinux, "geteuid");
         symbol(&getgidLinux, "getgid");
@@ -99,6 +104,22 @@ fn ctermidLinux(maybe_path: ?[*]c_char) callconv(.c) [*:0]c_char {
 
 fn dupLinux(fd: c_int) callconv(.c) c_int {
     return errno(linux.dup(fd));
+}
+
+fn read(fd: i32, buf: [*]u8, count: usize) callconv(.c) c_int {
+    return errno(linux.read(fd, buf, count));
+}
+
+fn write(fd: i32, buf: [*]const u8, count: usize) callconv(.c) c_int {
+    return errno(linux.write(fd, buf, count));
+}
+
+fn pread(fd: i32, buf: [*]u8, count: usize, offset: i64) callconv(.c) c_int {
+    return errno(linux.pread(fd, buf, count, offset));
+}
+
+fn pwrite(fd: i32, buf: [*]const u8, count: usize, offset: i64) callconv(.c) c_int {
+    return errno(linux.pwrite(fd, buf, count, offset));
 }
 
 fn getegidLinux() callconv(.c) linux.gid_t {
