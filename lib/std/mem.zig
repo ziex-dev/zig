@@ -3808,18 +3808,17 @@ pub fn repeatSeparated(allocator: std.mem.Allocator, comptime T: type, slice: []
     var repeated: usize = 1;
     while (true) {
         const to_repeat = @min(repeated, amount - repeated);
+        const write_offset = repeated * (slice.len + separator.len);
 
         if (repeated + to_repeat == amount) {
-            const write_offset = repeated * (slice.len + separator.len);
             // Don't copy the ending separator when doing the last copy.
             const read_length = (to_repeat * (slice.len + separator.len)) - separator.len;
             @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
             break;
-        } else {
-            const write_offset = repeated * (slice.len + separator.len);
-            const read_length = to_repeat * (slice.len + separator.len);
-            @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
         }
+
+        const read_length = to_repeat * (slice.len + separator.len);
+        @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
 
         repeated += to_repeat;
     }
@@ -3853,18 +3852,17 @@ pub fn repeatSeparatedScalar(allocator: std.mem.Allocator, comptime T: type, sli
     var repeated: usize = 1;
     while (true) {
         const to_repeat = @min(repeated, amount - repeated);
+        const write_offset = repeated * (slice.len + 1);
 
         if (repeated + to_repeat == amount) {
-            const write_offset = repeated * (slice.len + 1);
             // Don't copy the ending separator when doing the last copy.
             const read_length = (to_repeat * (slice.len + 1)) - 1;
             @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
             break;
-        } else {
-            const write_offset = repeated * (slice.len + 1);
-            const read_length = to_repeat * (slice.len + 1);
-            @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
         }
+
+        const read_length = to_repeat * (slice.len + 1);
+        @memcpy(buffer[write_offset .. write_offset + read_length], buffer[0..read_length]);
 
         repeated += to_repeat;
     }
