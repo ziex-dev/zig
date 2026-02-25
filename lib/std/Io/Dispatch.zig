@@ -4689,9 +4689,7 @@ const SleepWaiter = struct {
 
     fn wake(context: ?*anyopaque) callconv(.c) void {
         const waiter: *SleepWaiter = @ptrCast(@alignCast(context));
-        var sleeper = waiter.sleeper;
-        waiter.* = undefined;
-        Sleeper.wake(&sleeper);
+        Sleeper.wake(&waiter.sleeper);
     }
 };
 
@@ -4711,7 +4709,7 @@ fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
         return ev.yield(.{ .after = ev.timeFromTimeout(timeout) });
     };
     var waiter: SleepWaiter = .{
-        .cancelable = .{ .queue = queue, .cancel = &Futex.Waiter.canceled },
+        .cancelable = .{ .queue = queue, .cancel = &SleepWaiter.canceled },
         .timer = timer,
     };
     timer.as_object().set_context(&waiter);
@@ -5034,4 +5032,45 @@ fn addBuf(
 
 test {
     _ = Fiber.CancelProtection;
+}
+
+test "sleep cancel (pre-cancel) does not crash" {
+    var ev: Evented = undefined;
+    // std.heap.page_allocator avoids false-positive leak reports: `ev.queue` is concurrent,
+    // so the fiber's `.destroy` cleanup can race with `ev.deinit()` on another thread.
+    try ev.init(std.heap.page_allocator, .{});
+    defer ev.deinit();
+    const ev_io = ev.io();
+
+    // Cancel the group immediately after spawning, before SleepWaiter.start has run.
+    var group: Io.Group = .init;
+    group.async(ev_io, struct {
+        fn run(dispatch_io: Io) Io.Cancelable!void {
+            try Io.sleep(dispatch_io, .fromSeconds(9999), .awake);
+        }
+    }.run, .{ev_io});
+    group.cancel(ev_io);
+}
+
+test "sleep cancel (in-flight) does not crash" {
+    var ev: Evented = undefined;
+    try ev.init(std.heap.page_allocator, .{});
+    defer ev.deinit();
+    const ev_io = ev.io();
+
+    var sleeping: u32 = 0;
+    var group: Io.Group = .init;
+    group.async(ev_io, struct {
+        fn run(dispatch_io: Io, s: *u32) Io.Cancelable!void {
+            @atomicStore(u32, s, 1, .release);
+            Io.futexWake(dispatch_io, u32, s, 1);
+            try Io.sleep(dispatch_io, .fromSeconds(9999), .awake);
+        }
+    }.run, .{ ev_io, &sleeping });
+    // Wait until the fiber is about to call Io.sleep.
+    Io.futexWaitUncancelable(ev_io, u32, &sleeping, 0);
+    // Sleep briefly to allow SleepWaiter.start to run and activate the timer,
+    // so that group.cancel exercises the in-flight cancellation path.
+    try Io.sleep(ev_io, .fromMilliseconds(10), .awake);
+    group.cancel(ev_io);
 }
