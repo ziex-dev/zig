@@ -119,10 +119,11 @@ pub fn exp2(x: f64) callconv(.c) f64 {
         // x <= -1022
         if (ux >> 63 != 0) {
             // underflow
-            if (x <= -1075 or x - 0x1.0p52 + 0x1.0p52 != x) {
+            const fully_underflows = x <= -1075;
+            if (fully_underflows or x - 0x1.0p52 + 0x1.0p52 != x) {
                 if (compiler_rt.want_float_exceptions) math_error.fp_underflow_f64(x); // underflow
             }
-            if (x <= -1075) {
+            if (fully_underflows) {
                 return 0;
             }
         }

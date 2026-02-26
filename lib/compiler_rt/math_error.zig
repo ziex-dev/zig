@@ -139,7 +139,18 @@ pub inline fn clearFpStatus() void {
                 : "memory");
         },
         .aarch64 => {
-            asm volatile ("msr fpsr, xzr" ::: "memory");
+            // Read-modify-write: preserve QC (bit 27) and condition flags (bits 28-31),
+            // clear only the five exception status bits (bits 0-4: IOC/DZC/OFC/UFC/IXC).
+            var fpsr: u64 = 0;
+            asm volatile ("mrs %[v], fpsr"
+                : [v] "=r" (fpsr),
+                :
+                : "memory");
+            fpsr &= ~@as(u64, 0x1f);
+            asm volatile ("msr fpsr, %[v]"
+                :
+                : [v] "r" (fpsr),
+                : "memory");
         },
         else => {},
     }
