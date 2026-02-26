@@ -8,7 +8,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const arch = builtin.cpu.arch;
 const math = std.math;
-const mem = std.mem;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const compiler_rt = @import("../compiler_rt.zig");
