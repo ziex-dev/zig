@@ -108,8 +108,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : "memory"
-            );
+                : "memory");
             break :blk mxcsr & 0x3f; // low 6 bits are status flags
         },
         .aarch64 => blk: {
@@ -117,8 +116,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : "memory"
-            );
+                : "memory");
             break :blk @as(u32, @truncate(fpsr & 0x1f)); // low 5 bits
         },
         else => 0,
@@ -133,14 +131,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : "memory"
-            );
+                : "memory");
             mxcsr &= ~@as(u32, 0x3f);
             asm volatile ("ldmxcsr %[v]"
                 :
-                : [v] "m" (mxcsr)
-                : "memory"
-            );
+                : [v] "m" (mxcsr),
+                : "memory");
         },
         .aarch64 => {
             asm volatile ("msr fpsr, xzr" ::: "memory");
