@@ -13,6 +13,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
+const math_error = @import("math_error.zig");
 
 comptime {
     symbol(&__exp2h, "__exp2h");
@@ -50,12 +51,12 @@ pub fn exp2f(x: f32) callconv(.c) f32 {
         }
         // x >= 128
         if (u >= 0x43000000 and u < 0x80000000) {
-            return x * 0x1.0p127;
+            return if (compiler_rt.want_float_exceptions) math_error.fp_overflow_f32(x) else std.math.inf(f32);
         }
         // x < -126
         if (u >= 0x80000000) {
             if (u >= 0xC3160000 or u & 0x000FFFF != 0) {
-                if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(-0x1.0p-149 / x);
+                if (compiler_rt.want_float_exceptions) math_error.fp_underflow_f32(x); // underflow
             }
             // x <= -150
             if (u >= 0xC3160000) {
@@ -109,7 +110,7 @@ pub fn exp2(x: f64) callconv(.c) f64 {
     if (ix >= 0x408FF000) {
         // x >= 1024 or nan
         if (ix >= 0x40900000 and ux >> 63 == 0) {
-            return if (compiler_rt.want_float_exceptions) x * 0x1p1023 else std.math.inf(f64);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_overflow_f64(x) else std.math.inf(f64);
         }
         // -inf or -nan
         if (ix >= 0x7FF00000) {
@@ -119,7 +120,7 @@ pub fn exp2(x: f64) callconv(.c) f64 {
         if (ux >> 63 != 0) {
             // underflow
             if (x <= -1075 or x - 0x1.0p52 + 0x1.0p52 != x) {
-                if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(@as(f32, @floatCast(-0x1.0p-149 / x)));
+                if (compiler_rt.want_float_exceptions) math_error.fp_underflow_f64(x); // underflow
             }
             if (x <= -1075) {
                 return 0;
@@ -530,4 +531,24 @@ test "exp2() boundary" {
     try expectEqual(exp2(-0x1p-1074), 1); // Min negative input value
     try expectEqual(exp2(0x1p-1022), 1); // First positive subnormal input
     try expectEqual(exp2(-0x1p-1022), 1); // First negative subnormal input
+}
+
+test "exp2f() exception flags" {
+    if (math_error.FE_OVERFLOW == 0) return error.SkipZigTest;
+    math_error.clearFpStatus();
+    _ = exp2f(200.0); // 200 >= 128 → overflow
+    try expect(math_error.getFpStatus() & math_error.FE_OVERFLOW != 0);
+    math_error.clearFpStatus();
+    _ = exp2f(-200.0); // -200 <= -150 → underflow
+    try expect(math_error.getFpStatus() & math_error.FE_UNDERFLOW != 0);
+}
+
+test "exp2() exception flags" {
+    if (math_error.FE_OVERFLOW == 0) return error.SkipZigTest;
+    math_error.clearFpStatus();
+    _ = exp2(1100.0); // 1100 >= 1024 → overflow
+    try expect(math_error.getFpStatus() & math_error.FE_OVERFLOW != 0);
+    math_error.clearFpStatus();
+    _ = exp2(-1100.0); // -1100 <= -1075 → underflow
+    try expect(math_error.getFpStatus() & math_error.FE_UNDERFLOW != 0);
 }

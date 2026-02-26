@@ -12,6 +12,7 @@ const maxInt = std.math.maxInt;
 
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = @import("../compiler_rt.zig").symbol;
+const math_error = @import("math_error.zig");
 
 comptime {
     symbol(&__log10h, "__log10h");
@@ -49,11 +50,11 @@ pub fn log10f(x_: f32) callconv(.c) f32 {
     if (ix < 0x00800000 or ix >> 31 != 0) {
         // log(+-0) = -inf
         if (ix << 1 == 0) {
-            return if (compiler_rt.want_float_exceptions) -1 / (x * x) else -std.math.inf(f64);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_divzero_f32(true) else -std.math.inf(f32);
         }
         // log(-#) = nan
         if (ix >> 31 != 0) {
-            return if (compiler_rt.want_float_exceptions) (x - x) / 0.0 else math.nan(f64);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_invalid_f32(x) else math.nan(f32);
         }
 
         k -= 25;
@@ -111,11 +112,11 @@ pub fn log10(x_: f64) callconv(.c) f64 {
     if (hx < 0x00100000 or hx >> 31 != 0) {
         // log(+-0) = -inf
         if (ix << 1 == 0) {
-            return if (compiler_rt.want_float_exceptions) -1 / (x * x) else -std.math.inf(f64);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_divzero_f64(true) else -std.math.inf(f64);
         }
         // log(-#) = nan
         if (hx >> 31 != 0) {
-            return if (compiler_rt.want_float_exceptions) (x - x) / 0.0 else math.nan(f64);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_invalid_f64(x) else math.nan(f64);
         }
 
         // subnormal, scale x
@@ -256,4 +257,24 @@ test "log10() boundary" {
     try expectEqual(log10(0x1.fffffffffffffp-1), -0x1.bcb7b1526e50fp-55); // Last value before result reaches -0
     try expectEqual(log10(0x1p-1022), -0x1.33a7146f72a42p+8); // First subnormal
     try expect(math.isNan(log10(-0x1p-1022))); // First negative subnormal
+}
+
+test "log10f() exception flags" {
+    if (math_error.FE_INVALID == 0) return error.SkipZigTest;
+    math_error.clearFpStatus();
+    _ = log10f(-1.0);
+    try expect(math_error.getFpStatus() & math_error.FE_INVALID != 0);
+    math_error.clearFpStatus();
+    _ = log10f(0.0);
+    try expect(math_error.getFpStatus() & math_error.FE_DIVBYZERO != 0);
+}
+
+test "log10() exception flags" {
+    if (math_error.FE_INVALID == 0) return error.SkipZigTest;
+    math_error.clearFpStatus();
+    _ = log10(-1.0);
+    try expect(math_error.getFpStatus() & math_error.FE_INVALID != 0);
+    math_error.clearFpStatus();
+    _ = log10(0.0);
+    try expect(math_error.getFpStatus() & math_error.FE_DIVBYZERO != 0);
 }

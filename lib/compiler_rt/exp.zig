@@ -15,6 +15,7 @@ const expectEqual = std.testing.expectEqual;
 
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = @import("../compiler_rt.zig").symbol;
+const math_error = @import("math_error.zig");
 
 comptime {
     symbol(&__exph, "__exph");
@@ -58,10 +59,10 @@ pub fn expf(x_: f32) callconv(.c) f32 {
         }
         // x >= 88.722839
         if (hx >= 0x42b17218 and sign == 0) {
-            return x * 0x1.0p127;
+            return if (compiler_rt.want_float_exceptions) math_error.fp_overflow_f32(x) else std.math.inf(f32);
         }
         if (sign != 0) {
-            if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(-0x1.0p-149 / x); // overflow
+            if (compiler_rt.want_float_exceptions) math_error.fp_underflow_f32(x); // underflow
             // x <= -103.972084
             if (hx >= 0x42CFF1B5) {
                 return 0;
@@ -137,11 +138,11 @@ pub fn exp(x_: f64) callconv(.c) f64 {
         }
         if (x > 709.782712893383973096) {
             // overflow if x != inf
-            return if (compiler_rt.want_float_exceptions) x * 0x1p1023 else std.math.inf(f64);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_overflow_f64(x) else std.math.inf(f64);
         }
         if (x < -708.39641853226410622) {
             // underflow if x != -inf
-            if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(-0x0.0000000000001p-1022 / x);
+            if (compiler_rt.want_float_exceptions) math_error.fp_underflow_f64(x);
             if (x < -745.13321910194110842) {
                 return 0;
             }
@@ -306,4 +307,24 @@ test "exp() boundary" {
     try expectEqual(exp(-0x1.74910d52d3052p+9), 0.0); // The first value at which the result flushes to zero
     try expectEqual(exp(-0x1.6232bdd7abcd2p+9), 0x1.000000000007cp-1022); // The last value before the result flushes to subnormal
     try expectEqual(exp(-0x1.6232bdd7abcd3p+9), 0x1.ffffffffffcf8p-1023); // The first value for which the result flushes to subnormal
+}
+
+test "expf() exception flags" {
+    if (math_error.FE_OVERFLOW == 0) return error.SkipZigTest;
+    math_error.clearFpStatus();
+    _ = expf(200.0); // 200 > 88.722839 → overflow
+    try expect(math_error.getFpStatus() & math_error.FE_OVERFLOW != 0);
+    math_error.clearFpStatus();
+    _ = expf(-200.0); // -200 < -87.33655, sign!=0 → underflow
+    try expect(math_error.getFpStatus() & math_error.FE_UNDERFLOW != 0);
+}
+
+test "exp() exception flags" {
+    if (math_error.FE_OVERFLOW == 0) return error.SkipZigTest;
+    math_error.clearFpStatus();
+    _ = exp(800.0); // 800 > 709.78... → overflow
+    try expect(math_error.getFpStatus() & math_error.FE_OVERFLOW != 0);
+    math_error.clearFpStatus();
+    _ = exp(-800.0); // -800 < -708.39... → underflow
+    try expect(math_error.getFpStatus() & math_error.FE_UNDERFLOW != 0);
 }
