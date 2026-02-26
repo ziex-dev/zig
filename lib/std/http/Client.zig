@@ -74,11 +74,20 @@ pub const ConnectionPool = struct {
     free_size: usize = 32,
 
     /// The criteria for a connection to be considered a match.
-    pub const Criteria = struct {
-        host: HostName,
-        port: u16,
-        protocol: Protocol,
-        unix_path: ?[]const u8 = null,
+    ///
+    /// This uses a tagged union to ensure that host/port and unix_path
+    /// are mutually exclusive - they cannot both be specified at the same time.
+    pub const Criteria = union(enum) {
+        /// TCP connection criteria (host + port)
+        host_based: struct {
+            host: HostName,
+            port: u16,
+            protocol: Protocol,
+        },
+        /// Unix socket connection criteria
+        unix: struct {
+            path: []const u8,
+        },
     };
 
     /// Finds and acquires a connection from the connection pool matching the criteria.
@@ -92,16 +101,24 @@ pub const ConnectionPool = struct {
         var next = pool.free.last;
         while (next) |node| : (next = node.prev) {
             const connection: *Connection = @alignCast(@fieldParentPtr("pool_node", node));
-            if (connection.protocol != criteria.protocol) continue;
-            if (connection.port != criteria.port) continue;
 
-            // Domain names are case-insensitive (RFC 5890, Section 2.3.2.4)
-            if (!connection.host().eql(criteria.host)) continue;
+            // Match based on the criteria variant
+            switch (criteria) {
+                .host_based => |hb| {
+                    // For host-based connections, skip any unix socket connections
+                    if (connection.unixPath() != null) continue;
+                    if (connection.protocol != hb.protocol) continue;
+                    if (connection.port != hb.port) continue;
 
-            if (criteria.unix_path) |up| {
-                const cup = connection.unixPath() orelse continue;
-                if (!std.mem.eql(u8, cup, up)) continue;
-            } else if (connection.unixPath() != null) continue;
+                    // Domain names are case-insensitive (RFC 5890, Section 2.3.2.4)
+                    if (!connection.host().eql(hb.host)) continue;
+                },
+                .unix => |uc| {
+                    // For unix socket connections, skip any non-unix connections
+                    const cup = connection.unixPath() orelse continue;
+                    if (!std.mem.eql(u8, cup, uc.path)) continue;
+                },
+            }
 
             pool.acquireUnsafe(connection);
             return connection;
@@ -1486,9 +1503,11 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     const proxied_port = options.proxied_port orelse port;
 
     if (client.connection_pool.findConnection(io, .{
-        .host = proxied_host,
-        .port = proxied_port,
-        .protocol = protocol,
+        .host_based = .{
+            .host = proxied_host,
+            .port = proxied_port,
+            .protocol = protocol,
+        },
     })) |conn| return conn;
 
     var stream = try host.connect(io, port, .{ .mode = .stream });
@@ -1523,10 +1542,9 @@ pub fn connectUnix(client: *Client, name: HostName, path: []const u8) ConnectUni
     const io = client.io;
 
     if (client.connection_pool.findConnection(io, .{
-        .host = name,
-        .port = 0,
-        .protocol = .plain,
-        .unix_path = path,
+        .unix = .{
+            .path = path,
+        },
     })) |node|
         return node;
 
@@ -1562,9 +1580,11 @@ pub fn connectProxied(
     if (!proxy.supports_connect) return error.TunnelNotSupported;
 
     if (client.connection_pool.findConnection(io, .{
-        .host = proxied_host,
-        .port = proxied_port,
-        .protocol = proxy.protocol,
+        .host_based = .{
+            .host = proxied_host,
+            .port = proxied_port,
+            .protocol = proxy.protocol,
+        },
     })) |node| return node;
 
     var maybe_valid = false;
