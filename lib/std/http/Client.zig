@@ -78,6 +78,7 @@ pub const ConnectionPool = struct {
         host: HostName,
         port: u16,
         protocol: Protocol,
+        unix_path: ?[]const u8 = null,
     };
 
     /// Finds and acquires a connection from the connection pool matching the criteria.
@@ -96,6 +97,11 @@ pub const ConnectionPool = struct {
 
             // Domain names are case-insensitive (RFC 5890, Section 2.3.2.4)
             if (!connection.host().eql(criteria.host)) continue;
+
+            if (criteria.unix_path) |up| {
+                const cup = connection.unixPath() orelse continue;
+                if (!std.mem.eql(u8, cup, up)) continue;
+            } else if (connection.unixPath() != null) continue;
 
             pool.acquireUnsafe(connection);
             return connection;
@@ -239,6 +245,7 @@ pub const Connection = struct {
     pool_node: std.DoublyLinkedList.Node,
     port: u16,
     host_len: u8,
+    unix_path_len: u8,
     proxied: bool,
     closing: bool,
     protocol: Protocol,
@@ -251,17 +258,21 @@ pub const Connection = struct {
             remote_host: HostName,
             port: u16,
             stream: Io.net.Stream,
+            unix_path: ?[]const u8,
         ) error{OutOfMemory}!*Plain {
             const io = client.io;
             const gpa = client.allocator;
-            const alloc_len = allocLen(client, remote_host.bytes.len);
+            const unix_path_len = if (unix_path) |p| p.len else 0;
+            const alloc_len = allocLen(client, remote_host.bytes.len, unix_path_len);
             const base = try gpa.alignedAlloc(u8, .of(Plain), alloc_len);
             errdefer gpa.free(base);
             const host_buffer = base[@sizeOf(Plain)..][0..remote_host.bytes.len];
-            const socket_read_buffer = host_buffer.ptr[host_buffer.len..][0..client.read_buffer_size];
+            const unix_path_buffer = host_buffer.ptr[host_buffer.len..][0..unix_path_len];
+            const socket_read_buffer = unix_path_buffer.ptr[unix_path_buffer.len..][0..client.read_buffer_size];
             const socket_write_buffer = socket_read_buffer.ptr[socket_read_buffer.len..][0..client.write_buffer_size];
             assert(base.ptr + alloc_len == socket_write_buffer.ptr + socket_write_buffer.len);
             @memcpy(host_buffer, remote_host.bytes);
+            if (unix_path) |p| @memcpy(unix_path_buffer, p);
             const plain: *Plain = @ptrCast(base);
             plain.* = .{
                 .connection = .{
@@ -271,6 +282,7 @@ pub const Connection = struct {
                     .pool_node = .{},
                     .port = port,
                     .host_len = @intCast(remote_host.bytes.len),
+                    .unix_path_len = @intCast(unix_path_len),
                     .proxied = false,
                     .closing = false,
                     .protocol = .plain,
@@ -283,16 +295,22 @@ pub const Connection = struct {
             const c = &plain.connection;
             const gpa = c.client.allocator;
             const base: [*]align(@alignOf(Plain)) u8 = @ptrCast(plain);
-            gpa.free(base[0..allocLen(c.client, c.host_len)]);
+            gpa.free(base[0..allocLen(c.client, c.host_len, c.unix_path_len)]);
         }
 
-        fn allocLen(client: *Client, host_len: usize) usize {
-            return @sizeOf(Plain) + host_len + client.read_buffer_size + client.write_buffer_size;
+        fn allocLen(client: *Client, host_len: usize, unix_path_len: usize) usize {
+            return @sizeOf(Plain) + host_len + unix_path_len + client.read_buffer_size + client.write_buffer_size;
         }
 
         fn host(plain: *Plain) HostName {
             const base: [*]u8 = @ptrCast(plain);
             return .{ .bytes = base[@sizeOf(Plain)..][0..plain.connection.host_len] };
+        }
+
+        fn unixPath(plain: *Plain) ?[]const u8 {
+            if (plain.connection.unix_path_len == 0) return null;
+            const base: [*]u8 = @ptrCast(plain);
+            return base[@sizeOf(Plain)..][plain.connection.host_len..][0..plain.connection.unix_path_len];
         }
     };
 
@@ -306,13 +324,16 @@ pub const Connection = struct {
             remote_host: HostName,
             port: u16,
             stream: Io.net.Stream,
+            unix_path: ?[]const u8,
         ) !*Tls {
             const io = client.io;
             const gpa = client.allocator;
-            const alloc_len = allocLen(client, remote_host.bytes.len);
+            const unix_path_len = if (unix_path) |p| p.len else 0;
+            const alloc_len = allocLen(client, remote_host.bytes.len, unix_path_len);
             const base = try gpa.alignedAlloc(u8, .of(Tls), alloc_len);
             errdefer gpa.free(base);
             const host_buffer = base[@sizeOf(Tls)..][0..remote_host.bytes.len];
+            const unix_path_buffer = host_buffer.ptr[host_buffer.len..][0..unix_path_len];
             // The TLS client wants enough buffer for the max encrypted frame
             // size, and the HTTP body reader wants enough buffer for the
             // entire HTTP header. This means we need a combined upper bound.
@@ -323,6 +344,7 @@ pub const Connection = struct {
             const socket_read_buffer = socket_write_buffer.ptr[socket_write_buffer.len..][0..client.tls_buffer_size];
             assert(base.ptr + alloc_len == socket_read_buffer.ptr + socket_read_buffer.len);
             @memcpy(host_buffer, remote_host.bytes);
+            if (unix_path) |p| @memcpy(unix_path_buffer, p);
             const tls: *Tls = @ptrCast(base);
             var random_buffer: [std.crypto.tls.Client.Options.entropy_len]u8 = undefined;
             io.random(&random_buffer);
@@ -334,6 +356,7 @@ pub const Connection = struct {
                     .pool_node = .{},
                     .port = port,
                     .host_len = @intCast(remote_host.bytes.len),
+                    .unix_path_len = @intCast(unix_path_len),
                     .proxied = false,
                     .closing = false,
                     .protocol = .tls,
@@ -367,18 +390,24 @@ pub const Connection = struct {
             const c = &tls.connection;
             const gpa = c.client.allocator;
             const base: [*]align(@alignOf(Tls)) u8 = @ptrCast(tls);
-            gpa.free(base[0..allocLen(c.client, c.host_len)]);
+            gpa.free(base[0..allocLen(c.client, c.host_len, c.unix_path_len)]);
         }
 
-        fn allocLen(client: *Client, host_len: usize) usize {
+        fn allocLen(client: *Client, host_len: usize, unix_path_len: usize) usize {
             const tls_read_buffer_len = client.tls_buffer_size + client.read_buffer_size;
-            return @sizeOf(Tls) + host_len + tls_read_buffer_len + client.tls_buffer_size +
+            return @sizeOf(Tls) + host_len + unix_path_len + tls_read_buffer_len + client.tls_buffer_size +
                 client.write_buffer_size + client.tls_buffer_size;
         }
 
         fn host(tls: *Tls) HostName {
             const base: [*]u8 = @ptrCast(tls);
             return .{ .bytes = base[@sizeOf(Tls)..][0..tls.connection.host_len] };
+        }
+
+        fn unixPath(tls: *Tls) ?[]const u8 {
+            if (tls.connection.unix_path_len == 0) return null;
+            const base: [*]u8 = @ptrCast(tls);
+            return base[@sizeOf(Tls)..][tls.connection.host_len..][0..tls.connection.unix_path_len];
         }
     };
 
@@ -411,6 +440,20 @@ pub const Connection = struct {
             .plain => {
                 const plain: *Plain = @alignCast(@fieldParentPtr("connection", c));
                 return plain.host();
+            },
+        };
+    }
+
+    pub fn unixPath(c: *Connection) ?[]const u8 {
+        return switch (c.protocol) {
+            .tls => {
+                if (disable_tls) unreachable;
+                const tls: *Tls = @alignCast(@fieldParentPtr("connection", c));
+                return tls.unixPath();
+            },
+            .plain => {
+                const plain: *Plain = @alignCast(@fieldParentPtr("connection", c));
+                return plain.unixPath();
             },
         };
     }
@@ -1454,7 +1497,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     switch (protocol) {
         .tls => {
             if (disable_tls) return error.TlsInitializationFailed;
-            const tc = Connection.Tls.create(client, proxied_host, proxied_port, stream) catch |err| switch (err) {
+            const tc = Connection.Tls.create(client, proxied_host, proxied_port, stream, null) catch |err| switch (err) {
                 error.OutOfMemory => |e| return e,
                 error.Unexpected => |e| return e,
                 error.Canceled => |e| return e,
@@ -1464,7 +1507,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
             return &tc.connection;
         },
         .plain => {
-            const pc = try Connection.Plain.create(client, proxied_host, proxied_port, stream);
+            const pc = try Connection.Plain.create(client, proxied_host, proxied_port, stream, null);
             client.connection_pool.addUsed(io, &pc.connection);
             return &pc.connection;
         },
@@ -1476,18 +1519,18 @@ pub const ConnectUnixError = Allocator.Error || error{NameTooLong} || std.Io.net
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
 /// This function is threadsafe.
-pub fn connectUnix(client: *Client, path: HostName) ConnectUnixError!*Connection {
+pub fn connectUnix(client: *Client, name: HostName, path: []const u8) ConnectUnixError!*Connection {
     const io = client.io;
 
     if (client.connection_pool.findConnection(io, .{
-        .host = path,
+        .host = name,
         .port = 0,
         .protocol = .plain,
+        .unix_path = path,
     })) |node|
         return node;
 
-    const ua = path.unix_addr orelse return error.FileNotFound;
-    const unix_address = try Io.net.UnixAddress.init(ua);
+    const unix_address = try Io.net.UnixAddress.init(path);
     const handle = try io.vtable.netConnectUnix(io.userdata, &unix_address);
     errdefer io.vtable.netClose(io.userdata, (&handle)[0..1]);
 
@@ -1498,7 +1541,7 @@ pub fn connectUnix(client: *Client, path: HostName) ConnectUnixError!*Connection
         },
     };
 
-    const pc = try Connection.Plain.create(client, path, 0, stream);
+    const pc = try Connection.Plain.create(client, name, 0, stream, path);
 
     client.connection_pool.addUsed(io, &pc.connection);
 
