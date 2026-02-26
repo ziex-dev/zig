@@ -11,6 +11,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+/// Sign of the infinity returned by fp_divzero_*.
+pub const Sign = enum { positive, negative };
+
 // ---------------------------------------------------------------------------
 // INVALID — raises the IEEE 754 INVALID exception and returns a quiet NaN.
 // noinline: inside the function, x is an unknown f32, so LLVM cannot prove
@@ -27,20 +30,20 @@ pub noinline fn fp_invalid_f64(x: f64) f64 {
 
 // ---------------------------------------------------------------------------
 // DIVBYZERO — raises the IEEE 754 DIVBYZERO exception and returns ±Inf.
-// sign=true  → -Inf  (used by log(0) → -∞)
-// sign=false → +Inf
+// sign=.negative → -Inf  (used by log(0) → -∞)
+// sign=.positive → +Inf
 //
 // A volatile read prevents LLVM from substituting the compile-time constant
 // value ±1.0 before emitting the fdiv instruction.
 // ---------------------------------------------------------------------------
-pub noinline fn fp_divzero_f32(sign: bool) f32 {
-    var v: f32 = if (sign) -1.0 else 1.0;
+pub noinline fn fp_divzero_f32(sign: Sign) f32 {
+    var v: f32 = if (sign == .negative) -1.0 else 1.0;
     const vp: *volatile f32 = &v;
     return vp.* / 0.0;
 }
 
-pub noinline fn fp_divzero_f64(sign: bool) f64 {
-    var v: f64 = if (sign) -1.0 else 1.0;
+pub noinline fn fp_divzero_f64(sign: Sign) f64 {
+    var v: f64 = if (sign == .negative) -1.0 else 1.0;
     const vp: *volatile f64 = &v;
     return vp.* / 0.0;
 }
@@ -108,7 +111,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             break :blk mxcsr & 0x3f; // low 6 bits are status flags
         },
         .aarch64 => blk: {
@@ -116,7 +119,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             break :blk @as(u32, @truncate(fpsr & 0x1f)); // low 5 bits
         },
         else => 0,
@@ -131,12 +134,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             mxcsr &= ~@as(u32, 0x3f);
             asm volatile ("ldmxcsr %[v]"
                 :
                 : [v] "m" (mxcsr),
-                : "memory");
+                : .{ .memory = true });
         },
         .aarch64 => {
             // Read-modify-write: preserve QC (bit 27) and condition flags (bits 28-31),
@@ -145,12 +148,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             fpsr &= ~@as(u64, 0x1f);
             asm volatile ("msr fpsr, %[v]"
                 :
                 : [v] "r" (fpsr),
-                : "memory");
+                : .{ .memory = true });
         },
         else => {},
     }
@@ -172,19 +175,19 @@ test "fp_divzero raises DIVBYZERO" {
     if (FE_DIVBYZERO == 0) return error.SkipZigTest;
 
     clearFpStatus();
-    _ = fp_divzero_f32(true);
+    _ = fp_divzero_f32(.negative);
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 
     clearFpStatus();
-    _ = fp_divzero_f32(false);
+    _ = fp_divzero_f32(.positive);
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 
     clearFpStatus();
-    _ = fp_divzero_f64(true);
+    _ = fp_divzero_f64(.negative);
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 
     clearFpStatus();
-    _ = fp_divzero_f64(false);
+    _ = fp_divzero_f64(.positive);
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 }
 

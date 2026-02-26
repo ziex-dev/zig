@@ -46,7 +46,7 @@ pub fn logf(x_: f32) callconv(.c) f32 {
     if (ix < 0x00800000 or ix >> 31 != 0) {
         // log(+-0) = -inf
         if (ix << 1 == 0) {
-            return if (compiler_rt.want_float_exceptions) math_error.fp_divzero_f32(true) else -std.math.inf(f32);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_divzero_f32(.negative) else -std.math.inf(f32);
         }
         // log(-#) = nan
         if (ix >> 31 != 0) {
@@ -399,7 +399,7 @@ pub fn log(x: f64) callconv(.c) f64 {
         @branchHint(.unlikely);
 
         if (ix << 1 == 0)
-            return if (compiler_rt.want_float_exceptions) math_error.fp_divzero_f64(true) else -std.math.inf(f64);
+            return if (compiler_rt.want_float_exceptions) math_error.fp_divzero_f64(.negative) else -std.math.inf(f64);
 
         if (ix == @as(i64, @bitCast(std.math.inf(f64))))
             return x;
