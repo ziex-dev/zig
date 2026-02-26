@@ -285,7 +285,13 @@ const Fiber = struct {
             },
             .pending_task = .nothing,
         };
-        contextSwitch(&message).handle(fiber.evented);
+        // contextSwitch returns a pointer into the yielded fiber's stack.
+        // Copy it to worker-thread-local storage so handle() can safely call
+        // fiber.destroy() without LLVM deferring loads from the freed memory.
+        const received: SwitchMessage = contextSwitch(&message).*;
+        received.handle(
+            @as(*Fiber, @alignCast(@fieldParentPtr("context", received.contexts.old))).evented,
+        );
     }
 };
 
