@@ -425,12 +425,99 @@ pub const Secp256k1 = struct {
         break :pc precompute(Secp256k1.basePoint, 15);
     };
 
+    // Precomputed table for the endomorphism-transformed base point: psi(G) = (beta*G.x, G.y).
+    // Used by GLV scalar multiplication to halve the number of doublings.
+    const lambdaBasePointPc = pc: {
+        @setEvalBranchQuota(100000);
+        const beta_fe = Fe.fromInt(Endormorphism.beta) catch unreachable;
+        const lambda_bp = Secp256k1{
+            .x = basePoint.x.mul(beta_fe),
+            .y = basePoint.y,
+            .z = Fe.one,
+        };
+        break :pc precompute(lambda_bp, 15);
+    };
+
+    // Constant-time conditional move for scalar byte arrays.
+    fn scalarCMov(a: *[32]u8, b: [32]u8, c: u1) void {
+        const mask = @as(u8, 0) -% @as(u8, c);
+        for (a, b) |*ai, bi| {
+            ai.* ^= (ai.* ^ bi) & mask;
+        }
+    }
+
+    // Constant-time double-base scalar multiplication using the GLV endomorphism.
+    // Processes two ~128-bit scalars against two precomputed tables simultaneously,
+    // halving the number of EC doublings compared to standard pcMul16.
+    fn pcMul16Glv(
+        pc1: *const [16]Secp256k1,
+        s1: [32]u8,
+        neg1: u1,
+        pc2: *const [16]Secp256k1,
+        s2: [32]u8,
+        neg2: u1,
+    ) IdentityElementError!Secp256k1 {
+        var q = Secp256k1.identityElement;
+        var pos: usize = 124;
+        while (true) : (pos -= 4) {
+            const slot1 = @as(u4, @truncate((s1[pos >> 3] >> @as(u3, @truncate(pos)))));
+            var p1 = pcSelect(16, pc1, slot1);
+            const p1n = p1.neg();
+            p1.cMov(p1n, neg1);
+            q = q.add(p1);
+
+            const slot2 = @as(u4, @truncate((s2[pos >> 3] >> @as(u3, @truncate(pos)))));
+            var p2 = pcSelect(16, pc2, slot2);
+            const p2n = p2.neg();
+            p2.cMov(p2n, neg2);
+            q = q.add(p2);
+
+            if (pos == 0) break;
+            q = q.dbl().dbl().dbl().dbl();
+        }
+        try q.rejectIdentity();
+        return q;
+    }
+
     /// Multiply an elliptic curve point by a scalar.
     /// Return error.IdentityElement if the result is the identity element.
     pub fn mul(p: Secp256k1, s_: [32]u8, endian: std.builtin.Endian) IdentityElementError!Secp256k1 {
         const s = if (endian == .little) s_ else Fe.orderSwap(s_);
         if (p.is_base) {
-            return pcMul16(&basePointPc, s, false);
+            // Use GLV endomorphism: split 256-bit scalar into two ~128-bit halves
+            // to halve the number of doublings while maintaining constant-time execution.
+            if (Endormorphism.splitScalar(s, .little)) |split_result| {
+                var split = split_result;
+                const zero = comptime scalar.Scalar.zero.toBytes(.little);
+
+                // Constant-time: detect if upper halves are non-zero (scalar > 128 bits, needs negation)
+                var r1_hi: u8 = 0;
+                for (split.r1[16..]) |b| r1_hi |= b;
+                const r1_neg: u1 = @truncate((r1_hi | (0 -% r1_hi)) >> 7);
+
+                var r2_hi: u8 = 0;
+                for (split.r2[16..]) |b| r2_hi |= b;
+                const r2_neg: u1 = @truncate((r2_hi | (0 -% r2_hi)) >> 7);
+
+                // Conditionally negate scalars to fit in 128 bits (constant-time)
+                const r1_negated = scalar.neg(split.r1, .little) catch zero;
+                scalarCMov(&split.r1, r1_negated, r1_neg);
+
+                const r2_negated = scalar.neg(split.r2, .little) catch zero;
+                scalarCMov(&split.r2, r2_negated, r2_neg);
+
+                return pcMul16Glv(
+                    &basePointPc,
+                    split.r1,
+                    r1_neg,
+                    &lambdaBasePointPc,
+                    split.r2,
+                    r2_neg,
+                );
+            } else |_| {
+                // Non-canonical scalar: fall back to standard multiplication
+                return pcMul16(&basePointPc, s, false);
+            }
         }
         try p.rejectIdentity();
         const pc = precompute(p, 15);
