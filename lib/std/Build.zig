@@ -115,7 +115,7 @@ pub const Graph = struct {
     arena: Allocator,
     system_library_options: std.StringArrayHashMapUnmanaged(SystemLibraryMode) = .empty,
     system_package_mode: bool = false,
-    debug_compiler_runtime_libs: bool = false,
+    debug_compiler_runtime_libs: ?std.builtin.OptimizeMode = null,
     cache: Cache,
     zig_exe: [:0]const u8,
     environ_map: process.Environ.Map,
@@ -832,6 +832,8 @@ pub const LibraryOptions = struct {
     /// Can be set regardless of target. The `.manifest` file will be ignored
     /// if the target object format does not support embedded manifests.
     win32_manifest: ?LazyPath = null,
+    /// Win32 module definition file (.def).
+    win32_module_definition: ?LazyPath = null,
 };
 
 pub fn addLibrary(b: *Build, options: LibraryOptions) *Step.Compile {
@@ -846,6 +848,7 @@ pub fn addLibrary(b: *Build, options: LibraryOptions) *Step.Compile {
         .use_lld = options.use_lld,
         .zig_lib_dir = options.zig_lib_dir,
         .win32_manifest = options.win32_manifest,
+        .win32_module_definition = options.win32_module_definition,
     });
 }
 

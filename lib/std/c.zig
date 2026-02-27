@@ -6679,7 +6679,7 @@ pub const SO = switch (native_os) {
         pub const DONTROUTE = 0x0010;
         pub const BROADCAST = 0x0020;
         pub const USELOOPBACK = 0x0040;
-        pub const LINGER = 0x1080;
+        pub const LINGER = 0x0080;
         pub const OOBINLINE = 0x0100;
         pub const REUSEPORT = 0x0200;
         pub const ACCEPTFILTER = 0x1000;
@@ -6698,6 +6698,7 @@ pub const SO = switch (native_os) {
         pub const NOADDRERR = 0x1023;
         pub const NWRITE = 0x1024;
         pub const REUSESHAREUID = 0x1025;
+        pub const LINGER_SEC = 0x1080;
     },
     .freebsd => struct {
         pub const DEBUG = 0x00000001;
@@ -9812,13 +9813,16 @@ pub const EV = switch (native_os) {
         pub const ONESHOT = 0x0010;
         /// clear event state after reporting
         pub const CLEAR = 0x0020;
-        /// force immediate event output
-        /// ... with or without ERROR
-        /// ... use KEVENT_FLAG_ERROR_EVENTS
-        ///     on syscalls supporting flags
+        /// force EV_ERROR on success, data=0
         pub const RECEIPT = 0x0040;
         /// disable event after reporting
         pub const DISPATCH = 0x0080;
+        /// filter-specific flag
+        pub const FLAG1 = 0x2000;
+        /// error, data contains errno
+        pub const ERROR = 0x4000;
+        /// EOF detected
+        pub const EOF = 0x8000;
     },
     .freebsd => struct {
         /// add event to kq (implies enable)
@@ -10357,7 +10361,10 @@ pub extern "c" fn sendfile64(out_fd: fd_t, in_fd: fd_t, offset: ?*i64, count: us
 pub extern "c" fn setrlimit64(resource: rlimit_resource, rlim: *const rlimit) c_int;
 
 pub const arc4random_buf = switch (native_os) {
-    .linux => if (builtin.abi.isAndroid()) private.arc4random_buf else {},
+    .linux => if (builtin.abi.isAndroid() or
+        (builtin.abi.isGnu() and versionCheck(.{ .major = 2, .minor = 36, .patch = 0 })))
+        private.arc4random_buf
+    else {},
     .dragonfly, .netbsd, .freebsd, .illumos, .openbsd, .serenity, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => private.arc4random_buf,
     else => {},
 };
@@ -10721,6 +10728,7 @@ pub extern "c" fn chmod(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn fchmod(fd: fd_t, mode: mode_t) c_int;
 pub extern "c" fn fchmodat(fd: fd_t, path: [*:0]const u8, mode: mode_t, flags: c_uint) c_int;
 pub extern "c" fn fchown(fd: fd_t, owner: uid_t, group: gid_t) c_int;
+pub extern "c" fn fchownat(fd: fd_t, path: [*:0]const u8, owner: uid_t, group: gid_t, flags: c_uint) c_int;
 pub extern "c" fn umask(mode: mode_t) mode_t;
 
 pub extern "c" fn rmdir(path: [*:0]const u8) c_int;
@@ -10861,6 +10869,7 @@ pub const pthread_setname_np = switch (native_os) {
 
 pub extern "c" fn pthread_getname_np(thread: pthread_t, name: [*:0]u8, len: usize) c_int;
 pub extern "c" fn pthread_kill(pthread_t, signal: SIG) c_int;
+pub extern "c" fn pthread_exit(ptr: ?*anyopaque) noreturn;
 
 pub const pthread_threadid_np = switch (native_os) {
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => private.pthread_threadid_np,
@@ -11293,16 +11302,7 @@ pub const clock_get_time = darwin.clock_get_time;
 pub const clock_serv_t = darwin.clock_serv_t;
 pub const clock_res_t = darwin.clock_res_t;
 pub const @"close$NOCANCEL" = darwin.@"close$NOCANCEL";
-pub const dispatch_function_t = darwin.dispatch_function_t;
-pub const dispatch_once_f = darwin.dispatch_once_f;
-pub const dispatch_once_t = darwin.dispatch_once_t;
-pub const dispatch_release = darwin.dispatch_release;
-pub const dispatch_semaphore_create = darwin.dispatch_semaphore_create;
-pub const dispatch_semaphore_signal = darwin.dispatch_semaphore_signal;
-pub const dispatch_semaphore_t = darwin.dispatch_semaphore_t;
-pub const dispatch_semaphore_wait = darwin.dispatch_semaphore_wait;
-pub const dispatch_time = darwin.dispatch_time;
-pub const dispatch_time_t = darwin.dispatch_time_t;
+pub const dispatch = darwin.dispatch;
 pub const fcopyfile = darwin.fcopyfile;
 pub const host_t = darwin.host_t;
 pub const integer_t = darwin.integer_t;

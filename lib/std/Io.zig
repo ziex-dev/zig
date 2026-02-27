@@ -26,19 +26,17 @@ userdata: ?*anyopaque,
 vtable: *const VTable,
 
 pub const Threaded = @import("Io/Threaded.zig");
-pub const Evented = switch (builtin.os.tag) {
-    .linux => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => IoUring,
-        else => void, // context-switching code not implemented yet
-    },
-    .dragonfly, .freebsd, .netbsd, .openbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => switch (builtin.cpu.arch) {
-        .x86_64, .aarch64 => Kqueue,
-        else => void, // context-switching code not implemented yet
-    },
+
+pub const fiber = @import("Io/fiber.zig");
+pub const Evented = if (fiber.supported) switch (builtin.os.tag) {
+    .linux => Uring,
+    .dragonfly, .freebsd, .netbsd, .openbsd => Kqueue,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => Dispatch,
     else => void,
-};
+} else void; // context-switching code not implemented yet
+pub const Dispatch = @import("Io/Dispatch.zig");
 pub const Kqueue = @import("Io/Kqueue.zig");
-pub const IoUring = @import("Io/IoUring.zig");
+pub const Uring = @import("Io/Uring.zig");
 
 pub const Reader = @import("Io/Reader.zig");
 pub const Writer = @import("Io/Writer.zig");
@@ -51,6 +49,8 @@ pub const RwLock = @import("Io/RwLock.zig");
 pub const Semaphore = @import("Io/Semaphore.zig");
 
 pub const VTable = struct {
+    crashHandler: *const fn (?*anyopaque) void,
+
     /// If it returns `null` it means `result` has been already populated and
     /// `await` will be a no-op.
     ///
@@ -143,10 +143,6 @@ pub const VTable = struct {
     recancel: *const fn (?*anyopaque) void,
     swapCancelProtection: *const fn (?*anyopaque, new: CancelProtection) CancelProtection,
     checkCancel: *const fn (?*anyopaque) Cancelable!void,
-
-    /// Blocks until one of the futures from the list has a result ready, such
-    /// that awaiting it will not block. Returns that index.
-    select: *const fn (?*anyopaque, futures: []const *AnyFuture) Cancelable!usize,
 
     futexWait: *const fn (?*anyopaque, ptr: *const u32, expected: u32, Timeout) Cancelable!void,
     futexWaitUncancelable: *const fn (?*anyopaque, ptr: *const u32, expected: u32) void,
@@ -335,11 +331,9 @@ pub const Operation = union(enum) {
         .wasi => noreturn,
         .windows => struct {
             file: File,
-            IoControlCode: std.os.windows.CTL_CODE,
-            InputBuffer: ?*const anyopaque,
-            InputBufferLength: u32,
-            OutputBuffer: ?*anyopaque,
-            OutputBufferLength: u32,
+            code: std.os.windows.CTL_CODE,
+            in: []const u8 = &.{},
+            out: []u8 = &.{},
 
             pub const Result = std.os.windows.IO_STATUS_BLOCK;
         },
@@ -380,7 +374,9 @@ pub const Operation = union(enum) {
         pub const Pending = struct {
             node: List.DoubleNode,
             tag: Tag,
-            context: [3]usize,
+            userdata: Userdata align(@max(@alignOf(usize), 4)),
+
+            pub const Userdata = [7]usize;
         };
 
         pub const Completion = struct {
@@ -428,10 +424,10 @@ pub fn operate(io: Io, operation: Operation) Cancelable!Operation.Result {
 pub const Batch = struct {
     storage: []Operation.Storage,
     unused: Operation.List,
-    submissions: Operation.List,
+    submitted: Operation.List,
     pending: Operation.List,
-    completions: Operation.List,
-    context: ?*anyopaque,
+    completed: Operation.List,
+    userdata: ?*anyopaque align(@max(@alignOf(?*anyopaque), 4)),
 
     /// After calling this, it is safe to unconditionally defer a call to
     /// `cancel`. `storage` is a pre-allocated buffer of undefined memory that
@@ -450,43 +446,43 @@ pub const Batch = struct {
                 .head = .fromIndex(0),
                 .tail = .fromIndex(storage.len - 1),
             },
-            .submissions = .empty,
+            .submitted = .empty,
             .pending = .empty,
-            .completions = .empty,
-            .context = null,
+            .completed = .empty,
+            .userdata = null,
         };
     }
 
     /// Adds an operation to be performed at the next await call.
     /// Returns the index that will be returned by `next` after the operation completes.
     /// Asserts that no more than `storage.len` operations are active at a time.
-    pub fn add(b: *Batch, operation: Operation) u32 {
-        const index = b.unused.next;
-        b.addAt(index.toIndex(), operation);
+    pub fn add(batch: *Batch, operation: Operation) u32 {
+        const index = batch.unused.next;
+        batch.addAt(index.toIndex(), operation);
         return index;
     }
 
     /// Adds an operation to be performed at the next await call.
     /// After the operation completes, `next` will return `index`.
     /// Asserts that the operation at `index` is not active.
-    pub fn addAt(b: *Batch, index: u32, operation: Operation) void {
-        const storage = &b.storage[index];
+    pub fn addAt(batch: *Batch, index: u32, operation: Operation) void {
+        const storage = &batch.storage[index];
         const unused = storage.unused;
         switch (unused.prev) {
-            .none => b.unused.head = .none,
-            else => |prev_index| b.storage[prev_index.toIndex()].unused.next = unused.next,
+            .none => batch.unused.head = unused.next,
+            else => |prev_index| batch.storage[prev_index.toIndex()].unused.next = unused.next,
         }
         switch (unused.next) {
-            .none => b.unused.tail = .none,
-            else => |next_index| b.storage[next_index.toIndex()].unused.prev = unused.prev,
+            .none => batch.unused.tail = unused.prev,
+            else => |next_index| batch.storage[next_index.toIndex()].unused.prev = unused.prev,
         }
 
-        switch (b.submissions.tail) {
-            .none => b.submissions.head = .fromIndex(index),
-            else => |tail_index| b.storage[tail_index.toIndex()].submission.node.next = .fromIndex(index),
+        switch (batch.submitted.tail) {
+            .none => batch.submitted.head = .fromIndex(index),
+            else => |tail_index| batch.storage[tail_index.toIndex()].submission.node.next = .fromIndex(index),
         }
         storage.* = .{ .submission = .{ .node = .{ .next = .none }, .operation = operation } };
-        b.submissions.tail = .fromIndex(index);
+        batch.submitted.tail = .fromIndex(index);
     }
 
     pub const Completion = struct {
@@ -502,22 +498,22 @@ pub const Batch = struct {
     ///
     /// Each completion returned from this function dequeues from the `Batch`.
     /// It is not required to dequeue all completions before awaiting again.
-    pub fn next(b: *Batch) ?Completion {
-        const index = b.completions.head;
+    pub fn next(batch: *Batch) ?Completion {
+        const index = batch.completed.head;
         if (index == .none) return null;
-        const storage = &b.storage[index.toIndex()];
+        const storage = &batch.storage[index.toIndex()];
         const completion = storage.completion;
         const next_index = completion.node.next;
-        b.completions.head = next_index;
-        if (next_index == .none) b.completions.tail = .none;
+        batch.completed.head = next_index;
+        if (next_index == .none) batch.completed.tail = .none;
 
-        const tail_index = b.unused.tail;
+        const tail_index = batch.unused.tail;
         switch (tail_index) {
-            .none => b.unused.head = index,
-            else => b.storage[tail_index.toIndex()].unused.next = index,
+            .none => batch.unused.head = index,
+            else => batch.storage[tail_index.toIndex()].unused.next = index,
         }
         storage.* = .{ .unused = .{ .prev = tail_index, .next = .none } };
-        b.unused.tail = index;
+        batch.unused.tail = index;
         return .{ .index = index.toIndex(), .result = completion.result };
     }
 
@@ -529,8 +525,8 @@ pub const Batch = struct {
     /// concurrency into the batched operations, but unlike `awaitConcurrent`,
     /// does not require it, and therefore cannot fail with
     /// `error.ConcurrencyUnavailable`.
-    pub fn awaitAsync(b: *Batch, io: Io) Cancelable!void {
-        return io.vtable.batchAwaitAsync(io.userdata, b);
+    pub fn awaitAsync(batch: *Batch, io: Io) Cancelable!void {
+        return io.vtable.batchAwaitAsync(io.userdata, batch);
     }
 
     pub const AwaitConcurrentError = ConcurrentError || Cancelable || Timeout.Error;
@@ -542,8 +538,8 @@ pub const Batch = struct {
     /// Unlike `awaitAsync`, this function requires the implementation to
     /// perform the operations concurrently and therefore can fail with
     /// `error.ConcurrencyUnavailable`.
-    pub fn awaitConcurrent(b: *Batch, io: Io, timeout: Timeout) AwaitConcurrentError!void {
-        return io.vtable.batchAwaitConcurrent(io.userdata, b, timeout);
+    pub fn awaitConcurrent(batch: *Batch, io: Io, timeout: Timeout) AwaitConcurrentError!void {
+        return io.vtable.batchAwaitConcurrent(io.userdata, batch, timeout);
     }
 
     /// Requests all pending operations to be interrupted, then waits for all
@@ -552,8 +548,28 @@ pub const Batch = struct {
     /// canceled operations will be absent from the iteration. Some operations
     /// may have successfully completed regardless of the cancel request and
     /// will appear in the iteration.
-    pub fn cancel(b: *Batch, io: Io) void {
-        return io.vtable.batchCancel(io.userdata, b);
+    pub fn cancel(batch: *Batch, io: Io) void {
+        { // abort pending submissions
+            var tail_index = batch.unused.tail;
+            defer batch.unused.tail = tail_index;
+            var index = batch.submitted.head;
+            errdefer batch.submissions.head = index;
+            while (index != .none) {
+                const next_index = batch.storage[index.toIndex()].submission.node.next;
+                switch (tail_index) {
+                    .none => batch.unused.head = index,
+                    else => batch.storage[tail_index.toIndex()].unused.next = index,
+                }
+                batch.storage[index.toIndex()] = .{ .unused = .{ .prev = tail_index, .next = .none } };
+                tail_index = index;
+                index = next_index;
+            }
+            batch.submitted = .{ .head = .none, .tail = .none };
+        }
+        io.vtable.batchCancel(io.userdata, batch);
+        assert(batch.submitted.head == .none and batch.submitted.tail == .none);
+        assert(batch.pending.head == .none and batch.pending.tail == .none);
+        assert(batch.userdata == null); // that was the last chance to deallocate resources
     }
 };
 
@@ -623,7 +639,7 @@ pub const Limit = enum(usize) {
     }
 
     pub fn nonzero(l: Limit) bool {
-        return @intFromEnum(l) > 0;
+        return l != .nothing;
     }
 
     /// Return a new limit reduced by `amount` or return `null` indicating
@@ -1033,6 +1049,9 @@ pub const Group = struct {
     /// Once this function is called, there are resources associated with the
     /// group. To release those resources, `Group.await` or `Group.cancel` must
     /// eventually be called.
+    ///
+    /// If `error.Canceled` is returned from any operation this task performs,
+    /// it is asserted that `function` returns `error.Canceled`.
     pub fn async(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
@@ -1052,6 +1071,9 @@ pub const Group = struct {
     /// Once this function is called, there are resources associated with the
     /// group. To release those resources, `Group.await` or `Group.cancel` must
     /// eventually be called.
+    ///
+    /// If `error.Canceled` is returned from any operation this task performs,
+    /// it is asserted that `function` returns `error.Canceled`.
     pub fn concurrent(g: *Group, io: Io, function: anytype, args: std.meta.ArgsTuple(@TypeOf(function))) ConcurrentError!void {
         const Args = @TypeOf(args);
         const TypeErased = struct {
@@ -1113,13 +1135,13 @@ pub fn recancel(io: Io) void {
 /// To modify a task's cancel protection state, see `swapCancelProtection`.
 ///
 /// For a description of cancelation and cancelation points, see `Future.cancel`.
-pub const CancelProtection = enum {
+pub const CancelProtection = enum(u1) {
     /// Any call to an `Io` function with `error.Canceled` in its error set is a cancelation point.
     ///
     /// This is the default state, which all tasks are created in.
-    unblocked,
+    unblocked = 0,
     /// No `Io` function introduces a cancelation point (`error.Canceled` will never be returned).
-    blocked,
+    blocked = 1,
 };
 /// Updates the current task's cancel protection state (see `CancelProtection`).
 ///
@@ -1151,12 +1173,20 @@ pub fn checkCancel(io: Io) Cancelable!void {
     return io.vtable.checkCancel(io.userdata);
 }
 
+/// Executes tasks together, providing a mechanism to wait until one or more
+/// tasks complete. Similar to `Batch` but operates at the higher level task
+/// abstraction layer rather than lower level `Operation` abstraction layer.
+///
+/// The provided tagged union will be used as the return type of the await
+/// function. When calling async or concurrent, one specifies which union field
+/// the called function's result will be placed into upon completion.
 pub fn Select(comptime U: type) type {
     return struct {
         io: Io,
         group: Group,
+        /// The queue is never closed because there may be live resources
+        /// inserted into it which would otherwise leak.
         queue: Queue(U),
-        outstanding: usize,
 
         const S = @This();
 
@@ -1169,7 +1199,6 @@ pub fn Select(comptime U: type) type {
                 .io = io,
                 .queue = .init(buffer),
                 .group = .init,
-                .outstanding = 0,
             };
         }
 
@@ -1184,7 +1213,7 @@ pub fn Select(comptime U: type) type {
         /// already been called and completed, or it has successfully been
         /// assigned a unit of concurrency.
         ///
-        /// After this is called, `wait` or `cancel` must be called before the
+        /// After this is called, `await` or `cancel` must be called before the
         /// select is deinitialized.
         ///
         /// Threadsafe.
@@ -1203,40 +1232,90 @@ pub fn Select(comptime U: type) type {
                 args: @TypeOf(args),
                 fn start(type_erased_context: *const anyopaque) Cancelable!void {
                     const context: *const @This() = @ptrCast(@alignCast(type_erased_context));
-                    const elem = @unionInit(U, @tagName(field), @call(.auto, function, context.args));
+                    const raw_result = @call(.auto, function, context.args);
+                    const elem = @unionInit(U, @tagName(field), raw_result);
                     context.select.queue.putOneUncancelable(context.select.io, elem) catch |err| switch (err) {
                         error.Closed => unreachable,
                     };
+                    if (@typeInfo(@TypeOf(raw_result)) == .error_union)
+                        _ = raw_result catch |err| if (err == error.Canceled) return error.Canceled;
                 }
             };
             const context: Context = .{ .select = s, .args = args };
-            _ = @atomicRmw(usize, &s.outstanding, .Add, 1, .monotonic);
             s.io.vtable.groupAsync(s.io.userdata, &s.group, @ptrCast(&context), .of(Context), Context.start);
+        }
+
+        /// Calls `function` with `args` concurrently. The resource spawned is
+        /// owned by the select.
+        ///
+        /// `function` must have return type matching the `field` field of `Union`.
+        ///
+        /// After this function returns successfully, it is guaranteed that
+        /// `function` has been assigned a unit of concurrency, and `await` or
+        /// `cancel` must be called before the select is deinitialized.
+        ///
+        ///
+        /// Threadsafe.
+        ///
+        /// Related:
+        /// * `Io.concurrent`
+        /// * `Group.concurrent`
+        pub fn concurrent(
+            s: *S,
+            comptime field: Field,
+            function: anytype,
+            args: std.meta.ArgsTuple(@TypeOf(function)),
+        ) ConcurrentError!void {
+            const Context = struct {
+                select: *S,
+                args: @TypeOf(args),
+                fn start(type_erased_context: *const anyopaque) Cancelable!void {
+                    const context: *const @This() = @ptrCast(@alignCast(type_erased_context));
+                    const raw_result = @call(.auto, function, context.args);
+                    const elem = @unionInit(U, @tagName(field), raw_result);
+                    context.select.queue.putOneUncancelable(context.select.io, elem) catch |err| switch (err) {
+                        error.Closed => unreachable,
+                    };
+                    if (@typeInfo(@TypeOf(raw_result)) == .error_union)
+                        _ = raw_result catch |err| if (err == error.Canceled) return error.Canceled;
+                }
+            };
+            const context: Context = .{ .select = s, .args = args };
+            try s.io.vtable.groupConcurrent(s.io.userdata, &s.group, @ptrCast(&context), .of(Context), Context.start);
         }
 
         /// Blocks until another task of the select finishes.
         ///
-        /// Asserts there is at least one more `outstanding` task.
-        ///
-        /// Not threadsafe.
+        /// Threadsafe.
         pub fn await(s: *S) Cancelable!U {
-            s.outstanding -= 1;
             return s.queue.getOne(s.io) catch |err| switch (err) {
                 error.Canceled => |e| return e,
                 error.Closed => unreachable,
             };
         }
 
-        /// Equivalent to `wait` but requests cancelation on all remaining
+        /// Blocks until at least `min` number of results have been copied
+        /// into `buffer`.
+        ///
+        /// Asserts that `buffer.len >= min`.
+        ///
+        /// Threadsafe.
+        pub fn awaitMany(s: *S, buffer: []U, min: usize) Cancelable!usize {
+            return s.queue.get(s.io, buffer, min) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                error.Closed => unreachable,
+            };
+        }
+
+        /// Equivalent to `await` but requests cancelation on all remaining
         /// tasks owned by the select.
         ///
         /// For a description of cancelation and cancelation points, see `Future.cancel`.
         ///
-        /// It is illegal to call `wait` after this.
+        /// It is illegal to call `await` after this.
         ///
-        /// Idempotent. Not threadsafe.
+        /// Idempotent. Threadsafe.
         pub fn cancel(s: *S) void {
-            s.outstanding = 0;
             s.group.cancel(s.io);
         }
     };
@@ -1288,8 +1367,7 @@ pub fn futexWake(io: Io, comptime T: type, ptr: *align(@alignOf(u32)) const T, m
 /// shared region of code known as the "critical section".
 ///
 /// Mutex is an extern struct so that it may be used as a field inside another
-/// extern struct. Having a guaranteed memory layout including mutexes is
-/// important for IPC over shared memory (mmap).
+/// extern struct.
 pub const Mutex = extern struct {
     state: std.atomic.Value(State),
 
@@ -1667,7 +1745,7 @@ pub const TypeErasedQueue = struct {
         return if (slice.len > 0) slice else null;
     }
 
-    fn putLocked(q: *TypeErasedQueue, io: Io, elements: []const u8, target: usize, uncancelable: bool) (QueueClosedError || Cancelable)!usize {
+    fn putLocked(q: *TypeErasedQueue, io: Io, elements: []const u8, min: usize, uncancelable: bool) (QueueClosedError || Cancelable)!usize {
         // A closed queue cannot be added to, even if there is space in the buffer.
         if (q.closed) return error.Closed;
 
@@ -1703,12 +1781,12 @@ pub const TypeErasedQueue = struct {
             if (n == elements.len) return elements.len;
         }
 
-        // Don't block if we hit the target.
-        if (n >= target) return n;
+        // Don't block if we hit the min.
+        if (n >= min) return n;
 
         var pending: Put = .{
             .remaining = elements[n..],
-            .needed = target - n,
+            .needed = min - n,
             .condition = .init,
             .node = .{},
         };
@@ -1767,7 +1845,7 @@ pub const TypeErasedQueue = struct {
         return if (slice.len > 0) slice else null;
     }
 
-    fn getLocked(q: *TypeErasedQueue, io: Io, buffer: []u8, target: usize, uncancelable: bool) (QueueClosedError || Cancelable)!usize {
+    fn getLocked(q: *TypeErasedQueue, io: Io, buffer: []u8, min: usize, uncancelable: bool) (QueueClosedError || Cancelable)!usize {
         // The ring buffer gets first priority, then data should come from any
         // queued putters, then finally the ring buffer should be filled with
         // data from putters so they can be resumed.
@@ -1813,15 +1891,15 @@ pub const TypeErasedQueue = struct {
         // No need to call `fillRingBufferFromPutters` from this point onwards,
         // because we emptied the ring buffer *and* the putter queue!
 
-        // Don't block if we hit the target or if the queue is closed. Return how
+        // Don't block if we hit the min or if the queue is closed. Return how
         // many elements we could get immediately, unless the queue was closed and
         // empty, in which case report `error.Closed`.
         if (n == 0 and q.closed) return error.Closed;
-        if (n >= target or q.closed) return n;
+        if (n >= min or q.closed) return n;
 
         var pending: Get = .{
             .remaining = buffer[n..],
-            .needed = target - n,
+            .needed = min - n,
             .condition = .init,
             .node = .{},
         };
@@ -1897,7 +1975,7 @@ pub fn Queue(Elem: type) type {
         /// there is insufficient capacity. Returns when any one of the
         /// following conditions is satisfied:
         ///
-        /// * At least `target` elements have been added to the queue
+        /// * At least `min` elements have been added to the queue
         /// * The queue is closed
         /// * The current task is canceled
         ///
@@ -1906,16 +1984,16 @@ pub fn Queue(Elem: type) type {
         ///
         /// If the queue is closed or the task is canceled, but some items were
         /// already added before the closure or cancelation, then `put` may
-        /// return a number lower than `target`, in which case future calls are
+        /// return a number lower than `min`, in which case future calls are
         /// guaranteed to return `error.Canceled` or `error.Closed`.
         ///
-        /// A return value of 0 is only possible if `target` is 0, in which case
+        /// A return value of 0 is only possible if `min` is 0, in which case
         /// the call is guaranteed to queue as many of `elements` as is possible
         /// *without* blocking.
         ///
-        /// Asserts that `elements.len >= target`.
-        pub fn put(q: *@This(), io: Io, elements: []const Elem, target: usize) (QueueClosedError || Cancelable)!usize {
-            return @divExact(try q.type_erased.put(io, @ptrCast(elements), target * @sizeOf(Elem)), @sizeOf(Elem));
+        /// Asserts that `elements.len >= min`.
+        pub fn put(q: *@This(), io: Io, elements: []const Elem, min: usize) (QueueClosedError || Cancelable)!usize {
+            return @divExact(try q.type_erased.put(io, @ptrCast(elements), min * @sizeOf(Elem)), @sizeOf(Elem));
         }
 
         /// Same as `put` but blocks until all elements have been added to the queue.
@@ -1954,7 +2032,7 @@ pub fn Queue(Elem: type) type {
         /// if there are insufficient elements currently in the queue. Returns when
         /// any one of the following conditions is satisfied:
         ///
-        /// * At least `target` elements have been received from the queue
+        /// * At least `min` elements have been received from the queue
         /// * The queue is closed and contains no buffered elements
         /// * The current task is canceled
         ///
@@ -1963,16 +2041,16 @@ pub fn Queue(Elem: type) type {
         ///
         /// If the queue is closed or the task is canceled, but some items were
         /// already received before the closure or cancelation, then `get` may
-        /// return a number lower than `target`, in which case future calls are
+        /// return a number lower than `min`, in which case future calls are
         /// guaranteed to return `error.Canceled` or `error.Closed`.
         ///
-        /// A return value of 0 is only possible if `target` is 0, in which case
+        /// A return value of 0 is only possible if `min` is 0, in which case
         /// the call is guaranteed to fill as much of `buffer` as is possible
         /// *without* blocking.
         ///
-        /// Asserts that `buffer.len >= target`.
-        pub fn get(q: *@This(), io: Io, buffer: []Elem, target: usize) (QueueClosedError || Cancelable)!usize {
-            return @divExact(try q.type_erased.get(io, @ptrCast(buffer), target * @sizeOf(Elem)), @sizeOf(Elem));
+        /// Asserts that `buffer.len >= min`.
+        pub fn get(q: *@This(), io: Io, buffer: []Elem, min: usize) (QueueClosedError || Cancelable)!usize {
+            return @divExact(try q.type_erased.get(io, @ptrCast(buffer), min * @sizeOf(Elem)), @sizeOf(Elem));
         }
 
         /// Same as `get`, except does not introduce a cancelation point.
@@ -2093,40 +2171,6 @@ pub fn sleep(io: Io, duration: Duration, clock: Clock) Cancelable!void {
         .raw = duration,
         .clock = clock,
     } });
-}
-
-/// Given a struct with each field a `*Future`, returns a union with the same
-/// fields, each field type the future's result.
-pub fn SelectUnion(S: type) type {
-    const struct_fields = @typeInfo(S).@"struct".fields;
-    var names: [struct_fields.len][]const u8 = undefined;
-    var types: [struct_fields.len]type = undefined;
-    for (struct_fields, &names, &types) |struct_field, *union_field_name, *UnionFieldType| {
-        const FieldFuture = @typeInfo(struct_field.type).pointer.child;
-        union_field_name.* = struct_field.name;
-        UnionFieldType.* = @FieldType(FieldFuture, "result");
-    }
-    return @Union(.auto, std.meta.FieldEnum(S), &names, &types, &@splat(.{}));
-}
-
-/// `s` is a struct with every field a `*Future(T)`, where `T` can be any type,
-/// and can be different for each field.
-pub fn select(io: Io, s: anytype) Cancelable!SelectUnion(@TypeOf(s)) {
-    const U = SelectUnion(@TypeOf(s));
-    const S = @TypeOf(s);
-    const fields = @typeInfo(S).@"struct".fields;
-    var futures: [fields.len]*AnyFuture = undefined;
-    inline for (fields, &futures) |field, *any_future| {
-        const future = @field(s, field.name);
-        any_future.* = future.any_future orelse return @unionInit(U, field.name, future.result);
-    }
-    switch (try io.vtable.select(io.userdata, &futures)) {
-        inline 0...(fields.len - 1) => |selected_index| {
-            const field_name = fields[selected_index].name;
-            return @unionInit(U, field_name, @field(s, field_name).await(io));
-        },
-        else => unreachable,
-    }
 }
 
 pub const LockedStderr = struct {

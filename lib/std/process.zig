@@ -31,7 +31,7 @@ pub const Init = struct {
     /// `Init` is a superset of `Minimal`; the latter is included here.
     minimal: Minimal,
     /// Permanent storage for the entire process, cleaned automatically on
-    /// exit. Not threadsafe.
+    /// exit. Threadsafe.
     arena: *std.heap.ArenaAllocator,
     /// A default-selected general purpose allocator for temporary heap
     /// allocations. Debug mode will set up leak checking if possible.
@@ -60,7 +60,7 @@ pub const CurrentPathError = error{
     NameTooLong,
     /// Not possible on Windows. Always returned on WASI.
     CurrentDirUnlinked,
-} || Io.UnexpectedError;
+} || Io.Cancelable || Io.UnexpectedError;
 
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On other platforms, the result is an opaque sequence of bytes with no
@@ -72,7 +72,7 @@ pub fn currentPath(io: Io, buffer: []u8) CurrentPathError!usize {
 pub const CurrentPathAllocError = Allocator.Error || error{
     /// Not possible on Windows. Always returned on WASI.
     CurrentDirUnlinked,
-} || Io.UnexpectedError;
+} || Io.Cancelable || Io.UnexpectedError;
 
 /// On Windows, the result is encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On other platforms, the result is an opaque sequence of bytes with no
@@ -243,7 +243,7 @@ pub fn getBaseAddress() usize {
         .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => {
             return @intFromPtr(&std.c._mh_execute_header);
         },
-        .windows => return @intFromPtr(windows.kernel32.GetModuleHandleW(null)),
+        .windows => return @intFromPtr(windows.peb().ImageBaseAddress),
         else => @compileError("Unsupported OS"),
     }
 }
@@ -355,7 +355,7 @@ pub const SpawnError = error{
     /// On Windows, the volume does not contain a recognized file system. File
     /// system drivers might not be loaded, or the volume may be corrupt.
     UnrecognizedVolume,
-} || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
+} || Io.File.OpenError || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub const SpawnOptions = struct {
     argv: []const []const u8,
@@ -606,11 +606,11 @@ pub fn totalSystemMemory() TotalSystemMemoryError!u64 {
             return @as(u64, @bitCast(physmem));
         },
         .windows => {
-            var sbi: windows.SYSTEM_BASIC_INFORMATION = undefined;
+            var sbi: windows.SYSTEM.BASIC_INFORMATION = undefined;
             const rc = windows.ntdll.NtQuerySystemInformation(
-                .SystemBasicInformation,
+                .Basic,
                 &sbi,
-                @sizeOf(windows.SYSTEM_BASIC_INFORMATION),
+                @sizeOf(windows.SYSTEM.BASIC_INFORMATION),
                 null,
             );
             if (rc != .SUCCESS) {

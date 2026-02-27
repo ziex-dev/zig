@@ -282,40 +282,6 @@ test "Group.concurrent" {
     try testing.expectEqualSlices(usize, &.{ 45, 245 }, &results);
 }
 
-test "select" {
-    const io = testing.io;
-
-    var queue: Io.Queue(u8) = .init(&.{});
-
-    var get_a = io.concurrent(Io.Queue(u8).getOne, .{ &queue, io }) catch |err| switch (err) {
-        error.ConcurrencyUnavailable => {
-            try testing.expect(builtin.single_threaded);
-            return;
-        },
-    };
-    defer _ = get_a.cancel(io) catch {};
-
-    var get_b = try io.concurrent(Io.Queue(u8).getOne, .{ &queue, io });
-    defer _ = get_b.cancel(io) catch {};
-
-    var timeout = io.async(Io.sleep, .{ io, .fromMilliseconds(1), .awake });
-    defer timeout.cancel(io) catch {};
-
-    switch (try io.select(.{
-        .get_a = &get_a,
-        .get_b = &get_b,
-        .timeout = &timeout,
-    })) {
-        .get_a => return error.TestFailure,
-        .get_b => return error.TestFailure,
-        .timeout => {
-            queue.close(io);
-            try testing.expectError(error.Closed, get_a.await(io));
-            try testing.expectError(error.Closed, get_b.await(io));
-        },
-    }
-}
-
 fn testQueue(comptime len: usize) !void {
     const io = testing.io;
     var buf: [len]usize = undefined;
@@ -818,10 +784,11 @@ test "Event broadcast" {
         event: Io.Event = .unset,
         counter: std.atomic.Value(usize) = std.atomic.Value(usize).init(num_threads),
 
-        fn wait(self: *@This()) void {
+        fn wait(self: *@This()) !void {
             if (self.counter.fetchSub(1, .acq_rel) == 1) {
                 self.event.set(io);
             }
+            try self.event.wait(io);
         }
     };
 
@@ -829,9 +796,9 @@ test "Event broadcast" {
         start_barrier: Barrier = .{},
         finish_barrier: Barrier = .{},
 
-        fn run(self: *@This()) void {
-            self.start_barrier.wait();
-            self.finish_barrier.wait();
+        fn run(self: *@This()) !void {
+            try self.start_barrier.wait();
+            try self.finish_barrier.wait();
         }
     };
 
@@ -841,5 +808,59 @@ test "Event broadcast" {
     for (&threads) |*t| t.* = try std.Thread.spawn(.{}, Context.run, .{&ctx});
     defer for (threads) |t| t.join();
 
-    ctx.run();
+    try ctx.run();
+}
+
+test "Select" {
+    const S = struct {
+        fn foo() bool {
+            return true;
+        }
+
+        fn bar(io: Io) Io.Cancelable!void {
+            try io.sleep(.fromSeconds(300), .awake);
+        }
+
+        fn baz() error{Ignored}!u8 {
+            return 42;
+        }
+    };
+
+    const io = testing.io;
+
+    const U = union(enum) {
+        foo: bool,
+        bar: Io.Cancelable!void,
+        baz: error{Ignored}!u8,
+    };
+    var buffer: [4]U = undefined;
+    var select: Io.Select(U) = .init(io, &buffer);
+    defer select.cancel();
+
+    select.async(.foo, S.foo, .{});
+    select.concurrent(.bar, S.bar, .{io}) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
+
+    switch (try select.await()) {
+        .foo => {},
+        .bar => return error.TestFailed, // should be sleeping
+        .baz => return error.TestFailed, // not called yet
+    }
+    select.async(.foo, S.foo, .{});
+    select.async(.foo, S.foo, .{});
+
+    var finished_buffer: [3]U = undefined;
+    const finished = finished_buffer[0..try select.awaitMany(&finished_buffer, 2)];
+    try testing.expectEqualSlices(U, &.{ .{ .foo = true }, .{ .foo = true } }, finished);
+
+    select.async(.baz, S.baz, .{});
+
+    const result = switch (try select.await()) {
+        .baz => |n| try n,
+        .foo => return error.TestFailed, // not called
+        .bar => return error.TestFailed, // should be sleeping
+    };
+
+    try testing.expectEqual(42, result);
 }

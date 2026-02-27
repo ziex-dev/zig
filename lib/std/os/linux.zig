@@ -118,6 +118,7 @@ pub const SYS = switch (native_arch) {
     .arm, .armeb, .thumb, .thumbeb => syscalls.Arm,
     .csky => syscalls.CSky,
     .hexagon => syscalls.Hexagon,
+    .loongarch32 => syscalls.LoongArch32,
     .loongarch64 => syscalls.LoongArch64,
     .m68k => syscalls.M68k,
     .mips, .mipsel => syscalls.MipsO32,
@@ -591,6 +592,10 @@ pub fn errno(r: usize) E {
     const signed_r: isize = @bitCast(r);
     const int = if (signed_r > -4096 and signed_r < 0) -signed_r else 0;
     return @enumFromInt(int);
+}
+
+pub fn brk(addr: usize) usize {
+    return syscall1(.brk, addr);
 }
 
 pub fn dup(old: i32) usize {
@@ -1113,6 +1118,14 @@ pub fn pivot_root(new_root: [*:0]const u8, put_old: [*:0]const u8) usize {
     return syscall2(.pivot_root, @intFromPtr(new_root), @intFromPtr(put_old));
 }
 
+fn mmap2Unit() u64 {
+    return switch (native_arch) {
+        .arc, .arceb, .m68k => std.heap.pageSize(),
+        .or1k => 8 << 10,
+        else => 4 << 10,
+    };
+}
+
 pub fn mmap(address: ?[*]u8, length: usize, prot: PROT, flags: MAP, fd: i32, offset: i64) usize {
     if (@hasField(SYS, "mmap2")) {
         return syscall6(
@@ -1122,7 +1135,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: PROT, flags: MAP, fd: i32, off
             @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
-            @truncate(@as(u64, @bitCast(offset)) / std.heap.pageSize()),
+            @truncate(@as(u64, @bitCast(offset)) / mmap2Unit()),
         );
     } else {
         // The s390x mmap() syscall existed before Linux supported syscalls with 5+ parameters, so
@@ -1570,7 +1583,7 @@ pub fn clone2(flags: u32, child_stack_ptr: usize) usize {
     return syscall2(.clone, flags, child_stack_ptr);
 }
 
-pub fn close(fd: i32) usize {
+pub fn close(fd: fd_t) usize {
     return syscall1(.close, @as(usize, @bitCast(@as(isize, fd))));
 }
 
@@ -1862,6 +1875,14 @@ pub const F = struct {
     pub const GETPIPE_SZ = LINUX_SPECIFIC_BASE + 8;
     pub const ADD_SEALS = LINUX_SPECIFIC_BASE + 9;
     pub const GET_SEALS = LINUX_SPECIFIC_BASE + 10;
+
+    pub const SEAL_SEAL = 0x0001;
+    pub const SEAL_SHRINK = 0x0002;
+    pub const SEAL_GROW = 0x0004;
+    pub const SEAL_WRITE = 0x0008;
+    pub const SEAL_FUTURE_WRITE = 0x0010;
+    pub const SEAL_EXEC = 0x0020;
+
     pub const GET_RW_HINT = LINUX_SPECIFIC_BASE + 11;
     pub const SET_RW_HINT = LINUX_SPECIFIC_BASE + 12;
     pub const GET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 13;
@@ -6709,9 +6730,10 @@ pub const IORING_ACCEPT_MULTISHOT = 1 << 0;
 /// IORING_OP_MSG_RING command types, stored in sqe->addr
 pub const IORING_MSG_RING_COMMAND = enum(u8) {
     /// pass sqe->len as 'res' and off as user_data
-    DATA,
+    DATA = 0,
     /// send a registered fd to another ring
-    SEND_FD,
+    SEND_FD = 1,
+    _,
 };
 
 // io_uring_sqe.msg_ring_flags (rw_flags in the Zig struct)
@@ -6764,6 +6786,8 @@ pub const IORING_CQE_F_SOCK_NONEMPTY = 1 << 2;
 pub const IORING_CQE_F_NOTIF = 1 << 3;
 /// If set, the buffer ID set in the completion will get more completions.
 pub const IORING_CQE_F_BUF_MORE = 1 << 4;
+pub const IORING_CQE_F_SKIP = 1 << 5;
+pub const IORING_CQE_F_32 = 1 << 15;
 
 pub const IORING_CQE_BUFFER_SHIFT = 16;
 
@@ -7060,7 +7084,7 @@ pub const IORING_RESTRICTION = enum(u16) {
     _,
 };
 
-pub const IO_URING_SOCKET_OP = enum(u16) {
+pub const IO_URING_SOCKET_OP = enum(u32) {
     SIOCIN = 0,
     SIOCOUTQ = 1,
     GETSOCKOPT = 2,

@@ -16226,6 +16226,12 @@ fn zirAsm(
     });
     sema.appendRefsAssumeCapacity(out_args);
     sema.appendRefsAssumeCapacity(args);
+    {
+        const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
+        @memcpy(buffer[0..asm_source.len], asm_source);
+        buffer[asm_source.len] = 0;
+        sema.air_extra.items.len += asm_source.len / 4 + 1;
+    }
     for (outputs) |o| {
         const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
         @memcpy(buffer[0..o.c.len], o.c);
@@ -16241,12 +16247,6 @@ fn zirAsm(
         @memcpy(buffer[input.c.len + 1 ..][0..input.n.len], input.n);
         buffer[input.c.len + 1 + input.n.len] = 0;
         sema.air_extra.items.len += (input.c.len + input.n.len + (2 + 3)) / 4;
-    }
-    {
-        const buffer = mem.sliceAsBytes(sema.air_extra.unusedCapacitySlice());
-        @memcpy(buffer[0..asm_source.len], asm_source);
-        buffer[asm_source.len] = 0;
-        sema.air_extra.items.len += asm_source.len / 4 + 1;
     }
     return asm_air;
 }
@@ -23090,6 +23090,7 @@ fn checkAtomicPtrOperand(
 ) CompileError!Air.Inst.Ref {
     const pt = sema.pt;
     const zcu = pt.zcu;
+    try elem_ty.resolveLayout(pt);
     var diag: Zcu.AtomicPtrAlignmentDiagnostics = .{};
     const alignment = zcu.atomicPtrAlignment(elem_ty, &diag) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
