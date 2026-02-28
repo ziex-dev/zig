@@ -1,28 +1,35 @@
 const ConfigHeader = @This();
 
 const std = @import("std");
+const mem = std.mem;
+const testing = std.testing;
+const Build = std.Build;
 const Io = std.Io;
-const Step = std.Build.Step;
-const Allocator = std.mem.Allocator;
+const Step = Build.Step;
+const Allocator = mem.Allocator;
 const Writer = std.Io.Writer;
 
 pub const Style = union(enum) {
     /// A configure format supported by autotools that uses `#undef foo` to
     /// mark lines that can be substituted with different values.
-    autoconf_undef: std.Build.LazyPath,
-    /// A configure format supported by autotools that uses `@FOO@` output variables.
-    autoconf_at: std.Build.LazyPath,
+    autoconf_undef: Build.LazyPath,
+    /// A configure format supported by autotools that uses `@FOO@` output
+    /// variables.
+    autoconf_at: Build.LazyPath,
     /// The configure format supported by CMake. It uses `@FOO@`, `${}` and
     /// `#cmakedefine` for template substitution.
-    cmake: std.Build.LazyPath,
+    cmake: Build.LazyPath,
+    /// The configure format supported by Meson. It uses `@FOO@`, and
+    /// `#mesondefine` for template substitution.
+    meson: Build.LazyPath,
     /// Instead of starting with an input file, start with nothing.
     blank,
     /// Start with nothing, like blank, and output a nasm .asm file.
     nasm,
 
-    pub fn getPath(style: Style) ?std.Build.LazyPath {
+    pub fn getPath(style: Style) ?Build.LazyPath {
         switch (style) {
-            .autoconf_undef, .autoconf_at, .cmake => |s| return s,
+            .autoconf_undef, .autoconf_at, .cmake, .meson => |s| return s,
             .blank, .nasm => return null,
         }
     }
@@ -40,8 +47,7 @@ pub const Value = union(enum) {
 step: Step,
 values: std.StringArrayHashMap(Value),
 /// This directory contains the generated file under the name `include_path`.
-generated_dir: std.Build.GeneratedFile,
-
+generated_dir: Build.GeneratedFile,
 style: Style,
 max_bytes: usize,
 include_path: []const u8,
@@ -57,7 +63,7 @@ pub const Options = struct {
     include_guard_override: ?[]const u8 = null,
 };
 
-pub fn create(owner: *std.Build, options: Options) *ConfigHeader {
+pub fn create(owner: *Build, options: Options) *ConfigHeader {
     const config_header = owner.allocator.create(ConfigHeader) catch @panic("OOM");
 
     var include_path: []const u8 = "config.h";
@@ -70,7 +76,7 @@ pub fn create(owner: *std.Build, options: Options) *ConfigHeader {
             .dependency => |dependency| dependency.sub_path,
         };
         const basename = std.fs.path.basename(sub_path);
-        if (std.mem.endsWith(u8, basename, ".h.in")) {
+        if (mem.endsWith(u8, basename, ".h.in")) {
             include_path = basename[0 .. basename.len - 3];
         }
     }
@@ -119,10 +125,11 @@ pub fn addValues(config_header: *ConfigHeader, values: anytype) void {
     }
 }
 
-pub fn getOutputDir(ch: *ConfigHeader) std.Build.LazyPath {
+pub fn getOutputDir(ch: *ConfigHeader) Build.LazyPath {
     return .{ .generated = .{ .file = &ch.generated_dir } };
 }
-pub fn getOutputFile(ch: *ConfigHeader) std.Build.LazyPath {
+
+pub fn getOutputFile(ch: *ConfigHeader) Build.LazyPath {
     return ch.getOutputDir().path(ch.step.owner, ch.include_path);
 }
 
@@ -205,29 +212,22 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     const asm_generated_line = "; " ++ header_text ++ "\n";
 
     switch (config_header.style) {
-        .autoconf_undef, .autoconf_at => |file_source| {
+        .autoconf_undef, .autoconf_at, .cmake, .meson => |file_source| {
             try bw.writeAll(c_generated_line);
-            const src_path = file_source.getPath2(b, step);
+            const src_path = (try file_source.getPath4(b, step)).toString(b.allocator) catch @panic("OOM");
             const contents = Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(config_header.max_bytes)) catch |err| {
-                return step.fail("unable to read autoconf input file '{s}': {s}", .{
-                    src_path, @errorName(err),
+                return step.fail("unable to read '{s}' input file '{s}': {s}", .{
+                    @tagName(config_header.style), src_path, @errorName(err),
                 });
             };
+
             switch (config_header.style) {
                 .autoconf_undef => try render_autoconf_undef(step, contents, bw, config_header.values, src_path),
-                .autoconf_at => try render_autoconf_at(step, contents, &aw, config_header.values, src_path),
+                .autoconf_at => try render_autoconf_at(step, contents, bw, config_header.values, src_path),
+                .meson => try render_meson(step, contents, bw, config_header.values, src_path),
+                .cmake => try render_cmake(step, contents, bw, config_header.values, src_path),
                 else => unreachable,
             }
-        },
-        .cmake => |file_source| {
-            try bw.writeAll(c_generated_line);
-            const src_path = file_source.getPath2(b, step);
-            const contents = Io.Dir.cwd().readFileAlloc(io, src_path, arena, .limited(config_header.max_bytes)) catch |err| {
-                return step.fail("unable to read cmake input file '{s}': {s}", .{
-                    src_path, @errorName(err),
-                });
-            };
-            try render_cmake(step, contents, bw, config_header.values, src_path);
         },
         .blank => {
             try bw.writeAll(c_generated_line);
@@ -289,16 +289,16 @@ fn render_autoconf_undef(
 
     var any_errors = false;
     var line_index: u32 = 0;
-    var line_it = std.mem.splitScalar(u8, contents, '\n');
+    var line_it = mem.splitScalar(u8, contents, '\n');
     while (line_it.next()) |line| : (line_index += 1) {
-        if (!std.mem.startsWith(u8, line, "#")) {
+        if (!mem.startsWith(u8, line, "#")) {
             try bw.writeAll(line);
             try bw.writeByte('\n');
             continue;
         }
-        var it = std.mem.tokenizeAny(u8, line[1..], " \t\r");
+        var it = mem.tokenizeAny(u8, line[1..], " \t\r");
         const undef = it.next().?;
-        if (!std.mem.eql(u8, undef, "undef")) {
+        if (!mem.eql(u8, undef, "undef")) {
             try bw.writeAll(line);
             try bw.writeByte('\n');
             continue;
@@ -321,37 +321,32 @@ fn render_autoconf_undef(
         any_errors = true;
     }
 
-    if (any_errors) {
-        return error.MakeFailed;
-    }
+    if (any_errors) return error.HeaderConfigFailed;
 }
 
 fn render_autoconf_at(
     step: *Step,
     contents: []const u8,
-    aw: *Writer.Allocating,
+    bw: *Writer,
     values: std.StringArrayHashMap(Value),
     src_path: []const u8,
 ) !void {
     const build = step.owner;
     const allocator = build.allocator;
-    const bw = &aw.writer;
 
-    const used = allocator.alloc(bool, values.count()) catch @panic("OOM");
-    for (used) |*u| u.* = false;
-    defer allocator.free(used);
+    var is_used: std.DynamicBitSetUnmanaged = try .initEmpty(allocator, values.count());
+    defer is_used.deinit(allocator);
 
     var any_errors = false;
     var line_index: u32 = 0;
-    var line_it = std.mem.splitScalar(u8, contents, '\n');
+    var line_it = mem.splitScalar(u8, contents, '\n');
     while (line_it.next()) |line| : (line_index += 1) {
         const last_line = line_it.index == line_it.buffer.len;
 
-        const old_len = aw.written().len;
-        expand_variables_autoconf_at(bw, line, values, used) catch |err| switch (err) {
+        const old_len = bw.buffered().len;
+        expand_variables_autoconf_at(bw, line, values, &is_used) catch |err| switch (err) {
             error.MissingValue => {
-                const name = aw.written()[old_len..];
-                defer aw.shrinkRetainingCapacity(old_len);
+                const name = bw.buffered()[old_len..];
                 try step.addError("{s}:{d}: error: unspecified config header value: '{s}'", .{
                     src_path, line_index + 1, name,
                 });
@@ -369,14 +364,68 @@ fn render_autoconf_at(
         if (!last_line) try bw.writeByte('\n');
     }
 
-    for (values.unmanaged.entries.slice().items(.key), used) |name, u| {
-        if (!u) {
-            try step.addError("{s}: error: config header value unused: '{s}'", .{ src_path, name });
-            any_errors = true;
-        }
+    var unused_value_it = is_used.iterator(.{ .kind = .unset });
+    while (unused_value_it.next()) |index| {
+        try step.addError("{s}: error: config header value unused: '{s}'", .{ src_path, values.keys()[index] });
+        any_errors = true;
     }
 
-    if (any_errors) return error.MakeFailed;
+    if (any_errors) return error.HeaderConfigFailed;
+}
+
+fn render_meson(
+    step: *Step,
+    contents: []const u8,
+    bw: *Writer,
+    values: std.StringArrayHashMap(Value),
+    src_path: []const u8,
+) !void {
+    const build = step.owner;
+    const allocator = build.allocator;
+
+    var is_used: std.DynamicBitSetUnmanaged = try .initEmpty(allocator, values.count());
+    defer is_used.deinit(allocator);
+
+    var any_errors = false;
+    var line_index: u32 = 0;
+    var line_it = mem.splitScalar(u8, contents, '\n');
+    // https://mesonbuild.com/Configuration.html
+    while (line_it.next()) |line| : (line_index += 1) {
+        const last_line = line_it.index == line_it.buffer.len;
+
+        const old_len = bw.buffered().len;
+        expand_variables_meson(bw, line, values, &is_used) catch |err| switch (err) {
+            error.MissingToken => {
+                try step.addError("{s}:{d}: error: missing define name", .{ src_path, line_index + 1 });
+                any_errors = true;
+                continue;
+            },
+            error.MissingValue => {
+                const name = bw.buffered()[old_len..];
+                try step.addError("{s}:{d}: error: unspecified config header value: '{s}'", .{
+                    src_path, line_index + 1, name,
+                });
+                any_errors = true;
+                continue;
+            },
+            else => {
+                try step.addError("{s}:{d}: unable to substitute variable: error: {s}", .{
+                    src_path, line_index + 1, @errorName(err),
+                });
+                any_errors = true;
+                continue;
+            },
+        };
+        if (!last_line) try bw.writeByte('\n');
+    }
+
+    var unused_value_it = is_used.iterator(.{ .kind = .unset });
+    while (unused_value_it.next()) |index| {
+        try step.addError("{s}: error: config header value unused: '{s}'", .{ src_path, values.keys()[index] });
+        any_errors = true;
+    }
+
+    if (any_errors) return error.HeaderConfigFailed;
 }
 
 fn render_cmake(
@@ -394,7 +443,7 @@ fn render_cmake(
 
     var any_errors = false;
     var line_index: u32 = 0;
-    var line_it = std.mem.splitScalar(u8, contents, '\n');
+    var line_it = mem.splitScalar(u8, contents, '\n');
     while (line_it.next()) |raw_line| : (line_index += 1) {
         const last_line = line_it.index == line_it.buffer.len;
 
@@ -416,22 +465,22 @@ fn render_cmake(
         };
         defer allocator.free(line);
 
-        if (!std.mem.startsWith(u8, line, "#")) {
+        if (!mem.startsWith(u8, line, "#")) {
             try bw.writeAll(line);
             if (!last_line) try bw.writeByte('\n');
             continue;
         }
-        var it = std.mem.tokenizeAny(u8, line[1..], " \t\r");
+        var it = mem.tokenizeAny(u8, line[1..], " \t\r");
         const cmakedefine = it.next().?;
-        if (!std.mem.eql(u8, cmakedefine, "cmakedefine") and
-            !std.mem.eql(u8, cmakedefine, "cmakedefine01"))
+        if (!mem.eql(u8, cmakedefine, "cmakedefine") and
+            !mem.eql(u8, cmakedefine, "cmakedefine01"))
         {
             try bw.writeAll(line);
             if (!last_line) try bw.writeByte('\n');
             continue;
         }
 
-        const booldefine = std.mem.eql(u8, cmakedefine, "cmakedefine01");
+        const booldefine = mem.eql(u8, cmakedefine, "cmakedefine01");
 
         const name = it.next() orelse {
             try step.addError("{s}:{d}: error: missing define name", .{
@@ -440,28 +489,28 @@ fn render_cmake(
             any_errors = true;
             continue;
         };
-        var value = values_copy.get(name) orelse blk: {
+        var value: Value = values_copy.get(name) orelse blk: {
             if (booldefine) {
-                break :blk Value{ .int = 0 };
+                break :blk .{ .int = 0 };
             }
-            break :blk Value.undef;
+            break :blk .undef;
         };
 
         value = blk: {
             switch (value) {
                 .boolean => |b| {
                     if (!b) {
-                        break :blk Value.undef;
+                        break :blk .undef;
                     }
                 },
                 .int => |i| {
                     if (i == 0) {
-                        break :blk Value.undef;
+                        break :blk .undef;
                     }
                 },
                 .string => |string| {
                     if (string.len == 0) {
-                        break :blk Value.undef;
+                        break :blk .undef;
                     }
                 },
 
@@ -473,41 +522,35 @@ fn render_cmake(
         if (booldefine) {
             value = blk: {
                 switch (value) {
-                    .undef => {
-                        break :blk Value{ .boolean = false };
-                    },
-                    .defined => {
-                        break :blk Value{ .boolean = false };
+                    .undef, .defined => {
+                        break :blk .{ .boolean = false };
                     },
                     .boolean => |b| {
-                        break :blk Value{ .boolean = b };
+                        break :blk .{ .boolean = b };
                     },
                     .int => |i| {
-                        break :blk Value{ .boolean = i != 0 };
+                        break :blk .{ .boolean = i != 0 };
                     },
                     .string => |string| {
-                        break :blk Value{ .boolean = string.len != 0 };
+                        break :blk .{ .boolean = string.len != 0 };
                     },
-
                     else => {
-                        break :blk Value{ .boolean = false };
+                        break :blk .{ .boolean = false };
                     },
                 }
             };
-        } else if (value != Value.undef) {
-            value = Value{ .ident = it.rest() };
+        } else if (value != .undef) {
+            value = .{ .ident = it.rest() };
         }
 
         try renderValueC(bw, name, value);
     }
 
-    if (any_errors) {
-        return error.HeaderConfigFailed;
-    }
+    if (any_errors) return error.HeaderConfigFailed;
 }
 
 fn render_blank(
-    gpa: std.mem.Allocator,
+    gpa: mem.Allocator,
     bw: *Writer,
     defines: std.StringArrayHashMap(Value),
     include_path: []const u8,
@@ -557,6 +600,23 @@ fn renderValueC(bw: *Writer, name: []const u8, value: Value) !void {
     }
 }
 
+fn renderValueMeson(bw: *Writer, name: []const u8, value: Value) !void {
+    switch (value) {
+        .undef => try bw.print("/* #undef {s} */", .{name}),
+        .defined => try bw.print("#define {s}", .{name}),
+        .boolean => |b| {
+            if (b) {
+                try bw.print("#define {s}", .{name});
+            } else {
+                try bw.print("#undef {s}", .{name});
+            }
+        },
+        .int => |i| try bw.print("#define {s} {d}", .{ name, i }),
+        .ident => |ident| try bw.print("#define {s} {s}", .{ name, ident }),
+        .string => |string| try bw.print("#define {s} \"{f}\"", .{ name, std.zig.fmtString(string) }),
+    }
+}
+
 fn renderValueNasm(bw: *Writer, name: []const u8, value: Value) !void {
     switch (value) {
         .undef => try bw.print("; %undef {s}\n", .{name}),
@@ -571,41 +631,42 @@ fn renderValueNasm(bw: *Writer, name: []const u8, value: Value) !void {
 
 fn expand_variables_autoconf_at(
     bw: *Writer,
-    contents: []const u8,
+    line: []const u8,
     values: std.StringArrayHashMap(Value),
-    used: []bool,
+    is_used: *std.DynamicBitSetUnmanaged,
 ) !void {
     const valid_varname_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_";
 
     var curr: usize = 0;
     var source_offset: usize = 0;
-    while (curr < contents.len) : (curr += 1) {
-        if (contents[curr] != '@') continue;
-        if (std.mem.findScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
+    while (curr < line.len) : (curr += 1) {
+        if (line[curr] != '@') continue;
+        if (mem.findScalarPos(u8, line, curr + 1, '@')) |close_pos| {
             if (close_pos == curr + 1) {
                 // closed immediately, preserve as a literal
                 continue;
             }
-            const valid_varname_end = std.mem.findNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
+            const valid_varname_end = mem.findNonePos(u8, line, curr + 1, valid_varname_chars) orelse 0;
             if (valid_varname_end != close_pos) {
                 // contains invalid characters, preserve as a literal
                 continue;
             }
 
-            const key = contents[curr + 1 .. close_pos];
+            const key = line[curr + 1 .. close_pos];
             const index = values.getIndex(key) orelse {
                 // Report the missing key to the caller.
                 try bw.writeAll(key);
                 return error.MissingValue;
             };
-            const value = values.unmanaged.entries.slice().items(.value)[index];
-            used[index] = true;
-            try bw.writeAll(contents[source_offset..curr]);
+            const value = values.get(key).?;
+            is_used.set(index);
+
+            const content_before_value = line[source_offset..curr];
             switch (value) {
-                .undef, .defined => {},
-                .boolean => |b| try bw.writeByte(@as(u8, '0') + @intFromBool(b)),
-                .int => |i| try bw.print("{d}", .{i}),
-                .ident, .string => |s| try bw.writeAll(s),
+                .undef, .defined => try bw.print("{s}", .{content_before_value}),
+                .boolean => |b| try bw.print("{s}{c}", .{ content_before_value, @as(u8, '0') + @intFromBool(b) }),
+                .int => |i| try bw.print("{s}{d}", .{ content_before_value, i }),
+                .ident, .string => |s| try bw.print("{s}{s}", .{ content_before_value, s }),
             }
 
             curr = close_pos;
@@ -613,7 +674,35 @@ fn expand_variables_autoconf_at(
         }
     }
 
-    try bw.writeAll(contents[source_offset..]);
+    try bw.writeAll(line[source_offset..]);
+}
+
+fn expand_variables_meson(
+    bw: *Writer,
+    line: []const u8,
+    values: std.StringArrayHashMap(Value),
+    is_used: *std.DynamicBitSetUnmanaged,
+) !void {
+    const mesondefine = "#mesondefine";
+    if (mem.startsWith(u8, line, mesondefine)) {
+        const line_offset = mesondefine.len + 1;
+        if (line_offset > line.len) return error.MissingToken;
+        var it = mem.tokenizeAny(u8, line[line_offset..], " \t\r");
+        const name = it.next() orelse return error.MissingToken;
+
+        const index = values.getIndex(name) orelse {
+            // Report the missing key to the caller.
+            try bw.writeAll(name);
+            return error.MissingValue;
+        };
+
+        is_used.set(index);
+        try renderValueMeson(bw, name, values.values()[index]);
+        // comments/any other text passthrough unaffected
+        return try bw.writeAll(line[line_offset + name.len ..]);
+    }
+
+    try expand_variables_autoconf_at(bw, line, values, is_used);
 }
 
 fn expand_variables_cmake(
@@ -638,12 +727,12 @@ fn expand_variables_cmake(
     loop: while (curr < contents.len) : (curr += 1) {
         switch (contents[curr]) {
             '@' => blk: {
-                if (std.mem.findScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
+                if (mem.findScalarPos(u8, contents, curr + 1, '@')) |close_pos| {
                     if (close_pos == curr + 1) {
                         // closed immediately, preserve as a literal
                         break :blk;
                     }
-                    const valid_varname_end = std.mem.findNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
+                    const valid_varname_end = mem.findNonePos(u8, contents, curr + 1, valid_varname_chars) orelse 0;
                     if (valid_varname_end != close_pos) {
                         // contains invalid characters, preserve as a literal
                         break :blk;
@@ -734,7 +823,7 @@ fn expand_variables_cmake(
             else => {},
         }
 
-        if (var_stack.items.len > 0 and std.mem.findScalar(u8, valid_varname_chars, contents[curr]) == null) {
+        if (var_stack.items.len > 0 and mem.findScalar(u8, valid_varname_chars, contents[curr]) == null) {
             return error.InvalidCharacter;
         }
     }
@@ -755,15 +844,36 @@ fn testReplaceVariablesAutoconfAt(
 ) !void {
     var aw: Writer.Allocating = .init(allocator);
     defer aw.deinit();
+    const bw = &aw.writer;
 
-    const used = try allocator.alloc(bool, values.count());
-    for (used) |*u| u.* = false;
-    defer allocator.free(used);
+    var is_used: std.DynamicBitSetUnmanaged = try .initEmpty(allocator, values.count());
+    defer is_used.deinit(allocator);
 
-    try expand_variables_autoconf_at(&aw.writer, contents, values, used);
+    try expand_variables_autoconf_at(bw, contents, values, &is_used);
 
-    for (used) |u| if (!u) return error.UnusedValue;
-    try std.testing.expectEqualStrings(expected, aw.written());
+    var it = is_used.iterator(.{ .kind = .unset });
+    while (it.next()) |_| return error.UnusedValue;
+    try testing.expectEqualStrings(expected, aw.written());
+}
+
+fn testReplaceVariablesMeson(
+    allocator: Allocator,
+    contents: []const u8,
+    expected: []const u8,
+    values: std.StringArrayHashMap(Value),
+) !void {
+    var aw: Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    const bw = &aw.writer;
+
+    var is_used: std.DynamicBitSetUnmanaged = try .initEmpty(allocator, values.count());
+    defer is_used.deinit(allocator);
+
+    try expand_variables_meson(bw, contents, values, &is_used);
+
+    var it = is_used.iterator(.{ .kind = .unset });
+    while (it.next()) |_| return error.UnusedValue;
+    try testing.expectEqualStrings(expected, aw.written());
 }
 
 fn testReplaceVariablesCMake(
@@ -775,11 +885,11 @@ fn testReplaceVariablesCMake(
     const actual = try expand_variables_cmake(allocator, contents, values);
     defer allocator.free(actual);
 
-    try std.testing.expectEqualStrings(expected, actual);
+    try testing.expectEqualStrings(expected, actual);
 }
 
 test "expand_variables_autoconf_at simple cases" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     var values: std.StringArrayHashMap(Value) = .init(allocator);
     defer values.deinit();
 
@@ -804,104 +914,166 @@ test "expand_variables_autoconf_at simple cases" {
     try testReplaceVariablesAutoconfAt(allocator, "@defined@", "", values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("true", Value{ .boolean = true });
+    try values.putNoClobber("true", .{ .boolean = true });
     try testReplaceVariablesAutoconfAt(allocator, "@true@", "1", values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("false", Value{ .boolean = false });
+    try values.putNoClobber("false", .{ .boolean = false });
     try testReplaceVariablesAutoconfAt(allocator, "@false@", "0", values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("int", Value{ .int = 42 });
+    try values.putNoClobber("int", .{ .int = 42 });
     try testReplaceVariablesAutoconfAt(allocator, "@int@", "42", values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("ident", Value{ .string = "value" });
+    try values.putNoClobber("ident", .{ .string = "value" });
     try testReplaceVariablesAutoconfAt(allocator, "@ident@", "value", values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber("string", .{ .string = "text" });
     try testReplaceVariablesAutoconfAt(allocator, "@string@", "text", values);
     values.clearRetainingCapacity();
 
     // double packed substitution
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber("string", .{ .string = "text" });
     try testReplaceVariablesAutoconfAt(allocator, "@string@@string@", "texttext", values);
     values.clearRetainingCapacity();
 
     // triple packed substitution
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber("int", .{ .int = 42 });
+    try values.putNoClobber("string", .{ .string = "text" });
     try testReplaceVariablesAutoconfAt(allocator, "@string@@int@@string@", "text42text", values);
     values.clearRetainingCapacity();
 
     // double separated substitution
-    try values.putNoClobber("int", Value{ .int = 42 });
+    try values.putNoClobber("int", .{ .int = 42 });
     try testReplaceVariablesAutoconfAt(allocator, "@int@.@int@", "42.42", values);
     values.clearRetainingCapacity();
 
     // triple separated substitution
-    try values.putNoClobber("true", Value{ .boolean = true });
-    try values.putNoClobber("int", Value{ .int = 42 });
+    try values.putNoClobber("true", .{ .boolean = true });
+    try values.putNoClobber("int", .{ .int = 42 });
     try testReplaceVariablesAutoconfAt(allocator, "@int@.@true@.@int@", "42.1.42", values);
     values.clearRetainingCapacity();
 
     // misc prefix is preserved
-    try values.putNoClobber("false", Value{ .boolean = false });
+    try values.putNoClobber("false", .{ .boolean = false });
     try testReplaceVariablesAutoconfAt(allocator, "false is @false@", "false is 0", values);
     values.clearRetainingCapacity();
 
     // misc suffix is preserved
-    try values.putNoClobber("true", Value{ .boolean = true });
+    try values.putNoClobber("true", .{ .boolean = true });
     try testReplaceVariablesAutoconfAt(allocator, "@true@ is true", "1 is true", values);
     values.clearRetainingCapacity();
 
     // surrounding content is preserved
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try testReplaceVariablesAutoconfAt(allocator, "what is 6*7? @int@!", "what is 6*7? 42!", values);
+    try values.putNoClobber("int", .{ .int = 42 });
+    try testReplaceVariablesAutoconfAt(allocator, "what is 6*7? @int@! /* comment */", "what is 6*7? 42! /* comment */", values);
     values.clearRetainingCapacity();
 
     // incomplete key is preserved
     try testReplaceVariablesAutoconfAt(allocator, "@undef", "@undef", values);
 
     // unknown key leads to an error
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesAutoconfAt(allocator, "@bad@", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesAutoconfAt(allocator, "@bad@", "", values));
 
     // unused key leads to an error
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try values.putNoClobber("false", Value{ .boolean = false });
-    try std.testing.expectError(error.UnusedValue, testReplaceVariablesAutoconfAt(allocator, "@int", "", values));
+    try values.putNoClobber("int", .{ .int = 42 });
+    try values.putNoClobber("false", .{ .boolean = false });
+    try testing.expectError(error.UnusedValue, testReplaceVariablesAutoconfAt(allocator, "@int", "", values));
     values.clearRetainingCapacity();
 }
 
 test "expand_variables_autoconf_at edge cases" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     var values: std.StringArrayHashMap(Value) = .init(allocator);
     defer values.deinit();
 
     // @-vars resolved only when they wrap valid characters, otherwise considered literals
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber("string", .{ .string = "text" });
     try testReplaceVariablesAutoconfAt(allocator, "@@string@@", "@text@", values);
     values.clearRetainingCapacity();
 
     // expanded variables are considered strings after expansion
-    try values.putNoClobber("string_at", Value{ .string = "@string@" });
+    try values.putNoClobber("string_at", .{ .string = "@string@" });
     try testReplaceVariablesAutoconfAt(allocator, "@string_at@", "@string@", values);
     values.clearRetainingCapacity();
 }
 
+test "expand_variables_meson cases" {
+    const allocator = testing.allocator;
+    var values: std.StringArrayHashMap(Value) = .init(allocator);
+    defer values.deinit();
+
+    // missing token after mesondefine
+    try testing.expectError(error.MissingToken, testReplaceVariablesMeson(allocator, "#mesondefine ", "", values));
+    try testing.expectError(error.MissingToken, testReplaceVariablesMeson(allocator, "#mesondefine", "", values));
+
+    // mesondefine token value not set (token not in values)
+    try testing.expectError(error.MissingValue, testReplaceVariablesMeson(allocator, "#mesondefine unsetval", "", values));
+
+    // mesondefine boolean true renders as bare #define (no value)
+    try values.putNoClobber("trueval", .{ .boolean = true });
+    try testReplaceVariablesMeson(allocator, "#mesondefine trueval", "#define trueval", values);
+    try testReplaceVariablesMeson(allocator, "#mesondefine trueval /* some comments */", "#define trueval /* some comments */", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine boolean false renders as bare #undef (not commented out)
+    try values.putNoClobber("falseval", .{ .boolean = false });
+    try testReplaceVariablesMeson(allocator, "#mesondefine falseval", "#undef falseval", values);
+    try testReplaceVariablesMeson(allocator, "#mesondefine falseval /* some comments */", "#undef falseval /* some comments */", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine null (explicit undef)
+    try values.putNoClobber("noval", .undef);
+    try testReplaceVariablesMeson(allocator, "#mesondefine noval", "/* #undef noval */", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine defined (void)
+    try values.putNoClobber("defval", .defined);
+    try testReplaceVariablesMeson(allocator, "#mesondefine defval", "#define defval", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine integer renders as #define with numeric value
+    try values.putNoClobber("intval", .{ .int = 42 });
+    try testReplaceVariablesMeson(allocator, "#mesondefine intval", "#define intval 42", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine zero integer
+    try values.putNoClobber("zeroval", .{ .int = 0 });
+    try testReplaceVariablesMeson(allocator, "#mesondefine zeroval", "#define zeroval 0", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine negative integer
+    try values.putNoClobber("negval", .{ .int = -1 });
+    try testReplaceVariablesMeson(allocator, "#mesondefine negval", "#define negval -1", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine ident renders as #define with identifier value
+    try values.putNoClobber("identval", .{ .ident = "raw_identifier" });
+    try testReplaceVariablesMeson(allocator, "#mesondefine identval", "#define identval raw_identifier", values);
+    values.clearRetainingCapacity();
+
+    // mesondefine string renders as #define with quoted string value
+    try values.putNoClobber("stringval", .{ .string = "hello" });
+    try testReplaceVariablesMeson(allocator, "#mesondefine stringval", "#define stringval \"hello\"", values);
+    values.clearRetainingCapacity();
+
+    try testReplaceVariablesMeson(allocator, "@ substitution", "@ substitution", values);
+}
+
 test "expand_variables_cmake simple cases" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     var values: std.StringArrayHashMap(Value) = .init(allocator);
     defer values.deinit();
 
     try values.putNoClobber("undef", .undef);
     try values.putNoClobber("defined", .defined);
-    try values.putNoClobber("true", Value{ .boolean = true });
-    try values.putNoClobber("false", Value{ .boolean = false });
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try values.putNoClobber("ident", Value{ .string = "value" });
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber("true", .{ .boolean = true });
+    try values.putNoClobber("false", .{ .boolean = false });
+    try values.putNoClobber("int", .{ .int = 42 });
+    try values.putNoClobber("ident", .{ .string = "value" });
+    try values.putNoClobber("string", .{ .string = "text" });
 
     // empty strings are preserved
     try testReplaceVariablesCMake(allocator, "", "", values);
@@ -910,7 +1082,7 @@ test "expand_variables_cmake simple cases" {
     try testReplaceVariablesCMake(allocator, "no substitution", "no substitution", values);
 
     // empty ${} wrapper leads to an error
-    try std.testing.expectError(error.MissingKey, testReplaceVariablesCMake(allocator, "${}", "", values));
+    try testing.expectError(error.MissingKey, testReplaceVariablesCMake(allocator, "${}", "", values));
 
     // empty @ sigils are preserved
     try testReplaceVariablesCMake(allocator, "@", "@", values);
@@ -974,32 +1146,32 @@ test "expand_variables_cmake simple cases" {
     try testReplaceVariablesCMake(allocator, "undef}", "undef}", values);
 
     // unknown key leads to an error
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@bad@", "", values));
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${bad}", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@bad@", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${bad}", "", values));
 }
 
 test "expand_variables_cmake edge cases" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     var values: std.StringArrayHashMap(Value) = .init(allocator);
     defer values.deinit();
 
     // special symbols
-    try values.putNoClobber("at", Value{ .string = "@" });
-    try values.putNoClobber("dollar", Value{ .string = "$" });
-    try values.putNoClobber("underscore", Value{ .string = "_" });
+    try values.putNoClobber("at", .{ .string = "@" });
+    try values.putNoClobber("dollar", .{ .string = "$" });
+    try values.putNoClobber("underscore", .{ .string = "_" });
 
     // basic value
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber("string", .{ .string = "text" });
 
     // proxy case values
-    try values.putNoClobber("string_proxy", Value{ .string = "string" });
-    try values.putNoClobber("string_at", Value{ .string = "@string@" });
-    try values.putNoClobber("string_curly", Value{ .string = "{string}" });
-    try values.putNoClobber("string_var", Value{ .string = "${string}" });
+    try values.putNoClobber("string_proxy", .{ .string = "string" });
+    try values.putNoClobber("string_at", .{ .string = "@string@" });
+    try values.putNoClobber("string_curly", .{ .string = "{string}" });
+    try values.putNoClobber("string_var", .{ .string = "${string}" });
 
     // stack case values
-    try values.putNoClobber("nest_underscore_proxy", Value{ .string = "underscore" });
-    try values.putNoClobber("nest_proxy", Value{ .string = "nest_underscore_proxy" });
+    try values.putNoClobber("nest_underscore_proxy", .{ .string = "underscore" });
+    try values.putNoClobber("nest_proxy", .{ .string = "nest_underscore_proxy" });
 
     // @-vars resolved only when they wrap valid characters, otherwise considered literals
     try testReplaceVariablesCMake(allocator, "@@string@@", "@text@", values);
@@ -1020,31 +1192,31 @@ test "expand_variables_cmake edge cases" {
     try testReplaceVariablesCMake(allocator, "@dollar@{@string@}", "${text}", values);
 
     // when expanded variables contain invalid characters, they prevent further expansion
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${${string_var}}", "", values));
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${@string_var@}", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${${string_var}}", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${@string_var@}", "", values));
 
     // nested expanded variables are expanded from the inside out
     try testReplaceVariablesCMake(allocator, "${string${underscore}proxy}", "string", values);
     try testReplaceVariablesCMake(allocator, "${string@underscore@proxy}", "string", values);
 
     // nested vars are only expanded when ${} is closed
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@underscore@proxy@", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@underscore@proxy@", "", values));
     try testReplaceVariablesCMake(allocator, "${nest${underscore}proxy}", "nest_underscore_proxy", values);
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@@nest_underscore@underscore@proxy@@proxy@", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@@nest_underscore@underscore@proxy@@proxy@", "", values));
     try testReplaceVariablesCMake(allocator, "${nest${${nest_underscore${underscore}proxy}}proxy}", "nest_underscore_proxy", values);
 
     // invalid characters lead to an error
-    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str*ing}", "", values));
-    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str$ing}", "", values));
-    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str@ing}", "", values));
+    try testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str*ing}", "", values));
+    try testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str$ing}", "", values));
+    try testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str@ing}", "", values));
 }
 
 test "expand_variables_cmake escaped characters" {
-    const allocator = std.testing.allocator;
+    const allocator = testing.allocator;
     var values: std.StringArrayHashMap(Value) = .init(allocator);
     defer values.deinit();
 
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber("string", .{ .string = "text" });
 
     // backslash is an invalid character for @ lookup
     try testReplaceVariablesCMake(allocator, "\\@string\\@", "\\@string\\@", values);
@@ -1056,5 +1228,5 @@ test "expand_variables_cmake escaped characters" {
     try testReplaceVariablesCMake(allocator, "$\\{string}", "$\\{string}", values);
 
     // backslash is skipped when checking for invalid characters, yet it mangles the key
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${string\\}", "", values));
+    try testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${string\\}", "", values));
 }
