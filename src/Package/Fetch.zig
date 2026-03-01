@@ -149,7 +149,6 @@ pub const JobQueue = struct {
     fork_set: ForkSet = .{},
     /// Maps from hashes to []URLs
     mirror_set: MirrorSet = .empty,
-    mirror_list: std.ArrayList(Mirror) = .empty,
 
     pub const Mode = enum {
         /// Non-lazy dependencies are always fetched.
