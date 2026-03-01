@@ -32,13 +32,16 @@ pub const Dependency = struct {
     };
 };
 
-pub const Mirror = struct {
+pub const MirrorListUrl = struct {
     url: []const u8,
     url_tok: Ast.TokenIndex,
-    url_node: Ast.Node.Index,
+};
+
+pub const MirrorList = struct {
     hash: []const u8,
     hash_tok: Ast.TokenIndex,
-    hash_node: Ast.Node.Index,
+    urls_start: usize,
+    urls_end: usize,
 };
 
 pub const ErrorMessage = struct {
@@ -54,7 +57,8 @@ version_node: Ast.Node.Index,
 dependencies: std.StringArrayHashMapUnmanaged(Dependency),
 dependencies_node: Ast.Node.OptionalIndex,
 paths: std.StringArrayHashMapUnmanaged(void),
-mirrors: []Mirror,
+mirror_lists: []MirrorList,
+mirror_list_urls: []MirrorListUrl,
 minimum_zig_version: ?std.SemanticVersion,
 
 errors: []ErrorMessage,
@@ -85,7 +89,8 @@ pub fn parse(gpa: Allocator, ast: *const Ast, rng: std.Random, options: ParseOpt
         .dependencies = .{},
         .dependencies_node = .none,
         .paths = .{},
-        .mirrors = .empty,
+        .mirror_lists = .empty,
+        .mirror_list_urls = .empty,
         .allow_missing_paths_field = options.allow_missing_paths_field,
         .minimum_zig_version = null,
         .buf = .{},
@@ -94,6 +99,8 @@ pub fn parse(gpa: Allocator, ast: *const Ast, rng: std.Random, options: ParseOpt
     defer p.errors.deinit(gpa);
     defer p.dependencies.deinit(gpa);
     defer p.paths.deinit(gpa);
+    defer p.mirror_lists.deinit(gpa);
+    defer p.mirror_list_urls.deinit(gpa);
 
     p.parseRoot(main_node_index, rng) catch |err| switch (err) {
         error.ParseFailure => assert(p.errors.items.len > 0),
@@ -108,7 +115,8 @@ pub fn parse(gpa: Allocator, ast: *const Ast, rng: std.Random, options: ParseOpt
         .dependencies = try p.dependencies.clone(p.arena),
         .dependencies_node = p.dependencies_node,
         .paths = try p.paths.clone(p.arena),
-        .mirrors = try p.arena.dupe(Mirror, p.mirrors.items),
+        .mirror_lists = try p.arena.dupe(MirrorList, p.mirror_lists.items),
+        .mirror_list_urls = try p.arena.dupe(MirrorListUrl, p.mirror_list_urls.items),
         .minimum_zig_version = p.minimum_zig_version,
         .errors = try p.arena.dupe(ErrorMessage, p.errors.items),
         .arena_state = arena_instance.state,
@@ -159,7 +167,8 @@ const Parse = struct {
     dependencies: std.StringArrayHashMapUnmanaged(Dependency),
     dependencies_node: Ast.Node.OptionalIndex,
     paths: std.StringArrayHashMapUnmanaged(void),
-    mirrors: std.ArrayListUnmanaged(Mirror),
+    mirror_lists: std.ArrayListUnmanaged(MirrorList),
+    mirror_list_urls: std.ArrayListUnmanaged(MirrorListUrl),
     allow_missing_paths_field: bool,
     minimum_zig_version: ?std.SemanticVersion,
 
@@ -370,70 +379,43 @@ const Parse = struct {
         const ast = p.ast;
 
         var buf: [2]Ast.Node.Index = undefined;
-        const array_init = ast.fullArrayInit(&buf, node) orelse {
+        const struct_init = ast.fullStructInit(&buf, node) orelse {
             const tok = ast.nodeMainToken(node);
             return fail(p, tok, "expected mirrors expression to be a struct", .{});
         };
 
-        for (array_init.ast.elements) |element_init| {
-            const mirror = try parseMirror(p, element_init);
-            try p.mirrors.append(p.gpa, mirror);
+        for (struct_init.ast.fields) |field_init| {
+            const hash_token = ast.firstToken(field_init) - 2;
+            const hash_string = try identifierTokenString(p, hash_token);
+            const mirror_urls = try parseMirrorUrls(p, field_init);
+            try p.validateHash(hash_token, hash_string);
+            try p.mirror_lists.append(p.gpa, .{
+                .hash = hash_string,
+                .hash_tok = hash_token,
+                .urls_start = mirror_urls.start,
+                .urls_end = mirror_urls.end,
+            });
         }
     }
 
-    fn parseMirror(p: *Parse, node: Ast.Node.Index) !Mirror {
+    fn parseMirrorUrls(p: *Parse, node: Ast.Node.Index) !struct { start: usize, end: usize } {
         const ast = p.ast;
 
         var buf: [2]Ast.Node.Index = undefined;
-        const struct_init = ast.fullStructInit(&buf, node) orelse {
+        const array_init = ast.fullArrayInit(&buf, node) orelse {
             const tok = ast.nodeMainToken(node);
-            return fail(p, tok, "expected dependency expression to be a struct", .{});
+            return fail(p, tok, "expected list of mirrors expression to be an array", .{});
         };
 
-        var mirror: Mirror = .{
-            .url = undefined,
-            .url_tok = undefined,
-            .url_node = undefined,
-            .hash = undefined,
-            .hash_tok = undefined,
-            .hash_node = undefined,
-        };
-        var has_url = false;
-        var has_hash = false;
+        const start = p.mirror_list_urls.items.len;
+        for (array_init.ast.elements) |url_node| {
+            const url_tok = ast.firstToken(url_node);
+            const url_string = try parseString(p, url_node);
 
-        for (struct_init.ast.fields) |field_init| {
-            const name_token = ast.firstToken(field_init) - 2;
-            const field_name = try identifierTokenString(p, name_token);
-            if (mem.eql(u8, field_name, "url")) {
-                mirror.url = parseString(p, field_init) catch |err| switch (err) {
-                    error.ParseFailure => continue,
-                    else => |e| return e,
-                };
-                has_url = true;
-                mirror.url_tok = ast.nodeMainToken(field_init);
-                mirror.url_node = field_init;
-            } else if (mem.eql(u8, field_name, "hash")) {
-                mirror.hash = parseHash(p, field_init) catch |err| switch (err) {
-                    error.ParseFailure => continue,
-                    else => |e| return e,
-                };
-                has_hash = true;
-                mirror.hash_tok = ast.nodeMainToken(field_init);
-                mirror.hash_node = field_init;
-            } else {
-                // Ignore unknown fields so that we can add fields in future zig
-                // versions without breaking older zig versions.
-            }
+            try p.mirror_list_urls.append(p.gpa, .{ .url = url_string, .url_tok = url_tok });
         }
-
-        if (!has_url) {
-            try appendError(p, ast.nodeMainToken(node), "mirror requires 'url' field.", .{});
-        }
-        if (!has_hash) {
-            try appendError(p, ast.nodeMainToken(node), "mirror requires 'hash' field.", .{});
-        }
-
-        return mirror;
+        const end = p.mirror_list_urls.items.len;
+        return .{ .start = start, .end = end };
     }
 
     fn parseBool(p: *Parse, node: Ast.Node.Index) !bool {
@@ -506,11 +488,15 @@ const Parse = struct {
         const tok = ast.nodeMainToken(node);
         const h = try parseString(p, node);
 
+        try p.validateHash(tok, h);
+
+        return h;
+    }
+
+    fn validateHash(p: *Parse, tok: Ast.TokenIndex, h: []const u8) !void {
         if (h.len > Package.Hash.max_len) {
             return fail(p, tok, "hash length exceeds maximum: {d}", .{h.len});
         }
-
-        return h;
     }
 
     /// TODO: try to DRY this with AstGen.identifierTokenString

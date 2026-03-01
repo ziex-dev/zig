@@ -969,23 +969,33 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
         try f.job_queue.all_fetches.ensureUnusedCapacity(gpa, new_fetches.len);
         try f.job_queue.table.ensureUnusedCapacity(gpa, @intCast(new_fetches.len));
 
-        for (manifest.mirrors) |mirror| {
-            const mirror_allocated = try f.arena.allocator().create(Mirror);
-            mirror_allocated.* = .{
-                .url = mirror.url,
-                .hash_tok = mirror.hash_tok,
-                .location_tok = mirror.url_tok,
-                .package_root = f.package_root,
-                .manifest_ast = &f.manifest_ast,
-                .next = .init(null),
-            };
+        for (manifest.mirror_lists) |mirror_url_list| {
+            const hash: Package.Hash = .fromSlice(mirror_url_list.hash);
+            var mirror_list: ?*JobQueue.MirrorList = f.job_queue.mirror_set.getPtr(hash);
+            const mirror_urls = manifest.mirror_list_urls[mirror_url_list.urls_start..mirror_url_list.urls_end];
+            for (mirror_urls) |mirror| {
+                const mirror_allocated = try f.arena.allocator().create(Mirror);
+                mirror_allocated.* = .{
+                    .url = mirror.url,
+                    .location_tok = mirror.url_tok,
+                    .hash_tok = mirror_url_list.hash_tok,
+                    .package_root = f.package_root,
+                    .manifest_ast = &f.manifest_ast,
+                    .next = .init(null),
+                };
 
-            const gpres = try f.job_queue.mirror_set.getOrPut(gpa, .fromSlice(mirror.hash));
-            if (!gpres.found_existing) {
-                gpres.value_ptr.* = .{ .start = mirror_allocated, .end = mirror_allocated };
-            } else {
-                gpres.value_ptr.*.end.next.store(mirror_allocated, .seq_cst);
-                gpres.value_ptr.*.end = mirror_allocated;
+                if (mirror_list) |list| {
+                    list.end.next.store(mirror_allocated, .seq_cst);
+                    list.end = mirror_allocated;
+                } else {
+                    const gpres = try f.job_queue.mirror_set.getOrPut(gpa, hash);
+                    std.debug.assert(!gpres.found_existing);
+                    gpres.value_ptr.* = .{
+                        .start = mirror_allocated,
+                        .end = mirror_allocated,
+                    };
+                    mirror_list = gpres.value_ptr;
+                }
             }
         }
 

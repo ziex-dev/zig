@@ -10,17 +10,12 @@
         },
     },
     .mirrors = .{
-        .{
-            .hash = "dep_a-0.0.1-p5fEvsQBAAB5IzndT5YanGl_SzXF15EJy-7abcoZih5B",
-            .url = "first url is bad",
+        .@"dep_a-0.0.1-p5fEvsQBAAB5IzndT5YanGl_SzXF15EJy-7abcoZih5B" = .{
+            "first url is bad",
         },
-        .{
-            .hash = "dep_b-0.0.1-vr1FDxUBAAAzfEydzlYbY3bJSo8Ty3AWC6tKRfXycyuM",
-            .url = "first url is bad",
-        },
-        .{
-            .hash = "dep_b-0.0.1-vr1FDxUBAAAzfEydzlYbY3bJSo8Ty3AWC6tKRfXycyuM",
-            .url = "http://127.0.0.1:5674/dep_b.tar",
+        .@"dep_b-0.0.1-vr1FDxUBAAAzfEydzlYbY3bJSo8Ty3AWC6tKRfXycyuM" = .{
+            "first url is bad",
+            "http://127.0.0.1:5674/dep_b.tar",
         },
     },
     .fingerprint = 0x5cdd7148718e765d,
