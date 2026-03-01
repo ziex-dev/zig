@@ -69,6 +69,7 @@ omit_missing_hash_error: bool,
 allow_missing_paths_field: bool,
 /// If true and URL points to a Git repository, will use the latest commit.
 use_latest_commit: bool,
+mirrors: []const Mirror,
 
 // Above this are fields provided as inputs to `run`.
 // Below this are fields populated by `run`.
@@ -146,6 +147,9 @@ pub const JobQueue = struct {
     /// Identifies paths that override all packages in the tree with matching
     /// project ids.
     fork_set: ForkSet = .{},
+    /// Maps from hashes to []URLs
+    mirror_set: MirrorSet = .empty,
+    mirror_list: std.ArrayList(Mirror) = .empty,
 
     pub const Mode = enum {
         /// Non-lazy dependencies are always fetched.
@@ -157,6 +161,7 @@ pub const JobQueue = struct {
     pub const Table = std.AutoArrayHashMapUnmanaged(Package.Hash, *Fetch);
     pub const UnlazySet = std.AutoArrayHashMapUnmanaged(Package.Hash, void);
     pub const ForkSet = std.ArrayHashMapUnmanaged(Fork, void, Fork.Context, false);
+    pub const MirrorSet = std.AutoArrayHashMapUnmanaged(Package.Hash, std.ArrayList(Mirror));
 
     pub const Fork = struct {
         path: Cache.Path,
@@ -195,6 +200,8 @@ pub const JobQueue = struct {
         if (jq.all_fetches.items.len == 0) return;
         const gpa = jq.all_fetches.items[0].arena.child_allocator;
         jq.table.deinit(gpa);
+        for (jq.mirror_set.values()) |*mirrors| mirrors.deinit(gpa);
+        jq.mirror_set.deinit(gpa);
         // These must be deinitialized in reverse order because subsequent
         // `Fetch` instances are allocated in prior ones' arenas.
         // Sorry, I know it's a bit weird, but it slightly simplifies the
@@ -653,19 +660,47 @@ pub fn run(f: *Fetch) RunError!void {
         return error.FetchFailed;
     }
 
-    // Fetch and unpack the remote into a temporary directory.
-    const uri = std.Uri.parse(remote.url) catch |err| return f.fail(
-        f.location_tok,
-        try eb.printString("invalid URI: {t}", .{err}),
-    );
-    var resource: Resource = undefined;
-    try f.initResource(uri, &resource, &resource_buffer);
-    return f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, remote.hash, false);
+    const original_location_tok = f.location_tok;
+    const original_hash_tok = f.hash_tok;
+    const original_parent_package_root = f.parent_package_root;
+    const original_parent_manifest_ast = f.parent_manifest_ast;
+    for (f.mirrors) |mirror| {
+        f.location_tok = mirror.location_tok;
+        f.hash_tok = .fromToken(mirror.hash_tok);
+        f.parent_package_root = mirror.package_root;
+        f.parent_manifest_ast = mirror.manifest_ast;
+        defer f.location_tok = original_location_tok;
+        defer f.hash_tok = original_hash_tok;
+        defer f.parent_package_root = original_parent_package_root;
+        defer f.parent_manifest_ast = original_parent_manifest_ast;
+
+        return f.initAndRunResource(mirror.url, &resource_buffer, remote.hash) catch continue;
+    }
+    return try f.initAndRunResource(remote.url, &resource_buffer, remote.hash);
 }
 
 pub fn deinit(f: *Fetch) void {
     f.error_bundle.deinit();
     f.arena.deinit();
+}
+
+fn initAndRunResource(
+    f: *Fetch,
+    url: []const u8,
+    resource_buffer: []u8,
+    hash: ?Package.Hash,
+) RunError!void {
+    const eb = &f.error_bundle;
+    const arena = f.arena.allocator();
+
+    // Fetch and unpack the remote into a temporary directory.
+    const uri = std.Uri.parse(url) catch |err| return f.fail(
+        f.location_tok,
+        try eb.printString("invalid URI: {t}", .{err}),
+    );
+    var resource: Resource = undefined;
+    try f.initResource(uri, &resource, resource_buffer);
+    return try f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, hash, false);
 }
 
 /// Consumes `resource`, even if an error is returned.
@@ -894,6 +929,18 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
         try f.job_queue.all_fetches.ensureUnusedCapacity(gpa, new_fetches.len);
         try f.job_queue.table.ensureUnusedCapacity(gpa, @intCast(new_fetches.len));
 
+        for (manifest.mirrors) |mirror| {
+            const gpres = try f.job_queue.mirror_set.getOrPut(gpa, .fromSlice(mirror.hash));
+            if (!gpres.found_existing) gpres.value_ptr.* = .empty;
+            try gpres.value_ptr.append(gpa, .{
+                .url = mirror.url,
+                .hash_tok = mirror.hash_tok,
+                .location_tok = mirror.url_tok,
+                .package_root = f.package_root,
+                .manifest_ast = &f.manifest_ast,
+            });
+        }
+
         // There are four cases here:
         // * Correct hash is provided by manifest.
         //   - Hash map already has the entry, no need to add it again.
@@ -952,6 +999,14 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                     break :l .{ .relative_path = new_root };
                 },
             };
+            var mirrors: []const Mirror = &.{};
+            if (location == .remote) {
+                if (location.remote.hash) |hash| {
+                    if (f.job_queue.mirror_set.getPtr(hash)) |mirrors_value| {
+                        mirrors = try parent_arena.dupe(Mirror, mirrors_value.items);
+                    }
+                }
+            }
             prog_names[new_fetch_index] = dep_name;
             new_fetch_index += 1;
             if (!promoted_existing_to_eager) {
@@ -974,6 +1029,7 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                 .omit_missing_hash_error = false,
                 .allow_missing_paths_field = true,
                 .use_latest_commit = false,
+                .mirrors = mirrors,
 
                 .package_root = undefined,
                 .error_bundle = undefined,
@@ -1150,6 +1206,14 @@ const FileType = enum {
         try std.testing.expect(fromContentDisposition("FileName=\"stuff.tar.gz\"; attachment;") == null);
         try std.testing.expect(fromContentDisposition("FileName=\"stuff.tar.gz\";") == null);
     }
+};
+
+const Mirror = struct {
+    url: []const u8,
+    location_tok: std.zig.Ast.TokenIndex,
+    hash_tok: std.zig.Ast.TokenIndex,
+    package_root: Cache.Path,
+    manifest_ast: ?*const std.zig.Ast,
 };
 
 const init_resource_buffer_size = git.Packet.max_data_length;

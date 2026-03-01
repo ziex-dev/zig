@@ -32,6 +32,15 @@ pub const Dependency = struct {
     };
 };
 
+pub const Mirror = struct {
+    url: []const u8,
+    url_tok: Ast.TokenIndex,
+    url_node: Ast.Node.Index,
+    hash: []const u8,
+    hash_tok: Ast.TokenIndex,
+    hash_node: Ast.Node.Index,
+};
+
 pub const ErrorMessage = struct {
     msg: []const u8,
     tok: Ast.TokenIndex,
@@ -45,6 +54,7 @@ version_node: Ast.Node.Index,
 dependencies: std.StringArrayHashMapUnmanaged(Dependency),
 dependencies_node: Ast.Node.OptionalIndex,
 paths: std.StringArrayHashMapUnmanaged(void),
+mirrors: []Mirror,
 minimum_zig_version: ?std.SemanticVersion,
 
 errors: []ErrorMessage,
@@ -75,6 +85,7 @@ pub fn parse(gpa: Allocator, ast: *const Ast, rng: std.Random, options: ParseOpt
         .dependencies = .{},
         .dependencies_node = .none,
         .paths = .{},
+        .mirrors = .empty,
         .allow_missing_paths_field = options.allow_missing_paths_field,
         .minimum_zig_version = null,
         .buf = .{},
@@ -97,6 +108,7 @@ pub fn parse(gpa: Allocator, ast: *const Ast, rng: std.Random, options: ParseOpt
         .dependencies = try p.dependencies.clone(p.arena),
         .dependencies_node = p.dependencies_node,
         .paths = try p.paths.clone(p.arena),
+        .mirrors = try p.arena.dupe(Mirror, p.mirrors.items),
         .minimum_zig_version = p.minimum_zig_version,
         .errors = try p.arena.dupe(ErrorMessage, p.errors.items),
         .arena_state = arena_instance.state,
@@ -147,6 +159,7 @@ const Parse = struct {
     dependencies: std.StringArrayHashMapUnmanaged(Dependency),
     dependencies_node: Ast.Node.OptionalIndex,
     paths: std.StringArrayHashMapUnmanaged(void),
+    mirrors: std.ArrayListUnmanaged(Mirror),
     allow_missing_paths_field: bool,
     minimum_zig_version: ?std.SemanticVersion,
 
@@ -178,6 +191,8 @@ const Parse = struct {
             } else if (mem.eql(u8, field_name, "paths")) {
                 have_included_paths = true;
                 try parseIncludedPaths(p, field_init);
+            } else if (mem.eql(u8, field_name, "mirrors")) {
+                try parseMirrors(p, field_init);
             } else if (mem.eql(u8, field_name, "name")) {
                 p.name = try parseName(p, field_init);
                 have_name = true;
@@ -349,6 +364,76 @@ const Parse = struct {
             const normalized = try std.fs.path.resolve(p.arena, &.{path_string});
             try p.paths.put(p.gpa, normalized, {});
         }
+    }
+
+    fn parseMirrors(p: *Parse, node: Ast.Node.Index) !void {
+        const ast = p.ast;
+
+        var buf: [2]Ast.Node.Index = undefined;
+        const array_init = ast.fullArrayInit(&buf, node) orelse {
+            const tok = ast.nodeMainToken(node);
+            return fail(p, tok, "expected mirrors expression to be a struct", .{});
+        };
+
+        for (array_init.ast.elements) |element_init| {
+            const mirror = try parseMirror(p, element_init);
+            try p.mirrors.append(p.gpa, mirror);
+        }
+    }
+
+    fn parseMirror(p: *Parse, node: Ast.Node.Index) !Mirror {
+        const ast = p.ast;
+
+        var buf: [2]Ast.Node.Index = undefined;
+        const struct_init = ast.fullStructInit(&buf, node) orelse {
+            const tok = ast.nodeMainToken(node);
+            return fail(p, tok, "expected dependency expression to be a struct", .{});
+        };
+
+        var mirror: Mirror = .{
+            .url = undefined,
+            .url_tok = undefined,
+            .url_node = undefined,
+            .hash = undefined,
+            .hash_tok = undefined,
+            .hash_node = undefined,
+        };
+        var has_url = false;
+        var has_hash = false;
+
+        for (struct_init.ast.fields) |field_init| {
+            const name_token = ast.firstToken(field_init) - 2;
+            const field_name = try identifierTokenString(p, name_token);
+            if (mem.eql(u8, field_name, "url")) {
+                mirror.url = parseString(p, field_init) catch |err| switch (err) {
+                    error.ParseFailure => continue,
+                    else => |e| return e,
+                };
+                has_url = true;
+                mirror.url_tok = ast.nodeMainToken(field_init);
+                mirror.url_node = field_init;
+            } else if (mem.eql(u8, field_name, "hash")) {
+                mirror.hash = parseHash(p, field_init) catch |err| switch (err) {
+                    error.ParseFailure => continue,
+                    else => |e| return e,
+                };
+                has_hash = true;
+                mirror.hash_tok = ast.nodeMainToken(field_init);
+                mirror.hash_node = field_init;
+            } else {
+                // Ignore unknown fields so that we can add fields in future zig
+                // versions without breaking older zig versions.
+            }
+        }
+
+        if (!has_url) {
+            try appendError(p, ast.nodeMainToken(node), "mirror requires 'url' field.", .{});
+        }
+        if (!has_hash) {
+            try appendError(p, ast.nodeMainToken(node), "mirror requires 'hash' field.", .{});
+        }
+
+        return mirror;
     }
 
     fn parseBool(p: *Parse, node: Ast.Node.Index) !bool {
