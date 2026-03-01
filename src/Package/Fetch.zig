@@ -69,7 +69,7 @@ omit_missing_hash_error: bool,
 allow_missing_paths_field: bool,
 /// If true and URL points to a Git repository, will use the latest commit.
 use_latest_commit: bool,
-mirrors: []const Mirror,
+first_mirror: ?*const Mirror,
 
 // Above this are fields provided as inputs to `run`.
 // Below this are fields populated by `run`.
@@ -160,7 +160,8 @@ pub const JobQueue = struct {
     pub const Table = std.AutoArrayHashMapUnmanaged(Package.Hash, *Fetch);
     pub const UnlazySet = std.AutoArrayHashMapUnmanaged(Package.Hash, void);
     pub const ForkSet = std.ArrayHashMapUnmanaged(Fork, void, Fork.Context, false);
-    pub const MirrorSet = std.AutoArrayHashMapUnmanaged(Package.Hash, std.ArrayList(Mirror));
+    pub const MirrorSet = std.AutoArrayHashMapUnmanaged(Package.Hash, MirrorList);
+    pub const MirrorList = struct { start: *Mirror, end: *Mirror };
 
     pub const Fork = struct {
         path: Cache.Path,
@@ -199,7 +200,6 @@ pub const JobQueue = struct {
         if (jq.all_fetches.items.len == 0) return;
         const gpa = jq.all_fetches.items[0].arena.child_allocator;
         jq.table.deinit(gpa);
-        for (jq.mirror_set.values()) |*mirrors| mirrors.deinit(gpa);
         jq.mirror_set.deinit(gpa);
         // These must be deinitialized in reverse order because subsequent
         // `Fetch` instances are allocated in prior ones' arenas.
@@ -663,7 +663,8 @@ pub fn run(f: *Fetch) RunError!void {
     const original_hash_tok = f.hash_tok;
     const original_parent_package_root = f.parent_package_root;
     const original_parent_manifest_ast = f.parent_manifest_ast;
-    for (f.mirrors) |mirror| {
+    var current_mirror = f.first_mirror;
+    while (current_mirror) |mirror| : (current_mirror = mirror.next.load(.unordered)) {
         f.location_tok = mirror.location_tok;
         f.hash_tok = .fromToken(mirror.hash_tok);
         f.parent_package_root = mirror.package_root;
@@ -929,15 +930,23 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
         try f.job_queue.table.ensureUnusedCapacity(gpa, @intCast(new_fetches.len));
 
         for (manifest.mirrors) |mirror| {
-            const gpres = try f.job_queue.mirror_set.getOrPut(gpa, .fromSlice(mirror.hash));
-            if (!gpres.found_existing) gpres.value_ptr.* = .empty;
-            try gpres.value_ptr.append(gpa, .{
+            const mirror_allocated = try f.arena.allocator().create(Mirror);
+            mirror_allocated.* = .{
                 .url = mirror.url,
                 .hash_tok = mirror.hash_tok,
                 .location_tok = mirror.url_tok,
                 .package_root = f.package_root,
                 .manifest_ast = &f.manifest_ast,
-            });
+                .next = .init(null),
+            };
+
+            const gpres = try f.job_queue.mirror_set.getOrPut(gpa, .fromSlice(mirror.hash));
+            if (!gpres.found_existing) {
+                gpres.value_ptr.* = .{ .start = mirror_allocated, .end = mirror_allocated };
+            } else {
+                gpres.value_ptr.*.end.next.store(mirror_allocated, .seq_cst);
+                gpres.value_ptr.*.end = mirror_allocated;
+            }
         }
 
         // There are four cases here:
@@ -998,11 +1007,11 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                     break :l .{ .relative_path = new_root };
                 },
             };
-            var mirrors: []const Mirror = &.{};
+            var first_mirror: ?*Mirror = null;
             if (location == .remote) {
                 if (location.remote.hash) |hash| {
-                    if (f.job_queue.mirror_set.getPtr(hash)) |mirrors_value| {
-                        mirrors = try parent_arena.dupe(Mirror, mirrors_value.items);
+                    if (f.job_queue.mirror_set.get(hash)) |mirror_list| {
+                        first_mirror = mirror_list.start;
                     }
                 }
             }
@@ -1213,6 +1222,7 @@ const Mirror = struct {
     hash_tok: std.zig.Ast.TokenIndex,
     package_root: Cache.Path,
     manifest_ast: ?*const std.zig.Ast,
+    next: std.atomic.Value(?*const Mirror),
 };
 
 const init_resource_buffer_size = git.Packet.max_data_length;

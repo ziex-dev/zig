@@ -5355,7 +5355,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
                     .omit_missing_hash_error = true,
                     .allow_missing_paths_field = false,
                     .use_latest_commit = false,
-                    .mirrors = &.{},
+                    .first_mirror = null,
 
                     .package_root = undefined,
                     .error_bundle = undefined,
@@ -7205,7 +7205,7 @@ fn cmdFetch(
         .omit_missing_hash_error = true,
         .allow_missing_paths_field = false,
         .use_latest_commit = true,
-        .mirrors = &.{},
+        .first_mirror = null,
 
         .package_root = undefined,
         .error_bundle = undefined,
