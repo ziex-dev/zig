@@ -109,7 +109,7 @@ pub fn handleConnection(io: std.Io, conn: std.Io.net.Stream) !void {
 const dependencies: std.StaticStringMap([]const File) = .initComptime(.{
     .{
         "/dep_a.tar", &[_]File{
-            .{ .name = "build.zig", .text = 
+            .{ .name = "build.zig", .text =
             \\const std = @import("std");
             \\
             \\pub fn build(b: *std.Build) void {
@@ -117,7 +117,7 @@ const dependencies: std.StaticStringMap([]const File) = .initComptime(.{
             \\}
             \\
             },
-            .{ .name = "build.zig.zon", .text = 
+            .{ .name = "build.zig.zon", .text =
             \\.{
             \\    .name = .dep_a,
             \\    .version = "0.0.1",
@@ -137,7 +137,7 @@ const dependencies: std.StaticStringMap([]const File) = .initComptime(.{
     },
     .{
         "/dep_b.tar", &[_]File{
-            .{ .name = "build.zig", .text = 
+            .{ .name = "build.zig", .text =
             \\const std = @import("std");
             \\
             \\pub fn build(b: *std.Build) void {
@@ -145,7 +145,7 @@ const dependencies: std.StaticStringMap([]const File) = .initComptime(.{
             \\}
             \\
             },
-            .{ .name = "build.zig.zon", .text = 
+            .{ .name = "build.zig.zon", .text =
             \\.{
             \\    .name = .dep_b,
             \\    .version = "0.0.1",
