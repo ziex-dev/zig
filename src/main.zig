@@ -5359,6 +5359,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
 
                     .package_root = undefined,
                     .error_bundle = undefined,
+                    .active_error_bundle = undefined,
                     .manifest = undefined,
                     .manifest_ast = undefined,
                     .have_manifest = false,
@@ -7209,6 +7210,7 @@ fn cmdFetch(
 
         .package_root = undefined,
         .error_bundle = undefined,
+        .active_error_bundle = undefined,
         .manifest = undefined,
         .manifest_ast = undefined,
         .have_manifest = false,

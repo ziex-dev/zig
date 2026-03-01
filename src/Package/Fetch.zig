@@ -77,6 +77,7 @@ first_mirror: ?*const Mirror,
 /// Relative to the build root of the root package.
 package_root: Cache.Path,
 error_bundle: ErrorBundle.Wip,
+active_error_bundle: *ErrorBundle.Wip,
 manifest: Manifest,
 manifest_ast: std.zig.Ast,
 have_manifest: bool,
@@ -493,12 +494,13 @@ pub const RunError = error{
 pub fn run(f: *Fetch) RunError!void {
     const job_queue = f.job_queue;
     const io = job_queue.io;
-    const eb = &f.error_bundle;
     const arena = f.arena.allocator();
     const gpa = f.arena.child_allocator;
     const local_cache_root = job_queue.local_cache;
 
-    try eb.init(gpa);
+    try f.error_bundle.init(gpa);
+    f.active_error_bundle = &f.error_bundle;
+    const eb = f.active_error_bundle;
 
     // Check the global zig package cache to see if the hash already exists. If
     // so, load, parse, and validate the build.zig.zon file therein, and skip
@@ -659,10 +661,50 @@ pub fn run(f: *Fetch) RunError!void {
         return error.FetchFailed;
     }
 
+    if (f.first_mirror == null) {
+        return f.runMirrors(&resource_buffer, remote);
+    } else {
+        var mirror_error_bundle: ErrorBundle.Wip = undefined;
+        try mirror_error_bundle.init(gpa);
+        defer mirror_error_bundle.deinit();
+
+        failure: {
+            const prev_active_error_bundle = f.active_error_bundle;
+            f.active_error_bundle = &mirror_error_bundle;
+            defer f.active_error_bundle = prev_active_error_bundle;
+            return f.runMirrors(&resource_buffer, remote) catch |err| switch (err) {
+                error.FetchFailed => break :failure,
+                else => return err,
+            };
+        }
+
+        // Only add errors if the fetch failed
+        var mirror_error_bundle_owned = try mirror_error_bundle.toOwnedBundle("");
+        defer mirror_error_bundle_owned.deinit(gpa);
+
+        try eb.addRootErrorMessage(.{
+            .msg = try eb.printString("all mirrors failed:", .{}),
+            .src_loc = try f.srcLoc(f.hash_tok.unwrap().?), // if there are mirrors, there must be a hash token
+            .notes_len = mirror_error_bundle_owned.errorMessageCount(),
+        });
+        try eb.addBundleAsNotes(mirror_error_bundle_owned);
+
+        return error.FetchFailed;
+    }
+}
+
+pub fn deinit(f: *Fetch) void {
+    f.error_bundle.deinit();
+    f.arena.deinit();
+}
+
+fn runMirrors(f: *Fetch, resource_buffer: []u8, remote: Location.Remote) RunError!void {
     const original_location_tok = f.location_tok;
     const original_hash_tok = f.hash_tok;
     const original_parent_package_root = f.parent_package_root;
     const original_parent_manifest_ast = f.parent_manifest_ast;
+
+    // First, try to fetch using mirrors
     var current_mirror = f.first_mirror;
     while (current_mirror) |mirror| : (current_mirror = mirror.next.load(.unordered)) {
         f.location_tok = mirror.location_tok;
@@ -674,14 +716,12 @@ pub fn run(f: *Fetch) RunError!void {
         defer f.parent_package_root = original_parent_package_root;
         defer f.parent_manifest_ast = original_parent_manifest_ast;
 
-        return f.initAndRunResource(mirror.url, &resource_buffer, remote.hash) catch continue;
+        return f.initAndRunResource(mirror.url, resource_buffer, remote.hash) catch |err| switch (err) {
+            error.FetchFailed => continue,
+            else => return err,
+        };
     }
-    return try f.initAndRunResource(remote.url, &resource_buffer, remote.hash);
-}
-
-pub fn deinit(f: *Fetch) void {
-    f.error_bundle.deinit();
-    f.arena.deinit();
+    return try f.initAndRunResource(remote.url, resource_buffer, remote.hash);
 }
 
 fn initAndRunResource(
@@ -690,7 +730,7 @@ fn initAndRunResource(
     resource_buffer: []u8,
     hash: ?Package.Hash,
 ) RunError!void {
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const arena = f.arena.allocator();
 
     // Fetch and unpack the remote into a temporary directory.
@@ -718,7 +758,7 @@ fn runResource(
     defer resource.deinit(io);
 
     const arena = f.arena.allocator();
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const rand_int = r: {
         var x: u64 = undefined;
         io.random(@ptrCast(&x));
@@ -855,7 +895,7 @@ pub fn computedPackageHash(f: *const Fetch) Package.Hash {
 /// not computing a hash, we need to do a syscall to check for it.
 fn checkBuildFileExistence(f: *Fetch) RunError!void {
     const io = f.job_queue.io;
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     if (f.package_root.access(io, Package.build_zig_basename, .{})) |_| {
         f.has_build_zig = true;
     } else |err| switch (err) {
@@ -874,7 +914,7 @@ fn checkBuildFileExistence(f: *Fetch) RunError!void {
 /// This function populates `f.manifest` or leaves it `null`.
 fn loadManifest(f: *Fetch, pkg_root: Cache.Path) RunError!void {
     const io = f.job_queue.io;
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const arena = f.arena.allocator();
     const manifest_path = try pkg_root.join(arena, Manifest.basename);
 
@@ -1041,6 +1081,7 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
 
                 .package_root = undefined,
                 .error_bundle = undefined,
+                .active_error_bundle = undefined,
                 .manifest = undefined,
                 .manifest_ast = undefined,
                 .have_manifest = false,
@@ -1087,7 +1128,7 @@ fn srcLoc(
     tok: std.zig.Ast.TokenIndex,
 ) Allocator.Error!ErrorBundle.SourceLocationIndex {
     const ast = f.parent_manifest_ast orelse return .none;
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const start_loc = ast.tokenLocation(0, tok);
     const src_path = try eb.printString("{f}" ++ fs.path.sep_str ++ Manifest.basename, .{f.parent_package_root});
     const msg_off = 0;
@@ -1103,7 +1144,7 @@ fn srcLoc(
 }
 
 fn fail(f: *Fetch, msg_tok: std.zig.Ast.TokenIndex, msg_str: u32) RunError {
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     try eb.addRootErrorMessage(.{
         .msg = msg_str,
         .src_loc = try f.srcLoc(msg_tok),
@@ -1230,7 +1271,7 @@ const init_resource_buffer_size = git.Packet.max_data_length;
 fn initResource(f: *Fetch, uri: std.Uri, resource: *Resource, reader_buffer: []u8) RunError!void {
     const io = f.job_queue.io;
     const arena = f.arena.allocator();
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
 
     if (ascii.eqlIgnoreCase(uri.scheme, "file")) {
         const path = try uri.path.toRawMaybeAlloc(arena);
@@ -1368,7 +1409,7 @@ fn unpackResource(
     uri_path: []const u8,
     tmp_directory: Cache.Directory,
 ) RunError!UnpackResult {
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const file_type = switch (resource.*) {
         .file => FileType.fromPath(uri_path) orelse
             return f.fail(f.location_tok, try eb.printString("unknown file type: '{s}'", .{uri_path})),
@@ -1487,7 +1528,7 @@ fn unpackResource(
 }
 
 fn unpackTarball(f: *Fetch, out_dir: Io.Dir, reader: *Io.Reader) RunError!UnpackResult {
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const arena = f.arena.allocator();
     const io = f.job_queue.io;
 
@@ -1531,7 +1572,7 @@ fn unzip(
     const cache_root = f.job_queue.global_cache;
     const prefix = "tmp/";
     const suffix = ".zip";
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const random_len = @sizeOf(u64) * 2;
 
     var zip_path: [prefix.len + random_len + suffix.len]u8 = undefined;
@@ -1740,7 +1781,7 @@ fn computeHash(f: *Fetch, pkg_path: Cache.Path, filter: Filter) RunError!Compute
     // All the path name strings need to be in memory for sorting.
     const arena = f.arena.allocator();
     const gpa = f.arena.child_allocator;
-    const eb = &f.error_bundle;
+    const eb = f.active_error_bundle;
     const root_dir = pkg_path.root_dir.handle;
 
     // Collect all files, recursively, then sort.
@@ -2217,7 +2258,7 @@ const UnpackResult = struct {
         if (unfiltered_errors == 0) return;
 
         // Emmit errors to an `ErrorBundle`.
-        const eb = &f.error_bundle;
+        const eb = f.active_error_bundle;
         try eb.addRootErrorMessage(.{
             .msg = try eb.addString(self.root_error_message),
             .src_loc = try f.srcLoc(f.location_tok),
@@ -2281,6 +2322,7 @@ const UnpackResult = struct {
         fetch.location_tok = 0;
         try fetch.error_bundle.init(gpa);
         defer fetch.error_bundle.deinit();
+        fetch.active_error_bundle = &fetch.error_bundle;
 
         // validate errors with filter
         try std.testing.expectError(error.FetchFailed, res.validate(&fetch, filter));
