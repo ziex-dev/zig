@@ -1037,7 +1037,7 @@ fn queueJobsForDeps(f: *Fetch) RunError!void {
                 .omit_missing_hash_error = false,
                 .allow_missing_paths_field = true,
                 .use_latest_commit = false,
-                .mirrors = mirrors,
+                .first_mirror = first_mirror,
 
                 .package_root = undefined,
                 .error_bundle = undefined,
