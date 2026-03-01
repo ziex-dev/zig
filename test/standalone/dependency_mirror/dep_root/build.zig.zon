@@ -1,0 +1,27 @@
+.{
+    .name = .dependency_mirror,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0-dev.2687+41594c190",
+    .paths = .{ "build.zig.zon", "build.zig" },
+    .dependencies = .{
+        .dep_a = .{
+            .url = "http://127.0.0.1:5674/dep_a.tar",
+            .hash = "dep_a-0.0.1-p5fEvsQBAAB5IzndT5YanGl_SzXF15EJy-7abcoZih5B",
+        },
+    },
+    .mirrors = .{
+        .{
+            .hash = "dep_a-0.0.1-p5fEvsQBAAB5IzndT5YanGl_SzXF15EJy-7abcoZih5B",
+            .url = "first url is bad",
+        },
+        .{
+            .hash = "dep_b-0.0.1-vr1FDxUBAAAzfEydzlYbY3bJSo8Ty3AWC6tKRfXycyuM",
+            .url = "first url is bad",
+        },
+        .{
+            .hash = "dep_b-0.0.1-vr1FDxUBAAAzfEydzlYbY3bJSo8Ty3AWC6tKRfXycyuM",
+            .url = "http://127.0.0.1:5674/dep_b.tar",
+        },
+    },
+    .fingerprint = 0x5cdd7148718e765d,
+}

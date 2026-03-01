@@ -168,6 +168,9 @@
         .install_headers = .{
             .path = "install_headers",
         },
+        .dependency_mirror = .{
+            .path = "dependency_mirror",
+        },
         .dependency_options = .{
             .path = "dependency_options",
         },
