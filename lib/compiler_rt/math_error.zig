@@ -11,21 +11,27 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-/// Sign of the infinity returned by fp_divzero_*.
-pub const Sign = enum { positive, negative };
+/// Sign of the infinity returned by fp_divzero_* functions.
+/// Used to specify whether the result should be +Inf or -Inf.
+pub const InfinitySign = enum { negative, positive };
 
 // ---------------------------------------------------------------------------
 // INVALID — raises the IEEE 754 INVALID exception and returns a quiet NaN.
 // noinline: inside the function, x is an unknown f32, so LLVM cannot prove
 //   x - x == 0.0 (x might be NaN), and thus cannot fold (x-x)/(x-x) to NaN
 //   without emitting the fdiv instruction.
+// volatile: additional barrier to prevent constant folding on aarch64
 // ---------------------------------------------------------------------------
 pub noinline fn fp_invalid_f32(x: f32) f32 {
-    return (x - x) / (x - x);
+    var result: f32 = x - x;
+    const result_ptr: *volatile f32 = &result;
+    return result_ptr.* / result_ptr.*;
 }
 
 pub noinline fn fp_invalid_f64(x: f64) f64 {
-    return (x - x) / (x - x);
+    var result: f64 = x - x;
+    const result_ptr: *volatile f64 = &result;
+    return result_ptr.* / result_ptr.*;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,13 +42,13 @@ pub noinline fn fp_invalid_f64(x: f64) f64 {
 // A volatile read prevents LLVM from substituting the compile-time constant
 // value ±1.0 before emitting the fdiv instruction.
 // ---------------------------------------------------------------------------
-pub noinline fn fp_divzero_f32(sign: Sign) f32 {
+pub noinline fn fp_divzero_f32(sign: InfinitySign) f32 {
     var v: f32 = if (sign == .negative) -1.0 else 1.0;
     const vp: *volatile f32 = &v;
     return vp.* / 0.0;
 }
 
-pub noinline fn fp_divzero_f64(sign: Sign) f64 {
+pub noinline fn fp_divzero_f64(sign: InfinitySign) f64 {
     var v: f64 = if (sign == .negative) -1.0 else 1.0;
     const vp: *volatile f64 = &v;
     return vp.* / 0.0;
@@ -52,27 +58,37 @@ pub noinline fn fp_divzero_f64(sign: Sign) f64 {
 // OVERFLOW — raises OVERFLOW|INEXACT and returns +Inf.
 // noinline: x is unknown inside the function, so LLVM cannot fold x * huge
 //   to infinity without emitting the fmul instruction.
+// volatile: additional barrier to prevent constant folding on aarch64
 // ---------------------------------------------------------------------------
 pub noinline fn fp_overflow_f32(x: f32) f32 {
-    return x * 0x1.0p127;
+    var huge: f32 = 0x1.0p127;
+    const huge_ptr: *volatile f32 = &huge;
+    return x * huge_ptr.*;
 }
 
 pub noinline fn fp_overflow_f64(x: f64) f64 {
-    return x * 0x1p1023;
+    var huge: f64 = 0x1p1023;
+    const huge_ptr: *volatile f64 = &huge;
+    return x * huge_ptr.*;
 }
 
 // ---------------------------------------------------------------------------
 // UNDERFLOW — raises UNDERFLOW|INEXACT as a side effect (result is discarded).
 // noinline: x is unknown inside the function, so LLVM cannot fold -tiny/x to
 //   zero without emitting the fdiv instruction.
+// volatile: additional barrier to prevent constant folding on aarch64
 // doNotOptimizeAway: prevents LLVM from eliminating the division as dead code.
 // ---------------------------------------------------------------------------
 pub noinline fn fp_underflow_f32(x: f32) void {
-    std.mem.doNotOptimizeAway(-0x1.0p-149 / x);
+    var tiny: f32 = -0x1.0p-149;
+    const tiny_ptr: *volatile f32 = &tiny;
+    std.mem.doNotOptimizeAway(tiny_ptr.* / x);
 }
 
 pub noinline fn fp_underflow_f64(x: f64) void {
-    std.mem.doNotOptimizeAway(-0x0.0000000000001p-1022 / x);
+    var tiny: f64 = -0x0.0000000000001p-1022;
+    const tiny_ptr: *volatile f64 = &tiny;
+    std.mem.doNotOptimizeAway(tiny_ptr.* / x);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,7 +127,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : .{ .memory = true });
+                : "memory");
             break :blk mxcsr & 0x3f; // low 6 bits are status flags
         },
         .aarch64 => blk: {
@@ -119,7 +135,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : .{ .memory = true });
+                : "memory");
             break :blk @as(u32, @truncate(fpsr & 0x1f)); // low 5 bits
         },
         else => 0,
@@ -134,12 +150,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : .{ .memory = true });
+                : "memory");
             mxcsr &= ~@as(u32, 0x3f);
             asm volatile ("ldmxcsr %[v]"
                 :
                 : [v] "m" (mxcsr),
-                : .{ .memory = true });
+                : "memory");
         },
         .aarch64 => {
             // Read-modify-write: preserve QC (bit 27) and condition flags (bits 28-31),
@@ -148,12 +164,26 @@ pub inline fn clearFpStatus() void {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : .{ .memory = true });
+                : "memory");
             fpsr &= ~@as(u64, 0x1f);
             asm volatile ("msr fpsr, %[v]"
                 :
                 : [v] "r" (fpsr),
-                : .{ .memory = true });
+                : "memory");
+
+            // Disable exception trapping in FPCR (bits 0-4: EIE/EZE/EOE/EUE/EIXE).
+            // These bits ENABLE EXCEPTION TRAPS (raising exceptions), not flag setting.
+            // To only set flags without trapping, these bits must be DISABLED.
+            var fpcr: u64 = 0;
+            asm volatile ("mrs %[v], fpcr"
+                : [v] "=r" (fpcr),
+                :
+                : "memory");
+            fpcr &= ~@as(u64, 0x1f); // Disable bits 0-4 (exception trap enable flags)
+            asm volatile ("msr fpcr, %[v]"
+                :
+                : [v] "r" (fpcr),
+                : "memory");
         },
         else => {},
     }
@@ -163,11 +193,13 @@ test "fp_invalid raises INVALID" {
     if (FE_INVALID == 0) return error.SkipZigTest;
 
     clearFpStatus();
-    _ = fp_invalid_f32(1.0);
+    const nan_f32 = fp_invalid_f32(1.0);
+    try std.testing.expect(std.math.isNan(nan_f32));
     try std.testing.expect(getFpStatus() & FE_INVALID != 0);
 
     clearFpStatus();
-    _ = fp_invalid_f64(1.0);
+    const nan_f64 = fp_invalid_f64(1.0);
+    try std.testing.expect(std.math.isNan(nan_f64));
     try std.testing.expect(getFpStatus() & FE_INVALID != 0);
 }
 
@@ -175,19 +207,23 @@ test "fp_divzero raises DIVBYZERO" {
     if (FE_DIVBYZERO == 0) return error.SkipZigTest;
 
     clearFpStatus();
-    _ = fp_divzero_f32(.negative);
+    const neg_inf_f32 = fp_divzero_f32(.negative);
+    try std.testing.expectEqual(neg_inf_f32, -std.math.inf(f32));
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 
     clearFpStatus();
-    _ = fp_divzero_f32(.positive);
+    const pos_inf_f32 = fp_divzero_f32(.positive);
+    try std.testing.expectEqual(pos_inf_f32, std.math.inf(f32));
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 
     clearFpStatus();
-    _ = fp_divzero_f64(.negative);
+    const neg_inf_f64 = fp_divzero_f64(.negative);
+    try std.testing.expectEqual(neg_inf_f64, -std.math.inf(f64));
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 
     clearFpStatus();
-    _ = fp_divzero_f64(.positive);
+    const pos_inf_f64 = fp_divzero_f64(.positive);
+    try std.testing.expectEqual(pos_inf_f64, std.math.inf(f64));
     try std.testing.expect(getFpStatus() & FE_DIVBYZERO != 0);
 }
 
@@ -195,11 +231,11 @@ test "fp_overflow raises OVERFLOW" {
     if (FE_OVERFLOW == 0) return error.SkipZigTest;
 
     clearFpStatus();
-    _ = fp_overflow_f32(std.math.floatMax(f32));
+    std.mem.doNotOptimizeAway(fp_overflow_f32(std.math.floatMax(f32)));
     try std.testing.expect(getFpStatus() & FE_OVERFLOW != 0);
 
     clearFpStatus();
-    _ = fp_overflow_f64(std.math.floatMax(f64));
+    std.mem.doNotOptimizeAway(fp_overflow_f64(std.math.floatMax(f64)));
     try std.testing.expect(getFpStatus() & FE_OVERFLOW != 0);
 }
 
