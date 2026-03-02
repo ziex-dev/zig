@@ -122,6 +122,8 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
             .c_va_arg,
             .c_va_copy,
             .abs,
+            .log2,
+            .log10,
             => {
                 const ty_op = data[@intFromEnum(inst)].ty_op;
                 try self.verifyInstOperands(inst, .{ ty_op.operand, .none, .none });
@@ -144,8 +146,6 @@ fn verifyBody(self: *Verify, body: []const Air.Inst.Index) Error!void {
             .exp,
             .exp2,
             .log,
-            .log2,
-            .log10,
             .floor,
             .ceil,
             .round,
