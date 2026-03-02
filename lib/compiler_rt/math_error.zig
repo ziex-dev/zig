@@ -127,7 +127,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             break :blk mxcsr & 0x3f; // low 6 bits are status flags
         },
         .aarch64 => blk: {
@@ -135,7 +135,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             break :blk @as(u32, @truncate(fpsr & 0x1f)); // low 5 bits
         },
         else => 0,
@@ -156,12 +156,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             fpsr &= ~@as(u64, 0x1f);
             asm volatile ("msr fpsr, %[v]"
                 :
                 : [v] "r" (fpsr),
-                : "memory");
+                : .{ .memory = true });
 
             // Disable exception trapping in FPCR (bits 0-4: EIE/EZE/EOE/EUE/EIXE).
             // These bits ENABLE EXCEPTION TRAPS (raising exceptions), not flag setting.
@@ -170,12 +170,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("mrs %[v], fpcr"
                 : [v] "=r" (fpcr),
                 :
-                : "memory");
+                : .{ .memory = true });
             fpcr &= ~@as(u64, 0x1f); // Disable bits 0-4 (exception trap enable flags)
             asm volatile ("msr fpcr, %[v]"
                 :
                 : [v] "r" (fpcr),
-                : "memory");
+                : .{ .memory = true });
         },
         else => {},
     }
