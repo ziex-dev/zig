@@ -111,7 +111,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             break :blk mxcsr & 0x3f; // low 6 bits are status flags
         },
         .aarch64 => blk: {
@@ -119,7 +119,7 @@ pub inline fn getFpStatus() u32 {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             break :blk @as(u32, @truncate(fpsr & 0x1f)); // low 5 bits
         },
         else => 0,
@@ -134,12 +134,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("stmxcsr %[v]"
                 : [v] "=m" (mxcsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             mxcsr &= ~@as(u32, 0x3f);
             asm volatile ("ldmxcsr %[v]"
                 :
                 : [v] "m" (mxcsr),
-                : "memory");
+                : .{ .memory = true });
         },
         .aarch64 => {
             // Read-modify-write: preserve QC (bit 27) and condition flags (bits 28-31),
@@ -148,12 +148,12 @@ pub inline fn clearFpStatus() void {
             asm volatile ("mrs %[v], fpsr"
                 : [v] "=r" (fpsr),
                 :
-                : "memory");
+                : .{ .memory = true });
             fpsr &= ~@as(u64, 0x1f);
             asm volatile ("msr fpsr, %[v]"
                 :
                 : [v] "r" (fpsr),
-                : "memory");
+                : .{ .memory = true });
         },
         else => {},
     }
