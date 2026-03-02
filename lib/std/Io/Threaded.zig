@@ -15659,7 +15659,10 @@ fn setUpChildIo(stdio: process.SpawnOptions.StdIo, pipe_fd: i32, std_fileno: i32
         .close => closeFd(std_fileno),
         .inherit => {},
         .ignore => try dup2(dev_null_fd, std_fileno),
-        .file => @panic("TODO implement setUpChildIo when file is used"),
+        .file => |file| {
+            if (file.flags.nonblocking) @panic("TODO: Implement setUpChildIo when nonblocking file is used");
+            try dup2(file.handle, std_fileno);
+        },
     }
 }
 
