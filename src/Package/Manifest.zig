@@ -23,7 +23,6 @@ pub const Dependency = struct {
     hash_tok: Ast.OptionalTokenIndex,
     hash_node: Ast.Node.OptionalIndex,
     node: Ast.Node.Index,
-    name_tok: Ast.TokenIndex,
     lazy: bool,
 
     pub const Location = union(enum) {
@@ -294,14 +293,12 @@ const Parse = struct {
             .hash_tok = .none,
             .hash_node = .none,
             .node = node,
-            .name_tok = undefined,
             .lazy = false,
         };
         var has_location = false;
 
         for (struct_init.ast.fields) |field_init| {
             const name_token = ast.firstToken(field_init) - 2;
-            dep.name_tok = name_token;
             const field_name = try identifierTokenString(p, name_token);
             // We could get fancy with reflection and comptime logic here but doing
             // things manually provides an opportunity to do any additional verification
