@@ -249,6 +249,8 @@ pub const VTable = struct {
     netWriteFile: *const fn (?*anyopaque, net.Socket.Handle, header: []const u8, *Io.File.Reader, Io.Limit) net.Stream.Writer.WriteFileError!usize,
     netClose: *const fn (?*anyopaque, handle: []const net.Socket.Handle) void,
     netShutdown: *const fn (?*anyopaque, handle: net.Socket.Handle, how: net.ShutdownHow) net.ShutdownError!void,
+    netSetNoDelay: *const fn (?*anyopaque, handle: net.Socket.Handle) net.Stream.SetNoDelayError!void,
+    netSetKeepAlive: *const fn (?*anyopaque, handle: net.Socket.Handle) net.Stream.SetKeepAliveError!void,
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,

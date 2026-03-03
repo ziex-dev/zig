@@ -467,6 +467,8 @@ pub fn io(ev: *Evented) Io {
             .netInterfaceNameResolve = netInterfaceNameResolveUnavailable,
             .netInterfaceName = netInterfaceNameUnavailable,
             .netLookup = netLookupUnavailable,
+            .netSetNoDelay = netSetNoDelayUnavailable,
+            .netSetKeepAlive = netSetKeepAliveUnavailable,
         },
     };
 }
@@ -4985,6 +4987,24 @@ fn netLookupUnavailable(
     _ = options;
     resolved.close(ev.io());
     return error.NetworkDown;
+}
+
+fn netSetNoDelayUnavailable(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetNoDelayError!void {
+    _ = userdata;
+    _ = handle;
+    return error.OperationUnsupported;
+}
+
+fn netSetKeepAliveUnavailable(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetKeepAliveError!void {
+    _ = userdata;
+    _ = handle;
+    return error.OperationUnsupported;
 }
 
 fn readAll(ev: *Evented, file: File, buffer: []u8) File.ReadStreamingError!void {

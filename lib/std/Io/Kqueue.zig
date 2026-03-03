@@ -658,6 +658,8 @@ pub fn io(k: *Kqueue) Io {
             .netInterfaceNameResolve = netInterfaceNameResolve,
             .netInterfaceName = netInterfaceName,
             .netLookup = netLookup,
+            .netSetNoDelay = netSetNoDelay,
+            .netSetKeepAlive = netSetKeepAlive,
         },
     };
 }
@@ -1327,6 +1329,24 @@ fn netLookup(
     _ = resolved;
     _ = options;
     @panic("TODO");
+}
+
+fn netSetNoDelay(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetNoDelayError!void {
+    const k: *Kqueue = @ptrCast(@alignCast(userdata));
+    const fd: posix.fd_t = @intCast(handle);
+    try setSocketOption(k, fd, posix.IPPROTO.TCP, posix.TCP.NODELAY, 1);
+}
+
+fn netSetKeepAlive(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetKeepAliveError!void {
+    const k: *Kqueue = @ptrCast(@alignCast(userdata));
+    const fd: posix.fd_t = @intCast(handle);
+    try setSocketOption(k, fd, posix.SOL.SOCKET, posix.SO.KEEPALIVE, 1);
 }
 
 fn openSocketPosix(

@@ -1235,6 +1235,30 @@ pub const Stream = struct {
         return io.vtable.netShutdown(io.userdata, s.socket.handle, how);
     }
 
+    pub const SetNoDelayError = error{
+        SystemResources,
+        OperationUnsupported,
+        NetworkDown,
+    } || Io.UnexpectedError || Io.Cancelable;
+
+    /// Disables Nagle's algorithm for the stream.
+    /// When enabled, TCP sends packets immediately without waiting for more data.
+    pub fn setNoDelay(s: *const Stream, io: Io) SetNoDelayError!void {
+        return io.vtable.netSetNoDelay(io.userdata, s.socket.handle);
+    }
+
+    pub const SetKeepAliveError = error{
+        SystemResources,
+        OperationUnsupported,
+        NetworkDown,
+    } || Io.UnexpectedError || Io.Cancelable;
+
+    /// Enables TCP keepalive for the stream.
+    /// This helps detect dead peers by periodically sending probes.
+    pub fn setKeepAlive(s: *const Stream, io: Io) SetKeepAliveError!void {
+        return io.vtable.netSetKeepAlive(io.userdata, s.socket.handle);
+    }
+
     pub const Reader = struct {
         io: Io,
         interface: Io.Reader,

@@ -1907,6 +1907,8 @@ pub fn io(t: *Threaded) Io {
             .netInterfaceNameResolve = netInterfaceNameResolve,
             .netInterfaceName = netInterfaceName,
             .netLookup = netLookup,
+            .netSetNoDelay = netSetNoDelay,
+            .netSetKeepAlive = netSetKeepAlive,
         },
     };
 }
@@ -2039,6 +2041,8 @@ pub fn ioBasic(t: *Threaded) Io {
             .netInterfaceNameResolve = netInterfaceNameResolveUnavailable,
             .netInterfaceName = netInterfaceNameUnavailable,
             .netLookup = netLookupUnavailable,
+            .netSetNoDelay = netSetNoDelayUnavailable,
+            .netSetKeepAlive = netSetKeepAliveUnavailable,
         },
     };
 }
@@ -13789,6 +13793,57 @@ fn netLookupUnavailable(
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     resolved.close(ioBasic(t));
     return error.NetworkDown;
+}
+
+fn netSetNoDelay(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetNoDelayError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    switch (native_os) {
+        .windows => {
+            try setSocketOptionWsa(t, handle, ws2_32.IPPROTO.TCP, ws2_32.TCP.NODELAY, 1);
+        },
+        else => {
+            // On POSIX, we need to convert the Windows SOCKET to a file descriptor
+            const fd: posix.fd_t = @intCast(handle);
+            try setSocketOption(fd, posix.IPPROTO.TCP, posix.TCP.NODELAY, 1);
+        },
+    }
+}
+
+fn netSetKeepAlive(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetKeepAliveError!void {
+    const t: *Threaded = @ptrCast(@alignCast(userdata));
+    switch (native_os) {
+        .windows => {
+            try setSocketOptionWsa(t, handle, ws2_32.SOL.SOCKET, ws2_32.SO.KEEPALIVE, 1);
+        },
+        else => {
+            const fd: posix.fd_t = @intCast(handle);
+            try setSocketOption(fd, posix.SOL.SOCKET, posix.SO.KEEPALIVE, 1);
+        },
+    }
+}
+
+fn netSetNoDelayUnavailable(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetNoDelayError!void {
+    _ = userdata;
+    _ = handle;
+    return error.OperationUnsupported;
+}
+
+fn netSetKeepAliveUnavailable(
+    userdata: ?*anyopaque,
+    handle: net.Socket.Handle,
+) net.Stream.SetKeepAliveError!void {
+    _ = userdata;
+    _ = handle;
+    return error.OperationUnsupported;
 }
 
 fn netLookupFallible(
