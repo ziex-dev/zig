@@ -176,7 +176,9 @@ if(ZIG_USE_LLVM_CONFIG)
       OUTPUT_STRIP_TRAILING_WHITESPACE)
   string(REPLACE " " ";" LLVM_INCLUDE_DIRS "${LLVM_INCLUDE_DIRS_SPACES}")
 
-  link_directories("${LLVM_LIBDIRS}")
+  # On BSD systems, zstd lives inside `/usr/local/lib` and, by default, the
+  # linker does not look there unless specified.
+  link_directories("${LLVM_LIBDIRS}" "/usr/local/lib")
 else()
   # Here we assume that we're cross compiling with Zig, of course. No reason
   # to support more complicated setups.
