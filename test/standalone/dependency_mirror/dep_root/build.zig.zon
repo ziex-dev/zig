@@ -6,15 +6,15 @@
     .dependencies = .{
         .dep_a = .{
             .url = "http://127.0.0.1:5674/dep_a.tar",
-            .hash = "dep_a-0.0.1-p5fEvsQBAAB5IzndT5YanGl_SzXF15EJy-7abcoZih5B",
+            .hash = "dep_a-0.0.1-p5fEvtsBAAAA1GlQNQB9_N1NcoHff4Dpdojc0Udu7KDz",
         },
     },
     .mirrors = .{
-        .@"dep_a-0.0.1-p5fEvsQBAAB5IzndT5YanGl_SzXF15EJy-7abcoZih5B" = .{
-            "first url is bad",
+        .@"dep_a-0.0.1-p5fEvtsBAAAA1GlQNQB9_N1NcoHff4Dpdojc0Udu7KDz" = .{
+            "http://127.0.0.1:5674/bad_hash.tar",
         },
         .@"dep_b-0.0.1-vr1FDxUBAAAzfEydzlYbY3bJSo8Ty3AWC6tKRfXycyuM" = .{
-            "first url is bad",
+            "http://127.0.0.1:5674/bad_hash.tar",
             "http://127.0.0.1:5674/dep_b.tar",
         },
     },

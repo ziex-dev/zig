@@ -661,36 +661,36 @@ pub fn run(f: *Fetch) RunError!void {
         return error.FetchFailed;
     }
 
-    if (f.first_mirror == null) {
-        return f.runMirrors(&resource_buffer, remote);
-    } else {
-        var mirror_error_bundle: ErrorBundle.Wip = undefined;
-        try mirror_error_bundle.init(gpa);
-        defer mirror_error_bundle.deinit();
+    const can_clear_errors = f.error_bundle.root_list.items.len == 0;
 
-        failure: {
-            const prev_active_error_bundle = f.active_error_bundle;
-            f.active_error_bundle = &mirror_error_bundle;
-            defer f.active_error_bundle = prev_active_error_bundle;
-            return f.runMirrors(&resource_buffer, remote) catch |err| switch (err) {
-                error.FetchFailed => break :failure,
-                error.OutOfMemory, error.Canceled => return err,
-            };
+    // Fetch and unpack the remote into a temporary directory.
+    f.active_mirror = f.first_mirror;
+    while (f.active_mirror) |mirror| : (f.active_mirror = mirror.next.load(.unordered)) {
+        const uri = std.Uri.parse(mirror.url) catch |err| return f.fail(
+            .location,
+            try eb.printString("invalid URI: {t}", .{err}),
+        );
+        if (f.initAndRunResource(uri, &resource_buffer, remote.hash)) {
+            if (can_clear_errors) try f.clearErrors(gpa);
+            return;
+        } else |err| switch (err) {
+            // If a mirror fails to fetch, keep trying more mirrors.
+            error.FetchFailed => continue,
+            error.OutOfMemory, error.Canceled => return err,
         }
-
-        // Only add errors if the fetch failed
-        var mirror_error_bundle_owned = try mirror_error_bundle.toOwnedBundle("");
-        defer mirror_error_bundle_owned.deinit(gpa);
-
-        try eb.addRootErrorMessage(.{
-            .msg = try eb.printString("all mirrors failed:", .{}),
-            .src_loc = try f.srcLoc(.hash),
-            .notes_len = mirror_error_bundle_owned.errorMessageCount(),
-        });
-        try eb.addBundleAsNotes(mirror_error_bundle_owned);
-
-        return error.FetchFailed;
     }
+
+    const uri = std.Uri.parse(remote.url) catch |err| return f.fail(
+        .location,
+        try eb.printString("invalid URI: {t}", .{err}),
+    );
+    try f.initAndRunResource(uri, &resource_buffer, remote.hash);
+
+    // After sucesfully running the resource, clear any errors that
+    // may have been generated from mirror attempts failing
+    if (can_clear_errors) try f.clearErrors(gpa);
+
+    return;
 }
 
 pub fn deinit(f: *Fetch) void {
@@ -698,35 +698,22 @@ pub fn deinit(f: *Fetch) void {
     f.arena.deinit();
 }
 
-fn runMirrors(f: *Fetch, resource_buffer: []u8, remote: Location.Remote) RunError!void {
-    // First, try to fetch using mirrors
-    f.active_mirror = f.first_mirror;
-    while (f.active_mirror) |mirror| : (f.active_mirror = mirror.next.load(.unordered)) {
-        return f.initAndRunResource(mirror.url, resource_buffer, remote.hash) catch |err| switch (err) {
-            error.FetchFailed => continue,
-            else => return err,
-        };
-    }
-    return try f.initAndRunResource(remote.url, resource_buffer, remote.hash);
+fn clearErrors(f: *Fetch, gpa: std.mem.Allocator) !void {
+    f.error_bundle.deinit();
+    try f.error_bundle.init(gpa);
 }
 
 fn initAndRunResource(
     f: *Fetch,
-    url: []const u8,
+    uri: std.Uri,
     resource_buffer: []u8,
     hash: ?Package.Hash,
 ) RunError!void {
-    const eb = f.active_error_bundle;
     const arena = f.arena.allocator();
 
-    // Fetch and unpack the remote into a temporary directory.
-    const uri = std.Uri.parse(url) catch |err| return f.fail(
-        .location,
-        try eb.printString("invalid URI: {t}", .{err}),
-    );
     var resource: Resource = undefined;
     try f.initResource(uri, &resource, resource_buffer);
-    return try f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, hash, false);
+    try f.runResource(try uri.path.toRawMaybeAlloc(arena), &resource, hash, false);
 }
 
 /// Consumes `resource`, even if an error is returned.

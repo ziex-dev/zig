@@ -125,7 +125,7 @@ const dependencies: std.StaticStringMap([]const File) = .initComptime(.{
             \\    .paths = .{ "build.zig.zon", "build.zig" },
             \\    .dependencies = .{
             \\        .dep_b = .{
-            \\            .url = "invalid url",
+            \\            .url = "http://127.0.0.1:5674/bad_hash.tar",
             \\            .hash = "dep_b-0.0.1-vr1FDxUBAAAzfEydzlYbY3bJSo8Ty3AWC6tKRfXycyuM",
             \\        },
             \\    },
@@ -153,6 +153,14 @@ const dependencies: std.StaticStringMap([]const File) = .initComptime(.{
             \\    .paths = .{ "build.zig.zon", "build.zig" },
             \\    .fingerprint = 0x6c06081e0f45bdbe,
             \\}
+            \\
+            },
+        },
+    },
+    .{
+        "/bad_hash.tar", &[_]File{
+            .{ .name = "bad", .text =
+            \\bad hash
             \\
             },
         },
