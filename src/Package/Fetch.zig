@@ -2320,6 +2320,7 @@ const UnpackResult = struct {
         var fetch: Fetch = undefined;
         fetch.parent_manifest_ast = null;
         fetch.location_tok = 0;
+        fetch.active_mirror = null;
         try fetch.error_bundle.init(gpa);
         defer fetch.error_bundle.deinit();
         fetch.active_error_bundle = &fetch.error_bundle;
