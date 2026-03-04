@@ -1384,7 +1384,10 @@ fn transFnType(
             .is_var_args = switch (func_ty.kind) {
                 .normal => false,
                 .variadic => true,
-                .old_style => !ctx.is_export and !ctx.is_always_inline and !ctx.has_body,
+                .old_style => if (t.comp.target.cpu.arch.isWasm())
+                    false
+                else
+                    !ctx.is_export and !ctx.is_always_inline and !ctx.has_body,
             },
             .name = ctx.fn_name,
             .linksection_string = linksection_string,

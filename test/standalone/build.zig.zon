@@ -199,6 +199,9 @@
         .posix = .{
             .path = "posix",
         },
+        .translate_c_old_style_wasm = .{
+            .path = "translate_c_old_style_wasm",
+        },
     },
     .paths = .{
         "build.zig",
