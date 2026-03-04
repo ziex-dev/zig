@@ -13799,6 +13799,7 @@ fn netSetNoDelay(
     userdata: ?*anyopaque,
     handle: net.Socket.Handle,
 ) net.Stream.SetNoDelayError!void {
+    if (native_os == .wasi) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
         .windows => {
@@ -13816,6 +13817,7 @@ fn netSetKeepAlive(
     userdata: ?*anyopaque,
     handle: net.Socket.Handle,
 ) net.Stream.SetKeepAliveError!void {
+    if (native_os == .wasi) return error.OperationUnsupported;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     switch (native_os) {
         .windows => {
