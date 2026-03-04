@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const Step = std.Build.Step;
 const LazyPath = std.Build.LazyPath;
 const fs = std.fs;
@@ -12,6 +13,7 @@ step: Step,
 source: std.Build.LazyPath,
 include_dirs: std.array_list.Managed(std.Build.Module.IncludeDir),
 c_macros: std.array_list.Managed([]const u8),
+c_flags: std.array_list.Managed([]const u8),
 out_basename: []const u8,
 target: std.Build.ResolvedTarget,
 optimize: std.builtin.OptimizeMode,
@@ -40,6 +42,7 @@ pub fn create(owner: *std.Build, options: Options) *TranslateC {
         .source = source,
         .include_dirs = std.array_list.Managed(std.Build.Module.IncludeDir).init(owner.allocator),
         .c_macros = std.array_list.Managed([]const u8).init(owner.allocator),
+        .c_flags = std.array_list.Managed([]const u8).init(owner.allocator),
         .out_basename = undefined,
         .target = options.target,
         .optimize = options.optimize,
@@ -148,12 +151,34 @@ pub fn defineCMacroRaw(translate_c: *TranslateC, name_and_value: []const u8) voi
     translate_c.c_macros.append(translate_c.step.owner.dupe(name_and_value)) catch @panic("OOM");
 }
 
+pub fn addCFlags(translate_c: *TranslateC, flags: []const []const u8) void {
+    const b = translate_c.step.owner;
+    translate_c.c_flags.appendSlice(b.dupeStrings(flags)) catch @panic("OOM");
+}
+
 fn make(step: *Step, options: Step.MakeOptions) !void {
     const prog_node = options.progress_node;
     const b = step.owner;
     const translate_c: *TranslateC = @fieldParentPtr("step", step);
 
     var argv_list = std.array_list.Managed([]const u8).init(b.allocator);
+    try translate_c.appendArgv(&argv_list);
+
+    const output_dir = try step.evalZigProcess(argv_list.items, prog_node, false, options.web_server, options.gpa);
+
+    const c_source_path = translate_c.source.getPath2(b, step);
+    const basename = std.fs.path.stem(std.fs.path.basename(c_source_path));
+    translate_c.out_basename = b.fmt("{s}.zig", .{basename});
+    translate_c.output_file.path = output_dir.?.joinString(b.allocator, translate_c.out_basename) catch @panic("OOM");
+}
+
+fn appendArgv(
+    translate_c: *TranslateC,
+    argv_list: *std.array_list.Managed([]const u8),
+) !void {
+    const b = translate_c.step.owner;
+    const step = &translate_c.step;
+
     try argv_list.append(b.graph.zig_exe);
     try argv_list.append("translate-c");
     if (translate_c.link_libc) {
@@ -182,7 +207,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     }
 
     for (translate_c.include_dirs.items) |include_dir| {
-        try include_dir.appendZigProcessFlags(b, &argv_list, step);
+        try include_dir.appendZigProcessFlags(b, argv_list, step);
     }
 
     for (translate_c.c_macros.items) |c_macro| {
@@ -190,12 +215,12 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         try argv_list.append(c_macro);
     }
 
+    if (translate_c.c_flags.items.len > 0) {
+        try argv_list.append("-cflags");
+        try argv_list.appendSlice(translate_c.c_flags.items);
+        try argv_list.append("--");
+    }
+
     const c_source_path = translate_c.source.getPath2(b, step);
     try argv_list.append(c_source_path);
-
-    const output_dir = try step.evalZigProcess(argv_list.items, prog_node, false, options.web_server, options.gpa);
-
-    const basename = std.fs.path.stem(std.fs.path.basename(c_source_path));
-    translate_c.out_basename = b.fmt("{s}.zig", .{basename});
-    translate_c.output_file.path = output_dir.?.joinString(b.allocator, translate_c.out_basename) catch @panic("OOM");
 }
