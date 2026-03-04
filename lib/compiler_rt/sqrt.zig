@@ -7,7 +7,6 @@
 
 const std = @import("std");
 const math = std.math;
-const math = std.math;
 const builtin = @import("builtin");
 const arch = builtin.cpu.arch;
 
