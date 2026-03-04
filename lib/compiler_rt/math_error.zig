@@ -146,8 +146,22 @@ pub inline fn getFpStatus() u32 {
 pub inline fn clearFpStatus() void {
     switch (builtin.cpu.arch) {
         .x86_64 => {
-            // ldmxcsr is not supported in the test environment.
-            // Flag clearing cannot be performed; tests handle stale flags.
+            if (std.Target.x86.featureSetHas(builtin.cpu.features, .sse)) {
+                // Allocate 16 bytes aligned to 16 bytes for ldmxcsr/stmxcsr
+                var mxcsr_buf: [4]u32 align(16) = [_]u32{ 0, 0, 0, 0 };
+
+                asm volatile ("stmxcsr %[v]"
+                    : [v] "=m" (mxcsr_buf),
+                    :
+                    : .{ .memory = true });
+
+                mxcsr_buf[0] &= ~@as(u32, 0x3f);
+
+                asm volatile ("ldmxcsr %[v]"
+                    :
+                    : [v] "m" (mxcsr_buf),
+                    : .{ .memory = true });
+            }
         },
         .aarch64 => {
             // Read-modify-write: preserve QC (bit 27) and condition flags (bits 28-31),
