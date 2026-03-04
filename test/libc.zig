@@ -113,7 +113,7 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("regression/pthread_once-deadlock.c", false, .{});
     cases.addLibcTestCase("regression/pthread_rwlock-ebusy.c", false, .{});
     cases.addLibcTestCase("regression/putenv-doublefree.c", true, .{});
-    cases.addLibcTestCase("regression/raise-race.c", false, .{});
+    // cases.addLibcTestCase("regression/raise-race.c", false, .{}); - Sometimes hangs when run natively on x86_64-linux.
     cases.addLibcTestCase("regression/regex-backref-0.c", true, .{});
     cases.addLibcTestCase("regression/regex-bracket-icase.c", true, .{});
     cases.addLibcTestCase("regression/regex-ere-backref.c", true, .{});
@@ -138,8 +138,8 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("regression/wcsncpy-read-overflow.c", true, .{});
     cases.addLibcTestCase("regression/wcsstr-false-negative.c", true, .{});
 
-    // cases.addLibcTestCase("math/acos.c", true, .{});
-    // cases.addLibcTestCase("math/acosf.c", true, .{});
+    cases.addLibcTestCase("math/acos.c", true, .{});
+    cases.addLibcTestCase("math/acosf.c", true, .{});
     // cases.addLibcTestCase("math/acosh.c", true, .{});
     cases.addLibcTestCase("math/acoshf.c", true, .{});
     // cases.addLibcTestCase("math/acoshl.c", true, .{});
@@ -296,9 +296,9 @@ pub fn addCases(cases: *tests.LibcContext) void {
     // cases.addLibcTestCase("math/rint.c", true, .{});
     cases.addLibcTestCase("math/rintf.c", true, .{});
     // cases.addLibcTestCase("math/rintl.c", true, .{});
-    // cases.addLibcTestCase("math/round.c", true, .{});
-    // cases.addLibcTestCase("math/roundf.c", true, .{});
-    // cases.addLibcTestCase("math/roundl.c", true, .{});
+    cases.addLibcTestCase("math/round.c", true, .{});
+    cases.addLibcTestCase("math/roundf.c", true, .{});
+    cases.addLibcTestCase("math/roundl.c", true, .{});
     cases.addLibcTestCase("math/scalb.c", true, .{});
     cases.addLibcTestCase("math/scalbf.c", true, .{});
     cases.addLibcTestCase("math/scalbln.c", true, .{});

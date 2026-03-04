@@ -129,6 +129,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
             },
 
             .run_test => {
+                testing.environ = init.environ;
                 testing.allocator_instance = .{};
                 testing.io_instance = .init(testing.allocator, .{
                     .argv0 = .init(init.args),
@@ -244,6 +245,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             if (testing.allocator_instance.deinit() == .leak) leaks += 1;
         }
         testing.log_level = .warn;
+        testing.environ = init.environ;
 
         const test_node = root_node.start(test_fn.name, 0);
         if (!have_tty) {
@@ -377,7 +379,7 @@ var fuzz_amount_or_instance: u64 = undefined;
 
 pub fn fuzz(
     context: anytype,
-    comptime testOne: fn (context: @TypeOf(context), []const u8) anyerror!void,
+    comptime testOne: fn (context: @TypeOf(context), *std.testing.Smith) anyerror!void,
     options: testing.FuzzInputOptions,
 ) anyerror!void {
     // Prevent this function from confusing the fuzzer by omitting its own code
@@ -404,12 +406,12 @@ pub fn fuzz(
     const global = struct {
         var ctx: @TypeOf(context) = undefined;
 
-        fn test_one(input: fuzz_abi.Slice) callconv(.c) void {
+        fn test_one() callconv(.c) void {
             @disableInstrumentation();
             testing.allocator_instance = .{};
             defer if (testing.allocator_instance.deinit() == .leak) std.process.exit(1);
             log_err_count = 0;
-            testOne(ctx, input.toSlice()) catch |err| switch (err) {
+            testOne(ctx, @constCast(&testing.Smith{ .in = null })) catch |err| switch (err) {
                 error.SkipZigTest => return,
                 else => {
                     const stderr = std.debug.lockStderr(&.{}).terminal();
@@ -433,13 +435,11 @@ pub fn fuzz(
         const prev_allocator_state = testing.allocator_instance;
         testing.allocator_instance = .{};
         defer testing.allocator_instance = prev_allocator_state;
-
         global.ctx = context;
-        fuzz_abi.fuzzer_init_test(&global.test_one, .fromSlice(builtin.test_functions[fuzz_test_index].name));
 
+        fuzz_abi.fuzzer_set_test(&global.test_one, .fromSlice(builtin.test_functions[fuzz_test_index].name));
         for (options.corpus) |elem|
             fuzz_abi.fuzzer_new_input(.fromSlice(elem));
-
         fuzz_abi.fuzzer_main(fuzz_mode, fuzz_amount_or_instance);
         return;
     }
@@ -447,10 +447,12 @@ pub fn fuzz(
     // When the unit test executable is not built in fuzz mode, only run the
     // provided corpus.
     for (options.corpus) |input| {
-        try testOne(context, input);
+        var smith: testing.Smith = .{ .in = input };
+        try testOne(context, &smith);
     }
 
     // In case there is no provided corpus, also use an empty
     // string as a smoke test.
-    try testOne(context, "");
+    var smith: testing.Smith = .{ .in = "" };
+    try testOne(context, &smith);
 }

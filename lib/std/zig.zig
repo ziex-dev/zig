@@ -14,6 +14,7 @@ pub const Server = @import("zig/Server.zig");
 pub const Client = @import("zig/Client.zig");
 pub const Token = tokenizer.Token;
 pub const Tokenizer = tokenizer.Tokenizer;
+pub const TokenSmith = @import("zig/TokenSmith.zig");
 pub const string_literal = @import("zig/string_literal.zig");
 pub const number_literal = @import("zig/number_literal.zig");
 pub const primitives = @import("zig/primitives.zig");
@@ -737,7 +738,6 @@ pub const EnvVar = enum {
     ZIG_BUILD_MULTILINE_ERRORS,
     ZIG_VERBOSE_LINK,
     ZIG_VERBOSE_CC,
-    ZIG_BTRFS_WORKAROUND,
     ZIG_DEBUG_CMD,
     ZIG_IS_DETECTING_LIBC_PATHS,
     ZIG_IS_TRYING_TO_NOT_CALL_ITSELF,
@@ -992,6 +992,7 @@ test {
     _ = LibCDirs;
     _ = LibCInstallation;
     _ = Server;
+    _ = TokenSmith;
     _ = WindowsSdk;
     _ = number_literal;
     _ = primitives;

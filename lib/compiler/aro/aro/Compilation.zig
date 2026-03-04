@@ -107,7 +107,7 @@ pub const Environment = struct {
             if (parsed > max_timestamp) return error.InvalidEpoch;
             return .{ .provided = parsed };
         } else {
-            const timestamp = try Io.Clock.real.now(io);
+            const timestamp = Io.Clock.real.now(io);
             const seconds = std.math.cast(u64, timestamp.toSeconds()) orelse return error.InvalidEpoch;
             return .{ .system = std.math.clamp(seconds, 0, max_timestamp) };
         }
@@ -837,6 +837,9 @@ fn generateSystemDefines(comp: *Compilation, w: *Io.Writer) !void {
             if (target.cpu.has(.s390x, .vector)) {
                 try define(w, "__VX__");
             }
+        },
+        .riscv32, .riscv32be, .riscv64, .riscv64be => {
+            try w.print("#define __riscv_xlen {d}\n", .{ptr_width});
         },
         else => {},
     }

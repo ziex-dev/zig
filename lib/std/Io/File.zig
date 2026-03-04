@@ -10,16 +10,35 @@ const assert = std.debug.assert;
 const Dir = std.Io.Dir;
 
 handle: Handle,
+flags: Flags,
+
+pub const Flags = struct {
+    /// * true:
+    ///   - windows: opened with MODE.IO.ASYNCHRONOUS
+    ///   - POSIX: O_NONBLOCK is set
+    /// * false:
+    ///   - windows: opened with SYNCHRONOUS_ALERT or SYNCHRONOUS_NONALERT, or
+    ///     not a file.
+    ///   - POSIX: O_NONBLOCK is unset
+    nonblocking: bool,
+};
+
+pub const Handle = std.posix.fd_t;
 
 pub const Reader = @import("File/Reader.zig");
 pub const Writer = @import("File/Writer.zig");
 pub const Atomic = @import("File/Atomic.zig");
+/// Memory intended to remain consistent with file contents.
+pub const MemoryMap = @import("File/MemoryMap.zig");
+/// Concurrently read from multiple file streams, eliminating risk of
+/// deadlocking.
+pub const MultiReader = @import("File/MultiReader.zig");
 
-pub const Handle = std.posix.fd_t;
 pub const INode = std.posix.ino_t;
 pub const NLink = std.posix.nlink_t;
 pub const Uid = std.posix.uid_t;
 pub const Gid = std.posix.gid_t;
+pub const BlockSize = u32;
 
 pub const Kind = enum {
     block_device,
@@ -63,18 +82,49 @@ pub const Stat = struct {
     mtime: Io.Timestamp,
     /// Last status/metadata change time in nanoseconds, relative to UTC 1970-01-01.
     ctime: Io.Timestamp,
+    /// Smallest chunk length in bytes appropriate for optimal I/O. This will
+    /// be set to `1` for operating systems or file systems that do not
+    /// recognize this concept. Not always a power of two.
+    block_size: BlockSize,
 };
 
 pub fn stdout() File {
-    return .{ .handle = if (is_windows) std.os.windows.peb().ProcessParameters.hStdOutput else std.posix.STDOUT_FILENO };
+    return switch (native_os) {
+        .windows => .{
+            .handle = std.os.windows.peb().ProcessParameters.hStdOutput,
+            .flags = .{ .nonblocking = false },
+        },
+        else => .{
+            .handle = std.posix.STDOUT_FILENO,
+            .flags = .{ .nonblocking = false },
+        },
+    };
 }
 
 pub fn stderr() File {
-    return .{ .handle = if (is_windows) std.os.windows.peb().ProcessParameters.hStdError else std.posix.STDERR_FILENO };
+    return switch (native_os) {
+        .windows => .{
+            .handle = std.os.windows.peb().ProcessParameters.hStdError,
+            .flags = .{ .nonblocking = false },
+        },
+        else => .{
+            .handle = std.posix.STDERR_FILENO,
+            .flags = .{ .nonblocking = false },
+        },
+    };
 }
 
 pub fn stdin() File {
-    return .{ .handle = if (is_windows) std.os.windows.peb().ProcessParameters.hStdInput else std.posix.STDIN_FILENO };
+    return switch (native_os) {
+        .windows => .{
+            .handle = std.os.windows.peb().ProcessParameters.hStdInput,
+            .flags = .{ .nonblocking = false },
+        },
+        else => .{
+            .handle = std.posix.STDIN_FILENO,
+            .flags = .{ .nonblocking = false },
+        },
+    };
 }
 
 pub const StatError = error{
@@ -220,7 +270,6 @@ pub const CreateFlags = struct {
 };
 
 pub const OpenError = error{
-    SharingViolation,
     PipeBusy,
     NoDevice,
     /// On Windows, `\\server` or `\\server\share` was not found.
@@ -428,11 +477,16 @@ pub const Permissions = std.Options.FilePermissions orelse if (is_windows) enum(
     /// libc implementations use `0o666` inside `fopen` and then rely on the
     /// process-scoped "umask" setting to adjust this number for file creation.
     default_file = 0o666,
-    default_dir = 0o755,
-    executable_file = 0o777,
+    /// This is the default mode given to POSIX operating systems for creating
+    /// directories. `0o777` is "-rwxrwxrwx" which is counter-intuitive at first,
+    /// since most people would expect "-rwxr-xr-x", for example, when using
+    /// the `touch` command, which would correspond to `0o755`.
+    default_dir = 0o777,
     _,
 
     pub const has_executable_bit = native_os != .wasi;
+
+    pub const executable_file: @This() = .default_dir;
 
     pub fn toMode(self: @This()) std.posix.mode_t {
         return @intFromEnum(self);
@@ -521,15 +575,40 @@ pub fn setTimestampsNow(file: File, io: Io) SetTimestampsError!void {
     });
 }
 
-/// Returns 0 on stream end or if `buffer` has no space available for data.
+pub const ReadStreamingError = error{EndOfStream} || Reader.Error;
+
+/// May return fewer bytes than buffer space available, including 0.
+/// End-of-stream is indicated by `error.EndOfStream`.
 ///
 /// See also:
 /// * `reader`
-pub fn readStreaming(file: File, io: Io, buffer: []const []u8) Reader.Error!usize {
-    return io.vtable.fileReadStreaming(io.userdata, file, buffer);
+pub fn readStreaming(file: File, io: Io, buffer: []const []u8) ReadStreamingError!usize {
+    return (try io.operate(.{ .file_read_streaming = .{
+        .file = file,
+        .data = buffer,
+    } })).file_read_streaming;
 }
 
-pub const ReadPositionalError = Reader.Error || error{Unseekable};
+pub const ReadPositionalError = error{
+    InputOutput,
+    SystemResources,
+    /// Trying to read a directory file descriptor as if it were a file.
+    IsDir,
+    /// Non-blocking has been enabled, and reading from the file descriptor
+    /// would block.
+    WouldBlock,
+    /// In WASI, this error occurs when the file descriptor does
+    /// not hold the required rights to read from it.
+    AccessDenied,
+    /// Unable to read file due to lock. Depending on the `Io` implementation,
+    /// reading from a locked file may return this error, or may ignore the
+    /// lock.
+    LockViolation,
+    /// This file cannot be read positionally.
+    Unseekable,
+    /// File was not opened with read capability.
+    NotOpenForReading,
+} || Io.Cancelable || Io.UnexpectedError;
 
 /// Returns 0 on stream end or if `buffer` has no space available for data.
 ///
@@ -539,7 +618,33 @@ pub fn readPositional(file: File, io: Io, buffer: []const []u8, offset: u64) Rea
     return io.vtable.fileReadPositional(io.userdata, file, buffer, offset);
 }
 
-pub const WritePositionalError = Writer.Error || error{Unseekable};
+pub const WritePositionalError = error{
+    DiskQuota,
+    FileTooBig,
+    InputOutput,
+    NoSpaceLeft,
+    DeviceBusy,
+    /// File descriptor does not hold the required rights to write to it.
+    AccessDenied,
+    PermissionDenied,
+    /// File is an unconnected socket, or closed its read end.
+    BrokenPipe,
+    /// Insufficient kernel memory to read from in_fd.
+    SystemResources,
+    /// The process cannot access the file because another process has locked
+    /// a portion of the file. Windows-only.
+    LockViolation,
+    /// Non-blocking has been enabled and this operation would block.
+    WouldBlock,
+    /// This error occurs when a device gets disconnected before or mid-flush
+    /// while it's being written to - errno(6): No such device or address.
+    NoDevice,
+    FileBusy,
+    /// This file cannot be written positionally.
+    Unseekable,
+    /// File was not opened with write capability.
+    NotOpenForWriting,
+} || Io.Cancelable || Io.UnexpectedError;
 
 /// See also:
 /// * `writer`
@@ -614,11 +719,22 @@ pub fn writerStreaming(file: File, io: Io, buffer: []u8) Writer {
     return .initStreaming(file, io, buffer);
 }
 
+/// This is a low-level API that calls the `Io` interface function directly.
+/// For a higher level API, see `writerStreaming`.
+pub fn writeStreaming(file: File, io: Io, header: []const u8, data: []const []const u8, splat: usize) Writer.Error!usize {
+    return (try io.operate(.{ .file_write_streaming = .{
+        .file = file,
+        .header = header,
+        .data = data,
+        .splat = splat,
+    } })).file_write_streaming;
+}
+
 /// Equivalent to creating a streaming writer, writing `bytes`, and then flushing.
 pub fn writeStreamingAll(file: File, io: Io, bytes: []const u8) Writer.Error!void {
     var index: usize = 0;
     while (index < bytes.len) {
-        index += try io.vtable.fileWriteStreaming(io.userdata, file, &.{}, &.{bytes[index..]}, 1);
+        index += try writeStreaming(file, io, &.{}, &.{bytes[index..]}, 1);
     }
 }
 
@@ -682,7 +798,7 @@ pub const RealPathError = error{
     NoSpaceLeft,
     FileSystem,
     DeviceBusy,
-    SharingViolation,
+    FileBusy,
     PipeBusy,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
@@ -740,8 +856,13 @@ pub fn hardLink(
     return io.vtable.fileHardLink(io.userdata, file, new_dir, new_sub_path, options);
 }
 
+pub fn createMemoryMap(file: File, io: Io, options: MemoryMap.CreateOptions) MemoryMap.CreateError!MemoryMap {
+    return .create(io, file, options);
+}
+
 test {
     _ = Reader;
     _ = Writer;
     _ = Atomic;
+    _ = MemoryMap;
 }
