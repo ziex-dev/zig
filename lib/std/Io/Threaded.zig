@@ -13809,8 +13809,8 @@ fn netSetNoDelay(
         },
         else => {
             // Check if TCP constants are available (e.g., FreeBSD/NetBSD without networking)
-            if (@TypeOf(posix.IPPROTO.TCP) == void) return error.OperationUnsupported;
-            if (@TypeOf(posix.TCP) == void) return error.OperationUnsupported;
+            if (@TypeOf(posix.TCP) == void or @TypeOf(posix.IPPROTO.TCP) == void) return error.OperationUnsupported;
+            
             // On POSIX, we need to convert the Windows SOCKET to a file descriptor
             const fd: posix.fd_t = @intCast(handle);
             try setSocketOption(fd, posix.IPPROTO.TCP, posix.TCP.NODELAY, 1);
