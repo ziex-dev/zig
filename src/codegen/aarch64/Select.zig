@@ -9163,6 +9163,16 @@ pub const Value = struct {
             field_offset: u64,
             field_size: u64,
         ) Value.FieldPartIterator {
+            return vi.fieldMode(ty, field_offset, field_size, .view);
+        }
+
+        fn fieldMode(
+            vi: Value.Index,
+            ty: ZigType,
+            field_offset: u64,
+            field_size: u64,
+            mode: Value.DecomposeMode,
+        ) Value.FieldPartIterator {
             assert(field_size > 0);
             return .{
                 .vi = vi,
@@ -9170,7 +9180,40 @@ pub const Value = struct {
                 .field_offset = field_offset,
                 .field_size = field_size,
                 .next_offset = 0,
+                .mode = mode,
             };
+        }
+
+        fn forceSplitForProgress(vi: Value.Index, isel: *Select) !void {
+            assert(vi.parts(isel).only() != null);
+            const full_size = vi.size(isel);
+            assert(full_size > 1);
+            const zcu = isel.pt.zcu;
+            try isel.values.ensureUnusedCapacity(zcu.gpa, Value.max_parts);
+            const base_chunk_size: u64 = if (vi.isVector(isel)) 16 else 8;
+            var chunk_size: u64 = base_chunk_size;
+            var parts_len_u64 = std.math.divCeil(u64, full_size, chunk_size) catch unreachable;
+            if (parts_len_u64 > Value.max_parts) {
+                chunk_size = std.math.divCeil(u64, full_size, Value.max_parts) catch unreachable;
+                chunk_size = std.mem.alignForward(u64, chunk_size, base_chunk_size);
+                parts_len_u64 = std.math.divCeil(u64, full_size, chunk_size) catch unreachable;
+            }
+            if (parts_len_u64 <= 1) {
+                chunk_size = full_size - 1;
+                parts_len_u64 = 2;
+            }
+            if (parts_len_u64 > Value.max_parts)
+                return isel.fail("forceSplitForProgress: size={d}, is_vector={}, chunk_size={d}, parts={d}", .{ full_size, vi.isVector(isel), chunk_size, parts_len_u64 });
+
+            const parts_len: Value.PartsLen = @intCast(parts_len_u64);
+            vi.setParts(isel, parts_len);
+            const is_vector = vi.isVector(isel);
+            var part_offset: u64 = 0;
+            while (part_offset < full_size) : (part_offset += chunk_size) {
+                const part_size = @min(chunk_size, full_size - part_offset);
+                const part_vi = vi.addPart(isel, part_offset, part_size);
+                if (is_vector and part_size == 16) part_vi.setIsVector(isel);
+            }
         }
 
         fn ref(initial_vi: Value.Index, isel: *Select) Value.Index {
@@ -9242,9 +9285,13 @@ pub const Value = struct {
                 if (src_part_it.only()) |src_part_vi| only: {
                     const src_part_size = src_part_vi.size(isel);
                     if (src_part_size > @as(@TypeOf(src_part_size), if (src_part_vi.isVector(isel)) 16 else 8)) {
-                        var subpart_it = root.src_vi.field(root.ty, root.src_offset, src_part_size - 1);
+                        var subpart_it = root.src_vi.fieldMode(root.ty, root.src_offset, src_part_size - 1, .force_progress);
                         _ = try subpart_it.next(isel);
                         src_part_it = src_vi.parts(isel);
+                        if (src_part_it.only() != null) {
+                            try src_vi.forceSplitForProgress(isel);
+                            src_part_it = src_vi.parts(isel);
+                        }
                         assert(src_part_it.only() == null);
                         break :only;
                     }
@@ -9539,9 +9586,13 @@ pub const Value = struct {
                 const part_is_vector = part_vi.isVector(isel);
                 if (part_size > @as(@TypeOf(part_size), if (part_is_vector) 16 else 8)) {
                     if (!opts.split) return false;
-                    var subpart_it = root_vi.field(root_ty, opts.offset, part_size - 1);
+                    var subpart_it = root_vi.fieldMode(root_ty, opts.offset, part_size - 1, .force_progress);
                     _ = try subpart_it.next(isel);
                     part_it = vi.parts(isel);
+                    if (part_it.only() != null) {
+                        try vi.forceSplitForProgress(isel);
+                        part_it = vi.parts(isel);
+                    }
                     assert(part_it.only() == null);
                     break :only;
                 }
@@ -9628,9 +9679,13 @@ pub const Value = struct {
                 const part_is_vector = part_vi.isVector(isel);
                 if (part_size > @as(@TypeOf(part_size), if (part_is_vector) 16 else 8)) {
                     if (!opts.split) return;
-                    var subpart_it = root_vi.field(root_ty, opts.offset, part_size - 1);
+                    var subpart_it = root_vi.fieldMode(root_ty, opts.offset, part_size - 1, .force_progress);
                     _ = try subpart_it.next(isel);
                     part_it = vi.parts(isel);
+                    if (part_it.only() != null) {
+                        try vi.forceSplitForProgress(isel);
+                        part_it = vi.parts(isel);
+                    }
                     assert(part_it.only() == null);
                     break :only;
                 }
@@ -9840,9 +9895,13 @@ pub const Value = struct {
                 const part_is_vector = part_vi.isVector(isel);
                 if (part_size > @as(@TypeOf(part_size), if (part_is_vector) 16 else 8)) {
                     if (!opts.split) return;
-                    var subpart_it = root_vi.field(root_ty, opts.offset, part_size - 1);
+                    var subpart_it = root_vi.fieldMode(root_ty, opts.offset, part_size - 1, .force_progress);
                     _ = try subpart_it.next(isel);
                     part_it = def_vi.parts(isel);
+                    if (part_it.only() != null) {
+                        try def_vi.forceSplitForProgress(isel);
+                        part_it = def_vi.parts(isel);
+                    }
                     assert(part_it.only() == null);
                     break :only;
                 }
@@ -10162,12 +10221,81 @@ pub const Value = struct {
         }
     };
 
+    const DecomposeMode = enum {
+        view,
+        force_progress,
+    };
+
+    const AggregateDecompositionProgress = enum {
+        committed_parts,
+        force_split,
+        no_progress,
+    };
+
     const FieldPartIterator = struct {
         vi: Value.Index,
         ty: ZigType,
         field_offset: u64,
         field_size: u64,
         next_offset: u64,
+        mode: Value.DecomposeMode,
+
+        fn splitAroundWindow(
+            _: *FieldPartIterator,
+            isel: *Select,
+            vi: Value.Index,
+            begin: u64,
+            window_size: u64,
+        ) !void {
+            const full_size = vi.size(isel);
+            assert(begin + window_size <= full_size);
+            if (begin == 0 and window_size == full_size) return;
+
+            const leading_size = begin;
+            const trailing_offset = begin + window_size;
+            const trailing_size = full_size - trailing_offset;
+            const parts_len: Value.PartsLen = @intCast(@as(u3, @intFromBool(leading_size > 0)) + 1 + @as(u3, @intFromBool(trailing_size > 0)));
+            assert(parts_len > 1);
+
+            try isel.values.ensureUnusedCapacity(isel.pt.zcu.gpa, 3);
+            vi.setParts(isel, parts_len);
+            if (leading_size > 0) _ = vi.addPart(isel, 0, leading_size);
+            _ = vi.addPart(isel, begin, window_size);
+            if (trailing_size > 0) _ = vi.addPart(isel, trailing_offset, trailing_size);
+        }
+
+        fn finalizeAggregateDecomposition(
+            it: *FieldPartIterator,
+            isel: *Select,
+            vi: Value.Index,
+            parts_len: Value.PartsLen,
+        ) !Value.AggregateDecompositionProgress {
+            if (parts_len > 1) {
+                vi.setParts(isel, parts_len);
+                return .committed_parts;
+            }
+            if (it.mode == .force_progress) {
+                const full_size = vi.size(isel);
+                if (full_size > 1) {
+                    try vi.forceSplitForProgress(isel);
+                    return .force_split;
+                }
+            }
+            return .no_progress;
+        }
+
+        fn failNoProgress(
+            it: *const FieldPartIterator,
+            isel: *Select,
+            ty: ZigType,
+            offset: u64,
+            size: u64,
+        ) error{ OutOfMemory, CodegenFail } {
+            return isel.fail(
+                "Value.FieldPartIterator.next({f}) no decomposition progress mode={s} offset={d} size={d}",
+                .{ isel.fmtType(ty), @tagName(it.mode), offset, size },
+            );
+        }
 
         fn next(it: *FieldPartIterator, isel: *Select) !?struct { offset: u64, vi: Value.Index } {
             const next_offset = it.next_offset;
@@ -10184,7 +10312,7 @@ pub const Value = struct {
             var offset: u64 = 0;
             var size = ty_size;
             assert(next_part_offset + next_part_size <= size);
-            while (next_part_offset > 0 or next_part_size < size) {
+            field_window: while (next_part_offset > 0 or next_part_size < size) {
                 const part_vi = vi.partAtOffset(isel, next_part_offset);
                 if (part_vi != vi) {
                     vi = part_vi;
@@ -10244,6 +10372,13 @@ pub const Value = struct {
                     .array_type => |array_type| {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         const array_len = array_type.lenIncludingSentinel();
+                        if (it.mode == .force_progress and array_len > Value.max_parts) {
+                            const leaf_limit: u64 = if (vi.isVector(isel)) 16 else 8;
+                            if (size > leaf_limit) {
+                                try vi.forceSplitForProgress(isel);
+                                continue;
+                            }
+                        }
                         if (array_len > Value.max_parts and
                             (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
@@ -10285,18 +10420,19 @@ pub const Value = struct {
                             parts[parts_len] = .{ .offset = elem_begin, .size = elem_size };
                             parts_len += 1;
                         }
-                        vi.setParts(isel, parts_len);
-                        for (parts[0..parts_len]) |part| {
-                            const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
-                            if (elem_signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
-                            if (elem_is_vector) subpart_vi.setIsVector(isel);
+                        switch (try it.finalizeAggregateDecomposition(isel, vi, parts_len)) {
+                            .committed_parts => for (parts[0..parts_len]) |part| {
+                                const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
+                                if (elem_signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
+                                if (elem_is_vector) subpart_vi.setIsVector(isel);
+                            },
+                            .force_split => {},
+                            .no_progress => return it.failNoProgress(isel, ty, offset, size),
                         }
                     },
                     .anyframe_type => unreachable,
                     .error_union_type => |error_union_type| {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
-                        if ((std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
-                            return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const alignment = vi.alignment(isel);
                         const payload_ty: ZigType = .fromInterned(error_union_type.payload_type);
                         const error_set_offset = codegen.errUnionErrorOffset(payload_ty, zcu);
@@ -10352,11 +10488,14 @@ pub const Value = struct {
                             };
                             parts_len += 1;
                         }
-                        vi.setParts(isel, parts_len);
-                        for (parts[0..parts_len]) |part| {
-                            const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
-                            if (part.signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
-                            if (part.is_vector) subpart_vi.setIsVector(isel);
+                        switch (try it.finalizeAggregateDecomposition(isel, vi, parts_len)) {
+                            .committed_parts => for (parts[0..parts_len]) |part| {
+                                const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
+                                if (part.signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
+                                if (part.is_vector) subpart_vi.setIsVector(isel);
+                            },
+                            .force_split => {},
+                            .no_progress => return it.failNoProgress(isel, ty, offset, size),
                         }
                     },
                     .simple_type => |simple_type| switch (simple_type) {
@@ -10403,7 +10542,13 @@ pub const Value = struct {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         if (loaded_struct.field_types.len > Value.max_parts and
                             (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                        {
+                            if (it.mode == .force_progress and size > 1) {
+                                try vi.forceSplitForProgress(isel);
+                                continue;
+                            }
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
+                        }
                         const alignment = vi.alignment(isel);
                         const Part = struct { offset: u64, size: u64, signedness: ?std.builtin.Signedness, is_vector: bool };
                         var parts: [Value.max_parts]Part = undefined;
@@ -10453,18 +10598,27 @@ pub const Value = struct {
                             };
                             parts_len += 1;
                         }
-                        vi.setParts(isel, parts_len);
-                        for (parts[0..parts_len]) |part| {
-                            const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
-                            if (part.signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
-                            if (part.is_vector) subpart_vi.setIsVector(isel);
+                        switch (try it.finalizeAggregateDecomposition(isel, vi, parts_len)) {
+                            .committed_parts => for (parts[0..parts_len]) |part| {
+                                const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
+                                if (part.signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
+                                if (part.is_vector) subpart_vi.setIsVector(isel);
+                            },
+                            .force_split => {},
+                            .no_progress => return it.failNoProgress(isel, ty, offset, size),
                         }
                     },
                     .tuple_type => |tuple_type| {
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
                         if (tuple_type.types.len > Value.max_parts and
                             (std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
+                        {
+                            if (it.mode == .force_progress and size > 1) {
+                                try vi.forceSplitForProgress(isel);
+                                continue;
+                            }
                             return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
+                        }
                         const alignment = vi.alignment(isel);
                         const Part = struct { offset: u64, size: u64, is_vector: bool };
                         var parts: [Value.max_parts]Part = undefined;
@@ -10502,10 +10656,13 @@ pub const Value = struct {
                             parts[parts_len] = .{ .offset = field_begin, .size = field_size, .is_vector = field_is_vector };
                             parts_len += 1;
                         }
-                        vi.setParts(isel, parts_len);
-                        for (parts[0..parts_len]) |part| {
-                            const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
-                            if (part.is_vector) subpart_vi.setIsVector(isel);
+                        switch (try it.finalizeAggregateDecomposition(isel, vi, parts_len)) {
+                            .committed_parts => for (parts[0..parts_len]) |part| {
+                                const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
+                                if (part.is_vector) subpart_vi.setIsVector(isel);
+                            },
+                            .force_split => {},
+                            .no_progress => return it.failNoProgress(isel, ty, offset, size),
                         }
                     },
                     .union_type => {
@@ -10518,8 +10675,6 @@ pub const Value = struct {
                             } },
                         }
                         const min_part_log2_stride: u5 = if (size > 16) 4 else if (size > 8) 3 else 0;
-                        if ((std.math.divCeil(u64, size, @as(u64, 1) << min_part_log2_stride) catch unreachable) > Value.max_parts)
-                            return isel.fail("Value.FieldPartIterator.next({f})", .{isel.fmtType(ty)});
                         const union_layout = ZigType.getUnionLayout(loaded_union, zcu);
                         const alignment = vi.alignment(isel);
                         const tag_offset = union_layout.tagOffset();
@@ -10552,7 +10707,16 @@ pub const Value = struct {
                                     }
                                     break :field_signedness ip.indexToKey(loaded_union.loadTagType(ip).tag_ty).int_type.signedness;
                                 },
-                                .payload => null,
+                                .payload => {
+                                    if (it.mode == .view and offset >= field_begin and offset + size <= field_begin + field_size) {
+                                        const full_size = vi.size(isel);
+                                        if (offset != 0 or size != full_size) {
+                                            try it.splitAroundWindow(isel, vi, offset, size);
+                                            continue :field_window;
+                                        }
+                                    }
+                                    break :field_signedness null;
+                                },
                             };
                             if (parts_len > 0) combine: {
                                 const prev_part = &parts[parts_len - 1];
@@ -10573,10 +10737,13 @@ pub const Value = struct {
                             };
                             parts_len += 1;
                         }
-                        vi.setParts(isel, parts_len);
-                        for (parts[0..parts_len]) |part| {
-                            const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
-                            if (part.signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
+                        switch (try it.finalizeAggregateDecomposition(isel, vi, parts_len)) {
+                            .committed_parts => for (parts[0..parts_len]) |part| {
+                                const subpart_vi = vi.addPart(isel, part.offset - offset, part.size);
+                                if (part.signedness) |signedness| subpart_vi.setSignedness(isel, signedness);
+                            },
+                            .force_split => {},
+                            .no_progress => return it.failNoProgress(isel, ty, offset, size),
                         }
                     },
                     .opaque_type, .func_type => continue :type_key .{ .simple_type = .anyopaque },
