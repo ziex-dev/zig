@@ -212,10 +212,17 @@ fn parseBool(comptime T: type, iter: *Iterator) Error!T {
 }
 
 fn parseOptional(comptime T: type, iter: *Iterator, allocator: Allocator) (Error || Allocator.Error)!T {
-    return parseValue(@typeInfo(T).optional.child, iter, allocator) catch |err| switch (err) {
+    const ChildT = @typeInfo(T).optional.child;
+    const val = parseValue(ChildT, iter, allocator) catch |err| return switch (err) {
         Error.MissingValue => null,
         else => err,
     };
+    // Optional steals empty state from slices
+    const child_info = @typeInfo(ChildT);
+    return if (child_info == .pointer and child_info.pointer.size == .slice and val.len == 0)
+        null
+    else
+        val;
 }
 
 inline fn flagName(arg: []const u8) ?[]const u8 {
