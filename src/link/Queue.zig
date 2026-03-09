@@ -10,13 +10,13 @@
 //! the given tasks immediately---the queues are unused.
 //!
 //! If the codegen backend does not permit concurrency, then `Compilation` will call `finishZcuQueue`
-//! early so that the concurrent linker task exists after prelink and ZCU tasks will run
+//! early so that the concurrent linker task exits after prelink and ZCU tasks will run
 //! non-concurrently in `enqueueZcu`.
 
 /// This is the concurrent call to `runLinkTasks`. It may be set to non-`null` in `start`, and is
-/// set to `null` by the main thread after it is canceled. It is not otherwise modified; as such, it
-/// may be checked non-atomically. If a task is being queued and this is `null`, tasks must be run
-/// eagerly.
+/// set to `null` by `cancel` or `wait` after cancellation/completion. It is not otherwise modified;
+/// as such, it may be checked non-atomically. If a task is being queued and this is `null`, tasks
+/// must be run eagerly.
 future: ?std.Io.Future(void),
 
 /// This is only used if `future == null` during prelink. In that case, it is used to ensure that
@@ -31,8 +31,7 @@ zcu_queue: std.Io.Queue(ZcuTask),
 /// The capacity of the task queue buffers.
 pub const buffer_size = 512;
 
-/// The initial `Queue` state, containing no tasks, expecting no prelink tasks, and with no running worker thread.
-/// The `queued_prelink` field may be appended to before calling `start`.
+/// The initial `Queue` state with no running worker and no queue buffers allocated yet.
 pub const empty: Queue = .{
     .future = null,
     .prelink_mutex = .init,
@@ -54,8 +53,8 @@ pub fn wait(q: *Queue, io: Io) void {
     }
 }
 
-/// This is expected to be called exactly once, after which the caller must not directly access
-/// `queued_prelink` any longer. This will spawn the link thread if necessary.
+/// This is expected to be called exactly once to allocate queue buffers and possibly spawn
+/// the concurrent link worker.
 pub fn start(
     q: *Queue,
     comp: *Compilation,
@@ -96,12 +95,9 @@ pub fn enqueuePrelink(q: *Queue, comp: *Compilation, tasks: []const PrelinkTask)
 pub fn enqueueZcu(
     q: *Queue,
     comp: *Compilation,
-    tid: Zcu.PerThread.Id,
     task: ZcuTask,
 ) Io.Cancelable!void {
     const io = comp.io;
-
-    assert(tid == .main);
 
     if (q.future != null) {
         if (q.zcu_queue.putOne(io, task)) |_| {
@@ -118,7 +114,7 @@ pub fn enqueueZcu(
         }
     }
 
-    link.doZcuTask(comp, tid, task);
+    executeQueuedZcuTask(comp, .inline_main, task);
 }
 
 pub fn finishPrelinkQueue(q: *Queue, comp: *Compilation) Io.Cancelable!void {
@@ -147,11 +143,47 @@ pub fn finishZcuQueue(q: *Queue, comp: *Compilation) void {
     }
 }
 
+const ZcuExecMode = enum {
+    worker,
+    inline_main,
+};
+
+fn executeQueuedZcuTask(comp: *Compilation, comptime mode: ZcuExecMode, task: ZcuTask) void {
+    const io = comp.io;
+
+    switch (task) {
+        .link_func => |codegen_task| {
+            const func, var mir = link.waitLinkFuncTask(comp, codegen_task) catch |err| switch (err) {
+                error.Canceled, error.AlreadyReported => return,
+            };
+
+            switch (mode) {
+                .worker => {
+                    const tid: Zcu.PerThread.Id = .acquire(io);
+                    defer tid.release(io);
+                    link.doResolvedLinkFuncTask(comp, tid, func, &mir);
+                },
+                .inline_main => link.doResolvedLinkFuncTask(comp, .main, func, &mir),
+            }
+        },
+        .link_nav, .link_type, .update_line_number => {
+            switch (mode) {
+                .worker => {
+                    const tid: Zcu.PerThread.Id = .acquire(io);
+                    defer tid.release(io);
+                    link.doZcuTask(comp, tid, task);
+                },
+                .inline_main => link.doZcuTask(comp, .main, task),
+            }
+        },
+    }
+}
+
 fn runLinkTasks(q: *Queue, comp: *Compilation) void {
     const io = comp.io;
-    const tid: Zcu.PerThread.Id = .acquire(io);
-    defer tid.release(io);
 
+    // Invariant: the link worker must never block while holding a `PerThread.Id`.
+    // Queue reads and `.link_func` codegen waits must happen before TID acquisition.
     var have_idle_tasks = true;
 
     prelink_tasks: while (true) {
@@ -163,7 +195,7 @@ fn runLinkTasks(q: *Queue, comp: *Compilation) void {
         };
         if (n == 0) {
             assert(have_idle_tasks);
-            have_idle_tasks = runIdleTask(comp, tid);
+            have_idle_tasks = runIdleTask(comp);
         } else for (task_buf[0..n]) |task| {
             link.doPrelinkTask(comp, task);
             have_idle_tasks = true;
@@ -177,7 +209,7 @@ fn runLinkTasks(q: *Queue, comp: *Compilation) void {
                 lf.post_prelink = true;
             } else |err| switch (err) {
                 error.OutOfMemory => comp.link_diags.setAllocFailure(),
-                error.Canceled => @panic("TODO"),
+                error.Canceled => return,
                 error.LinkFailure => {},
             }
         }
@@ -192,14 +224,18 @@ fn runLinkTasks(q: *Queue, comp: *Compilation) void {
         };
         if (n == 0) {
             assert(have_idle_tasks);
-            have_idle_tasks = runIdleTask(comp, tid);
+            have_idle_tasks = runIdleTask(comp);
         } else for (task_buf[0..n]) |task| {
-            link.doZcuTask(comp, tid, task);
+            executeQueuedZcuTask(comp, .worker, task);
             have_idle_tasks = true;
         }
     }
 }
-fn runIdleTask(comp: *Compilation, tid: Zcu.PerThread.Id) bool {
+fn runIdleTask(comp: *Compilation) bool {
+    const io = comp.io;
+    const tid: Zcu.PerThread.Id = .acquire(io);
+    defer tid.release(io);
+
     return link.doIdleTask(comp, tid) catch |err| switch (err) {
         error.OutOfMemory => have_more: {
             comp.link_diags.setAllocFailure();

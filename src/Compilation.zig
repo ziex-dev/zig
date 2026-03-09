@@ -5185,7 +5185,7 @@ fn processOneJob(tid: Zcu.PerThread.Id, comp: *Compilation, job: Job) JobError!v
             const codegen_task = try zcu.codegen_task_pool.start(zcu, func.func, &owned_air.?, disown_air);
             if (disown_air) owned_air = null;
 
-            try comp.link_queue.enqueueZcu(comp, tid, .{ .link_func = codegen_task });
+            try comp.link_queue.enqueueZcu(comp, .{ .link_func = codegen_task });
         },
         .link_nav => |nav_index| {
             const zcu = comp.zcu.?;
@@ -5205,7 +5205,7 @@ fn processOneJob(tid: Zcu.PerThread.Id, comp: *Compilation, job: Job) JobError!v
                 comp.link_prog_node.completeOne();
                 return;
             }
-            try comp.link_queue.enqueueZcu(comp, tid, .{ .link_nav = nav_index });
+            try comp.link_queue.enqueueZcu(comp, .{ .link_nav = nav_index });
         },
         .link_type => |ty| {
             const zcu = comp.zcu.?;
@@ -5217,10 +5217,10 @@ fn processOneJob(tid: Zcu.PerThread.Id, comp: *Compilation, job: Job) JobError!v
                 comp.link_prog_node.completeOne();
                 return;
             }
-            try comp.link_queue.enqueueZcu(comp, tid, .{ .link_type = ty });
+            try comp.link_queue.enqueueZcu(comp, .{ .link_type = ty });
         },
         .update_line_number => |tracked_inst| {
-            try comp.link_queue.enqueueZcu(comp, tid, .{ .update_line_number = tracked_inst });
+            try comp.link_queue.enqueueZcu(comp, .{ .update_line_number = tracked_inst });
         },
         .analyze_func => |func| {
             const tracy_trace = traceNamed(@src(), "analyze_func");

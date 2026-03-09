@@ -1500,8 +1500,9 @@ pub fn doPrelinkTask(comp: *Compilation, task: PrelinkTask) void {
         },
     }
 }
+/// Executes ZCU link tasks that are ready to run under an active `Zcu.PerThread.Id`.
+/// `.link_func` is excluded because resolving it requires a blocking wait.
 pub fn doZcuTask(comp: *Compilation, tid: Zcu.PerThread.Id, task: ZcuTask) void {
-    const io = comp.io;
     const diags = &comp.link_diags;
     const zcu = comp.zcu.?;
     const ip = &zcu.intern_pool;
@@ -1534,35 +1535,8 @@ pub fn doZcuTask(comp: *Compilation, tid: Zcu.PerThread.Id, task: ZcuTask) void 
             }
             break :nav nav_index;
         },
-        .link_func => |codegen_task| nav: {
-            timer.pause(io);
-            const func, var mir = codegen_task.wait(&zcu.codegen_task_pool, io) catch |err| switch (err) {
-                error.Canceled, error.AlreadyReported => return,
-            };
-            defer mir.deinit(zcu);
-            timer.@"resume"(io);
+        .link_func => unreachable,
 
-            const nav = zcu.funcInfo(func).owner_nav;
-            const fqn_slice = ip.getNav(nav).fqn.toSlice(ip);
-
-            const nav_prog_node = comp.link_prog_node.start(fqn_slice, 0);
-            defer nav_prog_node.end();
-
-            assert(zcu.llvm_object == null); // LLVM codegen doesn't produce MIR
-            if (comp.bin_file) |lf| {
-                lf.updateFunc(pt, func, &mir) catch |err| switch (err) {
-                    error.OutOfMemory => return diags.setAllocFailure(),
-                    error.CodegenFail => return zcu.assertCodegenFailed(nav),
-                    error.Overflow, error.RelocationNotByteAligned => {
-                        switch (zcu.codegenFail(nav, "unable to codegen: {s}", .{@errorName(err)})) {
-                            error.OutOfMemory => return diags.setAllocFailure(),
-                            error.CodegenFail => return,
-                        }
-                    },
-                };
-            }
-            break :nav ip.indexToKey(func).func.owner_nav;
-        },
         .link_type => |ty| nav: {
             const name = Type.fromInterned(ty).containerTypeName(ip).toSlice(ip);
             const nav_prog_node = comp.link_prog_node.start(name, 0);
@@ -1592,6 +1566,45 @@ pub fn doZcuTask(comp: *Compilation, tid: Zcu.PerThread.Id, task: ZcuTask) void 
         },
     };
 
+    finishZcuLinkTiming(comp, &timer, maybe_nav);
+}
+
+/// Blocking half of `.link_func` processing.
+/// Callers must invoke this before holding/activating a `Zcu.PerThread.Id`.
+pub fn waitLinkFuncTask(
+    comp: *Compilation,
+    codegen_task: Zcu.CodegenTaskPool.Index,
+) Zcu.PerThread.RunCodegenError!struct { InternPool.Index, codegen.AnyMir } {
+    const zcu = comp.zcu.?;
+    return codegen_task.wait(&zcu.codegen_task_pool, comp.io);
+}
+
+pub fn doResolvedLinkFuncTask(
+    comp: *Compilation,
+    tid: Zcu.PerThread.Id,
+    func: InternPool.Index,
+    mir: *codegen.AnyMir,
+) void {
+    const pt: Zcu.PerThread = .activate(comp.zcu.?, tid);
+    defer pt.deactivate();
+
+    var timer = comp.startTimer();
+    const nav = nav: {
+        defer mir.deinit(comp.zcu.?);
+        break :nav doResolvedLinkFuncTaskInner(comp, pt, func, mir) orelse return;
+    };
+    finishZcuLinkTiming(comp, &timer, nav);
+}
+
+fn finishZcuLinkTiming(
+    comp: *Compilation,
+    timer: *Compilation.Timer,
+    maybe_nav: ?InternPool.Nav.Index,
+) void {
+    const io = comp.io;
+    const zcu = comp.zcu.?;
+    const ip = &zcu.intern_pool;
+
     if (timer.finish(io)) |ns_link| report_time: {
         comp.mutex.lockUncancelable(io);
         defer comp.mutex.unlock(io);
@@ -1610,6 +1623,48 @@ pub fn doZcuTask(comp: *Compilation, tid: Zcu.PerThread.Id, task: ZcuTask) void 
         }
     }
 }
+
+fn doResolvedLinkFuncTaskInner(
+    comp: *Compilation,
+    pt: Zcu.PerThread,
+    func: InternPool.Index,
+    mir: *codegen.AnyMir,
+) ?InternPool.Nav.Index {
+    const diags = &comp.link_diags;
+    const zcu = comp.zcu.?;
+    const ip = &zcu.intern_pool;
+
+    const nav = zcu.funcInfo(func).owner_nav;
+    const fqn_slice = ip.getNav(nav).fqn.toSlice(ip);
+
+    const nav_prog_node = comp.link_prog_node.start(fqn_slice, 0);
+    defer nav_prog_node.end();
+
+    assert(zcu.llvm_object == null); // LLVM codegen doesn't produce MIR
+    if (comp.bin_file) |lf| {
+        lf.updateFunc(pt, func, mir) catch |err| switch (err) {
+            error.OutOfMemory => {
+                diags.setAllocFailure();
+                return null;
+            },
+            error.CodegenFail => {
+                zcu.assertCodegenFailed(nav);
+                return null;
+            },
+            error.Overflow, error.RelocationNotByteAligned => {
+                switch (zcu.codegenFail(nav, "unable to codegen: {s}", .{@errorName(err)})) {
+                    error.OutOfMemory => {
+                        diags.setAllocFailure();
+                        return null;
+                    },
+                    error.CodegenFail => return null,
+                }
+            },
+        };
+    }
+    return nav;
+}
+
 pub fn doIdleTask(comp: *Compilation, tid: Zcu.PerThread.Id) error{ OutOfMemory, LinkFailure }!bool {
     return if (comp.bin_file) |lf| lf.idle(tid) else false;
 }
