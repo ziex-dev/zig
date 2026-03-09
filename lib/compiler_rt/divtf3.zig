@@ -236,7 +236,7 @@ inline fn div(a: f128, b: f128) f128 {
 
             // Round the quotient before pushing
             const shouldRound = (residual << 1) > bSignificand;
-            const roundedQuotient = quotient +% @as(u113, @intFromBool(shouldRound));
+            const roundedQuotient = quotient +% @intFromBool(shouldRound);
 
             // Move to the denormal range and apply the mask
             const denormQuotient = roundedQuotient >> shiftAmount;
