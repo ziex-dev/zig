@@ -32,4 +32,6 @@ test "divsf3" {
     try test__divsf3(1.0, 3.0, 0x3EAAAAAB);
     try test__divsf3(2.3509887e-38, 2.0, 0x00800000);
     try test__divsf3(1.0, 0x1.fffffep-1, 0x3f800001);
+    try test__divsf3(0x1.8p+0, 0x1p+127, 0x00600000);
+    try test__divsf3(1.0, 0x1p+127, 0x00400000);
 }

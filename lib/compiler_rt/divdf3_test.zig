@@ -32,4 +32,7 @@ test "divdf3" {
     try test__divdf3(1.0, 3.0, 0x3fd5555555555555);
     try test__divdf3(4.450147717014403e-308, 2.0, 0x10000000000000);
     try test__divdf3(1.0, 0x1.fffffffffffffp-1, 0x3ff0000000000001);
+    try test__divdf3(0x1.8p+0, 0x1p+1023, 0x000C000000000000);
+    try test__divdf3(1.0, 0x1p+1023, 0x0008000000000000);
+    try test__divdf3(0x1.8p+0, 0x1p+1024, 0x0006000000000000);
 }
