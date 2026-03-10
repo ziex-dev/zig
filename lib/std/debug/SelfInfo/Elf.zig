@@ -455,7 +455,8 @@ const DlIterContext = struct {
             switch (phdr.type) {
                 .NOTE => {
                     // Look for .note.gnu.build-id
-                    const segment_ptr: [*]const u8 = @ptrFromInt(info.addr + phdr.vaddr);
+                    // Overflowing addition handles VDSOs having p_vaddr = 0xffffffffff700000
+                    const segment_ptr: [*]const u8 = @ptrFromInt(info.addr +% phdr.vaddr);
                     var r: std.Io.Reader = .fixed(segment_ptr[0..phdr.memsz]);
                     const name_size = r.takeInt(u32, native_endian) catch continue;
                     const desc_size = r.takeInt(u32, native_endian) catch continue;
@@ -467,7 +468,8 @@ const DlIterContext = struct {
                     build_id = desc;
                 },
                 std.elf.PT.GNU_EH_FRAME => {
-                    const segment_ptr: [*]const u8 = @ptrFromInt(info.addr + phdr.vaddr);
+                    // Overflowing addition handles VDSOs having p_vaddr = 0xffffffffff700000
+                    const segment_ptr: [*]const u8 = @ptrFromInt(info.addr +% phdr.vaddr);
                     gnu_eh_frame = segment_ptr[0..phdr.memsz];
                 },
                 else => {},
@@ -491,7 +493,7 @@ const DlIterContext = struct {
         for (info.phdr[0..info.phnum]) |phdr| {
             if (phdr.type != .LOAD) continue;
             try context.si.ranges.append(gpa, .{
-                // Overflowing addition handles VSDOs having p_vaddr = 0xffffffffff700000
+                // Overflowing addition handles VDSOs having p_vaddr = 0xffffffffff700000
                 .start = info.addr +% phdr.vaddr,
                 .len = phdr.memsz,
                 .module_index = module_index,

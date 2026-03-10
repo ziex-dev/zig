@@ -87,9 +87,10 @@ fn iter_fn(info: *dl_phdr_info, size: usize, counter: *usize) IterFnError!void {
 
         if (phdr.type != .LOAD) continue;
 
-        const reloc_addr = info.addr + phdr.vaddr;
+        // Wrapping addition handles VDSOs having p_vaddr = 0xffffffffff700000
+        const reloc_addr = info.addr +% phdr.vaddr;
         // Find the ELF header
-        const elf_header = @as(*elf.Ehdr, @ptrFromInt(reloc_addr - phdr.offset));
+        const elf_header = @as(*elf.Ehdr, @ptrFromInt(reloc_addr -% phdr.offset));
         // Validate the magic
         if (!mem.eql(u8, elf_header.e_ident[0..4], elf.MAGIC)) return error.BadElfMagic;
         // Consistency check
