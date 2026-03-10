@@ -140,6 +140,10 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 var args = std.array_list.Managed([]const u8).init(arena);
                 try addCCArgs(comp, arena, &args, .{ .want_O3 = true });
                 try addLibcTopHalfIncludes(comp, arena, &args);
+                try args.appendSlice(&[_][]const u8{
+                    "-mllvm",
+                    "-wasm-enable-sjlj",
+                });
 
                 for (setjmp_src_files) |file_path| {
                     try libc_sources.append(.{
