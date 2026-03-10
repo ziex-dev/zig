@@ -803,6 +803,9 @@ pub const Request = struct {
     /// Whether the request should handle a 100-continue response before sending the request body.
     handle_continue: bool,
 
+    /// Timeout for establishing the TCP connection, including on redirects.
+    connect_timeout: Io.Timeout,
+
     /// Standard headers that have default, but overridable, behavior.
     headers: Headers,
 
@@ -1256,7 +1259,7 @@ pub const Request = struct {
             return error.RedirectRequiresResend;
         }
 
-        const new_connection = try r.client.connect(new_host, uriPort(new_uri, protocol), protocol);
+        const new_connection = try r.client.connect(new_host, uriPort(new_uri, protocol), protocol, r.connect_timeout);
         r.uri = new_uri;
         r.connection = new_connection;
         r.reader = .{
@@ -1448,7 +1451,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
         .protocol = protocol,
     })) |conn| return conn;
 
-    var stream = try host.connect(io, port, .{ .mode = .stream });
+    var stream = try host.connect(io, port, .{ .mode = .stream, .timeout = options.timeout });
     errdefer stream.close(io);
 
     switch (protocol) {
@@ -1517,6 +1520,7 @@ pub fn connectProxied(
     proxy: *Proxy,
     proxied_host: HostName,
     proxied_port: u16,
+    timeout: Io.Timeout,
 ) !*Connection {
     const io = client.io;
     if (!proxy.supports_connect) return error.TunnelNotSupported;
@@ -1535,6 +1539,7 @@ pub fn connectProxied(
             .protocol = proxy.protocol,
             .proxied_host = proxied_host,
             .proxied_port = proxied_port,
+            .timeout = timeout,
         });
         errdefer {
             connection.closing = true;
@@ -1591,26 +1596,27 @@ pub fn connect(
     host: HostName,
     port: u16,
     protocol: Protocol,
+    timeout: Io.Timeout,
 ) ConnectError!*Connection {
     const proxy = switch (protocol) {
         .plain => client.http_proxy,
         .tls => client.https_proxy,
-    } orelse return client.connectTcp(host, port, protocol);
+    } orelse return client.connectTcpOptions(.{ .host = host, .port = port, .protocol = protocol, .timeout = timeout });
 
     // Prevent proxying through itself.
     if (proxy.host.eql(host) and proxy.port == port and proxy.protocol == protocol) {
-        return client.connectTcp(host, port, protocol);
+        return client.connectTcpOptions(.{ .host = host, .port = port, .protocol = protocol, .timeout = timeout });
     }
 
     if (proxy.supports_connect) tunnel: {
-        return connectProxied(client, proxy, host, port) catch |err| switch (err) {
+        return connectProxied(client, proxy, host, port, timeout) catch |err| switch (err) {
             error.TunnelNotSupported => break :tunnel,
             else => |e| return e,
         };
     }
 
     // fall back to using the proxy as a normal http proxy
-    const connection = try client.connectTcp(proxy.host, proxy.port, proxy.protocol);
+    const connection = try client.connectTcpOptions(.{ .host = proxy.host, .port = proxy.port, .protocol = proxy.protocol, .timeout = timeout });
     connection.proxied = true;
     return connection;
 }
@@ -1646,6 +1652,9 @@ pub const RequestOptions = struct {
 
     /// Must be an already acquired connection.
     connection: ?*Connection = null,
+
+    /// Timeout for establishing the TCP connection.
+    connect_timeout: Io.Timeout = .none,
 
     /// Standard headers that have default, but overridable, behavior.
     headers: Request.Headers = .{},
@@ -1711,7 +1720,7 @@ pub fn request(
     const connection = options.connection orelse c: {
         var host_name_buffer: [HostName.max_len]u8 = undefined;
         const host_name = try uri.getHost(&host_name_buffer);
-        break :c try client.connect(host_name, uriPort(uri, protocol), protocol);
+        break :c try client.connect(host_name, uriPort(uri, protocol), protocol, options.connect_timeout);
     };
 
     return .{
@@ -1731,6 +1740,7 @@ pub fn request(
         .transfer_encoding = .none,
         .redirect_behavior = options.redirect_behavior,
         .handle_continue = options.handle_continue,
+        .connect_timeout = options.connect_timeout,
         .headers = options.headers,
         .extra_headers = options.extra_headers,
         .privileged_headers = options.privileged_headers,
@@ -1751,6 +1761,9 @@ pub const FetchOptions = struct {
     payload: ?[]const u8 = null,
     raw_uri: bool = false,
     keep_alive: bool = true,
+
+    /// Timeout for establishing the TCP connection.
+    connect_timeout: Io.Timeout = .none,
 
     /// Standard headers that have default, but overridable, behavior.
     headers: Request.Headers = .{},
@@ -1796,6 +1809,7 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
 
     var req = try request(client, method, uri, .{
         .redirect_behavior = redirect_behavior,
+        .connect_timeout = options.connect_timeout,
         .headers = options.headers,
         .extra_headers = options.extra_headers,
         .privileged_headers = options.privileged_headers,
