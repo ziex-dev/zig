@@ -332,13 +332,20 @@ test "zig fmt: container declaration, single line" {
     );
 }
 
-test "zig fmt: container declaration, one item, multi line trailing comma" {
-    try testCanonical(
+test "zig fmt: container declaration, one item collapses when it fits" {
+    try testTransform(
         \\test "" {
         \\    comptime {
         \\        const X = struct {
         \\            x: i32,
         \\        };
+        \\    }
+        \\}
+        \\
+    ,
+        \\test "" {
+        \\    comptime {
+        \\        const X = struct { x: i32 };
         \\    }
         \\}
         \\
@@ -375,15 +382,12 @@ test "zig fmt: container declaration, line break, no trailing comma" {
     );
 }
 
-test "zig fmt: container declaration, transform trailing comma" {
+test "zig fmt: container declaration, trailing comma does not force multiline" {
     try testTransform(
         \\const X = struct {
         \\    foo: i32, bar: i8, };
     ,
-        \\const X = struct {
-        \\    foo: i32,
-        \\    bar: i8,
-        \\};
+        \\const X = struct { foo: i32, bar: i8 };
         \\
     );
 }
@@ -502,8 +506,8 @@ test "zig fmt: allow empty line before comment at start of block" {
     );
 }
 
-test "zig fmt: trailing comma in fn parameter list" {
-    try testCanonical(
+test "zig fmt: fn parameter list collapses when it fits" {
+    try testTransform(
         \\pub fn f(
         \\    a: i32,
         \\    b: i32,
@@ -540,6 +544,17 @@ test "zig fmt: trailing comma in fn parameter list" {
         \\    a: i32,
         \\    b: i32,
         \\) linksection(".text") callconv(.c) i32 {}
+        \\
+    ,
+        \\pub fn f(a: i32, b: i32) i32 {}
+        \\pub fn f(a: i32, b: i32) align(8) i32 {}
+        \\pub fn f(a: i32, b: i32) addrspace(.generic) i32 {}
+        \\pub fn f(a: i32, b: i32) linksection(".text") i32 {}
+        \\pub fn f(a: i32, b: i32) callconv(.c) i32 {}
+        \\pub fn f(a: i32, b: i32) align(8) linksection(".text") i32 {}
+        \\pub fn f(a: i32, b: i32) align(8) callconv(.c) i32 {}
+        \\pub fn f(a: i32, b: i32) align(8) linksection(".text") callconv(.c) i32 {}
+        \\pub fn f(a: i32, b: i32) linksection(".text") callconv(.c) i32 {}
         \\
     );
 }
@@ -586,8 +601,8 @@ test "zig fmt: c pointer type" {
     );
 }
 
-test "zig fmt: builtin call with trailing comma" {
-    try testCanonical(
+test "zig fmt: builtin call collapses when it fits" {
+    try testTransform(
         \\pub fn main() void {
         \\    @breakpoint();
         \\    _ = @intFromBool(a);
@@ -596,6 +611,13 @@ test "zig fmt: builtin call with trailing comma" {
         \\        b,
         \\        c,
         \\    );
+        \\}
+        \\
+    ,
+        \\pub fn main() void {
+        \\    @breakpoint();
+        \\    _ = @intFromBool(a);
+        \\    _ = @call(a, b, c);
         \\}
         \\
     );
@@ -751,11 +773,16 @@ test "zig fmt: anon struct literal 1 element" {
 }
 
 test "zig fmt: anon struct literal 1 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = .{
         \\        .a = b,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = .{ .a = b };
         \\}
         \\
     );
@@ -771,12 +798,17 @@ test "zig fmt: anon struct literal 2 element" {
 }
 
 test "zig fmt: anon struct literal 2 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = .{
         \\        .a = b,
         \\        .c = d,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = .{ .a = b, .c = d };
         \\}
         \\
     );
@@ -792,13 +824,18 @@ test "zig fmt: anon struct literal 3 element" {
 }
 
 test "zig fmt: anon struct literal 3 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = .{
         \\        .a = b,
         \\        .c = d,
         \\        .e = f,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = .{ .a = b, .c = d, .e = f };
         \\}
         \\
     );
@@ -843,12 +880,17 @@ test "zig fmt: struct literal 2 element" {
 }
 
 test "zig fmt: struct literal 2 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = X{
         \\        .a = b,
         \\        .c = d,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = X{ .a = b, .c = d };
         \\}
         \\
     );
@@ -864,13 +906,18 @@ test "zig fmt: struct literal 3 element" {
 }
 
 test "zig fmt: struct literal 3 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = X{
         \\        .a = b,
         \\        .c = d,
         \\        .e = f,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = X{ .a = b, .c = d, .e = f };
         \\}
         \\
     );
@@ -886,11 +933,16 @@ test "zig fmt: anon list literal 1 element" {
 }
 
 test "zig fmt: anon list literal 1 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = .{
         \\        a,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = .{a};
         \\}
         \\
     );
@@ -906,12 +958,17 @@ test "zig fmt: anon list literal 2 element" {
 }
 
 test "zig fmt: anon list literal 2 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = .{
         \\        a,
         \\        b,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = .{ a, b };
         \\}
         \\
     );
@@ -960,11 +1017,16 @@ test "zig fmt: array literal 1 element" {
 }
 
 test "zig fmt: array literal 1 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = [1]u32{
         \\        a,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = [1]u32{a};
         \\}
         \\
     );
@@ -980,12 +1042,17 @@ test "zig fmt: array literal 2 element" {
 }
 
 test "zig fmt: array literal 2 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = [2]u32{
         \\        a,
         \\        b,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = [2]u32{ a, b };
         \\}
         \\
     );
@@ -1001,13 +1068,18 @@ test "zig fmt: array literal 3 element" {
 }
 
 test "zig fmt: array literal 3 element comma" {
-    try testCanonical(
+    try testTransform(
         \\test {
         \\    const x = [3]u32{
         \\        a,
         \\        b,
         \\        c,
         \\    };
+        \\}
+        \\
+    ,
+        \\test {
+        \\    const x = [3]u32{ a, b, c };
         \\}
         \\
     );
@@ -4885,8 +4957,8 @@ test "zig fmt: use of comments and multiline string literals may force the param
     );
 }
 
-test "zig fmt: single argument trailing commas in @builtins()" {
-    try testCanonical(
+test "zig fmt: builtin trailing commas do not force multiline" {
+    try testTransform(
         \\pub fn foo(qzz: []u8) i1 {
         \\    @panic(
         \\        foo,
@@ -4900,20 +4972,22 @@ test "zig fmt: single argument trailing commas in @builtins()" {
         \\    );
         \\}
         \\
+    ,
+        \\pub fn foo(qzz: []u8) i1 {
+        \\    @panic(foo);
+        \\    panic(foo);
+        \\    @panic(foo, bar);
+        \\}
+        \\
     );
 }
 
-test "zig fmt: trailing comma should force multiline 1 column" {
+test "zig fmt: trailing comma should not force multiline 1 column" {
     try testTransform(
         \\pub const UUID_NULL: uuid_t = [16]u8{0,0,0,0,};
         \\
     ,
-        \\pub const UUID_NULL: uuid_t = [16]u8{
-        \\    0,
-        \\    0,
-        \\    0,
-        \\    0,
-        \\};
+        \\pub const UUID_NULL: uuid_t = [16]u8{ 0, 0, 0, 0 };
         \\
     );
 }
@@ -4935,10 +5009,13 @@ test "zig fmt: function params should align nicely" {
 }
 
 test "zig fmt: fn proto end with anytype and comma" {
-    try testCanonical(
+    try testTransform(
         \\pub fn format(
         \\    out_stream: anytype,
         \\) !void {}
+        \\
+    ,
+        \\pub fn format(out_stream: anytype) !void {}
         \\
     );
 }
@@ -5208,6 +5285,48 @@ test "zig fmt: make single-line if no trailing comma" {
     ,
         \\test "array no trailing comma" {
         \\    var stream = multiOutStream(.{ fbs1.outStream(), fbs2.outStream() });
+        \\}
+        \\
+    );
+}
+
+test "zig fmt: nested lists break outer list and collapse inner list by width" {
+    try testTransform(
+        \\test "nested" {
+        \\    foo(
+        \\        [4]u8{
+        \\            0,
+        \\            1,
+        \\            2,
+        \\            3,
+        \\        },
+        \\        second_argument_name_that_pushes_the_call_over_the_line_limit,
+        \\    );
+        \\}
+        \\
+    ,
+        \\test "nested" {
+        \\    foo(
+        \\        [4]u8{ 0, 1, 2, 3 },
+        \\        second_argument_name_that_pushes_the_call_over_the_line_limit,
+        \\    );
+        \\}
+        \\
+    );
+}
+
+test "zig fmt: nested lists may break both outer and inner lists by width" {
+    try testCanonical(
+        \\test "nested multiline" {
+        \\    foo(
+        \\        [4]u8{
+        \\            aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,
+        \\            bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb,
+        \\            cccccccccccccccccccccccccccccc,
+        \\            dddddddddddddddddddddddddddddd,
+        \\        },
+        \\        second_argument_name_that_pushes_the_call_over_the_line_limit,
+        \\    );
         \\}
         \\
     );
