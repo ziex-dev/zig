@@ -9,8 +9,6 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const io = init.io;
     const process_cwd_path = try std.process.currentPathAlloc(io, init.arena.allocator());
-    var initial_process_cwd = try Io.Dir.cwd().openDir(io, ".", .{});
-    defer initial_process_cwd.close(io);
 
     var it = try init.minimal.args.iterateAllocator(gpa);
     defer it.deinit();
@@ -127,7 +125,7 @@ pub fn main(init: std.process.Init) !void {
 
     // Now let's set the tmp dir as the cwd and set the path only include the "something" sub dir
     try std.process.setCurrentDir(io, tmp_dir);
-    defer std.process.setCurrentDir(io, initial_process_cwd) catch {};
+    defer std.process.setCurrentPath(io, process_cwd_path) catch {};
     const something_subdir_abs_path = try std.mem.concatWithSentinel(gpa, u16, &.{ tmp_absolute_path_w, utf16Literal("\\something") }, 0);
     defer gpa.free(something_subdir_abs_path);
 
@@ -207,10 +205,20 @@ fn testExecError(err: anyerror, gpa: Allocator, io: Io, command: []const u8) !vo
 }
 
 fn testExec(gpa: Allocator, io: Io, command: []const u8, expected_stdout: []const u8) !void {
-    return testExecWithCwd(gpa, io, command, null, expected_stdout);
+    return testExecWithCwdInner(gpa, io, command, .inherit, expected_stdout);
 }
 
-fn testExecWithCwd(gpa: Allocator, io: Io, command: []const u8, cwd: ?[]const u8, expected_stdout: []const u8) !void {
+fn testExecWithCwd(gpa: Allocator, io: Io, command: []const u8, cwd: []const u8, expected_stdout: []const u8) !void {
+    // Test by passing CWD as both a path and a Dir
+    try testExecWithCwdInner(gpa, io, command, .{ .path = cwd }, expected_stdout);
+
+    var cwd_dir = try Io.Dir.cwd().openDir(io, cwd, .{});
+    defer cwd_dir.close(io);
+
+    try testExecWithCwdInner(gpa, io, command, .{ .dir = cwd_dir }, expected_stdout);
+}
+
+fn testExecWithCwdInner(gpa: Allocator, io: Io, command: []const u8, cwd: std.process.Child.Cwd, expected_stdout: []const u8) !void {
     const result = try std.process.run(gpa, io, .{
         .argv = &[_][]const u8{command},
         .cwd = cwd,
@@ -223,12 +231,13 @@ fn testExecWithCwd(gpa: Allocator, io: Io, command: []const u8, cwd: ?[]const u8
 }
 
 fn renameExe(dir: Io.Dir, io: Io, old_sub_path: []const u8, new_sub_path: []const u8) !void {
-    var attempt: u5 = 0;
+    var attempt: u5 = 10;
     while (true) break dir.rename(old_sub_path, dir, new_sub_path, io) catch |err| switch (err) {
         error.AccessDenied => {
-            if (attempt == 13) return error.AccessDenied;
+            if (attempt == 26) return error.AccessDenied;
             // give the kernel a chance to finish closing the executable handle
-            _ = std.os.windows.kernel32.SleepEx(@as(u32, 1) << attempt >> 1, std.os.windows.FALSE);
+            const interval = @as(std.os.windows.LARGE_INTEGER, -1) << attempt;
+            _ = std.os.windows.ntdll.NtDelayExecution(std.os.windows.FALSE, &interval);
             attempt += 1;
             continue;
         },

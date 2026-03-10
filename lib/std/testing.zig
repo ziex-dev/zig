@@ -950,9 +950,8 @@ test "expectEqualDeep primitive type" {
 }
 
 test "expectEqualDeep pointer" {
-    const a = 1;
-    const b = 1;
-    try expectEqualDeep(&a, &b);
+    try comptime expectEqualDeep(&1, &1);
+    try expectEqualDeep(&@as(u32, 1), &@as(u32, 1));
 }
 
 test "expectEqualDeep composite type" {
@@ -1203,6 +1202,8 @@ pub fn refAllDecls(comptime T: type) void {
     }
 }
 
+pub const Smith = @import("testing/Smith.zig");
+
 pub const FuzzInputOptions = struct {
     corpus: []const []const u8 = &.{},
 };
@@ -1210,7 +1211,7 @@ pub const FuzzInputOptions = struct {
 /// Inline to avoid coverage instrumentation.
 pub inline fn fuzz(
     context: anytype,
-    comptime testOne: fn (context: @TypeOf(context), input: []const u8) anyerror!void,
+    comptime testOne: fn (context: @TypeOf(context), smith: *Smith) anyerror!void,
     options: FuzzInputOptions,
 ) anyerror!void {
     return @import("root").fuzz(context, testOne, options);
@@ -1317,3 +1318,7 @@ pub const ReaderIndirect = struct {
         };
     }
 };
+
+test {
+    _ = &Smith;
+}

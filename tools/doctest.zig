@@ -198,9 +198,8 @@ fn printOutput(
             if (expected_outcome == .build_fail) {
                 const result = try process.run(arena, io, .{
                     .argv = build_args.items,
-                    .cwd = tmp_dir_path,
+                    .cwd = .{ .path = tmp_dir_path },
                     .environ_map = environ_map,
-                    .max_output_bytes = max_doc_file_size,
                 });
                 switch (result.term) {
                     .exited => |exit_code| {
@@ -255,8 +254,7 @@ fn printOutput(
                 const result = try process.run(arena, io, .{
                     .argv = run_args,
                     .environ_map = environ_map,
-                    .cwd = tmp_dir_path,
-                    .max_output_bytes = max_doc_file_size,
+                    .cwd = .{ .path = tmp_dir_path },
                 });
                 switch (result.term) {
                     .exited => |exit_code| {
@@ -374,8 +372,7 @@ fn printOutput(
             const result = try process.run(arena, io, .{
                 .argv = test_args.items,
                 .environ_map = environ_map,
-                .cwd = tmp_dir_path,
-                .max_output_bytes = max_doc_file_size,
+                .cwd = .{ .path = tmp_dir_path },
             });
             switch (result.term) {
                 .exited => |exit_code| {
@@ -430,8 +427,7 @@ fn printOutput(
             const result = try process.run(arena, io, .{
                 .argv = test_args.items,
                 .environ_map = environ_map,
-                .cwd = tmp_dir_path,
-                .max_output_bytes = max_doc_file_size,
+                .cwd = .{ .path = tmp_dir_path },
             });
             switch (result.term) {
                 .exited => |exit_code| {
@@ -506,8 +502,7 @@ fn printOutput(
                 const result = try process.run(arena, io, .{
                     .argv = build_args.items,
                     .environ_map = environ_map,
-                    .cwd = tmp_dir_path,
-                    .max_output_bytes = max_doc_file_size,
+                    .cwd = .{ .path = tmp_dir_path },
                 });
                 switch (result.term) {
                     .exited => |exit_code| {
@@ -1130,8 +1125,7 @@ fn run(
     const result = try process.run(allocator, io, .{
         .argv = args,
         .environ_map = environ_map,
-        .cwd = cwd,
-        .max_output_bytes = max_doc_file_size,
+        .cwd = .{ .path = cwd },
     });
     switch (result.term) {
         .exited => |exit_code| {

@@ -79,6 +79,10 @@ rc_includes: std.zig.RcIncludes = .any,
 /// Set via options; intended to be read-only after that.
 win32_manifest: ?LazyPath = null,
 
+/// (Windows) .def file to embed in the compilation (dll)
+/// Set via options; intended to be read-only after that.
+win32_module_definition: ?LazyPath = null,
+
 installed_path: ?[]const u8,
 
 /// Base address for an executable image.
@@ -284,6 +288,8 @@ pub const Options = struct {
     /// Can be set regardless of target. The `.manifest` file will be ignored
     /// if the target object format does not support embedded manifests.
     win32_manifest: ?LazyPath = null,
+    /// Win32 module definition file.
+    win32_module_definition: ?LazyPath = null,
 };
 
 pub const Kind = enum {
@@ -466,6 +472,13 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
         if (options.win32_manifest) |lp| {
             compile.win32_manifest = lp.dupe(compile.step.owner);
             lp.addStepDependencies(&compile.step);
+        }
+        if (compile.kind == .lib and compile.linkage != null and compile.linkage.? == .dynamic) {
+            // Building a Win32 DLL, check for win32 .def file.
+            if (options.win32_module_definition) |lp| {
+                compile.win32_module_definition = lp.dupe(compile.step.owner);
+                lp.addStepDependencies(&compile.step);
+            }
         }
     }
 
@@ -1332,6 +1345,10 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         try zig_args.append(manifest_file.getPath2(b, step));
     }
 
+    if (compile.win32_module_definition) |module_file| {
+        try zig_args.append(module_file.getPath2(b, step));
+    }
+
     if (compile.image_base) |image_base| {
         try zig_args.append("--image-base");
         try zig_args.append(b.fmt("0x{x}", .{image_base}));
@@ -1445,7 +1462,8 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
     try zig_args.append("--global-cache-dir");
     try zig_args.append(b.graph.global_cache_root.path orelse ".");
 
-    if (b.graph.debug_compiler_runtime_libs) try zig_args.append("--debug-rt");
+    if (b.graph.debug_compiler_runtime_libs) |mode|
+        try zig_args.append(b.fmt("--debug-rt={t}", .{mode}));
 
     try zig_args.append("--name");
     try zig_args.append(compile.name);
