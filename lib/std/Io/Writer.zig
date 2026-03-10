@@ -518,6 +518,12 @@ test "writeSplatAll works with a single buffer" {
     try testing.expectEqualStrings("hellohellohello", aw.writer.buffered());
 }
 
+/// Writes `bytes` to the buffer if there is space, otherwise calls `drain`.
+/// Number of bytes transferred is returned, which may be less than `bytes.len`.
+/// A return value of zero does not indicate stream end. A subsequent call may
+/// return nonzero, or signal end of stream via `error.WriteFailed`.
+///
+/// See `writeAll` for a function that attempts to transfer all bytes.
 pub fn write(w: *Writer, bytes: []const u8) Error!usize {
     if (w.end + bytes.len <= w.buffer.len) {
         @branchHint(.likely);
