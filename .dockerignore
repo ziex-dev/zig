@@ -1,0 +1,15 @@
+.git
+.github
+.gitignore
+.zig-cache
+zig-global-cache
+zig-local-cache
+build-debug-llvm
+stage3-debug
+docker-build.log
+*.swp
+*.swo
+*~
+.DS_Store
+.idea
+.vscode
