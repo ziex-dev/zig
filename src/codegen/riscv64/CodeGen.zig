@@ -4956,14 +4956,16 @@ fn genCall(
     // on linking.
     switch (info) {
         .air => |callee| {
-            if (try func.air.value(callee, pt)) |func_value| {
+            const linked = blk: {
+                const func_value = try func.air.value(callee, pt) orelse break :blk false;
                 const func_key = zcu.intern_pool.indexToKey(func_value.ip_index);
                 switch (switch (func_key) {
                     else => func_key,
-                    .ptr => |ptr| if (ptr.byte_offset == 0) switch (ptr.base_addr) {
-                        .nav => |nav| zcu.intern_pool.indexToKey(zcu.navValue(nav).toIntern()),
+                    .ptr => |ptr| switch (ptr.base_addr) {
+                        .nav => |nav| if (ptr.byte_offset == 0) zcu.intern_pool.indexToKey(zcu.navValue(nav).toIntern()) else func_key,
+                        .int => break :blk false,
                         else => func_key,
-                    } else func_key,
+                    },
                 }) {
                     .func => |func_val| {
                         if (func.bin_file.cast(.elf)) |elf_file| {
@@ -5000,9 +5002,11 @@ fn genCall(
                             } },
                         });
                     },
-                    else => return func.fail("TODO implement calling bitcasted functions", .{}),
+                    else => unreachable,
                 }
-            } else {
+                break :blk true;
+            };
+            if (!linked) {
                 assert(func.typeOf(callee).zigTypeTag(zcu) == .pointer);
                 const addr_reg, const addr_lock = try func.allocReg(.int);
                 defer func.register_manager.unlockReg(addr_lock);

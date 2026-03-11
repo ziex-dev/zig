@@ -15,6 +15,22 @@ fn addressToFunction() void {
     _ = @as(*const fn () void, @ptrFromInt(addr));
 }
 
+test "call function pointer cast from integer address" {
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
+
+    forceCompilerCallComptimeFnptr(false);
+}
+
+fn forceCompilerCallComptimeFnptr(x: bool) void {
+    if (x) {
+        castedFunctionPtr();
+    } else {
+        return;
+    }
+}
+const castedFunctionPtr: *const fn () void = @ptrFromInt(0xdeadbee0);
+
 test "mutate through ptr initialized with constant ptrFromInt value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
