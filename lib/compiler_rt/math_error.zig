@@ -149,17 +149,18 @@ pub inline fn clearFpStatus() void {
             if (std.Target.x86.featureSetHas(builtin.cpu.features, .sse)) {
                 // Allocate 16 bytes aligned to 16 bytes for ldmxcsr/stmxcsr
                 var mxcsr_buf: [4]u32 align(16) = [_]u32{ 0, 0, 0, 0 };
+                const mxcsr_ptr: [*]u32 = &mxcsr_buf;
 
-                asm volatile ("stmxcsr %[v]"
-                    : [v] "=m" (mxcsr_buf),
+                asm volatile ("stmxcsr (%[v])"
                     :
+                    : [v] "r" (mxcsr_ptr),
                     : .{ .memory = true });
 
                 mxcsr_buf[0] &= ~@as(u32, 0x3f);
 
-                asm volatile ("ldmxcsr %[v]"
+                asm volatile ("ldmxcsr (%[v])"
                     :
-                    : [v] "m" (mxcsr_buf),
+                    : [v] "r" (mxcsr_ptr),
                     : .{ .memory = true });
             }
         },
