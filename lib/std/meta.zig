@@ -649,9 +649,9 @@ pub fn eql(a: anytype, b: @TypeOf(a)) bool {
             };
         },
         .array => {
-            if (a.len != b.len) return false;
-            for (a, 0..) |e, i|
-                if (!eql(e, b[i])) return false;
+            for (a, b) |x, y| {
+                if (!eql(x, y)) return false;
+            }
             return true;
         },
         .vector => return @reduce(.And, a == b),
