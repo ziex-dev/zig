@@ -131,7 +131,7 @@ test "basic" {
     const a = std.testing.allocator;
 
     {
-        var pool: MemoryPool(u32) = .empty;
+        var pool: MemoryPool(u32, .{}) = .empty;
         defer pool.deinit(a);
 
         const p1 = try pool.create(a);
