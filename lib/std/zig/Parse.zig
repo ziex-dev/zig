@@ -952,10 +952,7 @@ fn expectStatement(p: *Parse, allow_defer_var: bool) Error!Node.Index {
         .keyword_errdefer => if (allow_defer_var) return p.addNode(.{
             .tag = .@"errdefer",
             .main_token = p.nextToken(),
-            .data = .{ .opt_token_and_node = .{
-                try p.parsePayload(),
-                try p.expectBlockExprStatement(),
-            } },
+            .data = .{ .node = try p.expectBlockExprStatement() },
         }),
         .keyword_if => return p.expectIfStatement(),
         .keyword_enum, .keyword_struct, .keyword_union => {

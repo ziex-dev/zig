@@ -1015,7 +1015,7 @@ fn block(
             .grouped_expression => try expr(w, scope, parent_decl, ast.nodeData(node).node_and_token[0]),
 
             .@"defer" => try expr(w, scope, parent_decl, ast.nodeData(node).node),
-            .@"errdefer" => try expr(w, scope, parent_decl, ast.nodeData(node).opt_token_and_node[1]),
+            .@"errdefer" => try expr(w, scope, parent_decl, ast.nodeData(node).node),
 
             else => try expr(w, scope, parent_decl, node),
         }
