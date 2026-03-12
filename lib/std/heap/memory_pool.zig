@@ -155,7 +155,7 @@ test "initCapacity (success)" {
     const a = std.testing.allocator;
 
     {
-        var pool: MemoryPool(u32) = try .initCapacity(a, 4);
+        var pool: MemoryPool(u32, .{}) = try .initCapacity(a, 4);
         defer pool.deinit(a);
 
         _ = try pool.create(a);
@@ -166,7 +166,7 @@ test "initCapacity (success)" {
 
 test "initCapacity (failure)" {
     const failer = std.testing.failing_allocator;
-    try std.testing.expectError(error.OutOfMemory, MemoryPool(u32).initCapacity(failer, 5));
+    try std.testing.expectError(error.OutOfMemory, MemoryPool(u32, .{}).initCapacity(failer, 5));
 }
 
 test "growable" {
@@ -192,7 +192,7 @@ test "greater than pointer default alignment" {
     const a = std.testing.allocator;
 
     {
-        var pool: MemoryPool(Foo) = .empty;
+        var pool: MemoryPool(Foo, .{}) = .empty;
         defer pool.deinit(a);
 
         const foo: *Foo = try pool.create(a);
