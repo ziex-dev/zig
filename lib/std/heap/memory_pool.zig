@@ -1,6 +1,17 @@
 const std = @import("../std.zig");
 const Allocator = std.mem.Allocator;
 const Alignment = std.mem.Alignment;
+const MemoryPool = std.heap.MemoryPool;
+
+/// A memory pool that can allocate objects of a single type very quickly.
+/// Use this when you need to allocate a lot of objects of the same type,
+/// because it outperforms general purpose allocators.
+/// Allocated items are aligned to `alignment`-byte addresses or `@alignOf(Item)`
+/// if `alignment` is `null`.
+/// Functions that potentially allocate memory accept an `Allocator` parameter.
+pub fn Aligned(comptime Item: type, comptime alignment: Alignment) type {
+    return Extra(Item, .{ .alignment = alignment });
+}
 
 pub const Options = struct {
     /// The alignment of the memory pool items. Use `null` for natural alignment.
@@ -15,12 +26,12 @@ pub const Options = struct {
 /// Use this when you need to allocate a lot of objects of the same type,
 /// because it outperforms general purpose allocators.
 /// Functions that potentially allocate memory accept an `Allocator` parameter.
-pub fn MemoryPool(comptime Item: type, comptime pool_options: Options) type {
+pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
     if (pool_options.alignment) |a| {
         if (a.compare(.eq, .of(Item))) {
             var new_options = pool_options;
             new_options.alignment = null;
-            return MemoryPool(Item, new_options);
+            return Extra(Item, new_options);
         }
     }
     return struct {
@@ -130,59 +141,53 @@ pub fn MemoryPool(comptime Item: type, comptime pool_options: Options) type {
 test "basic" {
     const a = std.testing.allocator;
 
-    {
-        var pool: MemoryPool(u32, .{}) = .empty;
-        defer pool.deinit(a);
+    var pool: MemoryPool(u32) = .empty;
+    defer pool.deinit(a);
 
-        const p1 = try pool.create(a);
-        const p2 = try pool.create(a);
-        const p3 = try pool.create(a);
+    const p1 = try pool.create(a);
+    const p2 = try pool.create(a);
+    const p3 = try pool.create(a);
 
-        // Assert uniqueness
-        try std.testing.expect(p1 != p2);
-        try std.testing.expect(p1 != p3);
-        try std.testing.expect(p2 != p3);
+    // Assert uniqueness
+    try std.testing.expect(p1 != p2);
+    try std.testing.expect(p1 != p3);
+    try std.testing.expect(p2 != p3);
 
-        pool.destroy(p2);
-        const p4 = try pool.create(a);
+    pool.destroy(p2);
+    const p4 = try pool.create(a);
 
-        // Assert memory reuse
-        try std.testing.expect(p2 == p4);
-    }
+    // Assert memory reuse
+    try std.testing.expect(p2 == p4);
 }
 
 test "initCapacity (success)" {
     const a = std.testing.allocator;
 
-    {
-        var pool: MemoryPool(u32, .{}) = try .initCapacity(a, 4);
-        defer pool.deinit(a);
+    var pool: MemoryPool(u32) = try .initCapacity(a, 4);
+    defer pool.deinit(a);
 
-        _ = try pool.create(a);
-        _ = try pool.create(a);
-        _ = try pool.create(a);
-    }
+    _ = try pool.create(a);
+    _ = try pool.create(a);
+    _ = try pool.create(a);
 }
 
 test "initCapacity (failure)" {
     const failer = std.testing.failing_allocator;
-    try std.testing.expectError(error.OutOfMemory, MemoryPool(u32, .{}).initCapacity(failer, 5));
+    try std.testing.expectError(error.OutOfMemory, MemoryPool(u32).initCapacity(failer, 5));
 }
 
 test "growable" {
     const a = std.testing.allocator;
 
-    {
-        var pool: MemoryPool(u32, .{ .growable = false }) = try .initCapacity(a, 4);
-        defer pool.deinit(a);
+    var pool: Extra(u32, .{ .growable = false }) = try .initCapacity(a, 4);
+    defer pool.deinit(a);
 
-        _ = try pool.create(a);
-        _ = try pool.create(a);
-        _ = try pool.create(a);
-        _ = try pool.create(a);
+    _ = try pool.create(a);
+    _ = try pool.create(a);
+    _ = try pool.create(a);
+    _ = try pool.create(a);
 
-        try std.testing.expectError(error.OutOfMemory, pool.create(a));
-    }
+    try std.testing.expectError(error.OutOfMemory, pool.create(a));
 }
 
 test "greater than pointer default alignment" {
@@ -191,13 +196,11 @@ test "greater than pointer default alignment" {
     };
     const a = std.testing.allocator;
 
-    {
-        var pool: MemoryPool(Foo, .{}) = .empty;
-        defer pool.deinit(a);
+    var pool: MemoryPool(Foo) = .empty;
+    defer pool.deinit(a);
 
-        const foo: *Foo = try pool.create(a);
-        pool.destroy(foo);
-    }
+    const foo: *Foo = try pool.create(a);
+    pool.destroy(foo);
 }
 
 test "greater than pointer manual alignment" {
@@ -206,11 +209,9 @@ test "greater than pointer manual alignment" {
     };
     const a = std.testing.allocator;
 
-    {
-        var pool: MemoryPool(Foo, .{ .alignment = .@"16" }) = .empty;
-        defer pool.deinit(a);
+    var pool: Aligned(Foo, .@"16") = .empty;
+    defer pool.deinit(a);
 
-        const foo: *align(16) Foo = try pool.create(a);
-        pool.destroy(foo);
-    }
+    const foo: *align(16) Foo = try pool.create(a);
+    pool.destroy(foo);
 }

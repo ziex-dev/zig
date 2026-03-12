@@ -723,7 +723,7 @@ pub const SourceMappings = struct {
     /// The default assumes that the first filename added is the root file.
     /// The value should be set to the correct offset if that assumption does not hold.
     root_filename_offset: u32 = 0,
-    source_node_pool: std.heap.MemoryPool(Sources.Node, .{}) = .empty,
+    source_node_pool: std.heap.MemoryPool(Sources.Node) = .empty,
     end_line: usize = 0,
 
     const sourceCompare = struct {
