@@ -1774,8 +1774,9 @@ pub const F80 = struct {
 
 fn SignOf(T: type) type {
     return switch (@typeInfo(T)) {
+        .comptime_int, .comptime_float => comptime_int,
         .int => IntFittingRange(@max(minInt(T), -1), @min(maxInt(T), 1)),
-        .float, .comptime_int, .comptime_float => IntFittingRange(-1, 1),
+        .float => IntFittingRange(-1, 1),
         .vector => |vec| @Vector(vec.len, SignOf(vec.child)),
         else => @compileError("Expected an int, float, or a vector of one, found " ++ @typeName(T)),
     };
