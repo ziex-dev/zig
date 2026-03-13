@@ -4327,8 +4327,176 @@ pub fn print(self: *Writer, arg0: []const u8, arg1: i32) !void {
       {#header_close#}
 
       {#header_open|Atomics#}
-      <p>TODO: @atomic rmw</p>
-      <p>TODO: builtin atomic memory ordering enum</p>
+      <p>
+      Zig provides builtin functions for atomic memory operations that allow
+      lock-free data structures and reliable cross-thread communication.
+      </p>
+      <p>
+      Every atomic operation accepts a compile-time
+      {#syntax#}AtomicOrder{#endsyntax#} parameter that determines the
+      memory ordering guarantees, controlling how operations on other
+      memory locations are reordered with respect to the atomic operation.
+      </p>
+
+      {#header_open|Atomic Memory Ordering#}
+      <p>
+      {#syntax#}AtomicOrder{#endsyntax#} can be found with
+      {#syntax#}@import("std").builtin.AtomicOrder{#endsyntax#} and has the
+      following values:
+      </p>
+      <table>
+        <tr>
+          <th>Value</th>
+          <th>Description</th>
+        </tr>
+        <tr>
+          <td>{#syntax#}.unordered{#endsyntax#}</td>
+          <td>No ordering constraints, only atomicity is guaranteed. This is the weakest
+          ordering and allows maximum reordering by both the compiler and hardware. Same as
+          C/C++ {#syntax#}memory_order_relaxed{#endsyntax#} except that it is also not a
+          "happens-before" edge even between operations to the same address.</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.monotonic{#endsyntax#}</td>
+          <td>Equivalent to C/C++ {#syntax#}memory_order_relaxed{#endsyntax#}. No ordering
+          constraints beyond atomicity, but is a valid "happens-before" edge between
+          operations to the same address.</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.acquire{#endsyntax#}</td>
+          <td>A load with this ordering is an acquire operation: no reads or writes in the
+          current thread can be reordered before this load. This ensures that all writes in
+          other threads that released the same atomic variable are visible in the current
+          thread. Used for operations like lock acquisition.</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.release{#endsyntax#}</td>
+          <td>A store with this ordering is a release operation: no reads or writes in the
+          current thread can be reordered after this store. This ensures that all writes in
+          the current thread are visible in other threads that acquire the same atomic
+          variable. Used for operations like lock release.</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.acq_rel{#endsyntax#}</td>
+          <td>Combines acquire and release semantics: the operation is both an acquire and a
+          release. No reads or writes in the current thread can be reordered before or after
+          this operation. Used for read-modify-write operations that both observe and publish
+          state.</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.seq_cst{#endsyntax#}</td>
+          <td>Sequentially consistent: in addition to acquire/release semantics, all
+          {#syntax#}.seq_cst{#endsyntax#} operations across all threads appear to occur in a
+          single total order. This is the strongest ordering and the easiest to reason about,
+          but also the most expensive.</td>
+        </tr>
+      </table>
+      {#header_close#}
+
+      {#header_open|Atomic Read-Modify-Write Operations#}
+      <p>
+      {#syntax#}AtomicRmwOp{#endsyntax#} can be found with
+      {#syntax#}@import("std").builtin.AtomicRmwOp{#endsyntax#} and specifies the operation
+      performed by {#link|@atomicRmw#}:
+      </p>
+      <table>
+        <tr>
+          <th>Operation</th>
+          <th>Description</th>
+          <th>Supported types</th>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Xchg{#endsyntax#}</td>
+          <td>Store the operand, returning the previous value</td>
+          <td>enums, integers, floats</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Add{#endsyntax#}</td>
+          <td>Add to existing value (wrapping for integers)</td>
+          <td>integers, floats</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Sub{#endsyntax#}</td>
+          <td>Subtract from existing value (wrapping for integers)</td>
+          <td>integers, floats</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.And{#endsyntax#}</td>
+          <td>Bitwise AND with existing value</td>
+          <td>integers</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Nand{#endsyntax#}</td>
+          <td>Bitwise NAND with existing value</td>
+          <td>integers</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Or{#endsyntax#}</td>
+          <td>Bitwise OR with existing value</td>
+          <td>integers</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Xor{#endsyntax#}</td>
+          <td>Bitwise XOR with existing value</td>
+          <td>integers</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Max{#endsyntax#}</td>
+          <td>Store the operand if larger than existing value</td>
+          <td>integers, floats</td>
+        </tr>
+        <tr>
+          <td>{#syntax#}.Min{#endsyntax#}</td>
+          <td>Store the operand if smaller than existing value</td>
+          <td>integers, floats</td>
+        </tr>
+      </table>
+      <p>
+      All read-modify-write operations return the previous value at the pointer
+      location. This allows their use in common lock-free patterns such as atomic
+      reference counting:
+      </p>
+<pre>{#syntax#}const old_count = @atomicRmw(u32, &ref_count, .Sub, 1, .acq_rel);
+if (old_count == 1) {
+    // Last reference, safe to deallocate
+}{#endsyntax#}</pre>
+      {#header_close#}
+
+      {#header_open|Data Races#}
+      <p>
+      In Zig, unsynchronized concurrent access to the same memory location, where
+      at least one access is a write, is <em>illegal behavior</em>. In
+      {#link|ReleaseSafe#} and {#link|Debug#} build modes this may be detected at
+      runtime, but in {#link|ReleaseFast#} and {#link|ReleaseSmall#} the behavior
+      is undefined. This is the same model as C and C++.
+      </p>
+      <p>
+      To safely share mutable state between threads, use atomic operations or
+      {#syntax#}std.Thread.Mutex{#endsyntax#}.
+      </p>
+      {#header_close#}
+
+      {#header_open|Atomics vs volatile#}
+      <p>
+      {#link|volatile#} and atomics are different mechanisms that serve
+      different purposes:
+      </p>
+      <ul>
+        <li><strong>Atomics</strong> are for synchronizing access to shared memory
+          between threads. They provide both atomicity (indivisible operations)
+          and ordering guarantees that prevent the compiler and CPU from
+          reordering memory accesses across thread boundaries.</li>
+        <li><strong>Volatile</strong> is for accessing hardware registers and
+          Memory Mapped Input/Output (MMIO), where every load and store has a
+          side effect that must not be elided or reordered by the compiler.
+          Volatile provides no cross-thread synchronization guarantees.</li>
+      </ul>
+      <p>
+      Using {#syntax#}volatile{#endsyntax#} for thread synchronization is a bug;
+      use atomics instead. Using atomics for MMIO is unnecessary; use
+      {#syntax#}volatile{#endsyntax#} instead.
+      </p>
+      {#header_close#}
 
       {#see_also|@atomicLoad|@atomicStore|@atomicRmw|@cmpxchgWeak|@cmpxchgStrong#}
 
