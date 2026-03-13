@@ -6757,6 +6757,82 @@ const builtin = @import("builtin");
       <a href="https://ziglang.org/learn/build-system/">Build System Documentation</a>
       </p>
       {#header_close#}
+      {#header_open|ZON#}
+      <p>
+      ZON (Zig Object Notation) is a data serialization format used for build
+      manifests ({#syntax#}build.zig.zon{#endsyntax#}) and other forms of machine
+      and human readable data. It is a subset of Zig's expression syntax, limited
+      to just literals and with no side effects. Unlike Zig source files, ZON
+      files contain no {#syntax#}@import{#endsyntax#}, type information,
+      or other references that may require resolution.
+      </p>
+      <p>
+      A ZON file contains exactly one expression, which is typically a struct
+      literal:
+      </p>
+<pre>{#syntax#}.{
+    .name = .my_package,
+    .version = "0.1.0",
+    .dependencies = .{},
+    .paths = .{
+        "",
+    },
+}{#endsyntax#}</pre>
+      <p>
+      ZON files can be loaded at compile time using {#syntax#}@import{#endsyntax#}.
+      If there is an inferred {#link|result type|Result Types#}, the ZON literal
+      is interpreted as that type. Otherwise, the return type is the type of
+      the equivalent Zig expression.
+      </p>
+      {#header_open|Expressions#}
+      <p>
+      A ZON expression may be one of the following:
+      </p>
+      <ul>
+        <li><strong>Struct literals</strong>: {#syntax#}.{ .name = "value", .count = 42 }{#endsyntax#}</li>
+        <li><strong>Tuple and array literals</strong>: {#syntax#}.{ 1, 2, 3 }{#endsyntax#}</li>
+        <li><strong>Empty literal</strong>: {#syntax#}.{}{#endsyntax#}</li>
+        <li><strong>{#link|String Literals and Unicode Code Point Literals|String Literals and Unicode Code Point Literals#}</strong>:
+          {#syntax#}"hello"{#endsyntax#}, including {#link|Escape Sequences#} and
+          {#link|Multiline String Literals#}</li>
+        <li><strong>Character literals</strong>: {#syntax#}'a'{#endsyntax#}, {#syntax#}'\n'{#endsyntax#}</li>
+        <li><strong>{#link|Integer Literals#}</strong>: {#syntax#}42{#endsyntax#}, {#syntax#}0xff{#endsyntax#},
+          {#syntax#}0b1010{#endsyntax#}, {#syntax#}0o77{#endsyntax#}</li>
+        <li><strong>{#link|Float Literals#}</strong>: {#syntax#}3.14{#endsyntax#}, {#syntax#}1.0e10{#endsyntax#}</li>
+        <li><strong>{#link|Enum Literals#}</strong>: {#syntax#}.foo{#endsyntax#}</li>
+        <li><strong>Booleans</strong>: {#syntax#}true{#endsyntax#}, {#syntax#}false{#endsyntax#}</li>
+        <li>{#syntax#}null{#endsyntax#}</li>
+        <li>{#syntax#}inf{#endsyntax#} and {#syntax#}nan{#endsyntax#} (IEEE 754 special values)</li>
+        <li><strong>Negation</strong>: {#syntax#}-{#endsyntax#} as a prefix to number literals or
+          {#syntax#}inf{#endsyntax#}</li>
+        <li><strong>{#link|Comments#}</strong></li>
+      </ul>
+      <p>
+      Expressions may be nested: struct and tuple literal fields can contain any
+      valid ZON expression as a value.
+      </p>
+      {#header_close#}
+
+      {#header_open|Limitations#}
+      <p>
+      ZON does not support any Zig syntax beyond the literal expressions listed above.
+      In particular, the following are not valid in ZON:
+      </p>
+      <ul>
+        <li>Arithmetic, bitwise, comparison, and other {#link|Operators#}</li>
+        <li>Type expressions (pointers, optionals, error unions, {#syntax#}struct{#endsyntax#},
+          {#syntax#}enum{#endsyntax#}, etc.)</li>
+        <li>Control flow ({#syntax#}if{#endsyntax#}, {#syntax#}while{#endsyntax#},
+          {#syntax#}for{#endsyntax#}, {#syntax#}switch{#endsyntax#})</li>
+        <li>{#syntax#}comptime{#endsyntax#} and {#syntax#}@{#endsyntax#}-prefixed
+          {#link|Builtin Functions#}</li>
+        <li>Field access, slicing, and indexing</li>
+        <li>Blocks and parenthesized expressions</li>
+        <li>{#syntax#}undefined{#endsyntax#}</li>
+      </ul>
+      {#header_close#}
+      {#see_also|@import#}
+      {#header_close#}
       {#header_open|C#}
       <p>
       Although Zig is independent of C, and, unlike most other languages, does not depend on libc,
