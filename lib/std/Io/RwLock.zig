@@ -280,6 +280,8 @@ test "concurrent access" {
 }
 
 test "lock canceling" {
+    if (builtin.single_threaded) return;
+
     const io = testing.io;
 
     var rl: Io.RwLock = .init;
