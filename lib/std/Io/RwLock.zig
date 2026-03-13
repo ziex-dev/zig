@@ -144,7 +144,7 @@ test "internal state" {
     rl.lockUncancelable(io);
     rl.unlock(io);
     try testing.expectEqual(rl, Io.RwLock.init);
-    
+
     try rl.lock(io);
     rl.unlock(io);
     try testing.expectEqual(rl, Io.RwLock.init);
@@ -159,7 +159,7 @@ test "smoke test" {
     try testing.expect(!rl.tryLock(io));
     try testing.expect(!rl.tryLockShared(io));
     rl.unlock(io);
-    
+
     try rl.lock(io);
     try testing.expect(!rl.tryLock(io));
     try testing.expect(!rl.tryLockShared(io));
@@ -285,23 +285,23 @@ test "lock canceling" {
     var rl: Io.RwLock = .init;
 
     rl.lockSharedUncancelable(io);
-    const sfuture = try io.concurrent(semaphoreLockCancel, .{&rl, io});
+    const sfuture = try io.concurrent(semaphoreLockCancel, .{ &rl, io });
     try std.testing.expectEqual(error.Canceled, sfuture.cancel(io));
     rl.unlockShared(io);
     try testing.expectEqual(rl, Io.RwLock.init);
-    
+
     rl.lockUncancelable(io);
-    const mfuture = try io.concurrent(mutexLockCancel, .{&rl, io});
+    const mfuture = try io.concurrent(mutexLockCancel, .{ &rl, io });
     try std.testing.expectEqual(error.Canceled, mfuture.cancel(io));
     rl.unlock(io);
     try testing.expectEqual(rl, Io.RwLock.init);
 }
 
-fn semaphoreLockCancel(rl: *Io.RwLock, io:Io)!void{
-    try rl.lock(io);//tests semaphore cancelling
+fn semaphoreLockCancel(rl: *Io.RwLock, io: Io) !void {
+    try rl.lock(io); //tests semaphore cancelling
 }
 
-fn mutexLockCancel(rl: *Io.RwLock, io:Io)!void{
+fn mutexLockCancel(rl: *Io.RwLock, io: Io) !void {
     //tests mutex canceling
     try std.testing.expectEqual(error.Canceled, rl.lockShared(io));
     io.recancel();
