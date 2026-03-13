@@ -285,13 +285,13 @@ test "lock canceling" {
     var rl: Io.RwLock = .init;
 
     rl.lockSharedUncancelable(io);
-    const sfuture = try io.concurrent(semaphoreLockCancel, .{ &rl, io });
+    var sfuture = try io.concurrent(semaphoreLockCancel, .{ &rl, io });
     try std.testing.expectEqual(error.Canceled, sfuture.cancel(io));
     rl.unlockShared(io);
     try testing.expectEqual(rl, Io.RwLock.init);
 
     rl.lockUncancelable(io);
-    const mfuture = try io.concurrent(mutexLockCancel, .{ &rl, io });
+    var mfuture = try io.concurrent(mutexLockCancel, .{ &rl, io });
     try std.testing.expectEqual(error.Canceled, mfuture.cancel(io));
     rl.unlock(io);
     try testing.expectEqual(rl, Io.RwLock.init);
