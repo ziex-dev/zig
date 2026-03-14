@@ -22,7 +22,8 @@ if(ZIG_USE_LLVM_CONFIG)
             "/mingw64/bin"
             "/c/msys64/mingw64/bin"
             "c:/msys64/mingw64/bin"
-            "C:/Libraries/llvm-21.0.0/bin")
+            "C:/Libraries/llvm-21.0.0/bin"
+            "/opt/homebrew/opt/llvm@21")
 
     if ("${LLVM_CONFIG_EXE}" STREQUAL "LLVM_CONFIG_EXE-NOTFOUND")
       if (NOT LLVM_CONFIG_ERROR_MESSAGES STREQUAL "")
