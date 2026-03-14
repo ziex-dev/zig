@@ -37,7 +37,6 @@ if(ZIG_USE_LLVM_CONFIG)
             "\nIf you use homebrew, try the following:"
             "\n brew install llvm@21"
             "\n brew link llvm@21")
-          message(SEND_ERROR "${ERROR_MSG}")
         endif()
         message(FATAL_ERROR "unable to find llvm-config")
       endif()
