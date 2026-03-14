@@ -29,6 +29,15 @@ if(ZIG_USE_LLVM_CONFIG)
         list(JOIN LLVM_CONFIG_ERROR_MESSAGES "\n" LLVM_CONFIG_ERROR_MESSAGE)
         message(FATAL_ERROR ${LLVM_CONFIG_ERROR_MESSAGE})
       else()
+        if ("${CMAKE_SYSTEM_NAME}" STREQUAL "Darwin")
+          message(SEND_ERROR
+            "Make sure you can LLVM 21 explicitly installed."
+            "\nThe presenence of the symlink llvm@21 mean it is installed."
+            "\nIf you use homebrew, try the following:"
+            "\n brew install llvm@21"
+            "\n brew link llvm@21")
+          message(SEND_ERROR "${ERROR_MSG}")
+        endif()
         message(FATAL_ERROR "unable to find llvm-config")
       endif()
     endif()
