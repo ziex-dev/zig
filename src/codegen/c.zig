@@ -4482,7 +4482,10 @@ fn airSwitchBr(f: *Function, inst: Air.Inst.Index, is_dispatch_loop: bool) !void
         assert(f.loop_switch_conds.remove(inst));
     };
 
-    try w.writeAll("switch (");
+    // Integer types wider than 64 bits may lower to a C struct. Use an if-else chain instead.
+    const condition_bits: u64 = if (condition_ty.isAbiInt(zcu)) condition_ty.bitSize(zcu) else 0;
+    const use_if_else = condition_bits > 64;
+    const is_big = use_if_else and lowersToBigInt(condition_ty, zcu);
 
     const lowered_condition_ty: Type = if (condition_ty.toIntern() == .bool_type)
         .u1
@@ -4490,123 +4493,215 @@ fn airSwitchBr(f: *Function, inst: Air.Inst.Index, is_dispatch_loop: bool) !void
         .usize
     else
         condition_ty;
-    if (condition_ty.toIntern() != lowered_condition_ty.toIntern()) {
-        try w.writeByte('(');
-        try f.renderType(w, lowered_condition_ty);
-        try w.writeByte(')');
+
+    if (!use_if_else) {
+        try w.writeAll("switch (");
+
+        if (condition_ty.toIntern() != lowered_condition_ty.toIntern()) {
+            try w.writeByte('(');
+            try f.renderType(w, lowered_condition_ty);
+            try w.writeByte(')');
+        }
+        try f.writeCValue(w, condition, .other);
+        try w.writeAll(") {");
+        f.indent();
     }
-    try f.writeCValue(w, condition, .other);
-    try w.writeAll(") {");
-    f.indent();
 
     const liveness = try f.liveness.getSwitchBr(gpa, inst, switch_br.cases_len + 1);
     defer gpa.free(liveness.deaths);
 
-    var any_range_cases = false;
-    var it = switch_br.iterateCases();
-    while (it.next()) |case| {
-        if (case.ranges.len > 0) {
-            any_range_cases = true;
-            continue;
-        }
-        for (case.items) |item| {
-            try f.newline();
-            try w.writeAll("case ");
-            const item_value = try f.air.value(item, pt);
-            // If `item_value` is a pointer with a known integer address, print the address
-            // with no cast to avoid a warning.
-            write_val: {
-                if (condition_ty.isPtrAtRuntime(zcu)) {
-                    if (item_value.?.getUnsignedInt(zcu)) |item_int| {
-                        try w.print("{f}", .{try f.fmtIntLiteralDec(try pt.intValue(lowered_condition_ty, item_int))});
-                        break :write_val;
-                    }
-                }
-                if (condition_ty.isPtrAtRuntime(zcu)) {
-                    try w.writeByte('(');
-                    try f.renderType(w, .usize);
-                    try w.writeByte(')');
-                }
-                try f.dg.renderValue(w, (try f.air.value(item, pt)).?, .other);
-            }
-            try w.writeByte(':');
-        }
-        try w.writeAll(" {");
-        f.indent();
-        try f.newline();
-        if (is_dispatch_loop) {
-            try w.print("zig_switch_{d}_dispatch_{d}:;", .{ @intFromEnum(inst), case.idx });
-            try f.newline();
-        }
-        try genBodyResolveState(f, inst, liveness.deaths[case.idx], case.body, true);
-        try f.outdent();
-        try w.writeByte('}');
-        if (f.dg.expected_block) |_|
-            return f.fail("runtime code not allowed in naked function", .{});
-
-        // The case body must be noreturn so we don't need to insert a break.
-    }
-
-    const else_body = it.elseBody();
-    try f.newline();
-
-    try w.writeAll("default: ");
-    if (any_range_cases) {
-        // We will iterate the cases again to handle those with ranges, and generate
-        // code using conditions rather than switch cases for such cases.
-        it = switch_br.iterateCases();
+    if (use_if_else) {
+        var it = switch_br.iterateCases();
+        var case_i: u32 = 0;
         while (it.next()) |case| {
-            if (case.ranges.len == 0) continue; // handled above
-
+            if (case_i != 0) {
+                try w.writeAll(" else ");
+            }
             try w.writeAll("if (");
             for (case.items, 0..) |item, item_i| {
                 if (item_i != 0) try w.writeAll(" || ");
-                try f.writeCValue(w, condition, .other);
-                try w.writeAll(" == ");
-                try f.dg.renderValue(w, (try f.air.value(item, pt)).?, .other);
+                try writeSwitchCmpBuiltin(f, w, condition, condition_ty, item, is_big, .eq);
             }
             for (case.ranges, 0..) |range, range_i| {
                 if (case.items.len != 0 or range_i != 0) try w.writeAll(" || ");
-                // "(x >= lower && x <= upper)"
                 try w.writeByte('(');
-                try f.writeCValue(w, condition, .other);
-                try w.writeAll(" >= ");
-                try f.dg.renderValue(w, (try f.air.value(range[0], pt)).?, .other);
+                try writeSwitchCmpBuiltin(f, w, condition, condition_ty, range[0], is_big, .gte);
                 try w.writeAll(" && ");
-                try f.writeCValue(w, condition, .other);
-                try w.writeAll(" <= ");
-                try f.dg.renderValue(w, (try f.air.value(range[1], pt)).?, .other);
+                try writeSwitchCmpBuiltin(f, w, condition, condition_ty, range[1], is_big, .lte);
                 try w.writeByte(')');
             }
             try w.writeAll(") {");
             f.indent();
             try f.newline();
             if (is_dispatch_loop) {
-                try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), case.idx });
+                try w.print("zig_switch_{d}_dispatch_{d}:;", .{ @intFromEnum(inst), case.idx });
+                try f.newline();
             }
             try genBodyResolveState(f, inst, liveness.deaths[case.idx], case.body, true);
             try f.outdent();
             try w.writeByte('}');
             if (f.dg.expected_block) |_|
                 return f.fail("runtime code not allowed in naked function", .{});
+            case_i += 1;
         }
-    }
-    if (is_dispatch_loop) {
-        try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), switch_br.cases_len });
-    }
-    if (else_body.len > 0) {
-        // Note that this must be the last case, so we do not need to use `genBodyResolveState` since
-        // the parent block will do it (because the case body is noreturn).
-        for (liveness.deaths[liveness.deaths.len - 1]) |death| {
-            try die(f, inst, death.toRef());
+
+        const else_body = it.elseBody();
+        if (case_i != 0) {
+            try w.writeAll(" else ");
         }
-        try genBody(f, else_body);
-        if (f.dg.expected_block) |_|
-            return f.fail("runtime code not allowed in naked function", .{});
-    } else try airUnreach(f);
-    try f.newline();
-    try f.outdent();
-    try w.writeAll("}\n");
+        try w.writeByte('{');
+        f.indent();
+        try f.newline();
+        if (is_dispatch_loop) {
+            try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), switch_br.cases_len });
+        }
+        if (else_body.len > 0) {
+            for (liveness.deaths[liveness.deaths.len - 1]) |death| {
+                try die(f, inst, death.toRef());
+            }
+            try genBody(f, else_body);
+            if (f.dg.expected_block) |_|
+                return f.fail("runtime code not allowed in naked function", .{});
+        } else try airUnreach(f);
+        try f.newline();
+        try f.outdent();
+        try w.writeAll("}\n");
+    } else {
+        var any_range_cases = false;
+        var it = switch_br.iterateCases();
+        while (it.next()) |case| {
+            if (case.ranges.len > 0) {
+                any_range_cases = true;
+                continue;
+            }
+            for (case.items) |item| {
+                try f.newline();
+                try w.writeAll("case ");
+                const item_value = try f.air.value(item, pt);
+                // If `item_value` is a pointer with a known integer address, print the address
+                // with no cast to avoid a warning.
+                write_val: {
+                    if (condition_ty.isPtrAtRuntime(zcu)) {
+                        if (item_value.?.getUnsignedInt(zcu)) |item_int| {
+                            try w.print("{f}", .{try f.fmtIntLiteralDec(try pt.intValue(lowered_condition_ty, item_int))});
+                            break :write_val;
+                        }
+                    }
+                    if (condition_ty.isPtrAtRuntime(zcu)) {
+                        try w.writeByte('(');
+                        try f.renderType(w, .usize);
+                        try w.writeByte(')');
+                    }
+                    try f.dg.renderValue(w, (try f.air.value(item, pt)).?, .other);
+                }
+                try w.writeByte(':');
+            }
+            try w.writeAll(" {");
+            f.indent();
+            try f.newline();
+            if (is_dispatch_loop) {
+                try w.print("zig_switch_{d}_dispatch_{d}:;", .{ @intFromEnum(inst), case.idx });
+                try f.newline();
+            }
+            try genBodyResolveState(f, inst, liveness.deaths[case.idx], case.body, true);
+            try f.outdent();
+            try w.writeByte('}');
+            if (f.dg.expected_block) |_|
+                return f.fail("runtime code not allowed in naked function", .{});
+
+            // The case body must be noreturn so we don't need to insert a break.
+        }
+
+        const else_body = it.elseBody();
+        try f.newline();
+
+        try w.writeAll("default: ");
+        if (any_range_cases) {
+            // We will iterate the cases again to handle those with ranges, and generate
+            // code using conditions rather than switch cases for such cases.
+            it = switch_br.iterateCases();
+            while (it.next()) |case| {
+                if (case.ranges.len == 0) continue; // handled above
+
+                try w.writeAll("if (");
+                for (case.items, 0..) |item, item_i| {
+                    if (item_i != 0) try w.writeAll(" || ");
+                    try f.writeCValue(w, condition, .other);
+                    try w.writeAll(" == ");
+                    try f.dg.renderValue(w, (try f.air.value(item, pt)).?, .other);
+                }
+                for (case.ranges, 0..) |range, range_i| {
+                    if (case.items.len != 0 or range_i != 0) try w.writeAll(" || ");
+                    // "(x >= lower && x <= upper)"
+                    try w.writeByte('(');
+                    try f.writeCValue(w, condition, .other);
+                    try w.writeAll(" >= ");
+                    try f.dg.renderValue(w, (try f.air.value(range[0], pt)).?, .other);
+                    try w.writeAll(" && ");
+                    try f.writeCValue(w, condition, .other);
+                    try w.writeAll(" <= ");
+                    try f.dg.renderValue(w, (try f.air.value(range[1], pt)).?, .other);
+                    try w.writeByte(')');
+                }
+                try w.writeAll(") {");
+                f.indent();
+                try f.newline();
+                if (is_dispatch_loop) {
+                    try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), case.idx });
+                }
+                try genBodyResolveState(f, inst, liveness.deaths[case.idx], case.body, true);
+                try f.outdent();
+                try w.writeByte('}');
+                if (f.dg.expected_block) |_|
+                    return f.fail("runtime code not allowed in naked function", .{});
+            }
+        }
+        if (is_dispatch_loop) {
+            try w.print("zig_switch_{d}_dispatch_{d}: ", .{ @intFromEnum(inst), switch_br.cases_len });
+        }
+        if (else_body.len > 0) {
+            // Note that this must be the last case, so we do not need to use `genBodyResolveState` since
+            // the parent block will do it (because the case body is noreturn).
+            for (liveness.deaths[liveness.deaths.len - 1]) |death| {
+                try die(f, inst, death.toRef());
+            }
+            try genBody(f, else_body);
+            if (f.dg.expected_block) |_|
+                return f.fail("runtime code not allowed in naked function", .{});
+        } else try airUnreach(f);
+        try f.newline();
+        try f.outdent();
+        try w.writeAll("}\n");
+    }
+}
+
+/// Produces `zig_cmp_<type>(condition, value) <op> 0`
+fn writeSwitchCmpBuiltin(
+    f: *Function,
+    w: *Writer,
+    condition: CValue,
+    condition_ty: Type,
+    item: Air.Inst.Ref,
+    is_big: bool,
+    operator: enum { eq, gte, lte },
+) !void {
+    const pt = f.dg.pt;
+    try w.writeAll("zig_cmp_");
+    try f.dg.renderTypeForBuiltinFnName(w, condition_ty);
+    try w.writeByte('(');
+    if (is_big) try w.writeByte('&');
+    try f.writeCValue(w, condition, .other);
+    try w.writeAll(", ");
+    if (is_big) try w.writeByte('&');
+    try f.dg.renderValue(w, (try f.air.value(item, pt)).?, .other);
+    try f.dg.renderBuiltinInfo(w, condition_ty, if (is_big) .bits else .none);
+    try w.writeAll(") ");
+    try w.writeAll(switch (operator) {
+        .eq => "== ",
+        .gte => ">= ",
+        .lte => "<= ",
+    });
+    try w.print("{f}", .{try f.fmtIntLiteralDec(try pt.intValue(.i32, 0))});
 }
 
 fn asmInputNeedsLocal(f: *Function, constraint: []const u8, value: CValue) bool {
