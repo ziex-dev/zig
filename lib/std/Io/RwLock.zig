@@ -50,16 +50,20 @@ pub fn lockUncancelable(rl: *RwLock, io: Io) void {
 
 pub fn lock(rl: *RwLock, io: Io) Io.Cancelable!void {
     _ = @atomicRmw(usize, &rl.state, .Add, writer, .seq_cst);
-    rl.mutex.lock(io) catch {
-        _ = @atomicRmw(usize, &rl.state, .Sub, writer, .seq_cst);
-        return error.Canceled;
+    rl.mutex.lock(io) catch |err| switch (err) {
+        error.Canceled => {
+            _ = @atomicRmw(usize, &rl.state, .Sub, writer, .seq_cst);
+            return error.Canceled;
+        },
     };
 
     const state = @atomicRmw(usize, &rl.state, .Add, is_writing -% writer, .seq_cst);
     if (state & reader_mask != 0)
-        rl.semaphore.wait(io) catch {
-            rl.unlock(io);
-            return error.Canceled;
+        rl.semaphore.wait(io) catch |err| switch (err) {
+            error.Canceled => {
+                rl.unlock(io);
+                return error.Canceled;
+            },
         };
 }
 
@@ -280,20 +284,22 @@ test "concurrent access" {
 }
 
 test "lock canceling" {
-    if (builtin.single_threaded) return;
-
     const io = testing.io;
 
     var rl: Io.RwLock = .init;
 
     rl.lockSharedUncancelable(io);
-    var sfuture = try io.concurrent(semaphoreLockCancel, .{ &rl, io });
+    var sfuture = io.concurrent(semaphoreLockCancel, .{ &rl, io }) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
     try std.testing.expectEqual(error.Canceled, sfuture.cancel(io));
     rl.unlockShared(io);
     try testing.expectEqual(rl, Io.RwLock.init);
 
     rl.lockUncancelable(io);
-    var mfuture = try io.concurrent(mutexLockCancel, .{ &rl, io });
+    var mfuture = io.concurrent(mutexLockCancel, .{ &rl, io }) catch |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+    };
     try std.testing.expectEqual(error.Canceled, mfuture.cancel(io));
     rl.unlock(io);
     try testing.expectEqual(rl, Io.RwLock.init);
