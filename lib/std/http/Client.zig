@@ -18,6 +18,8 @@ const mem = std.mem;
 const Uri = std.Uri;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
+const native_os = builtin.os.tag;
+const posix = std.posix;
 const Writer = std.Io.Writer;
 const Reader = std.Io.Reader;
 const HostName = std.Io.net.HostName;
@@ -1615,7 +1617,41 @@ pub fn connect(
     return connection;
 }
 
-pub const RequestError = ConnectTcpError || error{
+pub const SetTimeoutError = posix.SetSockOptError;
+
+/// Apply SO_RCVTIMEO and SO_SNDTIMEO socket options from an `Io.Timeout`.
+/// Works transparently with both plain and TLS connections.
+fn setSocketTimeout(connection: *Connection, timeout: Io.Timeout, io: Io) SetTimeoutError!void {
+    const duration = timeout.toDurationFromNow(io) orelse return;
+    const ns = duration.raw.nanoseconds;
+    if (ns <= 0) return;
+
+    const fd = connection.getStream().socket.handle;
+
+    if (native_os == .windows) {
+        // Windows SO_RCVTIMEO/SO_SNDTIMEO take a DWORD in milliseconds.
+        const ms: u32 = @intCast(@min(
+            @divTrunc(ns, std.time.ns_per_ms),
+            std.math.maxInt(u32),
+        ));
+        const opt = std.mem.asBytes(&ms);
+        try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.RCVTIMEO, opt);
+        try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.SNDTIMEO, opt);
+    } else {
+        // POSIX platforms use struct timeval.
+        const sec: i64 = @intCast(@divTrunc(ns, std.time.ns_per_s));
+        const usec: i64 = @intCast(@divTrunc(@rem(ns, std.time.ns_per_s), std.time.ns_per_us));
+        const tv = posix.timeval{
+            .sec = @intCast(sec),
+            .usec = @intCast(usec),
+        };
+        const opt = std.mem.asBytes(&tv);
+        try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.RCVTIMEO, opt);
+        try posix.setsockopt(fd, posix.SOL.SOCKET, posix.SO.SNDTIMEO, opt);
+    }
+}
+
+pub const RequestError = ConnectTcpError || SetTimeoutError || error{
     UnsupportedUriScheme,
     UriMissingHost,
     CertificateBundleLoadFailure,
@@ -1646,6 +1682,11 @@ pub const RequestOptions = struct {
 
     /// Must be an already acquired connection.
     connection: ?*Connection = null,
+
+    /// Timeout for socket read/write operations. Applies to `receiveHead()`
+    /// and body reads via `SO_RCVTIMEO`/`SO_SNDTIMEO`. Also used as the
+    /// connect timeout when establishing a new connection.
+    timeout: Io.Timeout = .none,
 
     /// Standard headers that have default, but overridable, behavior.
     headers: Request.Headers = .{},
@@ -1714,6 +1755,13 @@ pub fn request(
         break :c try client.connect(host_name, uriPort(uri, protocol), protocol);
     };
 
+    // Apply socket-level read/write timeouts. These apply transparently
+    // to both plain and TLS connections since TLS reads/writes use the
+    // underlying socket. Also applies to pooled connections on reuse.
+    if (options.timeout != .none) {
+        try setSocketTimeout(connection, options.timeout, io);
+    }
+
     return .{
         .uri = uri,
         .client = client,
@@ -1751,6 +1799,11 @@ pub const FetchOptions = struct {
     payload: ?[]const u8 = null,
     raw_uri: bool = false,
     keep_alive: bool = true,
+
+    /// Timeout for socket read/write operations. Applies to `receiveHead()`
+    /// and body reads via `SO_RCVTIMEO`/`SO_SNDTIMEO`. Also used as the
+    /// connect timeout when establishing a new connection.
+    timeout: Io.Timeout = .none,
 
     /// Standard headers that have default, but overridable, behavior.
     headers: Request.Headers = .{},
@@ -1800,6 +1853,7 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
         .extra_headers = options.extra_headers,
         .privileged_headers = options.privileged_headers,
         .keep_alive = options.keep_alive,
+        .timeout = options.timeout,
     });
     defer req.deinit();
 
