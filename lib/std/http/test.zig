@@ -1256,3 +1256,52 @@ test "redirect to different connection" {
         try expectEqualStrings("good job, you pass", body);
     }
 }
+
+test "request with timeout returns error on stalled server" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest;
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest;
+
+    const io = std.testing.io;
+
+    // Server that accepts a connection but never sends a response.
+    const test_server = try createTestServer(io, struct {
+        fn run(test_server: *TestServer) anyerror!void {
+            const net_server = &test_server.net_server;
+            var stream = try net_server.accept(io);
+            defer stream.close(io);
+
+            // Stall until the test server is shut down.
+            while (!test_server.shutting_down) {
+                std.Thread.sleep(10 * std.time.ns_per_ms);
+            }
+        }
+    });
+    defer test_server.destroy();
+
+    const gpa = std.testing.allocator;
+
+    var client: http.Client = .{
+        .allocator = gpa,
+        .io = io,
+    };
+    defer client.deinit();
+
+    var loc_buf: [100]u8 = undefined;
+    const location = try std.fmt.bufPrint(&loc_buf, "http://127.0.0.1:{d}/stall", .{
+        test_server.port(),
+    });
+    const uri = try std.Uri.parse(location);
+
+    // Use a short timeout (100ms) so the test doesn't hang.
+    var req = try client.request(.GET, uri, .{
+        .timeout = .{ .duration = .{ .raw = Io.Duration.fromMilliseconds(100), .clock = .realtime } },
+    });
+    defer req.deinit();
+
+    try req.sendBodiless();
+
+    // receiveHead should fail because the server never responds and the
+    // socket read times out.
+    const result = req.receiveHead(&.{});
+    try expectError(error.ReadFailed, result);
+}
