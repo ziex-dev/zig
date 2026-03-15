@@ -3436,6 +3436,7 @@ pub const STARTF_USESIZE = 0x00000002;
 pub const STARTF_USESTDHANDLES = 0x00000100;
 
 pub const THREAD_START_ROUTINE = fn (LPVOID) callconv(.winapi) DWORD;
+pub const USER_THREAD_START_ROUTINE = fn (LPVOID) callconv(.winapi) NTSTATUS;
 
 pub const SYSTEM_INFO = extern struct {
     anon1: extern union {
@@ -4918,9 +4919,7 @@ pub const PF = enum(DWORD) {
     /// The SSSE3 instruction set is available.
     SSSE3_INSTRUCTIONS_AVAILABLE = 36,
 
-    /// The SSE4_1 instruction set is available.
-    SSE4_1_INSTRUCTIONS_AVAILABLE = 37,
-
+    /// The SSE4_1 instruction set is available.    SSE4_1_INSTRUCTIONS_AVAILABLE = 37,
     /// The SSE4_2 instruction set is available.
     SSE4_2_INSTRUCTIONS_AVAILABLE = 38,
 
@@ -5176,3 +5175,19 @@ fn relocateCsrssAddress(addr: u64) *const anyopaque {
     const offset: usize = @intCast(addr - peb().CsrServerReadOnlySharedMemoryBase);
     return base + offset;
 }
+
+// TODO: inf: Find a better place
+pub const PS_ATTRIBUTE = extern struct {
+    Attribute: ULONG_PTR,
+    Size: SIZE_T,
+    u: extern union {
+        Value: ULONG_PTR,
+        ValuePtr: PVOID,
+    },
+    ReturnLength: ?*SIZE_T,
+};
+
+pub const PS_ATTRIBUTE_LIST = extern struct {
+    TotalLength: SIZE_T,
+    Attributes: [1]PS_ATTRIBUTE,
+};

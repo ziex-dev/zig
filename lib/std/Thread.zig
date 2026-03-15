@@ -405,14 +405,19 @@ const Completion = std.atomic.Value(enum(if (builtin.zig_backend == .stage2_risc
 /// Performs implementation-agnostic thread setup (`maybeAttachSignalStack`), then calls the given
 /// thread entry point `f` with `args` and handles the result.
 fn callFn(comptime f: anytype, args: anytype) switch (Impl) {
-    WindowsThreadImpl => windows.DWORD,
+    WindowsThreadImpl => windows.NTSTATUS,
     LinuxThreadImpl => u8,
     PosixThreadImpl => ?*anyopaque,
     else => unreachable,
 } {
     maybeAttachSignalStack();
 
-    const default_value = if (Impl == PosixThreadImpl) null else 0;
+    const default_value = switch (Impl) {
+        WindowsThreadImpl => .SUCCESS,
+        LinuxThreadImpl => 0,
+        PosixThreadImpl => null,
+        else => unreachable,
+    };
     const bad_fn_ret = "expected return type of startFn to be 'u8', 'noreturn', '!noreturn', 'void', or '!void'";
 
     switch (@typeInfo(@typeInfo(@TypeOf(f)).@"fn".return_type.?)) {
@@ -526,7 +531,7 @@ const WindowsThreadImpl = struct {
             fn_args: Args,
             thread: ThreadCompletion,
 
-            fn entryFn(raw_ptr: windows.PVOID) callconv(.winapi) windows.DWORD {
+            fn entryFn(raw_ptr: windows.PVOID) callconv(.winapi) windows.NTSTATUS {
                 const self: *@This() = @ptrCast(@alignCast(raw_ptr));
                 defer switch (self.thread.completion.swap(.completed, .seq_cst)) {
                     .running => {},
@@ -558,18 +563,22 @@ const WindowsThreadImpl = struct {
         // Going lower makes it default to that specified in the executable (~1mb).
         // Its also fine if the limit here is incorrect as stack size is only a hint.
         const stack_size = @max(64 * 1024, std.math.lossyCast(u32, config.stack_size));
+        var thread_handle: windows.HANDLE = undefined;
 
-        instance.thread.thread_handle = windows.kernel32.CreateThread(
-            null,
-            stack_size,
-            Instance.entryFn,
-            instance,
-            0,
-            null,
-        ) orelse {
-            const errno = windows.GetLastError();
-            return windows.unexpectedError(errno);
-        };
+        // NOTE: The closest user-mode equivalent to NtCreateThreadEx is CreateRemoteThreadEx.
+        // It internally creates the thread with THREAD_CREATE_FLAGS_CREATE_SUSPENDED
+        // so it can work with the activation context.
+        // We do not do this because we do not use client_id.
+        // NOTE: The original user-mode implementation (CreateRemoteThreadEx)
+        // also handles STACK_SIZE_PARAM_IS_A_RESERVATION, which determines
+        // whether the stack size is committed or reserved.
+        // We do not handle this flag and always commit the stack size.
+        switch (windows.ntdll.NtCreateThreadEx(&thread_handle, .{ .MAXIMUM_ALLOWED = true }, &.{}, windows.GetCurrentProcess(), Instance.entryFn, instance, 0, 0, stack_size, 0, null)) {
+            .SUCCESS => {
+                instance.thread.thread_handle = thread_handle;
+            },
+            else => |status| return windows.unexpectedStatus(status),
+        }
 
         return Impl{ .thread = &instance.thread };
     }

@@ -55,6 +55,9 @@ const UNWIND_HISTORY_TABLE = windows.UNWIND_HISTORY_TABLE;
 const USHORT = windows.USHORT;
 const VECTORED_EXCEPTION_HANDLER = windows.VECTORED_EXCEPTION_HANDLER;
 const WORD = windows.WORD;
+const USER_THREAD_START_ROUTINE = windows.USER_THREAD_START_ROUTINE;
+const PS_ATTRIBUTE = windows.PS_ATTRIBUTE;
+const PS_ATTRIBUTE_LIST = windows.PS_ATTRIBUTE_LIST;
 
 // ref: km/ntifs.h
 
@@ -759,3 +762,5 @@ pub extern "ntdll" fn NtLoadKeyEx(
     RootHandle: ?*HANDLE,
     Reserved: ?*anyopaque,
 ) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn NtCreateThreadEx(ThreadHandle: *HANDLE, DesiredAccess: ACCESS_MASK, ObjectAttributes: *const OBJECT.ATTRIBUTES, ProcessHandle: HANDLE, StartRoutine: *const USER_THREAD_START_ROUTINE, Argument: ?PVOID, CreateFlags: ULONG, ZeroBits: SIZE_T, StackSize: SIZE_T, MaximumStackSize: SIZE_T, AttributeList: ?*PS_ATTRIBUTE_LIST) callconv(.winapi) NTSTATUS;
