@@ -1270,10 +1270,10 @@ test "request with timeout returns error on stalled server" {
             var stream = try net_server.accept(io);
             defer stream.close(io);
 
-            // Stall until the test server is shut down.
-            while (!test_server.shutting_down) {
-                std.Thread.sleep(10 * std.time.ns_per_ms);
-            }
+            // Block until destroy() connects a dummy stream, causing this
+            // second accept to return and the thread to exit cleanly.
+            var dummy = try net_server.accept(io);
+            dummy.close(io);
         }
     });
     defer test_server.destroy();
@@ -1294,7 +1294,7 @@ test "request with timeout returns error on stalled server" {
 
     // Use a short timeout (100ms) so the test doesn't hang.
     var req = try client.request(.GET, uri, .{
-        .timeout = .{ .duration = .{ .raw = Io.Duration.fromMilliseconds(100), .clock = .realtime } },
+        .timeout = .{ .duration = .{ .raw = Io.Duration.fromMilliseconds(100), .clock = .real } },
     });
     defer req.deinit();
 
