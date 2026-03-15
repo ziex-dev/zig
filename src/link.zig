@@ -502,6 +502,8 @@ pub const File = struct {
         force_load_objc: bool,
         /// Whether local symbols should be discarded from the symbol table.
         discard_local_symbols: bool,
+        /// Suppress all linker warnings
+        suppress_warnings: bool,
 
         /// Windows-specific linker flags:
         /// PDB source path prefix to instruct the linker how to resolve relative

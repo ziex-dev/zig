@@ -138,6 +138,8 @@ no_implicit_dylibs: bool = false,
 force_load_objc: bool = true,
 /// Whether local symbols should be discarded from the symbol table.
 discard_local_symbols: bool = false,
+/// Suppress all linker warnings
+suppress_warnings: bool = false,
 
 /// Hot-code swapping state.
 hot_state: if (is_hot_update_compatible) HotUpdateState else struct {} = .{},
@@ -216,6 +218,7 @@ pub fn createEmpty(
         .framework_dirs = options.framework_dirs,
         .force_load_objc = options.force_load_objc,
         .discard_local_symbols = options.discard_local_symbols,
+        .suppress_warnings = options.suppress_warnings,
     };
     errdefer self.base.destroy();
 
@@ -725,6 +728,10 @@ fn dumpArgv(self: *MachO, comp: *Compilation) !void {
 
         if (self.force_load_objc) {
             try argv.append("-ObjC");
+        }
+
+        if (self.suppress_warnings) {
+            try argv.append("-w");
         }
 
         if (self.discard_local_symbols) {
