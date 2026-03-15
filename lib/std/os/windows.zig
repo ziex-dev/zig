@@ -23,6 +23,22 @@ pub const nls = @import("windows/nls.zig");
 
 pub const current_process: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -1))));
 
+pub const PS = struct {
+    pub const ATTRIBUTE = extern struct {
+        Attribute: ULONG_PTR,
+        Size: SIZE_T,
+        u: extern union {
+            Value: ULONG_PTR,
+            ValuePtr: PVOID,
+        },
+        ReturnLength: ?*SIZE_T,
+        pub const LIST = extern struct {
+            TotalLength: SIZE_T,
+            Attributes: [1]ATTRIBUTE,
+        };
+    };
+};
+
 pub const OBJECT = struct {
     // ref: um/winternl.h
 
@@ -1250,6 +1266,23 @@ pub const THREAD = struct {
         AffinityMask: KAFFINITY,
         Priority: KPRIORITY,
         BasePriority: KPRIORITY,
+    };
+
+    pub const CREATE_FLAGS = packed struct(ULONG) {
+        CREATE_SUSPENDED: bool = false,
+        SKIP_THREAD_ATTACH: bool = false,
+        HIDE_FROM_DEBUGGER: bool = false,
+        LOADER_WORKER: bool = false,
+        SKIP_LOADER_INIT: bool = false,
+        BYPASS_PROCESS_FREEZE: bool = false,
+        Reserved6: u26 = 0,
+
+        pub const NONE: CREATE_FLAGS = .{};
+    };
+
+    pub const StackSize = enum(SIZE_T) {
+        default = 0,
+        _,
     };
 };
 
@@ -5177,19 +5210,3 @@ fn relocateCsrssAddress(addr: u64) *const anyopaque {
     const offset: usize = @intCast(addr - peb().CsrServerReadOnlySharedMemoryBase);
     return base + offset;
 }
-
-pub const PS = struct {
-    pub const ATTRIBUTE = extern struct {
-        Attribute: ULONG_PTR,
-        Size: SIZE_T,
-        u: extern union {
-            Value: ULONG_PTR,
-            ValuePtr: PVOID,
-        },
-        ReturnLength: ?*SIZE_T,
-        pub const LIST = extern struct {
-            TotalLength: SIZE_T,
-            Attributes: [1]ATTRIBUTE,
-        };
-    };
-};

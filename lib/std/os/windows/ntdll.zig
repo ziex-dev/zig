@@ -769,9 +769,9 @@ pub extern "ntdll" fn NtCreateThreadEx(
     ProcessHandle: HANDLE,
     StartRoutine: *const USER_THREAD_START_ROUTINE,
     Argument: ?PVOID,
-    CreateFlags: ULONG,
+    CreateFlags: THREAD.CREATE_FLAGS,
     ZeroBits: SIZE_T,
-    StackSize: SIZE_T,
-    MaximumStackSize: SIZE_T,
+    StackSize: THREAD.StackSize,
+    MaximumStackSize: THREAD.StackSize,
     AttributeList: ?*PS.ATTRIBUTE.LIST,
 ) callconv(.winapi) NTSTATUS;

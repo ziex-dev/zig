@@ -565,14 +565,9 @@ const WindowsThreadImpl = struct {
         const stack_size = @max(64 * 1024, std.math.lossyCast(u32, config.stack_size));
         var thread_handle: windows.HANDLE = undefined;
 
-        // NOTE: About CreateRemoteThreadEx
-        // It internally creates the thread with THREAD_CREATE_FLAGS_CREATE_SUSPENDED
-        // so it can work with the activation context.
-        // We do not do this because we do not use client_id.
-        // The original kernel32 implementation
-        // also handles STACK_SIZE_PARAM_IS_A_RESERVATION, which determines
-        // whether the stack size is committed or reserved.
-        // We do not handle this flag and always commit the stack size.
+        // NOTE: Essentially a rebuild of CreateRemoteThreadEx without flag support
+        // - https://github.com/wine-mirror/wine/blob/3d128be6400b3869119d293d0c8fa9e7702978f8/dlls/kernelbase/thread.c#L85
+        // - https://codeberg.org/ziglang/zig/pulls/31519
         switch (windows.ntdll.NtCreateThreadEx(
             &thread_handle,
             .{ .MAXIMUM_ALLOWED = true },
@@ -580,10 +575,10 @@ const WindowsThreadImpl = struct {
             windows.GetCurrentProcess(),
             Instance.entryFn,
             instance,
+            .NONE,
             0,
-            0,
-            stack_size,
-            0,
+            @enumFromInt(stack_size),
+            .default,
             null,
         )) {
             .SUCCESS => {
