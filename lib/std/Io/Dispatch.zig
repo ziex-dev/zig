@@ -434,6 +434,7 @@ pub fn io(ev: *Evented) Io {
             .unlockStderr = unlockStderr,
             .processCurrentPath = processCurrentPath,
             .processSetCurrentDir = processSetCurrentDir,
+            .processSetCurrentPath = processSetCurrentPath,
             .processReplace = processReplace,
             .processReplacePath = processReplacePath,
             .processSpawn = processSpawn,
@@ -458,7 +459,6 @@ pub fn io(ev: *Evented) Io {
             .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
             .netSend = netSendUnavailable,
-            .netReceive = netReceiveUnavailable,
             .netRead = netReadUnavailable,
             .netWrite = netWriteUnavailable,
             .netWriteFile = netWriteFileUnavailable,
@@ -1331,7 +1331,7 @@ const Group = struct {
         evented: *Evented,
         group: Group,
         fiber: *Fiber,
-        start: *const fn (context: *const anyopaque) Io.Cancelable!void,
+        start: *const fn (context: *const anyopaque) void,
 
         fn fromFiber(fiber: *Fiber) *Group.AsyncClosure {
             return @ptrFromInt(Fiber.max_context_align.max(.of(Group.AsyncClosure)).backward(
@@ -1370,11 +1370,7 @@ const Group = struct {
             const ev = closure.evented;
             const fiber = closure.fiber;
             message.handle(ev);
-            if (closure.start(closure.contextPointer())) {
-                assert(!fiber.cancel_protection.acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
-            } else |err| switch (err) {
-                error.Canceled => assert(fiber.cancel_protection.acknowledged), // group task returned `error.Canceled` but was never canceled
-            }
+            closure.start(closure.contextPointer());
             if (closure.group.removeFiber(ev, fiber)) |awaiter| ev.queue.async(awaiter, &Fiber.@"resume");
             ev.yield(.destroy);
             unreachable; // switched to dead fiber
@@ -1387,28 +1383,11 @@ fn groupAsync(
     type_erased: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
+    start: *const fn (context: *const anyopaque) void,
 ) void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     return groupConcurrent(ev, type_erased, context, context_alignment, start) catch {
-        const fiber = Thread.current().currentFiber();
-        const pre_acknowledged = fiber.cancel_protection.acknowledged;
-        const result = start(context.ptr);
-        const post_acknowledged = fiber.cancel_protection.acknowledged;
-        if (result) {
-            if (pre_acknowledged) {
-                assert(post_acknowledged); // group task called `recancel` but was not canceled
-            } else {
-                assert(!post_acknowledged); // group task acknowledged cancelation but did not return `error.Canceled`
-            }
-        } else |err| switch (err) {
-            // Don't swallow the cancelation: make it visible to the `Group.async` caller.
-            error.Canceled => {
-                assert(!pre_acknowledged); // group task called `recancel` but was not canceled
-                assert(post_acknowledged); // group task returned `error.Canceled` but was never canceled
-                fiber.cancel_protection.recancel();
-            },
-        }
+        start(context.ptr);
     };
 }
 
@@ -1417,7 +1396,7 @@ fn groupConcurrent(
     type_erased: *Io.Group,
     context: []const u8,
     context_alignment: Alignment,
-    start: *const fn (context: *const anyopaque) Io.Cancelable!void,
+    start: *const fn (context: *const anyopaque) void,
 ) Io.ConcurrentError!void {
     assert(context_alignment.compare(.lte, Fiber.max_context_align)); // TODO
     assert(context.len <= Fiber.max_context_size); // TODO
@@ -1734,6 +1713,7 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
             },
         },
         .device_io_control => |*o| return .{ .device_io_control = try deviceIoControl(o) },
+        .net_receive => @panic("TODO implement net_receive operation"),
     }
 }
 
@@ -2154,6 +2134,7 @@ fn batchDrainSubmitted(
                     break :result null;
                 },
                 .device_io_control => {},
+                .net_receive => @panic("TODO implement batched net_receive"),
             };
             if (concurrency) return error.ConcurrencyUnavailable;
             break :result try operate(ev, storage.submission.operation);
@@ -2212,6 +2193,7 @@ fn batchSourceEvent(context: ?*anyopaque) callconv(.c) void {
             } };
         },
         .device_io_control => unreachable,
+        .net_receive => @panic("TODO implement batched net_receive"),
     };
 
     switch (pending.node.prev) {
@@ -4067,7 +4049,7 @@ fn processSetCurrentDir(userdata: ?*anyopaque, dir: Dir) process.SetCurrentDirEr
     };
 }
 
-fn processSetCurrentPath(userdata: ?*anyopaque, dir_path: []const u8) ChdirError!void {
+fn processSetCurrentPath(userdata: ?*anyopaque, dir_path: []const u8) process.SetCurrentPathError!void {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     _ = ev;
     var path_buffer: [c.PATH_MAX]u8 = undefined;
@@ -4425,10 +4407,7 @@ fn setUpChildIo(
         .close => closeFd(std_fileno),
         .inherit => {},
         .ignore => try ev.dup2(dev_null_fd, std_fileno),
-        .file => |file| {
-            if (file.flags.nonblocking) @panic("TODO implement setUpChildIo when nonblocking file is used");
-            try ev.dup2(file.handle, std_fileno);
-        },
+        .file => |file| try ev.dup2(file.handle, std_fileno),
     }
 }
 
@@ -4892,24 +4871,6 @@ fn netSendUnavailable(
     _ = handle;
     _ = messages;
     _ = flags;
-    return .{ error.NetworkDown, 0 };
-}
-
-fn netReceiveUnavailable(
-    userdata: ?*anyopaque,
-    handle: net.Socket.Handle,
-    message_buffer: []net.IncomingMessage,
-    data_buffer: []u8,
-    flags: net.ReceiveFlags,
-    timeout: Io.Timeout,
-) struct { ?net.Socket.ReceiveTimeoutError, usize } {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = handle;
-    _ = message_buffer;
-    _ = data_buffer;
-    _ = flags;
-    _ = timeout;
     return .{ error.NetworkDown, 0 };
 }
 

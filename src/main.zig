@@ -871,6 +871,7 @@ fn buildOutputType(
     var emit_h: Emit = .no;
     var soname: SOName = undefined;
     var want_compiler_rt: ?bool = null;
+    var zig_cc_explicitly_link_compiler_rt = false;
     var want_ubsan_rt: ?bool = null;
     var linker_script: ?[]const u8 = null;
     var version_script: ?[]const u8 = null;
@@ -979,7 +980,7 @@ fn buildOutputType(
         .dirs = undefined,
         .object_format = null,
         .dynamic_linker = null,
-        .modules = .{},
+        .modules = .empty,
         .opts = .{
             .is_test = switch (arg_mode) {
                 .zig_test, .zig_test_obj => true,
@@ -1006,18 +1007,18 @@ fn buildOutputType(
         .windows_libs = .empty,
         .link_inputs = .empty,
 
-        .c_source_files = .{},
-        .rc_source_files = .{},
+        .c_source_files = .empty,
+        .rc_source_files = .empty,
 
-        .llvm_m_args = .{},
+        .llvm_m_args = .empty,
         .sysroot = null,
-        .lib_directories = .{}, // populated by createModule()
-        .lib_dir_args = .{}, // populated from CLI arg parsing
+        .lib_directories = .empty, // populated by createModule()
+        .lib_dir_args = .empty, // populated from CLI arg parsing
         .libc_installation = null,
         .want_native_include_dirs = false,
-        .frameworks = .{},
-        .framework_dirs = .{},
-        .rpath_list = .{},
+        .frameworks = .empty,
+        .framework_dirs = .empty,
+        .rpath_list = .empty,
         .each_lib_rpath = null,
         .libc_paths_file = EnvVar.ZIG_LIBC.get(environ_map),
         .native_system_include_paths = &.{},
@@ -2001,17 +2002,31 @@ fn buildOutputType(
                                 .name = it.only_arg,
                             } });
                         } else {
-                            try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
-                                .name = it.only_arg,
-                                .query = .{
-                                    .must_link = must_link,
-                                    .needed = needed,
-                                    .weak = false,
-                                    .preferred_mode = lib_preferred_mode,
-                                    .search_strategy = lib_search_strategy,
-                                    .allow_so_scripts = allow_so_scripts,
+                            const compiler_rt_classification = target_util.classifyCompilerRtLibName(it.only_arg);
+                            switch (compiler_rt_classification) {
+                                .only_compiler_rt, .both => {
+                                    // We need this variable separately from `want_compiler_rt` because of
+                                    // invocations such as `zig cc -lcompiler_rt -nostdlib`. If we just set
+                                    // `want_compiler_rt = true` here, processing of the later `-nostdlib`
+                                    // would undo that.
+                                    zig_cc_explicitly_link_compiler_rt = true;
                                 },
-                            } });
+                                .none, .only_libunwind => {},
+                            }
+                            if (compiler_rt_classification != .only_compiler_rt) {
+                                // The case in which this arg wants to link libunwind is handled in createModule.
+                                try create_module.cli_link_inputs.append(arena, .{ .name_query = .{
+                                    .name = it.only_arg,
+                                    .query = .{
+                                        .must_link = must_link,
+                                        .needed = needed,
+                                        .weak = false,
+                                        .preferred_mode = lib_preferred_mode,
+                                        .search_strategy = lib_search_strategy,
+                                        .allow_so_scripts = allow_so_scripts,
+                                    },
+                                } });
+                            }
                         }
                     },
                     .ignore => {},
@@ -3547,7 +3562,7 @@ fn buildOutputType(
         .framework_dirs = create_module.framework_dirs.items,
         .frameworks = resolved_frameworks.items,
         .windows_lib_names = create_module.windows_libs.keys(),
-        .want_compiler_rt = want_compiler_rt,
+        .want_compiler_rt = if (zig_cc_explicitly_link_compiler_rt) true else want_compiler_rt,
         .want_ubsan_rt = want_ubsan_rt,
         .hash_style = hash_style,
         .linker_script = linker_script,
@@ -4688,9 +4703,8 @@ fn cmdTranslateC(
 
     man.hash.add(@as(u16, 0xb945)); // Random number to distinguish translate-c from compiling C objects
     man.hash.add(comp.config.c_frontend);
-    Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err| {
-        fatal("unable to process '{s}': {s}", .{ c_source_file.src_path, @errorName(err) });
-    };
+    Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err|
+        fatal("unable to process '{s}': {t}", .{ c_source_file.src_path, err });
 
     const result: Compilation.CImportResult = if (try man.hit()) .{
         .digest = man.finalBin(),
@@ -4732,11 +4746,8 @@ fn cmdTranslateC(
         const out_zig_path = try fs.path.join(arena, &.{ "o", &hex_digest, translated_basename });
         const zig_file = comp.dirs.local_cache.handle.openFile(io, out_zig_path, .{}) catch |err| {
             const path = comp.dirs.local_cache.path orelse ".";
-            fatal("unable to open cached translated zig file '{s}{s}{s}': {s}", .{
-                path,
-                fs.path.sep_str,
-                out_zig_path,
-                @errorName(err),
+            fatal("unable to open cached translated zig file '{s}{s}{s}': {t}", .{
+                path, fs.path.sep_str, out_zig_path, err,
             });
         };
         defer zig_file.close(io);
@@ -7223,6 +7234,8 @@ fn cmdFetch(
         error.OutOfMemory, error.Canceled => |e| return e,
         error.FetchFailed => {}, // error bundle checked below
     };
+
+    try job_queue.group.await(io);
 
     if (fetch.error_bundle.root_list.items.len > 0) {
         var errors = try fetch.error_bundle.toOwnedBundle("");
