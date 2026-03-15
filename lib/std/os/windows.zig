@@ -4919,7 +4919,9 @@ pub const PF = enum(DWORD) {
     /// The SSSE3 instruction set is available.
     SSSE3_INSTRUCTIONS_AVAILABLE = 36,
 
-    /// The SSE4_1 instruction set is available.    SSE4_1_INSTRUCTIONS_AVAILABLE = 37,
+    /// The SSE4_1 instruction set is available.
+    SSE4_1_INSTRUCTIONS_AVAILABLE = 37,
+
     /// The SSE4_2 instruction set is available.
     SSE4_2_INSTRUCTIONS_AVAILABLE = 38,
 
@@ -5176,18 +5178,18 @@ fn relocateCsrssAddress(addr: u64) *const anyopaque {
     return base + offset;
 }
 
-// TODO: inf: Find a better place
-pub const PS_ATTRIBUTE = extern struct {
-    Attribute: ULONG_PTR,
-    Size: SIZE_T,
-    u: extern union {
-        Value: ULONG_PTR,
-        ValuePtr: PVOID,
-    },
-    ReturnLength: ?*SIZE_T,
-};
-
-pub const PS_ATTRIBUTE_LIST = extern struct {
-    TotalLength: SIZE_T,
-    Attributes: [1]PS_ATTRIBUTE,
+pub const PS = struct {
+    pub const ATTRIBUTE = extern struct {
+        Attribute: ULONG_PTR,
+        Size: SIZE_T,
+        u: extern union {
+            Value: ULONG_PTR,
+            ValuePtr: PVOID,
+        },
+        ReturnLength: ?*SIZE_T,
+        pub const LIST = extern struct {
+            TotalLength: SIZE_T,
+            Attributes: [1]ATTRIBUTE,
+        };
+    };
 };

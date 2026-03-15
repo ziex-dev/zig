@@ -565,15 +565,27 @@ const WindowsThreadImpl = struct {
         const stack_size = @max(64 * 1024, std.math.lossyCast(u32, config.stack_size));
         var thread_handle: windows.HANDLE = undefined;
 
-        // NOTE: The closest user-mode equivalent to NtCreateThreadEx is CreateRemoteThreadEx.
+        // NOTE: About CreateRemoteThreadEx
         // It internally creates the thread with THREAD_CREATE_FLAGS_CREATE_SUSPENDED
         // so it can work with the activation context.
         // We do not do this because we do not use client_id.
-        // NOTE: The original user-mode implementation (CreateRemoteThreadEx)
+        // The original kernel32 implementation
         // also handles STACK_SIZE_PARAM_IS_A_RESERVATION, which determines
         // whether the stack size is committed or reserved.
         // We do not handle this flag and always commit the stack size.
-        switch (windows.ntdll.NtCreateThreadEx(&thread_handle, .{ .MAXIMUM_ALLOWED = true }, &.{}, windows.GetCurrentProcess(), Instance.entryFn, instance, 0, 0, stack_size, 0, null)) {
+        switch (windows.ntdll.NtCreateThreadEx(
+            &thread_handle,
+            .{ .MAXIMUM_ALLOWED = true },
+            &.{},
+            windows.GetCurrentProcess(),
+            Instance.entryFn,
+            instance,
+            0,
+            0,
+            stack_size,
+            0,
+            null,
+        )) {
             .SUCCESS => {
                 instance.thread.thread_handle = thread_handle;
             },
