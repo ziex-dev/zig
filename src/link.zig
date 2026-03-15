@@ -894,6 +894,8 @@ pub const File = struct {
     }
 
     pub fn destroy(base: *File) void {
+        base.endProgress();
+
         const io = base.comp.io;
         base.releaseLock();
         if (base.file) |f| f.close(io);

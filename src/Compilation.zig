@@ -3076,11 +3076,13 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         comp.link_prog_node = main_progress_node.start("Linking", 0);
         lf.startProgress(comp.link_prog_node);
     }
-    defer if (comp.bin_file) |lf| {
-        lf.endProgress();
+    defer {
+        if (comp.bin_file) |lf| {
+            lf.endProgress();
+        }
         comp.link_prog_node.end();
         comp.link_prog_node = .none;
-    };
+    }
 
     try comp.performAllTheWork(main_progress_node, arena);
 
