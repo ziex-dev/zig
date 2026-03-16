@@ -719,10 +719,27 @@ const Cancelable = struct {
     queue: c.dispatch.queue_t,
     cancel: c.dispatch.function_t,
 
-    const is_blocked: c.dispatch.function_t =
-        @ptrFromInt(@typeInfo(c.dispatch.function_t).pointer.alignment * 1);
-    const is_requested: c.dispatch.function_t =
-        @ptrFromInt(@typeInfo(c.dispatch.function_t).pointer.alignment * 2);
+    const fn_ptr_align: u32 = blk: {
+        const info = @typeInfo(c.dispatch.function_t);
+        if (info == .pointer) {
+            if (info.pointer.alignment) |a| {
+                break :blk @intCast(a);
+            } else {
+                break :blk @intCast(@alignOf(info.pointer.child));
+            }
+        } else if (info == .optional) {
+            const p = @typeInfo(info.optional.child).pointer;
+            if (p.alignment) |a| {
+                break :blk @intCast(a);
+            } else {
+                break :blk @intCast(@alignOf(p.child));
+            }
+        } else {
+            @compileError("unexpected type");
+        }
+    };
+    const is_blocked: c.dispatch.function_t = @ptrFromInt(fn_ptr_align * 1);
+    const is_requested: c.dispatch.function_t = @ptrFromInt(fn_ptr_align * 2);
 
     const blocked: Cancelable = .{ .queue = undefined, .cancel = is_blocked };
 
