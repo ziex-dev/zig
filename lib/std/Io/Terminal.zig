@@ -111,7 +111,16 @@ pub fn setColor(t: Terminal, color: Color) SetColorError!void {
         },
         .windows_api => |wa| {
             const windows = std.os.windows;
-            const attributes: windows.WORD = switch (color) {
+
+            if (color == .reset) {
+                var set_text_attribute = windows.CONSOLE.USER_IO.SET_TEXT_ATTRIBUTE(wa.reset_attributes);
+                switch (try set_text_attribute.operate(wa.io, wa.file)) {
+                    .SUCCESS => return,
+                    else => |status| return windows.unexpectedStatus(status),
+                }
+            }
+
+            const base_attributes: windows.WORD = switch (color) {
                 .black => 0,
                 .red => windows.FOREGROUND_RED,
                 .green => windows.FOREGROUND_GREEN,
@@ -131,10 +140,22 @@ pub fn setColor(t: Terminal, color: Color) SetColorError!void {
                 // "dim" is not supported using basic character attributes, but let's still make it do *something*.
                 // This matches the old behavior of TTY.Color before the bright variants were added.
                 .dim => windows.FOREGROUND_INTENSITY,
-                .reset => wa.reset_attributes,
+                .reset => unreachable,
             };
+
+            const FOREGROUND_MASK = windows.FOREGROUND_RED | windows.FOREGROUND_GREEN |
+                windows.FOREGROUND_BLUE | windows.FOREGROUND_INTENSITY;
+
+            var get_console_info = windows.CONSOLE.USER_IO.GET_SCREEN_BUFFER_INFO;
+            const current_attrs = switch (try get_console_info.operate(wa.io, wa.file)) {
+                .SUCCESS => get_console_info.Data.wAttributes,
+                else => wa.reset_attributes,
+            };
+
+            const final_attributes = (current_attrs & ~@as(windows.WORD, FOREGROUND_MASK)) | base_attributes;
+
             try t.writer.flush();
-            var set_text_attribute = windows.CONSOLE.USER_IO.SET_TEXT_ATTRIBUTE(attributes);
+            var set_text_attribute = windows.CONSOLE.USER_IO.SET_TEXT_ATTRIBUTE(final_attributes);
             switch (try set_text_attribute.operate(wa.io, wa.file)) {
                 .SUCCESS => {},
                 else => |status| return windows.unexpectedStatus(status),
