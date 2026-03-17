@@ -4704,7 +4704,7 @@ fn dirCreateFileAtomic(
                     try syscall.checkCancel();
                     continue;
                 },
-                .ISDIR, .NOENT => {
+                .ISDIR, .NOENT, .OPNOTSUPP => {
                     // Ambiguous error code. It might mean the file system
                     // does not support O_TMPFILE. Therefore, we must fall
                     // back to not using O_TMPFILE.
@@ -7587,12 +7587,13 @@ fn dirRenamePreserveLinux(
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
     const syscall: Syscall = try .start();
+    var flags: linux.RENAME = .{ .NOREPLACE = true };
     while (true) switch (linux.errno(linux.renameat2(
         old_dir.handle,
         old_sub_path_posix,
         new_dir.handle,
         new_sub_path_posix,
-        .{ .NOREPLACE = true },
+        flags,
     ))) {
         .SUCCESS => return syscall.finish(),
         .INTR => {
@@ -7617,7 +7618,21 @@ fn dirRenamePreserveLinux(
         .XDEV => return syscall.fail(error.CrossDevice),
         .ILSEQ => return syscall.fail(error.BadPathName),
         .FAULT => |err| return syscall.errnoBug(err),
-        .INVAL => |err| return syscall.errnoBug(err),
+        .INVAL => |err| {
+            // NOREPLACE not valid on NFS, give up atomic in the name of working at all.
+            if (flags.NOREPLACE) {
+                const rc = openat_sym(new_dir.handle, new_sub_path_posix, .{ .PATH = true }, @as(posix.mode_t, 0));
+                switch (posix.errno(rc)) {
+                    .SUCCESS => closeFd(@intCast(rc)),
+                    .NOENT => {
+                        flags.NOREPLACE = false;
+                        continue;
+                    },
+                    else => {},
+                }
+            }
+            return syscall.errnoBug(err);
+        },
         else => |err| return syscall.unexpectedErrno(err),
     };
 }

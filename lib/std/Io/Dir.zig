@@ -1795,6 +1795,7 @@ pub const CreateFileAtomicError = error{
     ReadOnlyFileSystem,
     /// The file attempted to be created is a running executable.
     FileBusy,
+    OperationUnsupported,
 } || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Create an unnamed ephemeral file that can eventually be atomically
