@@ -57,6 +57,7 @@ const VECTORED_EXCEPTION_HANDLER = windows.VECTORED_EXCEPTION_HANDLER;
 const WORD = windows.WORD;
 const USER_THREAD_START_ROUTINE = windows.USER_THREAD_START_ROUTINE;
 const PS = windows.PS;
+const TEB = windows.TEB;
 
 // ref: km/ntifs.h
 
@@ -360,6 +361,21 @@ pub extern "ntdll" fn NtQuerySystemInformation(
 ) callconv(.winapi) NTSTATUS;
 
 // ref none
+
+pub extern "ntdll" fn RtlGetActiveActivationContext(
+    ActivationContext: *?HANDLE,
+) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn RtlActivateActivationContextEx(
+    Flags: ULONG,
+    Teb: *TEB,
+    ActivationContext: HANDLE,
+    Cookie: *ULONG,
+) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn RtlReleaseActivationContext(
+    ActivationContext: HANDLE,
+) callconv(.winapi) void;
 
 pub extern "ntdll" fn LdrAddRefDll(
     Flags: ULONG,
@@ -771,7 +787,11 @@ pub extern "ntdll" fn NtCreateThreadEx(
     Argument: ?PVOID,
     CreateFlags: THREAD.CREATE_FLAGS,
     ZeroBits: SIZE_T,
-    StackSize: THREAD.StackSize,
-    MaximumStackSize: THREAD.StackSize,
+    /// This value is rounded up to the nearest page.
+    /// If this value is larger than `MaximumStackSize`, the maximum stack
+    /// size will be the rounded value of this parameter.
+    /// https://learn.microsoft.com/en-us/windows/win32/procthread/thread-stack-size
+    StackCommit: THREAD.StackSize,
+    StackReserve: THREAD.StackSize,
     AttributeList: ?*PS.ATTRIBUTE.LIST,
 ) callconv(.winapi) NTSTATUS;

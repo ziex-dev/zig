@@ -25,7 +25,12 @@ pub const current_process: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -
 
 pub const PS = struct {
     pub const ATTRIBUTE = extern struct {
-        Attribute: ULONG_PTR,
+        pub const TYPE = enum(ULONG_PTR) {
+            // https://github.com/m417z/ntdoc/blob/main/descriptions/psattributevalue.md
+            TEB_ADDRESS = 0x10004,
+            _,
+        };
+        Attribute: TYPE,
         Size: SIZE_T,
         u: extern union {
             Value: ULONG_PTR,
@@ -1281,6 +1286,7 @@ pub const THREAD = struct {
     };
 
     pub const StackSize = enum(SIZE_T) {
+        /// The default size specified in the executable header
         default = 0,
         _,
     };
