@@ -941,7 +941,6 @@ fn buildOutputType(
     var headerpad_max_install_names: bool = false;
     var dead_strip_dylibs: bool = false;
     var force_load_objc: bool = false;
-    var suppress_warnings: bool = false;
     var discard_local_symbols: bool = false;
     var contains_res_file: bool = false;
     var reference_trace: ?u32 = null;
@@ -2720,7 +2719,8 @@ fn buildOutputType(
                 } else if (mem.eql(u8, arg, "-u")) {
                     try force_undefined_symbols.put(arena, linker_args_it.nextOrFatal(), {});
                 } else if (mem.eql(u8, arg, "-w")) {
-                    suppress_warnings = true;
+                    // This ignores the -w flag of ld64 and ld64.lld to suppress all linker warnings
+                    // since Zig doesn't emit linker warnings.
                 } else if (mem.eql(u8, arg, "-x") or mem.eql(u8, arg, "--discard-all")) {
                     discard_local_symbols = true;
                 } else if (mem.eql(u8, arg, "--stack") or mem.eql(u8, arg, "-stack_size")) {
@@ -3646,7 +3646,6 @@ fn buildOutputType(
         .headerpad_max_install_names = headerpad_max_install_names,
         .dead_strip_dylibs = dead_strip_dylibs,
         .force_load_objc = force_load_objc,
-        .suppress_warnings = suppress_warnings,
         .discard_local_symbols = discard_local_symbols,
         .reference_trace = reference_trace,
         .pdb_out_path = pdb_out_path,

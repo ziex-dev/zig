@@ -1722,8 +1722,6 @@ pub const CreateOptions = struct {
     force_load_objc: bool = false,
     /// Whether local symbols should be discarded from the symbol table.
     discard_local_symbols: bool = false,
-    /// Suppress all linker warnings
-    suppress_warnings: bool = false,
     /// (Windows) PDB source path prefix to instruct the linker how to resolve relative
     /// paths when consolidating CodeView streams into a single PDB file.
     pdb_source_path: ?[]const u8 = null,
@@ -2379,7 +2377,6 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .dead_strip_dylibs = options.dead_strip_dylibs,
             .force_load_objc = options.force_load_objc,
             .discard_local_symbols = options.discard_local_symbols,
-            .suppress_warnings = options.suppress_warnings,
             .pdb_source_path = options.pdb_source_path,
             .pdb_out_path = options.pdb_out_path,
             .entry_addr = null, // CLI does not expose this option (yet?)
