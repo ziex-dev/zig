@@ -25,18 +25,66 @@ pub const current_process: HANDLE = @ptrFromInt(@as(usize, @bitCast(@as(isize, -
 
 pub const PS = struct {
     pub const ATTRIBUTE = extern struct {
-        pub const TYPE = enum(ULONG_PTR) {
-            // https://github.com/m417z/ntdoc/blob/main/descriptions/psattributevalue.md
-            TEB_ADDRESS = 0x10004,
-            _,
-        };
-        Attribute: TYPE,
+        Attribute: Type,
         Size: SIZE_T,
         u: extern union {
             Value: ULONG_PTR,
             ValuePtr: PVOID,
         },
         ReturnLength: ?*SIZE_T,
+
+        /// https://ntdoc.m417z.com/ps_attribute_num
+        /// Tag type is `u16` based on PS_ATTRIBUTE_NUMBER_MASK being 0xFFFF
+        pub const NUM = enum(u16) {
+            ParentProcess = 0,
+            DebugObject,
+            Token,
+            ClientId,
+            TebAddress,
+            ImageName,
+            ImageInfo,
+            MemoryReserve,
+            PriorityClass,
+            ErrorMode,
+            StdHandleInfo,
+            HandleList,
+            GroupAffinity,
+            PreferredNode,
+            IdealProcessor,
+            UmsThread,
+            MitigationOptions,
+            ProtectionLevel,
+            SecureProcess,
+            JobList,
+            ChildProcessPolicy,
+            AllApplicationPackagesPolicy,
+            Win32kFilter,
+            SafeOpenPromptOriginClaim,
+            BnoIsolation,
+            DesktopAppPolicy,
+            Chpe,
+            MitigationAuditOptions,
+            MachineType,
+            ComponentFilter,
+            EnableOptionalXStateFeatures,
+            SupportedMachines,
+            SveVectorLength,
+        };
+
+        /// https://ntdoc.m417z.com/psattributevalue
+        pub const Type = enum(ULONG_PTR) {
+            TEB_ADDRESS = construct(.TebAddress, true, false, false),
+            _,
+
+            pub fn construct(num: NUM, thread: bool, input: bool, additive: bool) ULONG_PTR {
+                var val: ULONG_PTR = @intFromEnum(num);
+                if (thread) val |= 0x10000;
+                if (input) val |= 0x20000;
+                if (additive) val |= 0x40000;
+                return val;
+            }
+        };
+
         pub const LIST = extern struct {
             TotalLength: SIZE_T,
             Attributes: [1]ATTRIBUTE,

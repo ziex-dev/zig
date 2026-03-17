@@ -788,7 +788,7 @@ pub extern "ntdll" fn NtCreateThreadEx(
     CreateFlags: THREAD.CREATE_FLAGS,
     ZeroBits: SIZE_T,
     /// This value is rounded up to the nearest page.
-    /// If this value is larger than `MaximumStackSize`, the maximum stack
+    /// If this value is larger than `StackReserve`, the reserved stack
     /// size will be the rounded value of this parameter.
     /// https://learn.microsoft.com/en-us/windows/win32/procthread/thread-stack-size
     StackCommit: THREAD.StackSize,
