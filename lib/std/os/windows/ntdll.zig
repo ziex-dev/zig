@@ -795,3 +795,8 @@ pub extern "ntdll" fn NtCreateThreadEx(
     StackReserve: THREAD.StackSize,
     AttributeList: ?*PS.ATTRIBUTE.LIST,
 ) callconv(.winapi) NTSTATUS;
+
+pub extern "ntdll" fn NtResumeThread(
+    ThreadHandle: HANDLE,
+    PreviousSuspendCount: ?*ULONG,
+) callconv(.winapi) NTSTATUS;
