@@ -4408,7 +4408,7 @@ pub fn print(self: *Writer, arg0: []const u8, arg1: i32) !void {
         <tr>
           <td>{#syntax#}.Xchg{#endsyntax#}</td>
           <td>Store the operand, returning the previous value</td>
-          <td>enums, integers, floats</td>
+          <td>enums, booleans, integers, floats</td>
         </tr>
         <tr>
           <td>{#syntax#}.Add{#endsyntax#}</td>
