@@ -52,6 +52,7 @@ comptime {
     }
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         symbol(&swab, "swab");
+        symbol(&confstr, "confstr");
     }
     if (builtin.target.isWasiLibC()) {
         symbol(&closeWasi, "close");
@@ -256,4 +257,24 @@ fn closeWasi(fd: std.c.fd_t) callconv(.c) c_int {
             return -1;
         },
     }
+}
+
+const ConfStr = enum(c_int) {
+    Path = 0,
+    Ilp32Off32C = 1116,
+};
+
+fn confstr(name: c_int, buf: ?[*]c_char, len: usize) callconv(.c) usize {
+    var s: []const c_char = @ptrCast("");
+    if (name == @intFromEnum(ConfStr.Path)) s = @ptrCast("/bin:/usr/bin");
+    if (name & ~@as(c_int, 4) != 1 and name - @intFromEnum(ConfStr.Ilp32Off32C) > 35) {
+        std.c._errno().* = @intFromEnum(std.c.E.INVAL);
+        return 0;
+    }
+    if (buf) |bufp| {
+        const n = @min(len -| 1, s.len);
+        @memcpy(bufp, s[0..n]);
+        if (len > 0) bufp[n] = 0;
+    }
+    return s.len + 1;
 }

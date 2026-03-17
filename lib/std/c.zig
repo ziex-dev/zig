@@ -11131,6 +11131,7 @@ pub const ioctl = switch (native_os) {
 
 pub extern "c" fn bzero(s: *anyopaque, n: usize) void;
 
+pub extern "c" fn confstr(name: c_int, buf: ?[*]c_char, len: usize) usize;
 pub extern "c" fn swab(noalias from: *const anyopaque, noalias to: *anyopaque, n: isize) void;
 
 pub extern "c" fn strncmp(a: [*:0]const c_char, b: [*:0]const c_char, max: usize) c_int;
