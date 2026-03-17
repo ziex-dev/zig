@@ -434,12 +434,13 @@ fn callFn(comptime f: anytype, args: anytype) switch (Impl) {
             }
 
             const status = @call(.auto, f, args);
-            if (Impl != PosixThreadImpl) {
-                return status;
+            switch (Impl) {
+                WindowsThreadImpl => return @enumFromInt(status),
+                LinuxThreadImpl => return status,
+                // pthreads don't support exit status, ignore value
+                PosixThreadImpl => return default_value,
+                else => unreachable,
             }
-
-            // pthreads don't support exit status, ignore value
-            return default_value;
         },
         .error_union => |info| {
             switch (info.payload) {
