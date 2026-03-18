@@ -281,7 +281,7 @@ pub fn parse(
         else
             .{ .VERSION = versyms[i].VERSION, .HIDDEN = false };
 
-        if (ver == .LOCAL) continue;
+        if (ver == elf.Versym.LOCAL) continue;
 
         try nonlocal_esyms.ensureUnusedCapacity(gpa, 1);
         try nonlocal_versyms.ensureUnusedCapacity(gpa, 1);
