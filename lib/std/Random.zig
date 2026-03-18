@@ -68,6 +68,40 @@ pub fn init(pointer: anytype, comptime fillFn: fn (ptr: @TypeOf(pointer), buf: [
     };
 }
 
+/// A generic fill function for generators that natively produce integers rather than bytes.
+pub fn wordwiseFillImpl(comptime Word: type, pointer: anytype, comptime nextFn: fn (ptr: @TypeOf(pointer)) Word, buf: []u8) void {
+    var i: usize = 0;
+    const word_size = @sizeOf(Word);
+
+    const aligned_len = buf.len - (buf.len % word_size);
+
+    // Complete word-sized segments.
+    while (i < aligned_len) : (i += word_size) {
+        const buf_slice = buf[i..][0..word_size];
+        mem.writeInt(Word, buf_slice, nextFn(pointer), .little);
+    }
+
+    // Remaining. (cuts the stream)
+    if (i != buf.len) {
+        var n = nextFn(pointer);
+        while (i < buf.len) : (i += 1) {
+            buf[i] = @as(u8, @truncate(n));
+            n >>= 8;
+        }
+    }
+}
+
+pub fn wordwiseInit(comptime Word: type, pointer: anytype, comptime nextFn: fn (ptr: @TypeOf(pointer)) Word) Random {
+    assert(@typeInfo(Word) == .int); // must be an integer
+
+    const impl = struct {
+        pub fn fill(ptr: @TypeOf(pointer), buf: []u8) void {
+            wordwiseFillImpl(Word, ptr, nextFn, buf);
+        }
+    };
+    return init(pointer, impl.fill);
+}
+
 /// Read random bytes into the specified buffer until full.
 pub fn bytes(r: Random, buf: []u8) void {
     r.fillFn(r.ptr, buf);

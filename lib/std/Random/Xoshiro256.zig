@@ -65,27 +65,7 @@ pub fn seed(self: *Xoshiro256, init_s: u64) void {
 }
 
 pub fn fill(self: *Xoshiro256, buf: []u8) void {
-    var i: usize = 0;
-    const aligned_len = buf.len - (buf.len & 7);
-
-    // Complete 8 byte segments.
-    while (i < aligned_len) : (i += 8) {
-        var n = self.next();
-        comptime var j: usize = 0;
-        inline while (j < 8) : (j += 1) {
-            buf[i + j] = @as(u8, @truncate(n));
-            n >>= 8;
-        }
-    }
-
-    // Remaining. (cuts the stream)
-    if (i != buf.len) {
-        var n = self.next();
-        while (i < buf.len) : (i += 1) {
-            buf[i] = @as(u8, @truncate(n));
-            n >>= 8;
-        }
-    }
+    return std.Random.wordwiseFillImpl(u64, self, next, buf);
 }
 
 test "sequence" {
