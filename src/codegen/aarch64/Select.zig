@@ -3623,7 +3623,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
             try call.finishReturn(isel);
 
             try call.prepareCallee(isel);
-            const linked = blk: {
+            const is_nav = blk: {
                 const ct_callee = air_call.callee.toInterned() orelse break :blk false;
                 try isel.nav_relocs.append(gpa, switch (ip.indexToKey(ct_callee)) {
                     else => unreachable,
@@ -3632,21 +3632,20 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                         .reloc = .{ .label = @intCast(isel.instructions.items.len) },
                     },
                     .ptr => |ptr| switch (ptr.base_addr) {
-                        .nav => .{
-                            .nav = ptr.base_addr.nav,
+                        .nav => |nav| .{
+                            .nav = nav,
                             .reloc = .{
                                 .label = @intCast(isel.instructions.items.len),
                                 .addend = ptr.byte_offset,
                             },
                         },
-                        .int => break :blk false,
-                        else => unreachable,
+                        else => break :blk false,
                     },
                 });
                 try isel.emit(.bl(0));
                 break :blk true;
             };
-            if (!linked) {
+            if (!is_nav) {
                 const callee_vi = try isel.use(air_call.callee);
                 const callee_mat = try callee_vi.matReg(isel);
                 try isel.emit(.blr(callee_mat.ra.x()));

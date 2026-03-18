@@ -176186,24 +176186,30 @@ fn genCall(self: *CodeGen, info: union(enum) {
     // on linking.
     switch (info) {
         .air => |callee| {
-            const linked = blk: {
+            const is_nav = blk: {
                 const func_value = try self.air.value(callee, pt) orelse break :blk false;
                 const func_key = ip.indexToKey(func_value.ip_index);
-                switch (switch (func_key) {
-                    else => func_key,
-                    .ptr => |ptr| switch (ptr.base_addr) {
-                        .nav => |nav| if (ptr.byte_offset == 0) ip.indexToKey(zcu.navValue(nav).toIntern()) else func_key,
-                        .int => break :blk false,
-                        else => func_key,
-                    },
-                }) {
+                const nav = switch (func_key) {
+                    .func, .@"extern" => func_key,
+                    .ptr => |ptr| if (ptr.byte_offset == 0) switch (ptr.base_addr) {
+                        .nav => |nav| ip.indexToKey(zcu.navValue(nav).toIntern()),
+                        else => break :blk false,
+                    } else break :blk false,
                     else => unreachable,
-                    .func => |func| try self.asmImmediate(.{ ._, .call }, .{ .nav = .{ .index = func.owner_nav } }),
-                    .@"extern" => |@"extern"| try self.asmImmediate(.{ ._, .call }, .{ .nav = .{ .index = @"extern".owner_nav } }),
+                };
+
+                switch (nav) {
+                    inline .func, .@"extern" => |v| {
+                        try self.asmImmediate(.{ ._, .call }, .{ .nav = .{ .index = v.owner_nav } });
+                    },
+                    else => {
+                        try self.asmImmediate(.{ ._, .call }, .{ .nav = .{ .index = func_key.ptr.base_addr.nav } });
+                    },
                 }
                 break :blk true;
             };
-            if (!linked) {
+
+            if (!is_nav) {
                 assert(self.typeOf(callee).zigTypeTag(zcu) == .pointer);
                 const scratch_reg = abi.getCAbiLinkerScratchReg(fn_info.cc);
                 try self.genSetReg(scratch_reg, .usize, .{ .air_ref = callee }, .{});

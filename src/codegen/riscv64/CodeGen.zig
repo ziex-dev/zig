@@ -4956,21 +4956,26 @@ fn genCall(
     // on linking.
     switch (info) {
         .air => |callee| {
-            const linked = blk: {
+            const is_nav = blk: {
                 const func_value = try func.air.value(callee, pt) orelse break :blk false;
                 const func_key = zcu.intern_pool.indexToKey(func_value.ip_index);
-                switch (switch (func_key) {
-                    else => func_key,
-                    .ptr => |ptr| switch (ptr.base_addr) {
-                        .nav => |nav| if (ptr.byte_offset == 0) zcu.intern_pool.indexToKey(zcu.navValue(nav).toIntern()) else func_key,
-                        .int => break :blk false,
-                        else => func_key,
-                    },
-                }) {
-                    .func => |func_val| {
+                const nav = switch (func_key) {
+                    .func, .@"extern" => func_key,
+                    .ptr => |ptr| if (ptr.byte_offset == 0) switch (ptr.base_addr) {
+                        .nav => |nav| zcu.intern_pool.indexToKey(zcu.navValue(nav).toIntern()),
+                        else => break :blk false,
+                    } else break :blk false,
+                    else => unreachable,
+                };
+
+                switch (nav) {
+                    else => |func_or_nav| {
                         if (func.bin_file.cast(.elf)) |elf_file| {
                             const zo = elf_file.zigObjectPtr().?;
-                            const sym_index = try zo.getOrCreateMetadataForNav(zcu, func_val.owner_nav);
+                            const sym_index = try zo.getOrCreateMetadataForNav(zcu, switch (func_or_nav) {
+                                .func => |func_val| func_val.owner_nav,
+                                else => func_key.ptr.base_addr.nav,
+                            });
 
                             if (func.mod.pic) {
                                 return func.fail("TODO: genCall pic", .{});
@@ -5002,11 +5007,11 @@ fn genCall(
                             } },
                         });
                     },
-                    else => unreachable,
                 }
                 break :blk true;
             };
-            if (!linked) {
+
+            if (!is_nav) {
                 assert(func.typeOf(callee).zigTypeTag(zcu) == .pointer);
                 const addr_reg, const addr_lock = try func.allocReg(.int);
                 defer func.register_manager.unlockReg(addr_lock);

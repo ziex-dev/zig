@@ -731,3 +731,34 @@ test "tail call function pointer" {
 
     S.foo(100);
 }
+
+const int_fnptr: *const fn () void = @ptrFromInt(0x40);
+
+fn callPtrFromInt(x: bool) void {
+    if (x) {
+        int_fnptr();
+    }
+}
+
+test "call @ptrFromInt function pointer" {
+    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
+
+    callPtrFromInt(false);
+}
+
+const non_func_nav align(16) = [_]u8{ 0x00, 0x00, 0x00, 0x00 };
+const fnptr: *const fn () void = @ptrCast(&non_func_nav);
+
+fn callPtrCast(x: bool) void {
+    if (x) {
+        fnptr();
+    }
+}
+
+test "call @ptrCast function pointer" {
+    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
+
+    callPtrCast(false);
+}
