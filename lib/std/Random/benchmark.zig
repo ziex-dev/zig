@@ -92,6 +92,7 @@ pub fn benchmark(comptime H: anytype, io: Io, bytes: usize, comptime block_size:
     const start = benchTime(io);
     while (offset < bytes) : (offset += block.len) {
         rng.fill(block[0..]);
+        std.mem.doNotOptimizeAway(&block);
     }
     const end = benchTime(io);
 
