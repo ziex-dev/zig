@@ -1959,6 +1959,8 @@ pub fn io(t: *Threaded) Io {
             .netInterfaceNameResolve = netInterfaceNameResolve,
             .netInterfaceName = netInterfaceName,
             .netLookup = netLookup,
+
+            .computerName = computerName,
         },
     };
 }
@@ -18898,5 +18900,35 @@ pub fn closeFd(fd: posix.fd_t) void {
         .SUCCESS, .INTR => {}, // INTR still a success, see https://github.com/ziglang/zig/issues/2425
         .BADF => recoverableOsBugDetected(), // use after free
         else => recoverableOsBugDetected(), // unexpected failure
+    }
+}
+
+fn computerName(userdata: ?*anyopaque, buffer: []u8) Io.ComputerNameError![]u8 {
+    _ = userdata;
+    const syscall: Syscall = try .start();
+    switch (native_os) {
+        .linux => {
+            const namespace = if (builtin.link_libc) std.c else std.os.linux;
+            var uts: namespace.utsname = undefined;
+            switch (std.posix.errno(namespace.uname(&uts))) {
+                .SUCCESS => {},
+                else => |e| return syscall.unexpectedErrno(e),
+            }
+            try syscall.checkCancel();
+            const computer_name_os = std.mem.span(uts.nodename[0..].ptr);
+            if (buffer.len < computer_name_os.len) return Io.ComputerNameError.BufferTooSmall;
+            @memcpy(buffer[0..computer_name_os.len], computer_name_os);
+            return buffer[0..computer_name_os.len];
+        },
+        .freebsd => {
+            switch (std.c.errno(std.c.gethostname(buffer.ptr, buffer.len))) {
+                .SUCCESS => {},
+                .NAMETOOLONG => return Io.ComputerNameError.BufferTooSmall,
+                else => |e| return syscall.unexpectedErrno(e),
+            }
+            const index = std.mem.findScalar(u8, buffer, 0) orelse return Io.ComputerNameError.BufferTooSmall;
+            return buffer[0..index];
+        },
+        else => @compileError("OS not supported"),
     }
 }

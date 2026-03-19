@@ -252,6 +252,8 @@ pub const VTable = struct {
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
+
+    computerName: *const fn (?*anyopaque, []u8) ComputerNameError![]u8,
 };
 
 pub const Operation = union(enum) {
@@ -2497,6 +2499,15 @@ test {
     _ = RwLock;
     _ = Semaphore;
     _ = @import("Io/test.zig");
+}
+
+pub const ComputerNameError = error{
+    Unexpected,
+    BufferTooSmall,
+} || Cancelable;
+
+pub fn getComputerName(io: Io, buffer: []u8) ComputerNameError![]u8 {
+    return io.vtable.computerName(io.userdata, buffer);
 }
 
 /// An implementation of `Io` which simulates a system supporting no `Io` operations.
