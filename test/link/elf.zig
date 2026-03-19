@@ -74,7 +74,8 @@ pub fn testAll(b: *Build, build_opts: BuildOptions) *Step {
         elf_step.dependOn(testImageBase(b, .{ .target = musl_target }));
         elf_step.dependOn(testInitArrayOrder(b, .{ .target = musl_target }));
         elf_step.dependOn(testLargeAlignmentExe(b, .{ .target = musl_target }));
-        elf_step.dependOn(testLargeBss(b, .{ .target = musl_target }));
+        // https://codeberg.org/ziglang/zig/issues/31580
+        // elf_step.dependOn(testLargeBss(b, .{ .target = musl_target }));
         elf_step.dependOn(testLinkingC(b, .{ .target = musl_target }));
         elf_step.dependOn(testLinkingCpp(b, .{ .target = musl_target }));
         elf_step.dependOn(testLinkingZig(b, .{ .target = musl_target }));
