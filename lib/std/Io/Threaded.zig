@@ -18925,7 +18925,7 @@ fn computerName(userdata: ?*anyopaque, buffer: []u8) Io.ComputerNameError![]u8 {
             syscall.finish();
             return result;
         },
-        .freebsd => {
+        .freebsd, .openbsd, .netbsd, .dragonfly => {
             switch (std.c.errno(std.c.gethostname(buffer.ptr, buffer.len))) {
                 .SUCCESS => {},
                 .NAMETOOLONG => return syscall.fail(Io.ComputerNameError.BufferTooSmall),
