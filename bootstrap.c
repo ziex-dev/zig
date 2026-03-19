@@ -24,11 +24,11 @@ static void panic(const char *reason) {
     // to be relocated incorrectly, causing immediate crashes on any binary produced by it.
     //
     // The only reliable workaround for this bug is to disable the optimization pass containing it,
-    // so here we check for a CLI flag requesting that workaround.
+    // so here we detect whether the compiler being used requires that workaround.
     //
     // The upstream bug is fixed in GCC version 15.2 onwards (and was also backported to the 13 and
     // 14 branches, however there are no 13.x and 14.x releases that contains the fix as of now).
-    // Once this bug is no longer widespread, we can remove this CLI flag.
+    // Once this bug is no longer widespread, we can remove this workaround.
     //
     // Upstream bug report: https://gcc.gnu.org/bugzilla/show_bug.cgi?id=119085
     #if (GCC_VERSION >= 160000)                         || \
