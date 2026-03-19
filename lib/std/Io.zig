@@ -2504,6 +2504,8 @@ test {
 pub const ComputerNameError = error{
     Unexpected,
     BufferTooSmall,
+    ComputerNameNotFound,
+    ReceivedUnexpectedData,
 } || Cancelable;
 
 pub fn getComputerName(io: Io, buffer: []u8) ComputerNameError![]u8 {

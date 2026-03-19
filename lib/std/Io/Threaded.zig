@@ -18929,6 +18929,53 @@ fn computerName(userdata: ?*anyopaque, buffer: []u8) Io.ComputerNameError![]u8 {
             const index = std.mem.findScalar(u8, buffer, 0) orelse return Io.ComputerNameError.BufferTooSmall;
             return buffer[0..index];
         },
+        .windows => {
+            const path = std.unicode.wtf8ToWtf16LeStringLiteral("\\Registry\\Machine\\System\\CurrentControlSet\\Control\\ComputerName\\ActiveComputerName");
+            const object = std.unicode.wtf8ToWtf16LeStringLiteral("ComputerName");
+
+            var key: windows.HANDLE = undefined;
+            switch (windows.ntdll.NtOpenKeyEx(&key, windows.ACCESS_MASK.Specific.Key.READ, &.{
+                .ObjectName = @constCast(&windows.UNICODE_STRING.init(path)),
+            }, .{})) {
+                .SUCCESS => {},
+                .OBJECT_PATH_SYNTAX_BAD, .OBJECT_NAME_NOT_FOUND => |e| return syscall.ntstatusBug(e),
+                else => return syscall.fail(Io.ComputerNameError.ComputerNameNotFound),
+            }
+            defer windows.CloseHandle(key);
+            try syscall.checkCancel();
+
+            const buffer_len = @sizeOf(windows.KEY.VALUE.PARTIAL_INFORMATION) + 2 * (net.HostName.max_len + 1);
+            var buffer_raw: [buffer_len]u8 align(@alignOf(windows.KEY.VALUE.PARTIAL_INFORMATION)) = undefined;
+            var result_length: windows.ULONG = 0;
+            switch (windows.ntdll.NtQueryValueKey(
+                key,
+                &windows.UNICODE_STRING.init(object),
+                .Partial,
+                &buffer_raw,
+                buffer_len,
+                &result_length,
+            )) {
+                .SUCCESS => {},
+                .BUFFER_TOO_SMALL, .BUFFER_OVERFLOW => return syscall.fail(Io.ComputerNameError.BufferTooSmall),
+                .OBJECT_NAME_NOT_FOUND => return syscall.fail(Io.ComputerNameError.ComputerNameNotFound),
+                else => |e| return syscall.unexpectedNtstatus(e),
+            }
+            try syscall.checkCancel();
+
+            const info: *windows.KEY.VALUE.PARTIAL_INFORMATION = @ptrCast(&buffer_raw);
+            if (info.Type != .SZ) return syscall.fail(Io.ComputerNameError.ReceivedUnexpectedData);
+
+            const result_wtf16Z: [*:0]const u16 = @ptrCast(@alignCast(info.data().ptr));
+            const result_wtf16 = std.mem.span(result_wtf16Z);
+            if (result_wtf16.len > buffer.len) return syscall.fail(Io.ComputerNameError.BufferTooSmall);
+            const index = std.unicode.wtf16LeToWtf8(buffer, result_wtf16);
+
+            try syscall.checkCancel();
+
+            const result_wtf8 = buffer[0..index];
+            syscall.finish();
+            return result_wtf8;
+        },
         else => @compileError("OS not supported"),
     }
 }
