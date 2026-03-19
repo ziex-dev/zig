@@ -758,7 +758,6 @@ fn callPtrCast(x: bool) void {
 
 test "call @ptrCast function pointer" {
     if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
 
     callPtrCast(false);
 }

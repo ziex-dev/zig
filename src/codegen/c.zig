@@ -3928,8 +3928,11 @@ fn airCall(
                 .func => |func| .{ func.owner_nav, Type.fromInterned(func.ty).fnCallingConvention(zcu) != .naked and
                     Type.fromInterned(func.uncoerced_ty).fnCallingConvention(zcu) == .naked },
                 .ptr => |ptr| if (ptr.byte_offset == 0) switch (ptr.base_addr) {
-                    .nav => |nav| .{ nav, Type.fromInterned(ptr.ty).childType(zcu).fnCallingConvention(zcu) != .naked and
-                        zcu.navValue(nav).typeOf(zcu).fnCallingConvention(zcu) == .naked },
+                    .nav => |nav| switch (ip.indexToKey(zcu.navValue(nav).toIntern())) {
+                        .func_type => .{ nav, Type.fromInterned(ptr.ty).childType(zcu).fnCallingConvention(zcu) != .naked and
+                            zcu.navValue(nav).typeOf(zcu).fnCallingConvention(zcu) == .naked },
+                        else => break :known, // Must be called via function pointer
+                    },
                     else => break :known,
                 } else break :known,
                 else => break :known,
