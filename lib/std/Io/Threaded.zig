@@ -18925,7 +18925,7 @@ fn computerName(userdata: ?*anyopaque, buffer: []u8) Io.ComputerNameError![]u8 {
             syscall.finish();
             return result;
         },
-        .wasi => @compileError("OS not supported"),
+        .wasi => return syscall.fail(Io.ComputerNameError.OperationUnsupported),
         .windows => {
             const path = std.unicode.wtf8ToWtf16LeStringLiteral("\\Registry\\Machine\\System\\CurrentControlSet\\Control\\ComputerName\\ActiveComputerName");
             const object = std.unicode.wtf8ToWtf16LeStringLiteral("ComputerName");

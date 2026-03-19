@@ -2506,6 +2506,7 @@ pub const ComputerNameError = error{
     BufferTooSmall,
     ComputerNameNotFound,
     ReceivedUnexpectedData,
+    OperationUnsupported,
 } || Cancelable;
 
 pub fn getComputerName(io: Io, buffer: []u8) ComputerNameError![]u8 {
