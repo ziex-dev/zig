@@ -18914,20 +18914,31 @@ fn computerName(userdata: ?*anyopaque, buffer: []u8) Io.ComputerNameError![]u8 {
                 .SUCCESS => {},
                 else => |e| return syscall.unexpectedErrno(e),
             }
+
             try syscall.checkCancel();
             const computer_name_os = std.mem.span(uts.nodename[0..].ptr);
-            if (buffer.len < computer_name_os.len) return Io.ComputerNameError.BufferTooSmall;
+            if (buffer.len < computer_name_os.len) return syscall.fail(Io.ComputerNameError.BufferTooSmall);
             @memcpy(buffer[0..computer_name_os.len], computer_name_os);
-            return buffer[0..computer_name_os.len];
+
+            try syscall.checkCancel();
+            const result = buffer[0..computer_name_os.len];
+            syscall.finish();
+            return result;
         },
         .freebsd => {
             switch (std.c.errno(std.c.gethostname(buffer.ptr, buffer.len))) {
                 .SUCCESS => {},
-                .NAMETOOLONG => return Io.ComputerNameError.BufferTooSmall,
+                .NAMETOOLONG => return syscall.fail(Io.ComputerNameError.BufferTooSmall),
                 else => |e| return syscall.unexpectedErrno(e),
             }
-            const index = std.mem.findScalar(u8, buffer, 0) orelse return Io.ComputerNameError.BufferTooSmall;
-            return buffer[0..index];
+
+            try syscall.checkCancel();
+            const index = std.mem.findScalar(u8, buffer, 0) orelse return syscall.fail(Io.ComputerNameError.BufferTooSmall);
+
+            try syscall.checkCancel();
+            const result = buffer[0..index];
+            syscall.finish();
+            return result;
         },
         .windows => {
             const path = std.unicode.wtf8ToWtf16LeStringLiteral("\\Registry\\Machine\\System\\CurrentControlSet\\Control\\ComputerName\\ActiveComputerName");
