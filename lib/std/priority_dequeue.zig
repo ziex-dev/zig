@@ -7,14 +7,12 @@ const expect = testing.expect;
 const expectEqual = testing.expectEqual;
 const expectError = testing.expectError;
 
-/// Priority Dequeue for storing generic data. Initialize with `init`.
-/// Provide `compareFn` that returns `Order.lt` when its second
-/// argument should get min-popped before its third argument,
-/// `Order.eq` if the arguments are of equal priority, or `Order.gt`
-/// if the third argument should be min-popped second.
-/// Popping the max element works in reverse. For example,
-/// to make `popMin` return the smallest number, provide
-/// `fn lessThan(context: void, a: T, b: T) Order { _ = context; return std.math.order(a, b); }`
+/// Priority Dequeue for storing generic data. Should be initialized with
+/// `initContext`.
+///
+/// `compareFn` is used to determine what should be min-popped or max-popped
+/// first. For min-popping, the "smallest" item goes first. For max-popping the
+/// "largest" item goes first. If items are equal then either can be popped
 pub fn PriorityDequeue(comptime T: type, comptime Context: type, comptime compareFn: fn (context: Context, a: T, b: T) Order) type {
     return struct {
         const Self = @This();
