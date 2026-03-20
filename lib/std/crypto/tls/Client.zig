@@ -134,7 +134,7 @@ pub const Options = struct {
     pub const entropy_len = 240;
 };
 
-const InitError = error{
+pub const InitError = error{
     WriteFailed,
     ReadFailed,
     InsufficientEntropy,
