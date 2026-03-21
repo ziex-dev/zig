@@ -2504,11 +2504,29 @@ test {
 pub const ComputerNameError = error{
     Unexpected,
     BufferTooSmall,
+    /// Windows-only
+    ///
+    /// Happens when there is no ComputerName
     ComputerNameNotFound,
+    /// Windows-only
+    ///
+    /// Happens when the Windows Registry has the ComputerName saved in the wrong format.
+    ///
+    /// Should never actually happen except if the machine is misconfigured.
     ReceivedUnexpectedData,
+    /// WASI-only
+    ///
+    /// WASI doesn't support this concept right now
     OperationUnsupported,
 } || Cancelable;
 
+/// Fetches the current ComputerName of the current machine.
+///
+/// This does not mean that it's the HostName since a machine can have multiple hostnames,
+/// one per interface, but only one ComputerName.
+///
+/// But it does not relate to how macOS defines a ComputerName since macOS allows for that
+/// full Unicode, and then sanitizes it for the local hostname.
 pub fn getComputerName(io: Io, buffer: []u8) ComputerNameError![]u8 {
     return io.vtable.computerName(io.userdata, buffer);
 }
