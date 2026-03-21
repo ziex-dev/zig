@@ -18975,17 +18975,20 @@ fn computerName(userdata: ?*anyopaque, buffer: []u8) Io.ComputerNameError![]u8 {
         },
         else => {
             // assumes that all other operating systems have a gethostname function in their libc
-            switch (std.c.errno(std.c.gethostname(buffer.ptr, buffer.len))) {
+            var hostname_buffer: [net.HostName.max_len+1]u8 = @splat(0);
+            switch (std.c.errno(std.c.gethostname(&hostname_buffer, hostname_buffer.len))) {
                 .SUCCESS => {},
                 .NAMETOOLONG => return syscall.fail(Io.ComputerNameError.BufferTooSmall),
                 else => |e| return syscall.unexpectedErrno(e),
             }
 
             try syscall.checkCancel();
-            const index = std.mem.findScalar(u8, buffer, 0) orelse return syscall.fail(Io.ComputerNameError.BufferTooSmall);
+            const index = std.mem.findScalar(u8, &hostname_buffer, 0) orelse return syscall.fail(Io.ComputerNameError.BufferTooSmall);
 
             try syscall.checkCancel();
+            if (buffer.len < index) return syscall.fail(Io.ComputerNameError.BufferTooSmall);
             const result = buffer[0..index];
+            @memcpy(result, hostname_buffer[0..index]);
             syscall.finish();
             return result;
         },

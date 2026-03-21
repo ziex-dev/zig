@@ -601,3 +601,25 @@ fn getRandomWtf16Path(allocator: std.mem.Allocator, buf: *std.ArrayList(u16), ra
     try buf.append(allocator, 0);
     return buf.items[0 .. buf.items.len - 1 :0];
 }
+
+test "computerName buffer edge" {
+    // assumption: if the buffer is large enough, the computerName will succeed
+    var buffer_expected: [2048]u8 = undefined;
+    var buffer_test: [2048]u8 = undefined;
+
+    var threaded: Io.Threaded = .init(testing.allocator, .{
+        .argv0 = .empty,
+        .environ = .empty,
+    });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const expected = io.getComputerName(&buffer_expected) catch return error.TestUnexpectedResult;
+
+    {
+        const barely_fits = io.getComputerName(buffer_test[0..expected.len]) catch return error.TestUnexpectedResult;
+        try testing.expectEqualStrings(expected, barely_fits);
+    }
+
+    try testing.expectError(error.BufferTooSmall, io.getComputerName(buffer_test[0 .. expected.len - 1]));
+}
