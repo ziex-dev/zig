@@ -18964,7 +18964,10 @@ fn computerName(userdata: ?*anyopaque, buffer: []u8) Io.ComputerNameError![]u8 {
 
             const result_wtf16Z: [*:0]const u16 = @ptrCast(@alignCast(info.data().ptr));
             const result_wtf16 = std.mem.span(result_wtf16Z);
-            if (result_wtf16.len > buffer.len) return syscall.fail(Io.ComputerNameError.BufferTooSmall);
+            // while Microsoft enforces ASCII-only for the ComputerName in its tools (UI, CLI etc.),
+            // this can be circumvented if somebody changes the ComputerName in the registry directly
+            const len = std.unicode.calcWtf8Len(result_wtf16);
+            if (len > buffer.len) return syscall.fail(Io.ComputerNameError.BufferTooSmall);
             const index = std.unicode.wtf16LeToWtf8(buffer, result_wtf16);
 
             try syscall.checkCancel();
