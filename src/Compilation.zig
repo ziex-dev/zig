@@ -777,16 +777,28 @@ pub const Directories = struct {
             break :d openUnresolved(arena, io, cwd, path, .@"global cache");
         };
 
-        const local_cache: Cache.Directory = switch (local_cache_strat) {
-            .override => |path| openUnresolved(arena, io, cwd, path, .@"local cache"),
-            .search => d: {
-                const maybe_path = introspect.resolveSuitableLocalCacheDir(arena, io, cwd) catch |err| {
-                    fatal("unable to resolve zig cache directory: {t}", .{err});
-                };
-                const path = maybe_path orelse break :d global_cache;
-                break :d openUnresolved(arena, io, cwd, path, .@"local cache");
-            },
-            .global => global_cache,
+        const local_cache: Cache.Directory = lc: {
+            var dir = switch (local_cache_strat) {
+                .override => |path| openUnresolved(arena, io, cwd, path, .@"local cache"),
+                .search => d: {
+                    const maybe_path = introspect.resolveSuitableLocalCacheDir(arena, io, cwd) catch |err| {
+                        fatal("unable to resolve zig cache directory: {s}", .{err});
+                    };
+                    const path = maybe_path orelse break :d global_cache;
+                    break :d openUnresolved(arena, io, cwd, path, .@"local cache");
+                },
+                .global => global_cache,
+            };
+            // Directory.path feeds into cache hash computation via
+            // Path.toString(). A CWD-relative path produces different
+            // hashes when `zig build` is invoked from different
+            // directories, causing unnecessary cache misses.
+            if (dir.path) |p| {
+                if (!fs.path.isAbsolute(p)) {
+                    dir.path = fs.path.join(arena, &.{ cwd, p }) catch @panic("OOM");
+                }
+            }
+            break :lc dir;
         };
 
         if (std.mem.eql(u8, zig_lib.path orelse "", global_cache.path orelse "")) {
