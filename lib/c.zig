@@ -43,6 +43,17 @@ pub inline fn symbol(comptime func: *const anyopaque, comptime name: []const u8)
     });
 }
 
+const test_zigc = builtin.is_test and !builtin.link_libc;
+
+threadlocal var test_errno: c_int = if (test_zigc) 0 else @compileError("not testing");
+
+pub fn errnoLocation() *c_int {
+    return if (test_zigc)
+        &test_errno
+    else
+        std.c._errno();
+}
+
 /// Given a low-level syscall return value, sets errno and returns `-1`, or on
 /// success returns the result.
 pub fn errno(syscall_return_value: usize) c_int {
@@ -52,7 +63,7 @@ pub fn errno(syscall_return_value: usize) c_int {
             const casted: c_int = @intCast(signed);
             if (casted < 0) {
                 @branchHint(.unlikely);
-                std.c._errno().* = -casted;
+                errnoLocation().* = -casted;
                 return -1;
             }
             return casted;

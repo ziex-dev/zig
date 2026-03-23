@@ -7,6 +7,7 @@ const ldiv_t = std.c.ldiv_t;
 const lldiv_t = std.c.lldiv_t;
 
 const symbol = @import("../c.zig").symbol;
+const errnoLocation = @import("../c.zig").errnoLocation;
 
 comptime {
     _ = @import("stdlib/rand.zig");
@@ -138,7 +139,7 @@ fn stringToInteger(comptime T: type, noalias buf: [*:0]const u8, noalias maybe_e
             end.* = buf;
         }
 
-        std.c._errno().* = @intFromEnum(std.c.E.INVAL);
+        errnoLocation().* = @intFromEnum(std.c.E.INVAL);
         return 0;
     }
 
@@ -181,7 +182,7 @@ fn stringToInteger(comptime T: type, noalias buf: [*:0]const u8, noalias maybe_e
 
     if (@typeInfo(T).int.signedness == .unsigned) {
         const result = parseDigitsWithSignGenericCharacter(T, u8, current, maybe_end, real_base, .pos) catch {
-            std.c._errno().* = @intFromEnum(std.c.E.RANGE);
+            errnoLocation().* = @intFromEnum(std.c.E.RANGE);
             return std.math.maxInt(T);
         };
 
@@ -189,12 +190,12 @@ fn stringToInteger(comptime T: type, noalias buf: [*:0]const u8, noalias maybe_e
     }
 
     if (negative) return parseDigitsWithSignGenericCharacter(T, u8, current, maybe_end, real_base, .neg) catch blk: {
-        std.c._errno().* = @intFromEnum(std.c.E.RANGE);
+        errnoLocation().* = @intFromEnum(std.c.E.RANGE);
         break :blk std.math.minInt(T);
     };
 
     return parseDigitsWithSignGenericCharacter(T, u8, current, maybe_end, real_base, .pos) catch blk: {
-        std.c._errno().* = @intFromEnum(std.c.E.RANGE);
+        errnoLocation().* = @intFromEnum(std.c.E.RANGE);
         break :blk std.math.maxInt(T);
     };
 }

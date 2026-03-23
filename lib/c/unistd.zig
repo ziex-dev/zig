@@ -5,6 +5,7 @@ const linux = std.os.linux;
 
 const symbol = @import("../c.zig").symbol;
 const errno = @import("../c.zig").errno;
+const errnoLocation = @import("../c.zig").errnoLocation;
 
 comptime {
     if (builtin.target.isMuslLibC()) {
@@ -237,7 +238,7 @@ fn close(fd: std.c.fd_t) callconv(.c) c_int {
     if (signed < 0) {
         @branchHint(.unlikely);
         if (-signed == @intFromEnum(linux.E.INTR)) return 0;
-        std.c._errno().* = @intCast(-signed);
+        errnoLocation().* = @intCast(-signed);
         return -1;
     }
     return 0;
@@ -251,7 +252,7 @@ fn closeWasi(fd: std.c.fd_t) callconv(.c) c_int {
     switch (std.os.wasi.fd_close(fd)) {
         .SUCCESS => return 0,
         else => |e| {
-            std.c._errno().* = @intFromEnum(e);
+            errnoLocation().* = @intFromEnum(e);
             return -1;
         },
     }

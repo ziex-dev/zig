@@ -21,6 +21,7 @@ const alignment_bytes = @max(@alignOf(std.c.max_align_t), @sizeOf(Header));
 const alignment: Alignment = .fromByteUnits(alignment_bytes);
 
 const symbol = @import("../c.zig").symbol;
+const errnoLocation = @import("../c.zig").errnoLocation;
 
 comptime {
     // Dependency on external errno location.
@@ -192,6 +193,6 @@ fn posix_memalign(result: *?[*]align(alignment_bytes) u8, alloc_alignment: usize
 /// `null`.
 fn nomem() ?[*]align(alignment_bytes) u8 {
     @branchHint(.cold);
-    std.c._errno().* = @intFromEnum(std.c.E.NOMEM);
+    errnoLocation().* = @intFromEnum(std.c.E.NOMEM);
     return null;
 }
