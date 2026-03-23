@@ -78,7 +78,7 @@ pub fn PriorityQueue(comptime T: type, comptime Context: type, comptime compareF
 
         /// Look at the highest priority element in the queue. Returns
         /// `null` if empty.
-        pub fn peek(self: *const Self) ?T {
+        pub fn peek(self: Self) ?T {
             return if (self.items.len > 0) self.items[0] else null;
         }
 
