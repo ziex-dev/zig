@@ -54,6 +54,16 @@ pub fn errnoLocation() *c_int {
         std.c._errno();
 }
 
+/// This function is intended to be used only in tests.
+/// If expected_errno is not equal to the current errno value,
+/// it prints diagnostics to stderr to show exactly how they are not equal,
+/// then returns a test failure error.
+/// After the check it resets the errno value to 0 (SUCCESS).
+pub fn expectErrno(expected_errno: std.c.E) !void {
+    try std.testing.expectEqual(expected_errno, @as(std.c.E, @enumFromInt(test_errno)));
+    test_errno = @intFromEnum(std.c.E.SUCCESS);
+}
+
 /// Given a low-level syscall return value, sets errno and returns `-1`, or on
 /// success returns the result.
 pub fn errno(syscall_return_value: usize) c_int {
