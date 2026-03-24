@@ -7381,104 +7381,120 @@ fn dirRenameWindowsInner(
     const new_path_w_buf = try sliceToPrefixedFileW(new_dir.handle, new_sub_path, .{});
     const new_path_w = new_path_w_buf.span();
 
-    const src_fd = src_fd: {
-        if (OpenFile(old_path_w, .{
-            .dir = old_dir.handle,
-            .access_mask = .{
-                .GENERIC = .{ .WRITE = true },
-                .STANDARD = .{
-                    .RIGHTS = .{ .DELETE = true },
-                    .SYNCHRONIZE = true,
+    var attempt: u5 = 0;
+    while (true) {
+        const src_fd = src_fd: {
+            if (OpenFile(old_path_w, .{
+                .dir = old_dir.handle,
+                .access_mask = .{
+                    .GENERIC = .{ .WRITE = true },
+                    .STANDARD = .{
+                        .RIGHTS = .{ .DELETE = true },
+                        .SYNCHRONIZE = true,
+                    },
                 },
-            },
-            .creation = .OPEN,
-            .filter = .any, // This function is supposed to rename both files and directories.
-            .follow_symlinks = false,
-        })) |handle| {
-            break :src_fd handle;
-        } else |err| switch (err) {
-            error.WouldBlock => unreachable, // Not possible without `.share_access_nonblocking = true`.
-            else => |e| return e,
-        }
-    };
-    defer w.CloseHandle(src_fd);
+                .creation = .OPEN,
+                .filter = .any, // This function is supposed to rename both files and directories.
+                .follow_symlinks = false,
+            })) |handle| {
+                break :src_fd handle;
+            } else |err| switch (err) {
+                error.WouldBlock => unreachable, // Not possible without `.share_access_nonblocking = true`.
+                else => |e| return e,
+            }
+        };
+        defer w.CloseHandle(src_fd);
 
-    var rc: w.NTSTATUS = undefined;
-    // FileRenameInformationEx has varying levels of support:
-    // - FILE_RENAME_INFORMATION_EX requires >= win10_rs1
-    //   (INVALID_INFO_CLASS is returned if not supported)
-    // - Requires the NTFS filesystem
-    //   (on filesystems like FAT32, INVALID_PARAMETER is returned)
-    // - FILE_RENAME_POSIX_SEMANTICS requires >= win10_rs1
-    // - FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5
-    //   (NOT_SUPPORTED is returned if a flag is unsupported)
-    //
-    // The strategy here is just to try using FileRenameInformationEx and fall back to
-    // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
-    const need_fallback = need_fallback: {
-        var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
-            .Flags = .{
-                .REPLACE_IF_EXISTS = replace_if_exists,
-                .POSIX_SEMANTICS = true,
-                .IGNORE_READONLY_ATTRIBUTE = true,
-            },
-            .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
-            .FileName = new_path_w,
-        });
-        var io_status_block: w.IO_STATUS_BLOCK = undefined;
-        const rename_info_buf = rename_info.toBuffer();
-        rc = w.ntdll.NtSetInformationFile(
-            src_fd,
-            &io_status_block,
-            rename_info_buf.ptr,
-            @intCast(rename_info_buf.len),
-            .RenameEx,
-        );
+        var rc: w.NTSTATUS = undefined;
+        // FileRenameInformationEx has varying levels of support:
+        // - FILE_RENAME_INFORMATION_EX requires >= win10_rs1
+        //   (INVALID_INFO_CLASS is returned if not supported)
+        // - Requires the NTFS filesystem
+        //   (on filesystems like FAT32, INVALID_PARAMETER is returned)
+        // - FILE_RENAME_POSIX_SEMANTICS requires >= win10_rs1
+        // - FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5
+        //   (NOT_SUPPORTED is returned if a flag is unsupported)
+        //
+        // The strategy here is just to try using FileRenameInformationEx and fall back to
+        // FileRenameInformation if the return value lets us know that some aspect of it is not supported.
+        const need_fallback = need_fallback: {
+            var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+                .Flags = .{
+                    .REPLACE_IF_EXISTS = replace_if_exists,
+                    .POSIX_SEMANTICS = true,
+                    .IGNORE_READONLY_ATTRIBUTE = true,
+                },
+                .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
+                .FileName = new_path_w,
+            });
+            var io_status_block: w.IO_STATUS_BLOCK = undefined;
+            const rename_info_buf = rename_info.toBuffer();
+            rc = w.ntdll.NtSetInformationFile(
+                src_fd,
+                &io_status_block,
+                rename_info_buf.ptr,
+                @intCast(rename_info_buf.len),
+                .RenameEx,
+            );
+            switch (rc) {
+                .SUCCESS => return,
+                // The filesystem does not support FileDispositionInformationEx
+                .INVALID_PARAMETER,
+                // The operating system does not support FileDispositionInformationEx
+                .INVALID_INFO_CLASS,
+                // The operating system does not support one of the flags
+                .NOT_SUPPORTED,
+                => break :need_fallback true,
+                // For all other statuses, fall down to the switch below to handle them.
+                else => break :need_fallback false,
+            }
+        };
+
+        if (need_fallback) {
+            var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
+                .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
+                .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
+                .FileName = new_path_w,
+            });
+            var io_status_block: w.IO_STATUS_BLOCK = undefined;
+            const rename_info_buf = rename_info.toBuffer();
+            rc = w.ntdll.NtSetInformationFile(
+                src_fd,
+                &io_status_block,
+                rename_info_buf.ptr,
+                @intCast(rename_info_buf.len),
+                .Rename,
+            );
+        }
+
         switch (rc) {
             .SUCCESS => return,
-            // The filesystem does not support FileDispositionInformationEx
-            .INVALID_PARAMETER,
-            // The operating system does not support FileDispositionInformationEx
-            .INVALID_INFO_CLASS,
-            // The operating system does not support one of the flags
-            .NOT_SUPPORTED,
-            => break :need_fallback true,
-            // For all other statuses, fall down to the switch below to handle them.
-            else => break :need_fallback false,
+            .INVALID_HANDLE => |err| return w.statusBug(err),
+            .INVALID_PARAMETER => |err| return w.statusBug(err),
+            .OBJECT_PATH_SYNTAX_BAD => |err| return w.statusBug(err),
+            .ACCESS_DENIED => {
+                // On Windows, renaming a file that replaces an existing one can
+                // transiently fail with ACCESS_DENIED. This happens because a
+                // prior close or delete operation on the destination file may not
+                // have fully completed, especially over SMB/UNC paths. Work around
+                // this with retry attempts using exponential backoff.
+                if (max_windows_kernel_bug_retries - attempt == 0) return error.AccessDenied;
+                try parking_sleep.sleep(.{ .duration = .{
+                    .raw = .fromMilliseconds((@as(u32, 1) << attempt) >> 1),
+                    .clock = .awake,
+                } });
+                attempt += 1;
+                continue;
+            },
+            .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
+            .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
+            .NOT_SAME_DEVICE => return error.CrossDevice,
+            .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
+            .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
+            .FILE_IS_A_DIRECTORY => return error.IsDir,
+            .NOT_A_DIRECTORY => return error.NotDir,
+            else => return w.unexpectedStatus(rc),
         }
-    };
-
-    if (need_fallback) {
-        var rename_info: w.FILE.RENAME_INFORMATION = .init(.{
-            .Flags = .{ .REPLACE_IF_EXISTS = replace_if_exists },
-            .RootDirectory = if (Dir.path.isAbsoluteWindowsWtf16(new_path_w)) null else new_dir.handle,
-            .FileName = new_path_w,
-        });
-        var io_status_block: w.IO_STATUS_BLOCK = undefined;
-        const rename_info_buf = rename_info.toBuffer();
-        rc = w.ntdll.NtSetInformationFile(
-            src_fd,
-            &io_status_block,
-            rename_info_buf.ptr,
-            @intCast(rename_info_buf.len),
-            .Rename,
-        );
-    }
-
-    switch (rc) {
-        .SUCCESS => {},
-        .INVALID_HANDLE => |err| return w.statusBug(err),
-        .INVALID_PARAMETER => |err| return w.statusBug(err),
-        .OBJECT_PATH_SYNTAX_BAD => |err| return w.statusBug(err),
-        .ACCESS_DENIED => return error.AccessDenied,
-        .OBJECT_NAME_NOT_FOUND => return error.FileNotFound,
-        .OBJECT_PATH_NOT_FOUND => return error.FileNotFound,
-        .NOT_SAME_DEVICE => return error.CrossDevice,
-        .OBJECT_NAME_COLLISION => return error.PathAlreadyExists,
-        .DIRECTORY_NOT_EMPTY => return error.DirNotEmpty,
-        .FILE_IS_A_DIRECTORY => return error.IsDir,
-        .NOT_A_DIRECTORY => return error.NotDir,
-        else => return w.unexpectedStatus(rc),
     }
 }
 
