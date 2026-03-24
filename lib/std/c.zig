@@ -7046,7 +7046,7 @@ pub const time_t = switch (native_os) {
 pub const suseconds_t = switch (native_os) {
     // https://github.com/SerenityOS/serenity/blob/b98f537f117b341788023ab82e0c11ca9ae29a57/Kernel/API/POSIX/sys/types.h#L49
     .illumos, .serenity => i64,
-    .freebsd, .dragonfly => c_long,
+    .linux, .freebsd, .dragonfly => c_long,
     .netbsd => c_int,
     .haiku => i32,
     else => void,
