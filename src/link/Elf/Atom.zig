@@ -527,6 +527,17 @@ fn reportUnhandledRelocError(self: Atom, rel: elf.Elf64_Rela, elf_file: *Elf) Re
     return error.RelocFailure;
 }
 
+fn reportRelocOverflow(self: Atom, rel: elf.Elf64_Rela, elf_file: *Elf) RelocError!void {
+    const diags = &elf_file.base.comp.link_diags;
+    var err = try diags.addErrorWithNotes(1);
+    try err.addMsg("relocation truncated to fit: {f} at offset 0x{x}", .{
+        relocation.fmtRelocType(rel.r_type(), elf_file.getTarget().cpu.arch),
+        rel.r_offset,
+    });
+    err.addNote("in {f}:{s}", .{ self.file(elf_file).?.fmtPath(), self.name(elf_file) });
+    return error.RelocFailure;
+}
+
 fn reportTextRelocError(
     self: Atom,
     symbol: *const Symbol,
@@ -1081,32 +1092,57 @@ const x86_64 = struct {
                 );
             },
 
-            .PLT32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S + A - P)), .little),
-            .PC32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S + A - P)), .little),
+            .PLT32,
+            .PC32,
+            => {
+                const value = std.math.cast(i32, S + A - P) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(i32, code[r_offset..][0..4], value, .little);
+            },
 
-            .GOTPCREL => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(G + GOT + A - P)), .little),
-            .GOTPC32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(GOT + A - P)), .little),
+            .GOTPCREL => {
+                const value = std.math.cast(i32, G + GOT + A - P) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(i32, code[r_offset..][0..4], value, .little);
+            },
+            .GOTPC32 => {
+                const value = std.math.cast(i32, GOT + A - P) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(i32, code[r_offset..][0..4], value, .little);
+            },
             .GOTPC64 => mem.writeInt(i64, code[r_offset..][0..8], GOT + A - P, .little),
 
             .GOTPCRELX => {
                 if (!target.flags.import and !target.isIFunc(elf_file) and !target.isAbs(elf_file)) blk: {
                     x86_64.relaxGotpcrelx(code[r_offset - 2 ..], t) catch break :blk;
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S + A - P)), .little);
+                    const value = std.math.cast(i32, S + A - P) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                     return;
                 }
-                mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(G + GOT + A - P)), .little);
+                const value = std.math.cast(i32, G + GOT + A - P) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(i32, code[r_offset..][0..4], value, .little);
             },
 
             .REX_GOTPCRELX => {
                 if (!target.flags.import and !target.isIFunc(elf_file) and !target.isAbs(elf_file)) blk: {
                     x86_64.relaxRexGotpcrelx(code[r_offset - 3 ..], t) catch break :blk;
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S + A - P)), .little);
+                    const value = std.math.cast(i32, S + A - P) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                     return;
                 }
-                mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(G + GOT + A - P)), .little);
+                const value = std.math.cast(i32, G + GOT + A - P) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(i32, code[r_offset..][0..4], value, .little);
             },
 
-            .@"32" => mem.writeInt(u32, code[r_offset..][0..4], @as(u32, @truncate(@as(u64, @intCast(S + A)))), .little),
+            .@"32" => {
+                const value = std.math.cast(u64, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(u32, code[r_offset..][0..4], @truncate(value), .little);
+            },
             .@"32S" => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @truncate(S + A)), .little),
 
             .TPOFF32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @truncate(S + A - TP)), .little),
@@ -1118,15 +1154,21 @@ const x86_64 = struct {
             .TLSGD => {
                 if (target.flags.has_tlsgd) {
                     const S_ = target.tlsGdAddress(elf_file);
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S_ + A - P)), .little);
+                    const value = std.math.cast(i32, S_ + A - P) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                 } else if (target.flags.has_gottp) {
                     const S_ = target.gotTpAddress(elf_file);
-                    try x86_64.relaxTlsGdToIe(atom, &.{ rel, it.next().? }, @intCast(S_ - P), elf_file, code, r_offset);
+                    const value = std.math.cast(i32, S_ - P) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    try x86_64.relaxTlsGdToIe(atom, &.{ rel, it.next().? }, value, elf_file, code, r_offset);
                 } else {
+                    const value = std.math.cast(i32, S - TP) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
                     try x86_64.relaxTlsGdToLe(
                         atom,
                         &.{ rel, it.next().? },
-                        @as(i32, @intCast(S - TP)),
+                        value,
                         elf_file,
                         code,
                         r_offset,
@@ -1138,12 +1180,16 @@ const x86_64 = struct {
                 if (elf_file.got.tlsld_index) |entry_index| {
                     const tlsld_entry = elf_file.got.entries.items[entry_index];
                     const S_ = tlsld_entry.address(elf_file);
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S_ + A - P)), .little);
+                    const value = std.math.cast(i32, S_ + A - P) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                 } else {
+                    const value = std.math.cast(i32, TP - elf_file.tlsAddress()) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
                     try x86_64.relaxTlsLdToLe(
                         atom,
                         &.{ rel, it.next().? },
-                        @as(i32, @intCast(TP - elf_file.tlsAddress())),
+                        value,
                         elf_file,
                         code,
                         r_offset,
@@ -1154,7 +1200,9 @@ const x86_64 = struct {
             .GOTPC32_TLSDESC => {
                 if (target.flags.has_tlsdesc) {
                     const S_ = target.tlsDescAddress(elf_file);
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S_ + A - P)), .little);
+                    const value = std.math.cast(i32, S_ + A - P) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                 } else {
                     x86_64.relaxGotPcTlsDesc(code[r_offset - 3 ..], t) catch {
                         var err = try diags.addErrorWithNotes(1);
@@ -1166,7 +1214,9 @@ const x86_64 = struct {
                         });
                         return error.RelaxFailure;
                     };
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S - TP)), .little);
+                    const value = std.math.cast(i32, S - TP) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                 }
             },
 
@@ -1178,14 +1228,22 @@ const x86_64 = struct {
             .GOTTPOFF => {
                 if (target.flags.has_gottp) {
                     const S_ = target.gotTpAddress(elf_file);
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S_ + A - P)), .little);
+                    const value = std.math.cast(i32, S_ + A - P) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                 } else {
                     x86_64.relaxGotTpOff(code[r_offset - 3 ..], t);
-                    mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(S - TP)), .little);
+                    const value = std.math.cast(i32, S - TP) orelse
+                        return atom.reportRelocOverflow(rel, elf_file);
+                    mem.writeInt(i32, code[r_offset..][0..4], value, .little);
                 }
             },
 
-            .GOT32 => mem.writeInt(i32, code[r_offset..][0..4], @as(i32, @intCast(G + A)), .little),
+            .GOT32 => {
+                const value = std.math.cast(i32, G + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(i32, code[r_offset..][0..4], value, .little);
+            },
 
             else => try atom.reportUnhandledRelocError(rel, elf_file),
         }
@@ -1208,18 +1266,37 @@ const x86_64 = struct {
 
         switch (r_type) {
             .NONE => unreachable,
-            .@"8" => try writer.writeInt(u8, @as(u8, @bitCast(@as(i8, @intCast(S + A)))), .little),
-            .@"16" => try writer.writeInt(u16, @as(u16, @bitCast(@as(i16, @intCast(S + A)))), .little),
-            .@"32" => try writer.writeInt(u32, @as(u32, @bitCast(@as(i32, @intCast(S + A)))), .little),
-            .@"32S" => try writer.writeInt(i32, @as(i32, @intCast(S + A)), .little),
+            .@"8" => {
+                const value = std.math.cast(i8, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                try writer.writeInt(u8, @as(u8, @bitCast(value)), .little);
+            },
+            .@"16" => {
+                const value = std.math.cast(i16, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                try writer.writeInt(u16, @as(u16, @bitCast(value)), .little);
+            },
+            .@"32" => {
+                const value = std.math.cast(i32, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                try writer.writeInt(u32, @as(u32, @bitCast(value)), .little);
+            },
+            .@"32S" => {
+                const value = std.math.cast(i32, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                try writer.writeInt(i32, value, .little);
+            },
             .@"64" => if (atom.debugTombstoneValue(target.*, elf_file)) |value|
                 try writer.writeInt(u64, value, .little)
             else
                 try writer.writeInt(i64, S + A, .little),
             .DTPOFF32 => if (atom.debugTombstoneValue(target.*, elf_file)) |value|
                 try writer.writeInt(u64, value, .little)
-            else
-                try writer.writeInt(i32, @as(i32, @intCast(S + A - DTP)), .little),
+            else {
+                const dtp_value = std.math.cast(i32, S + A - DTP) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                try writer.writeInt(i32, dtp_value, .little);
+            },
             .DTPOFF64 => if (atom.debugTombstoneValue(target.*, elf_file)) |value|
                 try writer.writeInt(u64, value, .little)
             else
@@ -1228,11 +1305,13 @@ const x86_64 = struct {
             .GOTPC64 => try writer.writeInt(i64, GOT + A, .little),
             .SIZE32 => {
                 const size = @as(i64, @intCast(target.elfSym(elf_file).st_size));
-                try writer.writeInt(u32, @bitCast(@as(i32, @intCast(size + A))), .little);
+                const value = std.math.cast(i32, size + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                try writer.writeInt(u32, @bitCast(value), .little);
             },
             .SIZE64 => {
                 const size = @as(i64, @intCast(target.elfSym(elf_file).st_size));
-                try writer.writeInt(i64, @intCast(size + A), .little);
+                try writer.writeInt(i64, size + A, .little);
             },
             else => try atom.reportUnhandledRelocError(rel, elf_file),
         }
@@ -1635,11 +1714,13 @@ const aarch64 = struct {
             },
             .LD64_GOT_LO12_NC => {
                 assert(target.flags.has_got);
-                const taddr = @as(u64, @intCast(G + GOT + A));
+                const taddr = std.math.cast(u64, G + GOT + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
                 util.writeLoadStoreRegInst(@divExact(@as(u12, @truncate(taddr)), 8), code);
             },
             .ADD_ABS_LO12_NC => {
-                const taddr = @as(u64, @intCast(S + A));
+                const taddr = std.math.cast(u64, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
                 util.writeAddImmInst(@truncate(taddr), code);
             },
             .LDST8_ABS_LO12_NC,
@@ -1649,7 +1730,8 @@ const aarch64 = struct {
             .LDST128_ABS_LO12_NC,
             => {
                 // TODO: NC means no overflow check
-                const taddr = @as(u64, @intCast(S + A));
+                const taddr = std.math.cast(u64, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
                 const off: u12 = switch (r_type) {
                     .LDST8_ABS_LO12_NC => @truncate(taddr),
                     .LDST16_ABS_LO12_NC => @divExact(@as(u12, @truncate(taddr)), 2),
@@ -1748,7 +1830,11 @@ const aarch64 = struct {
         var writer: Writer = .fixed(code);
         switch (r_type) {
             .NONE => unreachable,
-            .ABS32 => try writer.writeInt(i32, @as(i32, @intCast(S + A)), .little),
+            .ABS32 => {
+                const value = std.math.cast(i32, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                try writer.writeInt(i32, value, .little);
+            },
             .ABS64 => if (atom.debugTombstoneValue(target.*, elf_file)) |value|
                 try writer.writeInt(u64, value, .little)
             else
@@ -1825,7 +1911,11 @@ const riscv = struct {
         switch (r_type) {
             .NONE => unreachable,
 
-            .@"32" => mem.writeInt(u32, code[r_offset..][0..4], @as(u32, @truncate(@as(u64, @intCast(S + A)))), .little),
+            .@"32" => {
+                const value = std.math.cast(u64, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(u32, code[r_offset..][0..4], @truncate(value), .little);
+            },
 
             .@"64" => {
                 try atom.resolveDynAbsReloc(
@@ -1917,16 +2007,20 @@ const riscv = struct {
             },
 
             .TPREL_HI20 => {
-                const target_addr: u32 = @intCast(target.address(.{}, elf_file));
-                const val: i32 = @intCast(S + A - target_addr);
+                const target_addr = std.math.cast(u32, target.address(.{}, elf_file)) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                const val = std.math.cast(i32, S + A - @as(i64, target_addr)) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
                 riscv_util.writeInstU(code[r_offset..][0..4], @bitCast(val));
             },
 
             .TPREL_LO12_I,
             .TPREL_LO12_S,
             => {
-                const target_addr: u32 = @intCast(target.address(.{}, elf_file));
-                const val: i32 = @intCast(S + A - target_addr);
+                const target_addr = std.math.cast(u32, target.address(.{}, elf_file)) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                const val = std.math.cast(i32, S + A - @as(i64, target_addr)) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
                 switch (r_type) {
                     .TPREL_LO12_I => riscv_util.writeInstI(code[r_offset..][0..4], @bitCast(val)),
                     .TPREL_LO12_S => riscv_util.writeInstS(code[r_offset..][0..4], @bitCast(val)),
@@ -1959,7 +2053,11 @@ const riscv = struct {
         switch (r_type) {
             .NONE => unreachable,
 
-            .@"32" => mem.writeInt(i32, code[0..4], @intCast(S + A), .little),
+            .@"32" => {
+                const value = std.math.cast(i32, S + A) orelse
+                    return atom.reportRelocOverflow(rel, elf_file);
+                mem.writeInt(i32, code[0..4], value, .little);
+            },
             .@"64" => if (atom.debugTombstoneValue(target.*, elf_file)) |value|
                 mem.writeInt(u64, code[0..8], value, .little)
             else
