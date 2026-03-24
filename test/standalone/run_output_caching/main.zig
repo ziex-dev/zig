@@ -8,4 +8,5 @@ pub fn main(init: std.process.Init) !void {
     const file = try std.Io.Dir.cwd().createFile(io, filename, .{});
     defer file.close(io);
     try file.writeStreamingAll(io, filename);
+    try file.sync(io);
 }
