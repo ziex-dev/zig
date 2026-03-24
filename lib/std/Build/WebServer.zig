@@ -168,7 +168,10 @@ pub fn start(ws: *WebServer) error{AlreadyReported}!void {
 fn serve(ws: *WebServer) void {
     const io = ws.graph.io;
     while (true) {
-        var stream = ws.tcp_server.?.accept(io) catch |err| {
+        var stream = ws.tcp_server.?.accept(io, .{
+            .family = std.meta.activeTag(ws.listen_address),
+            .mode = .stream,
+        }) catch |err| {
             log.err("failed to accept connection: {s}", .{@errorName(err)});
             return;
         };

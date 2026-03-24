@@ -3733,7 +3733,7 @@ fn buildOutputType(
             });
             defer server.deinit(io);
 
-            var stream = try server.accept(io);
+            var stream = try server.accept(io, .{ .family = .ip4, .mode = .stream });
             defer stream.close(io);
 
             var input = stream.reader(io, &stdin_buffer);

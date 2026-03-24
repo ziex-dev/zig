@@ -12431,7 +12431,7 @@ fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle, options: 
     if (!have_networking) return error.NetworkDown;
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
-    options;
+    _ = options;
     var storage: PosixAddress = undefined;
     var addr_len: posix.socklen_t = @sizeOf(PosixAddress);
     const syscall: Syscall = try .start();
@@ -12495,10 +12495,13 @@ fn netAcceptWindows(userdata: ?*anyopaque, listen_handle: net.Socket.Handle, opt
         else => |status| return windows.unexpectedStatus(status),
     }
     errdefer t.deferAcceptAfd(listen_handle, storage.Info);
-    const accept_handle = openSocketAfd(
-        storage.RemoteAddress.posix.any.family,
-        .{ .mode = options.mode, .protocol = options.protocol },
-    ) catch |err| switch (err) {
+    const accept_handle = openSocketAfd(switch (options.family) {
+        .ip4 => posix.AF.INET,
+        .ip6 => posix.AF.INET6,
+    }, .{
+        .mode = options.mode,
+        .protocol = options.protocol,
+    }) catch |err| switch (err) {
         error.AddressFamilyUnsupported => return error.Unexpected,
         error.ProtocolUnsupportedByAddressFamily => return error.Unexpected,
         else => |e| return e,

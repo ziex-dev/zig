@@ -206,7 +206,7 @@ test "listen on a port, send bytes, receive bytes" {
     };
     defer client_task.cancel(io) catch {};
 
-    var stream = try server.accept(io);
+    var stream = try server.accept(io, .{ .family = .ip4, .mode = .stream });
     defer stream.close(io);
 
     var buf: [16]u8 = undefined;
@@ -272,7 +272,7 @@ test "listen on a unix socket, send bytes, receive bytes" {
     };
     defer client_task.cancel(io) catch {};
 
-    var stream = try server.accept(io);
+    var stream = try server.accept(io, .{ .family = .ip4, .mode = .stream });
     defer stream.close(io);
 
     var buf: [16]u8 = undefined;
@@ -355,7 +355,7 @@ test "cancel accept" {
     };
     defer server.deinit(io);
 
-    var accept = io.concurrent(std.Io.net.Server.accept, .{ &server, io }) catch |err| switch (err) {
+    var accept = io.concurrent(std.Io.net.Server.accept, .{ &server, io, .{ .family = .ip4, .mode = .stream } }) catch |err| switch (err) {
         error.ConcurrencyUnavailable => return error.SkipZigTest,
     };
     defer if (accept.cancel(io)) |stream| stream.close(io) else |_| {};
