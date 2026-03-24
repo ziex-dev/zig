@@ -341,6 +341,16 @@ const targets = [_]std.Target.Query{
     // .{ .cpu_arch = .xtensa, .os_tag = .linux, .abi = .none },
 };
 
+const source =
+    "const builtin = @import(\"builtin\");\n" ++
+    "comptime {\n" ++
+    "    if (builtin.abi.isOpenHarmony() and builtin.cpu.arch == .x86_64) {\n" ++
+    "        if (@bitSizeOf(c_longdouble) != 128 or @sizeOf(c_longdouble) != 16 or @alignOf(c_longdouble) != 16) {\n" ++
+    "            @compileError(\"x86_64-ohos c_longdouble must be 128-bit with 16-byte size/alignment\");\n" ++
+    "        }\n" ++
+    "    }\n" ++
+    "}\n";
+
 pub fn addCases(
     ctx: *Cases,
     build_options: @import("cases.zig").BuildOptions,
@@ -356,6 +366,6 @@ pub fn addCases(
             else => {},
         };
         var case = ctx.addObjLlvm("llvm_targets", b.resolveTargetQuery(target_query));
-        case.addCompile("");
+        case.addCompile(source);
     }
 }

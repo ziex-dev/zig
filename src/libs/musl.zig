@@ -7,6 +7,7 @@ const Module = @import("../Package/Module.zig");
 
 const Compilation = @import("../Compilation.zig");
 const build_options = @import("build_options");
+const ohos = @import("ohos.zig");
 
 pub const CrtFile = enum {
     crt1_o,
@@ -32,16 +33,18 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
         .crt1_o => {
             var args = std.array_list.Managed([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
+            if (comp.getTarget().abi.isOpenHarmony()) {
+                try ohos.appendCrtCcArgs(comp.getTarget(), &args);
+            }
             try args.append("-DCRT");
             var files = [_]Compilation.CSourceFile{
                 .{
-                    .src_path = try comp.dirs.zig_lib.join(arena, &.{
-                        "libc", "musl", "crt", "crt1.c",
-                    }),
+                    .src_path = try joinLibcSourcePath(comp, arena, "musl/crt/crt1.c"),
                     .extra_flags = args.items,
                     .owner = undefined,
                 },
             };
+            try ensureOhosExtraCrtFiles(comp, arena, prog_node);
             return comp.build_crt_file("crt1", .Obj, .@"musl crt1.o", prog_node, &files, .{
                 .omit_frame_pointer = true,
                 .no_builtin = true,
@@ -50,16 +53,18 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
         .rcrt1_o => {
             var args = std.array_list.Managed([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
+            if (comp.getTarget().abi.isOpenHarmony()) {
+                try ohos.appendCrtCcArgs(comp.getTarget(), &args);
+            }
             try args.append("-DCRT");
             var files = [_]Compilation.CSourceFile{
                 .{
-                    .src_path = try comp.dirs.zig_lib.join(arena, &.{
-                        "libc", "musl", "crt", "rcrt1.c",
-                    }),
+                    .src_path = try joinLibcSourcePath(comp, arena, "musl/crt/rcrt1.c"),
                     .extra_flags = args.items,
                     .owner = undefined,
                 },
             };
+            try ensureOhosExtraCrtFiles(comp, arena, prog_node);
             return comp.build_crt_file("rcrt1", .Obj, .@"musl rcrt1.o", prog_node, &files, .{
                 .omit_frame_pointer = true,
                 .pic = true,
@@ -69,16 +74,18 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
         .scrt1_o => {
             var args = std.array_list.Managed([]const u8).init(arena);
             try addCcArgs(comp, arena, &args, false);
+            if (comp.getTarget().abi.isOpenHarmony()) {
+                try ohos.appendCrtCcArgs(comp.getTarget(), &args);
+            }
             try args.append("-DCRT");
             var files = [_]Compilation.CSourceFile{
                 .{
-                    .src_path = try comp.dirs.zig_lib.join(arena, &.{
-                        "libc", "musl", "crt", "Scrt1.c",
-                    }),
+                    .src_path = try joinLibcSourcePath(comp, arena, "musl/crt/Scrt1.c"),
                     .extra_flags = args.items,
                     .owner = undefined,
                 },
             };
+            try ensureOhosExtraCrtFiles(comp, arena, prog_node);
             return comp.build_crt_file("Scrt1", .Obj, .@"musl Scrt1.o", prog_node, &files, .{
                 .omit_frame_pointer = true,
                 .pic = true,
@@ -107,6 +114,10 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 }
             }
 
+            if (target.abi.isOpenHarmony()) {
+                try ohos.addExtraSrcFiles(comp, arena, &source_table, addSrcFile);
+            }
+
             var c_source_files = std.array_list.Managed(Compilation.CSourceFile).init(comp.gpa);
             defer c_source_files.deinit();
 
@@ -119,6 +130,10 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
             while (it.next()) |entry| {
                 const src_file = entry.key_ptr.*;
                 const ext = entry.value_ptr.*;
+
+                if (ohos.shouldSkipSource(target, src_file)) {
+                    continue;
+                }
 
                 const dirname = path.dirname(src_file).?;
                 const basename = path.basename(src_file);
@@ -158,9 +173,12 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
 
                 var args = std.array_list.Managed([]const u8).init(arena);
                 try addCcArgs(comp, arena, &args, ext == .o3);
+                if (target.abi.isOpenHarmony()) {
+                    try ohos.appendSourceSpecificCcArgs(target, &args, src_file);
+                }
                 const c_source_file = try c_source_files.addOne();
                 c_source_file.* = .{
-                    .src_path = try comp.dirs.zig_lib.join(arena, &.{ "libc", src_file }),
+                    .src_path = try joinLibcSourcePath(comp, arena, src_file),
                     .extra_flags = args.items,
                     .owner = undefined,
                 };
@@ -258,7 +276,7 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 .clang_passthrough_mode = comp.clang_passthrough_mode,
                 .c_source_files = &.{
                     .{
-                        .src_path = try comp.dirs.zig_lib.join(arena, &.{ "libc", "musl", "libc.S" }),
+                        .src_path = try joinLibcSourcePath(comp, arena, "musl/libc.S"),
                         .owner = root_mod,
                     },
                 },
@@ -288,6 +306,57 @@ pub fn buildCrtFile(comp: *Compilation, in_crt_file: CrtFile, prog_node: std.Pro
                 comp.crt_files.putAssumeCapacityNoClobber(basename, crt_file);
             }
         },
+    }
+}
+
+
+fn ensureOhosExtraCrtFiles(comp: *Compilation, arena: Allocator, prog_node: std.Progress.Node) !void {
+    if (!comp.getTarget().abi.isOpenHarmony()) return;
+
+    const target = comp.getTarget();
+    const arch_name = std.zig.target.muslArchName(target.cpu.arch, target.abi);
+
+    if (!comp.crt_files.contains("crti.o")) {
+        var crti_args = std.array_list.Managed([]const u8).init(arena);
+        try addCcArgs(comp, arena, &crti_args, false);
+        try ohos.appendCrtCcArgs(target, &crti_args);
+        try crti_args.append("-DCRT");
+        const crti_rel = try std.fmt.allocPrint(arena, "musl/crt/{s}/crti.s", .{arch_name});
+        var crti_files = [_]Compilation.CSourceFile{.{
+            .src_path = try joinLibcSourcePath(comp, arena, crti_rel),
+            .extra_flags = crti_args.items,
+            .owner = undefined,
+        }};
+        try comp.build_crt_file("crti", .Obj, .@"musl crti.o", prog_node, &crti_files, .{
+            .omit_frame_pointer = true,
+            .pic = true,
+            .no_builtin = true,
+        });
+    }
+
+    if (!comp.crt_files.contains("crtn.o")) {
+        var crtn_args = std.array_list.Managed([]const u8).init(arena);
+        try addCcArgs(comp, arena, &crtn_args, false);
+        try ohos.appendCrtCcArgs(target, &crtn_args);
+        try crtn_args.append("-DCRT");
+        const crtn_rel = try std.fmt.allocPrint(arena, "musl/crt/{s}/crtn.s", .{arch_name});
+        var crtn_files = [_]Compilation.CSourceFile{
+            .{
+                .src_path = try joinLibcSourcePath(comp, arena, crtn_rel),
+                .extra_flags = crtn_args.items,
+                .owner = undefined,
+            },
+            .{
+                .src_path = try joinLibcSourcePath(comp, arena, "musl/crt/crtplus.c"),
+                .extra_flags = crtn_args.items,
+                .owner = undefined,
+            },
+        };
+        try comp.build_crt_file("crtn", .Obj, .@"musl crtn.o", prog_node, &crtn_files, .{
+            .omit_frame_pointer = true,
+            .pic = true,
+            .no_builtin = true,
+        });
     }
 }
 
@@ -344,6 +413,17 @@ fn isArchName(name: []const u8) bool {
     return false;
 }
 
+fn joinLibcSourcePath(comp: *Compilation, arena: Allocator, musl_rel_path: []const u8) ![]const u8 {
+    const rel_path = try resolveLibcSourcePath(comp, arena, musl_rel_path);
+    return comp.dirs.zig_lib.join(arena, &.{ "libc", rel_path });
+}
+
+fn resolveLibcSourcePath(comp: *Compilation, arena: Allocator, musl_rel_path: []const u8) ![]const u8 {
+    const target = comp.getTarget();
+    if (!target.abi.isOpenHarmony()) return musl_rel_path;
+    return ohos.resolveLibcSourcePath(comp, arena, musl_rel_path);
+}
+
 const Ext = enum {
     assembly,
     o3,
@@ -352,8 +432,10 @@ const Ext = enum {
 fn addSrcFile(arena: Allocator, source_table: *std.StringArrayHashMap(Ext), file_path: []const u8) !void {
     const ext: Ext = ext: {
         if (mem.endsWith(u8, file_path, ".c")) {
-            if (mem.startsWith(u8, file_path, "musl/src/string/") or
-                mem.startsWith(u8, file_path, "musl/src/internal/"))
+            if (mem.startsWith(u8, file_path, "musl/src/malloc/") or
+                mem.startsWith(u8, file_path, "musl/src/string/") or
+                mem.startsWith(u8, file_path, "musl/src/internal/") or
+                ohos.isO3Path(file_path))
             {
                 break :ext .o3;
             } else {
@@ -377,7 +459,7 @@ fn addSrcFile(arena: Allocator, source_table: *std.StringArrayHashMap(Ext), file
         }
         break :blk mutable_file_path;
     } else file_path;
-    source_table.putAssumeCapacityNoClobber(key, ext);
+    try source_table.putNoClobber(key, ext);
 }
 
 fn addCcArgs(
@@ -389,12 +471,29 @@ fn addCcArgs(
     const target = comp.getTarget();
     const arch_name = std.zig.target.muslArchName(target.cpu.arch, target.abi);
     const os_name = @tagName(target.os.tag);
+    const include_arch_name = if (target.abi.isOpenHarmony())
+        ohos.includeArchName(target)
+    else
+        std.zig.target.muslArchNameHeaders(target.cpu.arch);
+    const include_abi_name = if (target.abi.isOpenHarmony())
+        ohos.includeAbiName(target)
+    else
+        std.zig.target.muslAbiNameHeaders(target.abi);
     const triple = try std.fmt.allocPrint(arena, "{s}-{s}-{s}", .{
-        std.zig.target.muslArchNameHeaders(target.cpu.arch),
+        include_arch_name,
         os_name,
-        std.zig.target.muslAbiNameHeaders(target.abi),
+        include_abi_name,
     });
+    const musl_fallback_triple = if (target.abi.isOpenHarmony())
+        try ohos.muslFallbackTriple(arena, target, os_name)
+    else
+        null;
     const o_arg = if (want_O3) "-O3" else "-Os";
+
+    if (target.abi.isOpenHarmony()) {
+        try ohos.appendPreIncludeArgs(comp, arena, args, arch_name);
+        try ohos.appendCommonCcArgs(target, args);
+    }
 
     try args.appendSlice(&[_][]const u8{
         "-std=c99",
@@ -417,12 +516,20 @@ fn addCcArgs(
 
         "-I",
         try comp.dirs.zig_lib.join(arena, &.{ "libc", "musl", "src", "internal" }),
+    });
 
+    if (target.abi.isOpenHarmony()) {
+        try ohos.appendPostIncludeArgs(comp, arena, args, triple, musl_fallback_triple.?);
+    } else {
+        try args.appendSlice(&[_][]const u8{
+            "-I",
+            try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", triple }),
+        });
+    }
+
+    try args.appendSlice(&[_][]const u8{
         "-I",
         try comp.dirs.zig_lib.join(arena, &.{ "libc", "musl", "include" }),
-
-        "-I",
-        try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", triple }),
 
         "-I",
         try comp.dirs.zig_lib.join(arena, &.{ "libc", "include", "generic-musl" }),
@@ -430,7 +537,7 @@ fn addCcArgs(
         o_arg,
 
         "-Qunused-arguments",
-        "-w", // disable all warnings
+        "-w",
     });
 
     if (target.cpu.arch.isThumb()) {

@@ -18,6 +18,7 @@ pub const available_libcs = [_]ArchOsAbi{
     .{ .arch = .arm, .os = .linux, .abi = .gnueabihf, .os_ver = .{ .major = 2, .minor = 1, .patch = 0 } },
     .{ .arch = .arm, .os = .linux, .abi = .musleabi, .os_ver = .{ .major = 2, .minor = 1, .patch = 0 } },
     .{ .arch = .arm, .os = .linux, .abi = .musleabihf, .os_ver = .{ .major = 2, .minor = 1, .patch = 0 } },
+    .{ .arch = .arm, .os = .linux, .abi = .ohoseabi },
     .{ .arch = .arm, .os = .netbsd, .abi = .eabi, .os_ver = .{ .major = 1, .minor = 2, .patch = 0 } },
     .{ .arch = .arm, .os = .netbsd, .abi = .eabihf, .os_ver = .{ .major = 1, .minor = 2, .patch = 0 } },
     .{ .arch = .arm, .os = .openbsd, .abi = .eabi, .os_ver = .{ .major = 6, .minor = 1, .patch = 0 } },
@@ -35,6 +36,7 @@ pub const available_libcs = [_]ArchOsAbi{
     .{ .arch = .aarch64, .os = .freebsd, .abi = .none, .os_ver = .{ .major = 11, .minor = 0, .patch = 0 } },
     .{ .arch = .aarch64, .os = .linux, .abi = .gnu, .os_ver = .{ .major = 3, .minor = 7, .patch = 0 }, .glibc_min = .{ .major = 2, .minor = 17, .patch = 0 } },
     .{ .arch = .aarch64, .os = .linux, .abi = .musl, .os_ver = .{ .major = 3, .minor = 7, .patch = 0 } },
+    .{ .arch = .aarch64, .os = .linux, .abi = .ohos },
     .{ .arch = .aarch64, .os = .maccatalyst, .abi = .none, .os_ver = .{ .major = 11, .minor = 0, .patch = 0 } },
     .{ .arch = .aarch64, .os = .macos, .abi = .none, .os_ver = .{ .major = 11, .minor = 0, .patch = 0 } },
     .{ .arch = .aarch64, .os = .netbsd, .abi = .none, .os_ver = .{ .major = 9, .minor = 0, .patch = 0 } },
@@ -115,6 +117,7 @@ pub const available_libcs = [_]ArchOsAbi{
     .{ .arch = .x86_64, .os = .linux, .abi = .gnux32, .os_ver = .{ .major = 3, .minor = 4, .patch = 0 }, .glibc_triple = "x86_64-linux-gnu-x32" },
     .{ .arch = .x86_64, .os = .linux, .abi = .musl, .os_ver = .{ .major = 2, .minor = 6, .patch = 4 } },
     .{ .arch = .x86_64, .os = .linux, .abi = .muslx32, .os_ver = .{ .major = 3, .minor = 4, .patch = 0 } },
+    .{ .arch = .x86_64, .os = .linux, .abi = .ohos },
     .{ .arch = .x86_64, .os = .maccatalyst, .abi = .none, .os_ver = .{ .major = 10, .minor = 15, .patch = 0 } },
     .{ .arch = .x86_64, .os = .macos, .abi = .none, .os_ver = .{ .major = 10, .minor = 7, .patch = 0 } },
     .{ .arch = .x86_64, .os = .netbsd, .abi = .none, .os_ver = .{ .major = 2, .minor = 0, .patch = 0 } },
@@ -236,6 +239,22 @@ pub fn muslAbiNameHeaders(abi: std.Target.Abi) [:0]const u8 {
         .muslabin32 => "muslabin32",
         .muslx32 => "muslx32",
         else => "musl",
+    };
+}
+
+pub fn openHarmonyArchNameHeaders(arch: std.Target.Cpu.Arch) [:0]const u8 {
+    return switch (arch) {
+        .arm, .armeb, .thumb, .thumbeb => "arm",
+        .aarch64, .aarch64_be => "aarch64",
+        else => @tagName(arch),
+    };
+}
+
+pub fn openHarmonyAbiNameHeaders(abi: std.Target.Abi) [:0]const u8 {
+    return switch (abi) {
+        .ohos => "ohos",
+        .ohoseabi => "ohoseabi",
+        else => unreachable,
     };
 }
 

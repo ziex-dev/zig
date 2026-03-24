@@ -18,6 +18,14 @@ const have_i128 = builtin.cpu.arch != .x86 and !builtin.cpu.arch.isArm() and
 const have_f128 = builtin.cpu.arch.isWasm() or (builtin.cpu.arch.isX86() and !builtin.os.tag.isDarwin());
 const have_f80 = builtin.cpu.arch.isX86();
 
+comptime {
+    if (builtin.abi.isOpenHarmony() and builtin.cpu.arch == .x86_64) {
+        if (@bitSizeOf(c_longdouble) != 128 or @sizeOf(c_longdouble) != 16 or @alignOf(c_longdouble) != 16) {
+            @compileError("x86_64-ohos c_longdouble must be 128-bit with 16-byte size/alignment");
+        }
+    }
+}
+
 extern fn run_c_tests() void;
 
 export fn zig_panic() noreturn {

@@ -2473,6 +2473,13 @@ pub const DynamicLinker = struct {
 
                     else => none,
                 }
+            else if (abi.isOpenHarmony())
+                switch (cpu.arch) {
+                    .arm => if (abi == .ohoseabi) init("/lib/ld-musl-arm.so.1") else none,
+                    .aarch64 => if (abi == .ohos) init("/lib/ld-musl-aarch64.so.1") else none,
+                    .x86_64 => if (abi == .ohos) init("/lib/ld-musl-x86_64.so.1") else none,
+                    else => none,
+                }
             else if (abi.isMusl())
                 switch (cpu.arch) {
                     .arm,
@@ -3182,7 +3189,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) u16 {
                     else => return 64,
                 },
                 .longlong, .ulonglong, .double => return 64,
-                .longdouble => return 80,
+                .longdouble => if (target.abi.isOpenHarmony()) return 128 else return 80,
             },
             else => switch (c_type) {
                 .char => return 8,
@@ -3736,4 +3743,17 @@ const assert = std.debug.assert;
 
 test {
     std.testing.refAllDecls(Cpu.Arch);
+}
+
+test "x86_64-ohos long double matches clang ABI" {
+    const target: Target = .{
+        .cpu = .{ .arch = .x86_64, .model = &Target.x86.cpu.x86_64, .features = Target.Cpu.Feature.Set.empty },
+        .os = .{ .tag = .linux, .version_range = .default(.x86_64, .linux, .ohos) },
+        .abi = .ohos,
+        .ofmt = .elf,
+    };
+
+    try std.testing.expectEqual(@as(u16, 128), target.cTypeBitSize(.longdouble));
+    try std.testing.expectEqual(@as(u16, 16), target.cTypeByteSize(.longdouble));
+    try std.testing.expectEqual(@as(u16, 16), target.cTypeAlignment(.longdouble));
 }

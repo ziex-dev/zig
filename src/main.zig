@@ -1022,6 +1022,7 @@ fn buildOutputType(
         .each_lib_rpath = null,
         .libc_paths_file = EnvVar.ZIG_LIBC.get(environ_map),
         .native_system_include_paths = &.{},
+        .saw_nostdlib = false,
     };
     defer create_module.link_inputs.deinit(gpa);
 
@@ -2099,6 +2100,7 @@ fn buildOutputType(
                         mod_opts.unwind_tables = .sync;
                     },
                     .nostdlib => {
+                        create_module.saw_nostdlib = true;
                         create_module.opts.ensure_libc_on_non_freestanding = false;
                         create_module.opts.ensure_libcpp_on_non_freestanding = false;
                         want_compiler_rt = false;
@@ -3893,6 +3895,7 @@ const CreateModule = struct {
     rpath_list: std.ArrayList([]const u8),
     each_lib_rpath: ?bool,
     libc_paths_file: ?[]const u8,
+    saw_nostdlib: bool,
 };
 
 fn createModule(
@@ -3992,6 +3995,10 @@ fn createModule(
         create_module.opts.root_strip = cli_mod.inherited.strip;
         create_module.opts.root_error_tracing = cli_mod.inherited.error_tracing;
         const target = &resolved_target.result;
+
+        if (target.abi.isOpenHarmony() and !create_module.saw_nostdlib and create_module.opts.link_libc == null) {
+            create_module.opts.ensure_libc_on_non_freestanding = true;
+        }
 
         // First, remove libc, libc++, and compiler_rt libraries from the system libraries list.
         // We need to know whether the set of system libraries contains anything besides these

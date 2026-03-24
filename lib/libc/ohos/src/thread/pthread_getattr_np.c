@@ -1,0 +1,41 @@
+#define _GNU_SOURCE
+#include "pthread_impl.h"
+#include "libc.h"
+#include <sys/mman.h>
+
+int pthread_getattr_np(pthread_t t, pthread_attr_t *a)
+{
+	*a = (pthread_attr_t){0};
+	a->_a_detach = t->detach_state>=DT_DETACHED;
+	a->_a_guardsize = t->guard_size;
+	// Todo[#I9Q9K6]: We need a proper way to solve the stack setup of the main thread.
+	if (t->stack && t->stack_size) {
+		a->_a_stackaddr = (uintptr_t)t->stack;
+		a->_a_stacksize = t->stack_size;
+	} else {
+		char *p = (void *)libc.auxv;
+		size_t l = PAGE_SIZE;
+		p += -(uintptr_t)p & PAGE_SIZE-1;
+		a->_a_stackaddr = (uintptr_t)p;
+		while (mremap(p-l-PAGE_SIZE, PAGE_SIZE, 2*PAGE_SIZE, 0)==MAP_FAILED && errno==ENOMEM)
+			l += PAGE_SIZE;
+		a->_a_stacksize = l;
+	}
+#ifdef MUSL_EXTERNAL_FUNCTION
+#ifndef __LITEOS_A__
+    if (get_pthread_extended_function_policy()) {
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        int ret = pthread_getaffinity_np(t, sizeof(cpu_set_t), &cpuset);
+        if (ret != 0) {
+            return ESRCH;
+        }
+        ret = pthread_attr_setaffinity_np(a, sizeof(cpu_set_t), &cpuset);
+        if (ret != 0) {
+            return ESRCH;
+        }
+    }
+#endif
+#endif
+    return 0;
+}

@@ -284,6 +284,10 @@ pub fn resolve(options: Options) ResolveError!Config {
                 break :b .dynamic;
             }
 
+            if (target.abi.isOpenHarmony()) {
+                break :b .dynamic;
+            }
+
             // When targeting systems where the kernel and libc are developed alongside each other,
             // dynamic linking is the better default; static libc may contain code that requires
             // the very latest kernel version.
@@ -457,7 +461,7 @@ pub fn resolve(options: Options) ResolveError!Config {
     const pie = b: {
         switch (options.output_mode) {
             .Exe => if (target.os.tag == .fuchsia or
-                (target.abi.isAndroid() and link_mode == .dynamic))
+                ((target.abi.isAndroid() or target.abi.isOpenHarmony()) and link_mode == .dynamic))
             {
                 if (options.pie == false) return error.TargetRequiresPie;
                 break :b true;

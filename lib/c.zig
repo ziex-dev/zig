@@ -65,7 +65,11 @@ comptime {
     _ = @import("c/ctype.zig");
     _ = @import("c/fcntl.zig");
     _ = @import("c/inttypes.zig");
-    if (!builtin.target.isMinGW()) {
+    // OpenHarmony: prefer musl's allocator implementation. Zigc's malloc
+    // implementation uses SmpAllocator which relies on TLS; on OpenHarmony
+    // static builds TLS may be provided via emutls which itself needs
+    // posix_memalign, creating a bootstrap recursion.
+    if (!builtin.target.isMinGW() and !builtin.abi.isOpenHarmony()) {
         _ = @import("c/malloc.zig");
     }
     _ = @import("c/math.zig");

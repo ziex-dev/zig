@@ -1,0 +1,493 @@
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <string.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <endian.h>
+#include <errno.h>
+#include <threads.h>
+#include "lookup.h"
+
+#define COST_FOR_MS 1000
+#define COST_FOR_NANOSEC 1000000
+#define DNS_QUERY_SUCCESS 0
+#define DNS_QUERY_COMMOM_FAIL (-1)
+#define GETADDRINFO_PRINT_DEBUG(...)
+#define DNS_FAIL_REASON2_ROUND 99
+#define DNS_FAIL_REASON3_ROUND 299
+#define DNS_FAIL_REASON11_ROUND 99
+#define KEY_MAX 512
+#define KEY_SAME_MAX_TIME 2100000000LL
+
+typedef struct {
+    char host[KEY_MAX];
+    char serv[KEY_MAX];
+	int netid;
+    int family;
+    int socktype;
+    int protocol;
+    int flags;
+    struct timespec ts;
+} QueryKey;
+
+typedef struct SharedResult {
+    QueryKey key;
+    int is_done;
+    int rc; // res code
+	struct service ports[MAXSERVS];
+	struct address addrs[MAXADDRS];
+	char canon[256];
+	int nservs;
+	int naddrs;
+    int waiters;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    struct SharedResult *next;
+} SharedResult;
+
+static SharedResult *g_result_cache = NULL;
+static pthread_mutex_t g_cache_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static void gen_query_key(QueryKey *key, int netid, const char *host, const char *serv, const struct addrinfo *hints) {
+    memset(key, 0, sizeof(QueryKey));
+    if (host) {
+        strncpy(key->host, host, KEY_MAX - 1);
+        key->host[KEY_MAX - 1] = '\0';
+    }
+    if (serv) {
+        strncpy(key->serv, serv, KEY_MAX - 1);
+        key->serv[KEY_MAX - 1] = '\0';
+    }
+	key->netid = netid;
+#if OHOS_DNS_PROXY_BY_NETSYS
+	if (netid == 0) {
+		dns_get_default_network(&key->netid);
+	}
+#endif
+    key->family = hints ? hints->ai_family : AF_UNSPEC;
+    key->socktype = hints ? hints->ai_socktype : 0;
+    key->protocol = hints ? hints->ai_protocol : 0;
+    key->flags = hints ? hints->ai_flags : 0;
+    clock_gettime(CLOCK_REALTIME, &key->ts);
+}
+
+static int query_key_equal(const QueryKey *a, const QueryKey *b) {
+    int64_t diff = llabs((int64_t)a->ts.tv_sec * 1e9 + a->ts.tv_nsec - ((int64_t)b->ts.tv_sec * 1e9 + b->ts.tv_nsec));
+    return a->netid != 0 && b->netid != 0 &&
+		   a->netid == b->netid &&
+		   strcmp(a->host, b->host) == 0 &&
+           strcmp(a->serv, b->serv) == 0 &&
+           a->family == b->family &&
+           a->socktype == b->socktype &&
+           a->protocol == b->protocol &&
+           a->flags == b->flags &&
+           diff <= KEY_SAME_MAX_TIME; // if a query does not finish in 2s100ms, new incoming query do a new dns search
+}
+
+static SharedResult *get_shared_result(const QueryKey *key, int *is_leader) {
+    pthread_mutex_lock(&g_cache_mutex);
+    SharedResult *res = NULL;
+	*is_leader = 0;
+    for (res = g_result_cache; res; res = res->next) {
+        if (query_key_equal(&res->key, key)) {
+			pthread_mutex_lock(&res->mutex);
+			res->waiters++;
+			pthread_mutex_unlock(&res->mutex);
+            pthread_mutex_unlock(&g_cache_mutex);
+            return res;
+        }
+    }
+
+    // create new node if there is no same key in global cache
+    res = calloc(1, sizeof(SharedResult));
+    if (!res) {
+        pthread_mutex_unlock(&g_cache_mutex);
+        return NULL;
+    }
+    res->key = *key;
+    res->is_done = 0;
+    res->rc = EAI_AGAIN;
+	res->nservs = 0;
+	res->naddrs = 0;
+    res->waiters = 1;
+    pthread_mutex_init(&res->mutex, NULL);
+    pthread_cond_init(&res->cond, NULL);
+
+    res->next = g_result_cache;
+    g_result_cache = res;
+	*is_leader = 1;
+
+    pthread_mutex_unlock(&g_cache_mutex);
+    return res;
+}
+
+static void release_shared_result(SharedResult *res) {
+	if (!res) {
+		return;
+	}
+    pthread_mutex_lock(&g_cache_mutex);
+	pthread_mutex_lock(&res->mutex);
+    res->waiters--;
+    int last_ref = (res->waiters == 0 && res->is_done);
+	pthread_mutex_unlock(&res->mutex);
+    
+    if (last_ref) {
+        SharedResult **prev = &g_result_cache;
+        while (*prev && *prev != res) {
+            prev = &(*prev)->next;
+        }
+        if (*prev) {
+            *prev = res->next;
+        }
+
+        pthread_mutex_lock(&res->mutex);
+        pthread_mutex_unlock(&res->mutex);
+        pthread_mutex_destroy(&res->mutex);
+        pthread_cond_destroy(&res->cond);
+        free(res);
+    }
+    pthread_mutex_unlock(&g_cache_mutex);
+}
+
+int reportdnsresult(int netid, char* name, int usedtime, int queryret, struct addrinfo *res, struct queryparam *param)
+{
+#if OHOS_DNS_PROXY_BY_NETSYS
+	if (dns_post_result_to_netsys_cache(netid, name, usedtime, queryret, res, param) == 0) {
+		GETADDRINFO_PRINT_DEBUG("getaddrinfo_ext reportdnsresult fail\n");
+	}
+#endif
+	return 0;
+}
+
+static custom_dns_resolver g_customdnsresolvehook;
+thread_local int recursive = 0;
+
+int setdnsresolvehook(custom_dns_resolver hookfunc)
+{
+	int ret = -1;
+	if (g_customdnsresolvehook) {
+		return ret;
+	}
+	if (hookfunc) {
+		g_customdnsresolvehook = hookfunc;
+		ret = 0;
+	}
+	return ret;
+}
+
+int removednsresolvehook()
+{
+	g_customdnsresolvehook = NULL;
+	return 0;
+}
+
+int getaddrinfo_hook(const char* host, const char* serv, const struct addrinfo* hints,
+    struct addrinfo** res)
+{
+    if (g_customdnsresolvehook) {
+        int ret = g_customdnsresolvehook(host, serv, hints, res);
+        if (ret == 0) {
+            return ret;
+        }
+    }
+    return predefined_host_lookup_ip(host, serv, hints, res);
+}
+
+int getaddrinfo(const char *restrict host, const char *restrict serv, const struct addrinfo *restrict hint, struct addrinfo **restrict res)
+{
+	struct queryparam param = {0, 0, 0, 0, NULL};
+	return getaddrinfo_ext(host, serv, hint, res, &param);
+}
+
+int getaddrinfo_ext(const char *restrict host, const char *restrict serv, const struct addrinfo *restrict hint,
+					struct addrinfo **restrict res, struct queryparam *restrict param)
+{
+	int netid = 0;
+	int type = 0;
+	struct timeval timeStart, timeEnd;
+
+	if (!host && !serv) return EAI_NONAME;
+	if (!param) {
+		netid = 0;
+		type = 0;
+	} else {
+		netid = param->qp_netid;
+		type = param->qp_type;
+	}
+
+	if (g_customdnsresolvehook) {
+		if (recursive == 0) {
+			++recursive;
+			int ret = g_customdnsresolvehook(host, serv, hint, res);
+			--recursive;
+			return ret;
+		}
+	}
+
+#if OHOS_DNS_PROXY_BY_NETSYS
+	GETADDRINFO_PRINT_DEBUG("getaddrinfo_ext netid:%{public}d type:%{public}d \n", netid, type);
+	if (type == QEURY_TYPE_NORMAL && predefined_host_is_contain_host(host) == 0) {
+		if (dns_get_addr_info_from_netsys_cache2(netid, host, serv, hint, res) == 0) {
+			GETADDRINFO_PRINT_DEBUG("getaddrinfo_ext get from netsys cache OK\n");
+			reportdnsresult(netid, (char *)host, 0, DNS_QUERY_SUCCESS, *res, param);
+			return 0;
+		}
+	}
+#endif
+
+	struct service ports[MAXSERVS];
+	struct address addrs[MAXADDRS];
+	char canon[256], *outcanon;
+	int nservs, naddrs, nais, canon_len, i, j, k;
+	int family = AF_UNSPEC, flags = 0, proto = 0, socktype = 0;
+	struct aibuf *out;
+	struct dns_ans *ans;
+
+	if (hint) {
+		family = hint->ai_family;
+		flags = hint->ai_flags;
+		proto = hint->ai_protocol;
+		socktype = hint->ai_socktype;
+
+		const int mask = AI_PASSIVE | AI_CANONNAME | AI_NUMERICHOST |
+			AI_V4MAPPED | AI_ALL | AI_ADDRCONFIG | AI_NUMERICSERV;
+		if ((flags & mask) != flags) {
+#ifndef __LITEOS__
+			MUSL_LOGW("bad hint ai_flag: %{public}d", flags);
+#endif
+			return EAI_BADFLAGS;
+		}
+
+		switch (family) {
+		case AF_INET:
+		case AF_INET6:
+		case AF_UNSPEC:
+			break;
+		default:
+#ifndef __LITEOS__
+			MUSL_LOGW("wrong family in hint: %{public}d", family);
+#endif
+			return EAI_FAMILY;
+		}
+	}
+
+	if (flags & AI_ADDRCONFIG) {
+		/* Define the "an address is configured" condition for address
+		 * families via ability to create a socket for the family plus
+		 * routability of the loopback address for the family. */
+		static const struct sockaddr_in lo4 = {
+			.sin_family = AF_INET, .sin_port = 65535,
+			.sin_addr.s_addr = __BYTE_ORDER == __BIG_ENDIAN
+				? 0x7f000001 : 0x0100007f
+		};
+		static const struct sockaddr_in6 lo6 = {
+			.sin6_family = AF_INET6, .sin6_port = 65535,
+			.sin6_addr = IN6ADDR_LOOPBACK_INIT
+		};
+		int tf[2] = { AF_INET, AF_INET6 };
+		const void *ta[2] = { &lo4, &lo6 };
+		socklen_t tl[2] = { sizeof lo4, sizeof lo6 };
+		for (i = 0; i < 2; i++) {
+			if (family == tf[1 - i]) continue;
+			int s = socket(tf[i], SOCK_CLOEXEC | SOCK_DGRAM,
+				IPPROTO_UDP);
+#ifndef __LITEOS__
+			if (s < 0) {
+				MUSL_LOGW("create socket failed for family: %{public}d, errno: %{public}d", tf[i], errno);
+			}
+#endif
+			if (s >= 0) {
+				int cs;
+				pthread_setcancelstate(
+					PTHREAD_CANCEL_DISABLE, &cs);
+				int r = connect(s, ta[i], tl[i]);
+				int saved_errno = errno;
+				pthread_setcancelstate(cs, 0);
+				close(s);
+				if (!r) continue;
+				errno = saved_errno;
+			}
+			switch (errno) {
+			case EADDRNOTAVAIL:
+			case EAFNOSUPPORT:
+			case EHOSTUNREACH:
+			case ENETDOWN:
+			case ENETUNREACH:
+				break;
+			default:
+#ifndef __LITEOS__
+				MUSL_LOGW("connect to local address failed: %{public}d", errno);
+#endif
+				return EAI_SYSTEM;
+			}
+			if (family == tf[i]) {
+#ifndef __LITEOS__
+				MUSL_LOGW("family mismatch: %{public}d", EAI_NONAME);
+#endif
+                return EAI_NONAME;
+			}
+			family = tf[1 - i];
+		}
+	}
+
+    QueryKey key;
+    gen_query_key(&key, netid, host, serv, hint);
+
+	int is_leader = 0;
+    SharedResult *shared_res = get_shared_result(&key, &is_leader);
+    if (!shared_res) return EAI_MEMORY;
+
+	int timeStartRet = gettimeofday(&timeStart, NULL);
+	int t_cost = 0;
+    if (is_leader) {
+		// first thread do the dns search
+        nservs = __lookup_serv(ports, serv, proto, socktype, flags);
+        if (nservs < 0) {
+            pthread_mutex_lock(&shared_res->mutex);
+            shared_res->rc = nservs;
+            shared_res->is_done = 1;
+            if (shared_res->waiters > 1) {
+                pthread_cond_broadcast(&shared_res->cond);
+            }
+            pthread_mutex_unlock(&shared_res->mutex);
+            release_shared_result(shared_res);
+            return nservs;
+        }
+
+        naddrs = lookup_name_ext(addrs, canon, host, family, flags, netid);
+		int timeEndRet = gettimeofday(&timeEnd, NULL);
+		if (timeStartRet == 0 && timeEndRet == 0) {
+			t_cost = COST_FOR_NANOSEC * (timeEnd.tv_sec - timeStart.tv_sec) + (timeEnd.tv_usec - timeStart.tv_usec);
+			t_cost /= COST_FOR_MS;
+		}
+
+        if (naddrs < 0) {
+			reportdnsresult(netid, (char *)host, t_cost, naddrs, NULL, param);
+            naddrs = revert_dns_fail_cause(naddrs);
+            pthread_mutex_lock(&shared_res->mutex);
+            shared_res->rc = naddrs;
+            shared_res->is_done = 1;
+            if (shared_res->waiters > 1) {
+                pthread_cond_broadcast(&shared_res->cond);
+            }
+            pthread_mutex_unlock(&shared_res->mutex);
+            release_shared_result(shared_res);
+            return naddrs;
+        }
+
+		pthread_mutex_lock(&shared_res->mutex);
+        shared_res->rc = 0;
+		memcpy(shared_res->ports, ports, sizeof(shared_res->ports));
+		memcpy(shared_res->addrs, addrs, sizeof(shared_res->addrs));
+		strncpy(shared_res->canon, canon, sizeof(shared_res->canon) - 1);
+		shared_res->canon[sizeof(shared_res->canon) - 1] = '\0';
+		shared_res->nservs = nservs;
+		shared_res->naddrs = naddrs;
+        shared_res->is_done = 1;
+        if (shared_res->waiters > 1) {
+            pthread_cond_broadcast(&shared_res->cond);
+        }
+        pthread_mutex_unlock(&shared_res->mutex);
+    } else {
+        // other threads wait for the result
+		MUSL_LOGW("wait shared result");
+        pthread_mutex_lock(&shared_res->mutex);
+		while (shared_res->is_done == 0) {
+			pthread_cond_wait(&shared_res->cond, &shared_res->mutex);
+		}
+		int timeEndRet = gettimeofday(&timeEnd, NULL);
+		if (timeStartRet == 0 && timeEndRet == 0) {
+			t_cost = COST_FOR_NANOSEC * (timeEnd.tv_sec - timeStart.tv_sec) + (timeEnd.tv_usec - timeStart.tv_usec);
+			t_cost /= COST_FOR_MS;
+		}
+        pthread_mutex_unlock(&shared_res->mutex);
+    }
+
+	pthread_mutex_lock(&shared_res->mutex);
+	if (shared_res->rc != 0) {
+		int rc = shared_res->rc;
+		pthread_mutex_unlock(&shared_res->mutex);
+		release_shared_result(shared_res);
+		return rc;
+	}
+
+	nais = shared_res->nservs * shared_res->naddrs;
+	canon_len = strlen(shared_res->canon);
+	out = calloc(1, nais * sizeof(*out) + canon_len + 1);
+	if (!out) return EAI_MEMORY;
+
+	ans = calloc(1, nais * sizeof(struct dns_ans));
+	if (!ans) {
+		free(out);
+		return EAI_MEMORY;
+	}
+
+	if (canon_len) {
+		outcanon = (void *)&out[nais];
+		memcpy(outcanon, shared_res->canon, canon_len + 1);
+	} else {
+		outcanon = 0;
+	}
+
+	for (k = i = 0; i < shared_res->naddrs; i++) for (j = 0; j < shared_res->nservs; j++, k++) {
+		out[k].slot = k;
+		out[k].ai = (struct addrinfo) {
+			.ai_family = shared_res->addrs[i].family,
+			.ai_socktype = shared_res->ports[j].socktype,
+			.ai_protocol = shared_res->ports[j].proto,
+			.ai_addrlen = shared_res->addrs[i].family == AF_INET
+				? sizeof(struct sockaddr_in)
+				: sizeof(struct sockaddr_in6),
+			.ai_addr = (void *)&out[k].sa,
+			.ai_canonname = outcanon };
+		if (k) out[k-1].ai.ai_next = &out[k].ai;
+		switch (shared_res->addrs[i].family) {
+		case AF_INET:
+			out[k].sa.sin.sin_family = AF_INET;
+			out[k].sa.sin.sin_port = htons(shared_res->ports[j].port);
+			memcpy(&out[k].sa.sin.sin_addr, &shared_res->addrs[i].addr, 4);
+			break;
+		case AF_INET6:
+			out[k].sa.sin6.sin6_family = AF_INET6;
+			out[k].sa.sin6.sin6_port = htons(shared_res->ports[j].port);
+			out[k].sa.sin6.sin6_scope_id = shared_res->addrs[i].scopeid;
+			memcpy(&out[k].sa.sin6.sin6_addr, &shared_res->addrs[i].addr, 16);
+			break;
+		}
+		ans[k].ai = &out[k].ai;
+		ans[k].ttl = (unsigned int)addrs[i].ttl;
+	}
+	out[0].ref = nais;
+	*res = &out->ai;
+	pthread_mutex_unlock(&shared_res->mutex);
+	reportdnsresult(netid, (char *)host, t_cost, DNS_QUERY_SUCCESS, *res, param);
+	release_shared_result(shared_res);
+
+	int cnt = predefined_host_is_contain_host(host);
+#if OHOS_DNS_PROXY_BY_NETSYS
+	if (type == QEURY_TYPE_NORMAL && cnt == 0) {
+		dns_set_addr_info_to_netsys_cache2(netid, host, serv, hint, ans, k);
+	}
+#endif
+	free(ans);
+	return 0;
+}
+
+hidden int revert_dns_fail_cause(int cause)
+{
+	if (cause <= DNS_FAIL_REASON_PARAM_INVALID && cause > DNS_FAIL_REASON_PARAM_INVALID - DNS_FAIL_REASON2_ROUND) {
+		return EAI_NONAME;
+	}
+	if (cause <= DNS_FAIL_REASON_ROUTE_CONFIG_ERR && cause > DNS_FAIL_REASON_ROUTE_CONFIG_ERR -
+		DNS_FAIL_REASON3_ROUND) {
+		return EAI_AGAIN;
+	}
+	if (cause <= DNS_FAIL_REASON_LACK_V6_SUPPORT && cause > DNS_FAIL_REASON_LACK_V6_SUPPORT -
+		DNS_FAIL_REASON2_ROUND) {
+		return EAI_SYSTEM;
+	}
+	return cause;
+}

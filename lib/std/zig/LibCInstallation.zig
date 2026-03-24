@@ -112,8 +112,11 @@ pub fn parse(allocator: Allocator, io: Io, libc_file: []const u8, target: *const
         return error.ParseError;
     }
 
-    if (self.gcc_dir == null and os_tag == .haiku) {
-        log.err("gcc_dir may not be empty for {s}", .{@tagName(os_tag)});
+    if (self.gcc_dir == null and (os_tag == .haiku or target.abi.isOpenHarmony())) {
+        log.err("gcc_dir may not be empty for {s}-{s}", .{
+            @tagName(os_tag),
+            @tagName(target.abi),
+        });
         return error.ParseError;
     }
 
@@ -209,6 +212,10 @@ pub fn findNative(gpa: Allocator, io: Io, args: FindNativeOptions) FindError!Lib
         try self.findNativeIncludeDirPosix(gpa, io, args);
         try self.findNativeGccDirHaiku(gpa, io, args);
         self.crt_dir = try gpa.dupe(u8, "/system/develop/lib");
+    } else if (args.target.abi.isOpenHarmony()) {
+        try self.findNativeIncludeDirPosix(gpa, io, args);
+        try self.findNativeCrtDirPosix(gpa, io, args);
+        try self.findNativeGccDirOpenHarmony(gpa, io, args);
     } else if (builtin.target.os.tag == .illumos) {
         // There is only one libc, and its headers/libraries are always in the same spot.
         self.include_dir = try gpa.dupe(u8, "/usr/include");
@@ -449,7 +456,7 @@ fn findNativeCrtDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, args: 
     self.crt_dir = try ccPrintFileName(gpa, io, .{
         .environ_map = args.environ_map,
         .search_basename = switch (args.target.os.tag) {
-            .linux => if (args.target.abi.isAndroid()) "crtbegin_dynamic.o" else "crt1.o",
+            .linux => if (args.target.abi.isAndroid()) "crtbegin_dynamic.o" else if (args.target.abi.isOpenHarmony()) "Scrt1.o" else "crt1.o",
             else => "crt1.o",
         },
         .want_dirname = .only_dir,
@@ -460,6 +467,15 @@ fn findNativeCrtDirPosix(self: *LibCInstallation, gpa: Allocator, io: Io, args: 
 fn findNativeGccDirHaiku(self: *LibCInstallation, gpa: Allocator, io: Io, args: FindNativeOptions) FindError!void {
     self.gcc_dir = try ccPrintFileName(gpa, io, .{
         .search_basename = "crtbeginS.o",
+        .want_dirname = .only_dir,
+        .verbose = args.verbose,
+    });
+}
+
+fn findNativeGccDirOpenHarmony(self: *LibCInstallation, gpa: Allocator, io: Io, args: FindNativeOptions) FindError!void {
+    self.gcc_dir = try ccPrintFileName(gpa, io, .{
+        .environ_map = args.environ_map,
+        .search_basename = "clang_rt.crtbegin.o",
         .want_dirname = .only_dir,
         .verbose = args.verbose,
     });
@@ -749,6 +765,36 @@ pub const CrtBasenames = struct {
             },
         };
 
+        if (target.abi.isOpenHarmony()) return switch (mode) {
+            .dynamic_lib => .{
+                .crti = "crti.o",
+                .crtbegin = "clang_rt.crtbegin.o",
+                .crtend = "clang_rt.crtend.o",
+                .crtn = "crtn.o",
+            },
+            .dynamic_exe, .dynamic_pie => .{
+                .crt0 = "Scrt1.o",
+                .crti = "crti.o",
+                .crtbegin = "clang_rt.crtbegin.o",
+                .crtend = "clang_rt.crtend.o",
+                .crtn = "crtn.o",
+            },
+            .static_exe => .{
+                .crt0 = "crt1.o",
+                .crti = "crti.o",
+                .crtbegin = "clang_rt.crtbegin.o",
+                .crtend = "clang_rt.crtend.o",
+                .crtn = "crtn.o",
+            },
+            .static_pie => .{
+                .crt0 = "rcrt1.o",
+                .crti = "crti.o",
+                .crtbegin = "clang_rt.crtbegin.o",
+                .crtend = "clang_rt.crtend.o",
+                .crtn = "crtn.o",
+            },
+        };
+
         return switch (target.os.tag) {
             .linux => switch (mode) {
                 .dynamic_lib => .{
@@ -1002,6 +1048,27 @@ pub fn resolveCrtPaths(
                 .crti = if (crt_basenames.crti) |basename| try crt_dir_path.join(arena, basename) else null,
                 .crtbegin = if (crt_basenames.crtbegin) |basename| try gcc_dir_path.join(arena, basename) else null,
                 .crtend = if (crt_basenames.crtend) |basename| try gcc_dir_path.join(arena, basename) else null,
+                .crtn = if (crt_basenames.crtn) |basename| try crt_dir_path.join(arena, basename) else null,
+            };
+        },
+        .linux => if (target.abi.isOpenHarmony()) {
+            const gcc_dir_path: Path = .{
+                .root_dir = std.Build.Cache.Directory.cwd(),
+                .sub_path = lci.gcc_dir orelse return error.LibCInstallationMissingCrtDir,
+            };
+            return .{
+                .crt0 = if (crt_basenames.crt0) |basename| try crt_dir_path.join(arena, basename) else null,
+                .crti = if (crt_basenames.crti) |basename| try crt_dir_path.join(arena, basename) else null,
+                .crtbegin = if (crt_basenames.crtbegin) |basename| try gcc_dir_path.join(arena, basename) else null,
+                .crtend = if (crt_basenames.crtend) |basename| try gcc_dir_path.join(arena, basename) else null,
+                .crtn = if (crt_basenames.crtn) |basename| try crt_dir_path.join(arena, basename) else null,
+            };
+        } else {
+            return .{
+                .crt0 = if (crt_basenames.crt0) |basename| try crt_dir_path.join(arena, basename) else null,
+                .crti = if (crt_basenames.crti) |basename| try crt_dir_path.join(arena, basename) else null,
+                .crtbegin = if (crt_basenames.crtbegin) |basename| try crt_dir_path.join(arena, basename) else null,
+                .crtend = if (crt_basenames.crtend) |basename| try crt_dir_path.join(arena, basename) else null,
                 .crtn = if (crt_basenames.crtn) |basename| try crt_dir_path.join(arena, basename) else null,
             };
         },

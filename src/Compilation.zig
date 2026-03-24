@@ -1350,6 +1350,8 @@ pub const MiscTask = enum {
     docs_wasm,
 
     @"musl crt1.o",
+    @"musl crti.o",
+    @"musl crtn.o",
     @"musl rcrt1.o",
     @"musl Scrt1.o",
     @"musl libc.a",
@@ -2568,7 +2570,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                     }
                     // Loads the libraries provided by `target_util.libcFullLinkFlags(target)`.
                     comp.oneshot_prelink_tasks.appendAssumeCapacity(.load_host_libc);
-                } else if (target.isMuslLibC()) {
+                } else if (target.isMuslLibC() or target.abi.isOpenHarmony()) {
                     if (!std.zig.target.canBuildLibC(target)) return diag.fail(.cross_libc_unavailable);
 
                     if (musl.needsCrt0(comp.config.output_mode, comp.config.link_mode, comp.config.pie)) |f| {
