@@ -30,21 +30,22 @@ const ws2_32 = windows.ws2_32;
 /// * memory-mapping when mmap or equivalent is not available
 allocator: Allocator,
 mutex: Io.Mutex = .init,
-cond: Io.Condition = .init,
-run_queue: std.SinglyLinkedList = .{},
-join_requested: bool = false,
+join_requested: std.atomic.Value(bool) = .init(false),
 stack_size: usize,
 /// All threads are spawned detached; this is how we wait until they all exit.
 wait_group: WaitGroup = .init,
 async_limit: Io.Limit,
 concurrent_limit: Io.Limit = .unlimited,
+concurrent_count: std.atomic.Value(usize) = .init(0),
 /// Error from calling `std.Thread.getCpuCount` in `init`.
 cpu_count_error: ?std.Thread.CpuCountError,
-/// Number of threads that are unavailable to take tasks. To calculate
-/// available count, subtract this from either `async_limit` or
-/// `concurrent_limit`.
-busy_count: usize = 0,
+/// Number of pending tasks
+busy_count: std.atomic.Value(usize) = .init(0),
+thread_states: []ThreadState = &.{},
 worker_threads: std.atomic.Value(?*Thread),
+worker_counter: std.atomic.Value(u32) = .init(0),
+worker_index: std.atomic.Value(usize) = .init(0),
+enqueue_index: std.atomic.Value(usize) = .init(0),
 pid: Pid = .unknown,
 
 have_signal_handler: bool,
@@ -450,6 +451,7 @@ const default_fn_align = switch (builtin.mode) {
 const Runnable = struct {
     node: std.SinglyLinkedList.Node,
     startFn: *const fn (*Runnable, *Thread, *Threaded) void,
+    is_concurrent: bool = false,
 };
 
 const Group = struct {
@@ -823,6 +825,8 @@ const Thread = struct {
     handle: Handle,
 
     status: std.atomic.Value(Status),
+    local_state: ?*ThreadState = null,
+    local_index: usize = 0,
 
     cancel_protection: Io.CancelProtection,
     /// Always released when `Status.cancelation` is set to `.parked`.
@@ -1339,6 +1343,11 @@ const Thread = struct {
     };
 };
 
+const ThreadState = struct {
+    mutex: Io.Mutex = .init,
+    local_queue: std.SinglyLinkedList = .{},
+};
+
 const Syscall = struct {
     thread: ?*Thread,
     /// Marks entry to a syscall region. This should be tightly scoped around the actual syscall
@@ -1632,6 +1641,9 @@ pub fn init(
     };
 
     const cpu_count = std.Thread.getCpuCount();
+    const num_workers = if (cpu_count) |n| @max(n, 1) else |_| 1;
+    const thread_states: []ThreadState = gpa.alloc(ThreadState, num_workers) catch &.{};
+    for (thread_states) |*state| state.* = .{};
 
     var t: Threaded = .{
         .allocator = gpa,
@@ -1647,6 +1659,7 @@ pub fn init(
         .environ = .{ .process_environ = options.environ },
         .worker_threads = .init(null),
         .disable_memory_mapping = options.disable_memory_mapping,
+        .thread_states = thread_states,
     };
 
     if (posix.Sigaction != void) {
@@ -1704,9 +1717,7 @@ var global_single_threaded_instance: Threaded = .init_single_threaded;
 pub const global_single_threaded: *Threaded = &global_single_threaded_instance;
 
 pub fn setAsyncLimit(t: *Threaded, new_limit: Io.Limit) void {
-    mutexLock(&t.mutex);
-    defer mutexUnlock(&t.mutex);
-    t.async_limit = new_limit;
+    @atomicStore(Io.Limit, &t.async_limit, new_limit, .monotonic);
 }
 
 pub fn deinit(t: *Threaded) void {
@@ -1719,17 +1730,15 @@ pub fn deinit(t: *Threaded) void {
     t.null_file.deinit();
     t.random_file.deinit();
     t.pipe_file.deinit();
+    t.allocator.free(t.thread_states);
     t.* = undefined;
 }
 
 fn join(t: *Threaded) void {
     if (builtin.single_threaded) return;
-    {
-        mutexLock(&t.mutex);
-        defer mutexUnlock(&t.mutex);
-        t.join_requested = true;
-    }
-    condBroadcast(&t.cond);
+    t.join_requested.store(true, .release);
+    _ = t.worker_counter.fetchAdd(1, .release);
+    Thread.futexWake(&t.worker_counter.raw, std.math.maxInt(u32));
     t.wait_group.wait();
 }
 
@@ -1751,6 +1760,12 @@ fn worker(t: *Threaded) void {
         .csprng = .uninitialized,
     };
     Thread.current = &thread;
+
+    if (t.thread_states.len > 0) {
+        const index = t.worker_index.fetchAdd(1, .monotonic) % t.thread_states.len;
+        thread.local_state = &t.thread_states[index];
+        thread.local_index = index;
+    }
 
     if (is_windows) {
         assert(windows.ntdll.NtOpenThread(
@@ -1786,21 +1801,61 @@ fn worker(t: *Threaded) void {
 
     defer t.wait_group.finish();
 
-    mutexLock(&t.mutex);
-    defer mutexUnlock(&t.mutex);
-
     while (true) {
-        while (t.run_queue.popFirst()) |runnable_node| {
-            mutexUnlock(&t.mutex);
-            thread.cancel_protection = .unblocked;
-            const runnable: *Runnable = @fieldParentPtr("node", runnable_node);
-            runnable.startFn(runnable, &thread, t);
-            mutexLock(&t.mutex);
-            t.busy_count -= 1;
-        }
-        if (t.join_requested) break;
-        condWait(&t.cond, &t.mutex);
+        const expect = t.worker_counter.load(.acquire);
+
+        if (t.dequeue(&thread)) continue;
+
+        if (t.trySteal(&thread)) continue;
+
+        if (t.dequeue(&thread)) continue;
+
+        if (t.join_requested.load(.acquire)) return;
+        Thread.futexWaitUncancelable(&t.worker_counter.raw, expect, null);
     }
+}
+
+fn trySteal(t: *Threaded, thread: *Thread) bool {
+    for (1..t.thread_states.len) |offset| {
+        const index = (thread.local_index +% offset) % t.thread_states.len;
+        const thread_state = &t.thread_states[index];
+        if (tryLock(&thread_state.mutex)) {
+            if (thread_state.local_queue.popFirst()) |runnable_node| {
+                mutexUnlock(&thread_state.mutex);
+                const saved = thread.status.load(.monotonic);
+                t.runNode(thread, runnable_node);
+                thread.status.store(saved, .monotonic);
+                return true;
+            }
+            mutexUnlock(&thread_state.mutex);
+        }
+    }
+    return false;
+}
+
+fn dequeue(t: *Threaded, thread: *Thread) bool {
+    if (thread.local_state) |state| {
+        if (tryLock(&state.mutex)) {
+            if (state.local_queue.popFirst()) |runnable_node| {
+                mutexUnlock(&state.mutex);
+                t.runNode(thread, runnable_node);
+                return true;
+            }
+            mutexUnlock(&state.mutex);
+        }
+    }
+    return false;
+}
+
+fn runNode(t: *Threaded, thread: *Thread, runnable_node: *std.SinglyLinkedList.Node) void {
+    thread.cancel_protection = .unblocked;
+    const runnable: *Runnable = @fieldParentPtr("node", runnable_node);
+    const is_concurrent = runnable.is_concurrent;
+    runnable.startFn(runnable, thread, t);
+    if (is_concurrent) _ = t.concurrent_count.fetchSub(1, .release);
+    _ = t.busy_count.fetchSub(1, .release);
+    _ = t.worker_counter.fetchAdd(1, .release);
+    Thread.futexWake(&t.worker_counter.raw, 1);
 }
 
 pub fn io(t: *Threaded) Io {
@@ -2071,6 +2126,24 @@ fn crashHandler(userdata: ?*anyopaque) void {
     thread.cancel_protection = .blocked;
 }
 
+fn enqueue(t: *Threaded, node: *std.SinglyLinkedList.Node) void {
+    assert(t.thread_states.len > 0);
+
+    const state = blk: {
+        if (Thread.current) |thread|
+            if (thread.local_state) |s| break :blk s;
+
+        const index = t.enqueue_index.fetchAdd(1, .monotonic) % t.thread_states.len;
+        break :blk &t.thread_states[index];
+    };
+
+    mutexLock(&state.mutex);
+    state.local_queue.prepend(node);
+    mutexUnlock(&state.mutex);
+    _ = t.worker_counter.fetchAdd(1, .release);
+    Thread.futexWake(&t.worker_counter.raw, 1);
+}
+
 fn async(
     userdata: ?*anyopaque,
     result: []u8,
@@ -2093,37 +2166,34 @@ fn async(
         },
     };
 
-    mutexLock(&t.mutex);
+    const async_limit = @atomicLoad(Io.Limit, &t.async_limit, .monotonic);
 
-    const busy_count = t.busy_count;
-
-    if (busy_count >= @intFromEnum(t.async_limit)) {
-        mutexUnlock(&t.mutex);
+    if (@intFromEnum(async_limit) == 0 or t.thread_states.len == 0) {
         future.destroy(gpa);
         start(context.ptr, result.ptr);
         return null;
     }
 
-    t.busy_count = busy_count + 1;
+    const busy_count = t.busy_count.fetchAdd(1, .monotonic);
+    const pool_size = t.wait_group.value() -| 1;
 
-    const pool_size = t.wait_group.value();
-    if (pool_size - busy_count == 0) {
+    if (busy_count >= pool_size and pool_size <= @intFromEnum(async_limit)) {
         t.wait_group.start();
         const thread = std.Thread.spawn(.{ .stack_size = t.stack_size }, worker, .{t}) catch {
             t.wait_group.finish();
-            t.busy_count = busy_count;
-            mutexUnlock(&t.mutex);
-            future.destroy(gpa);
-            start(context.ptr, result.ptr);
-            return null;
+            if (t.worker_threads.load(.acquire) == null) {
+                _ = t.busy_count.fetchSub(1, .release);
+                future.destroy(gpa);
+                start(context.ptr, result.ptr);
+                return null;
+            }
+            t.enqueue(&future.runnable.node);
+            return @ptrCast(future);
         };
         thread.detach();
     }
 
-    t.run_queue.prepend(&future.runnable.node);
-
-    mutexUnlock(&t.mutex);
-    condSignal(&t.cond);
+    t.enqueue(&future.runnable.node);
     return @ptrCast(future);
 }
 
@@ -2145,19 +2215,24 @@ fn concurrent(
     };
     errdefer future.destroy(gpa);
 
-    mutexLock(&t.mutex);
-    defer mutexUnlock(&t.mutex);
-
-    const busy_count = t.busy_count;
-
-    if (busy_count >= @intFromEnum(t.concurrent_limit))
+    if (t.thread_states.len == 0)
         return error.ConcurrencyUnavailable;
 
-    t.busy_count = busy_count + 1;
-    errdefer t.busy_count = busy_count;
+    const concurrent_count = t.concurrent_count.fetchAdd(1, .acquire);
+    future.runnable.is_concurrent = true;
+    errdefer {
+        future.runnable.is_concurrent = false;
+        _ = t.concurrent_count.fetchSub(1, .release);
+    }
 
-    const pool_size = t.wait_group.value();
-    if (pool_size - busy_count == 0) {
+    if (concurrent_count >= @intFromEnum(t.concurrent_limit))
+        return error.ConcurrencyUnavailable;
+
+    const busy_count = t.busy_count.fetchAdd(1, .monotonic);
+    errdefer _ = t.busy_count.fetchSub(1, .release);
+
+    const pool_size = t.wait_group.value() -| 1;
+    if (busy_count >= pool_size and pool_size <= @intFromEnum(t.concurrent_limit)) {
         t.wait_group.start();
         errdefer t.wait_group.finish();
 
@@ -2167,9 +2242,7 @@ fn concurrent(
         thread.detach();
     }
 
-    t.run_queue.prepend(&future.runnable.node);
-
-    condSignal(&t.cond);
+    t.enqueue(&future.runnable.node);
     return @ptrCast(future);
 }
 
@@ -2190,27 +2263,32 @@ fn groupAsync(
         error.OutOfMemory => return groupAsyncEager(start, context.ptr),
     };
 
-    mutexLock(&t.mutex);
+    const async_limit = @atomicLoad(Io.Limit, &t.async_limit, .monotonic);
 
-    const busy_count = t.busy_count;
-
-    if (busy_count >= @intFromEnum(t.async_limit)) {
-        mutexUnlock(&t.mutex);
+    if (@intFromEnum(async_limit) == 0 or t.thread_states.len == 0) {
         task.destroy(gpa);
         return groupAsyncEager(start, context.ptr);
     }
 
-    t.busy_count = busy_count + 1;
+    const busy_count = t.busy_count.fetchAdd(1, .monotonic);
+    const pool_size = t.wait_group.value() -| 1;
 
-    const pool_size = t.wait_group.value();
-    if (pool_size - busy_count == 0) {
+    if (busy_count >= pool_size and pool_size <= @intFromEnum(async_limit)) {
         t.wait_group.start();
         const thread = std.Thread.spawn(.{ .stack_size = t.stack_size }, worker, .{t}) catch {
             t.wait_group.finish();
-            t.busy_count = busy_count;
-            mutexUnlock(&t.mutex);
-            task.destroy(gpa);
-            return groupAsyncEager(start, context.ptr);
+            if (t.worker_threads.load(.acquire) == null) {
+                _ = t.busy_count.fetchSub(1, .release);
+                task.destroy(gpa);
+                return groupAsyncEager(start, context.ptr);
+            }
+            _ = g.status().fetchAdd(.{
+                .num_running = 1,
+                .have_awaiter = false,
+                .canceled = false,
+            }, .monotonic);
+            t.enqueue(&task.runnable.node);
+            return;
         };
         thread.detach();
     }
@@ -2223,10 +2301,7 @@ fn groupAsync(
         .have_awaiter = false,
         .canceled = false,
     }, .monotonic);
-    t.run_queue.prepend(&task.runnable.node);
-
-    mutexUnlock(&t.mutex);
-    condSignal(&t.cond);
+    t.enqueue(&task.runnable.node);
 }
 fn groupAsyncEager(
     start: *const fn (context: *const anyopaque) void,
@@ -2253,19 +2328,24 @@ fn groupConcurrent(
     };
     errdefer task.destroy(gpa);
 
-    mutexLock(&t.mutex);
-    defer mutexUnlock(&t.mutex);
-
-    const busy_count = t.busy_count;
-
-    if (busy_count >= @intFromEnum(t.concurrent_limit))
+    if (t.thread_states.len == 0)
         return error.ConcurrencyUnavailable;
 
-    t.busy_count = busy_count + 1;
-    errdefer t.busy_count = busy_count;
+    const concurrent_count = t.concurrent_count.fetchAdd(1, .acquire);
+    task.runnable.is_concurrent = true;
+    errdefer {
+        task.runnable.is_concurrent = false;
+        _ = t.concurrent_count.fetchSub(1, .release);
+    }
 
-    const pool_size = t.wait_group.value();
-    if (pool_size - busy_count == 0) {
+    if (concurrent_count >= @intFromEnum(t.concurrent_limit))
+        return error.ConcurrencyUnavailable;
+
+    const busy_count = t.busy_count.fetchAdd(1, .monotonic);
+    errdefer _ = t.busy_count.fetchSub(1, .release);
+
+    const pool_size = t.wait_group.value() -| 1;
+    if (busy_count >= pool_size and pool_size <= @intFromEnum(t.concurrent_limit)) {
         t.wait_group.start();
         errdefer t.wait_group.finish();
 
@@ -2283,9 +2363,8 @@ fn groupConcurrent(
         .have_awaiter = false,
         .canceled = false,
     }, .monotonic);
-    t.run_queue.prepend(&task.runnable.node);
 
-    condSignal(&t.cond);
+    t.enqueue(&task.runnable.node);
 }
 
 fn groupAwait(userdata: ?*anyopaque, type_erased: *Io.Group, initial_token: *anyopaque) Io.Cancelable!void {
@@ -18648,74 +18727,9 @@ fn eventSet(event: *Io.Event) void {
     }
 }
 
-/// Same as `Io.Condition.broadcast` but avoids the VTable.
-fn condBroadcast(cond: *Io.Condition) void {
-    var prev_state = cond.state.load(.monotonic);
-    while (prev_state.waiters > prev_state.signals) {
-        @branchHint(.unlikely);
-        prev_state = cond.state.cmpxchgWeak(prev_state, .{
-            .waiters = prev_state.waiters,
-            .signals = prev_state.waiters,
-        }, .release, .monotonic) orelse {
-            // Update the epoch to tell the waiting threads that there are new signals for them.
-            // Note that a waiting thread could miss a take if *exactly* (1<<32)-1 wakes happen
-            // between it observing the epoch and sleeping on it, but this is extraordinarily
-            // unlikely due to the precise number of calls required.
-            _ = cond.epoch.fetchAdd(1, .release); // `.release` to ensure ordered after `state` update
-            Thread.futexWake(&cond.epoch.raw, prev_state.waiters - prev_state.signals);
-            return;
-        };
-    }
-}
-
-/// Same as `Io.Condition.signal` but avoids the VTable.
-fn condSignal(cond: *Io.Condition) void {
-    var prev_state = cond.state.load(.monotonic);
-    while (prev_state.waiters > prev_state.signals) {
-        @branchHint(.unlikely);
-        prev_state = cond.state.cmpxchgWeak(prev_state, .{
-            .waiters = prev_state.waiters,
-            .signals = prev_state.signals + 1,
-        }, .release, .monotonic) orelse {
-            // Update the epoch to tell the waiting threads that there are new signals for them.
-            // Note that a waiting thread could miss a take if *exactly* (1<<32)-1 wakes happen
-            // between it observing the epoch and sleeping on it, but this is extraordinarily
-            // unlikely due to the precise number of calls required.
-            _ = cond.epoch.fetchAdd(1, .release); // `.release` to ensure ordered after `state` update
-            Thread.futexWake(&cond.epoch.raw, 1);
-            return;
-        };
-    }
-}
-
-/// Same as `Io.Condition.waitUncancelable` but avoids the VTable.
-fn condWait(cond: *Io.Condition, mutex: *Io.Mutex) void {
-    var epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before state load
-
-    {
-        const prev_state = cond.state.fetchAdd(.{ .waiters = 1, .signals = 0 }, .monotonic);
-        assert(prev_state.waiters < std.math.maxInt(u16)); // overflow caused by too many waiters
-    }
-
-    mutexUnlock(mutex);
-    defer mutexLock(mutex);
-
-    while (true) {
-        Thread.futexWaitUncancelable(&cond.epoch.raw, epoch, null);
-
-        epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before `state` laod
-
-        var prev_state = cond.state.load(.monotonic);
-        while (prev_state.signals > 0) {
-            prev_state = cond.state.cmpxchgWeak(prev_state, .{
-                .waiters = prev_state.waiters - 1,
-                .signals = prev_state.signals - 1,
-            }, .acquire, .monotonic) orelse {
-                // We successfully consumed a signal.
-                return;
-            };
-        }
-    }
+/// Same as `Io.Mutex.tryLock` but avoids the VTable.
+pub fn tryLock(m: *Io.Mutex) bool {
+    return m.state.cmpxchgStrong(.unlocked, .locked_once, .acquire, .monotonic) == null;
 }
 
 /// Same as `Io.Mutex.lockUncancelable` but avoids the VTable.
