@@ -32,8 +32,7 @@ const pathToPosix = Io.Threaded.pathToPosix;
 const pid_t = linux.pid_t;
 const PosixAddress = Io.Threaded.PosixAddress;
 const posixAddressFamily = Io.Threaded.posixAddressFamily;
-const posixProtocol = Io.Threaded.posixProtocol;
-const posixSocketMode = Io.Threaded.posixSocketMode;
+const posixSocketModeProtocol = Io.Threaded.posixSocketModeProtocol;
 const process = std.process;
 const recoverableOsBugDetected = Io.Threaded.recoverableOsBugDetected;
 const setTimestampToPosix = Io.Threaded.setTimestampToPosix;
@@ -594,7 +593,10 @@ const CachedFd = struct {
                     @atomicStore(Once, &cached_fd.once, .uninitialized, .monotonic);
                     futexWake(ev, @ptrCast(&cached_fd.once), 1);
                 }
-                const fd = try ev.openat(cancel_region, linux.AT.FDCWD, path, flags, 0);
+                const fd = ev.openat(cancel_region, linux.AT.FDCWD, path, flags, 0) catch |err| switch (err) {
+                    error.OperationUnsupported => return error.Unexpected, // TMPFILE unset.
+                    else => |e| return e,
+                };
                 @atomicStore(Once, &cached_fd.once, .fromFd(fd), .monotonic);
                 futexWake(ev, @ptrCast(&cached_fd.once), std.math.maxInt(u32));
                 return fd;
@@ -2427,7 +2429,7 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                 break :cond true;
             },
         }) {
-            var operation_userdata: *Io.Operation.Storage.Pending.Userdata =
+            const operation_userdata: *Io.Operation.Storage.Pending.Userdata =
                 @ptrFromInt(next & ~@as(usize, 0b11));
             next = operation_userdata[0];
             const completion: Completion = .{
@@ -2723,12 +2725,10 @@ fn dirOpenDir(
             error.WouldBlock => return errnoBug(.AGAIN),
             error.FileTooBig => return errnoBug(.FBIG),
             error.NoSpaceLeft => return errnoBug(.NOSPC),
-            error.DeviceBusy => return errnoBug(.BUSY), // O_EXCL not passed
+            error.DeviceBusy => return errnoBug(.BUSY), // EXCL unset.
             error.FileBusy => return errnoBug(.TXTBSY),
             error.PathAlreadyExists => return errnoBug(.EXIST), // Not creating.
-            error.PipeBusy => return error.Unexpected, // Not opening a pipe.
-            error.AntivirusInterference => unreachable, // Windows-only
-            error.FileLocksUnsupported => return errnoBug(.OPNOTSUPP), // Not asking for locks.
+            error.OperationUnsupported => return errnoBug(.OPNOTSUPP), // No TMPFILE, no locks.
             else => |e| return e,
         },
     };
@@ -2811,13 +2811,16 @@ fn dirCreateFile(
 
     var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
     defer maybe_sync.deinit(ev);
-    const fd = try ev.openat(&maybe_sync.cancel_region, dir.handle, sub_path_posix, .{
+    const fd = ev.openat(&maybe_sync.cancel_region, dir.handle, sub_path_posix, .{
         .ACCMODE = if (flags.read) .RDWR else .WRONLY,
         .CREAT = true,
         .TRUNC = flags.truncate,
         .EXCL = flags.exclusive,
         .CLOEXEC = true,
-    }, flags.permissions.toMode());
+    }, flags.permissions.toMode()) catch |err| switch (err) {
+        error.OperationUnsupported => return error.Unexpected, // TMPFILE unset.
+        else => |e| return e,
+    };
     errdefer ev.closeAsync(fd);
 
     switch (flags.lock) {
@@ -2893,7 +2896,7 @@ fn dirCreateFileAtomic(
                     flags,
                     options.permissions.toMode(),
                 ) catch |err| switch (err) {
-                    error.IsDir, error.FileNotFound => {
+                    error.IsDir, error.FileNotFound, error.OperationUnsupported => {
                         // Ambiguous error code. It might mean the file system
                         // does not support O_TMPFILE. Therefore, we must fall
                         // back to not using O_TMPFILE.
@@ -2902,9 +2905,6 @@ fn dirCreateFileAtomic(
                     error.FileTooBig => return errnoBug(.FBIG),
                     error.DeviceBusy => return errnoBug(.BUSY), // O_EXCL not passed
                     error.PathAlreadyExists => return errnoBug(.EXIST), // Not creating.
-                    error.PipeBusy => return error.Unexpected, // Not opening a pipe.
-                    error.AntivirusInterference => unreachable, // Windows-only
-                    error.FileLocksUnsupported => return errnoBug(.OPNOTSUPP), // Not asking for locks.
                     else => |e| return e,
                 },
                 .flags = .{ .nonblocking = false },
@@ -2995,7 +2995,7 @@ fn dirOpenFile(
 
     var maybe_sync: CancelRegion.Sync.Maybe = .{ .cancel_region = .init() };
     defer maybe_sync.deinit(ev);
-    const fd = try ev.openat(&maybe_sync.cancel_region, dir.handle, sub_path_posix, .{
+    const fd = ev.openat(&maybe_sync.cancel_region, dir.handle, sub_path_posix, .{
         .ACCMODE = switch (flags.mode) {
             .read_only => .RDONLY,
             .write_only => .WRONLY,
@@ -3005,7 +3005,10 @@ fn dirOpenFile(
         .NOFOLLOW = !flags.follow_symlinks,
         .CLOEXEC = true,
         .PATH = flags.path_only,
-    }, 0);
+    }, 0) catch |err| switch (err) {
+        error.OperationUnsupported => return error.Unexpected, // TMPFILE unset.
+        else => |e| return e,
+    };
     errdefer ev.closeAsync(fd);
 
     if (!flags.allow_directory) {
@@ -3150,7 +3153,7 @@ fn dirRealPathFile(
         .PATH = true,
     }, 0) catch |err| switch (err) {
         error.WouldBlock => return errnoBug(.AGAIN),
-        error.FileLocksUnsupported => return errnoBug(.OPNOTSUPP), // Not asking for locks.
+        error.OperationUnsupported => return errnoBug(.OPNOTSUPP), // Not asking for locks.
         else => |e| return e,
     };
     defer ev.closeAsync(fd);
@@ -4199,7 +4202,7 @@ fn processSetCurrentPath(userdata: ?*anyopaque, dir_path: []const u8) process.Se
     const dir_path_posix = try pathToPosix(dir_path, &path_buffer);
     var sync: CancelRegion.Sync = try .init(ev);
     defer sync.deinit(ev);
-    return ev.chdir(&sync, dir_path_posix);
+    return chdir(&sync, dir_path_posix);
 }
 
 fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) process.ReplaceError {
@@ -4952,9 +4955,9 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
 
 fn netListenIpUnavailable(
     userdata: ?*anyopaque,
-    address: net.IpAddress,
+    address: *const net.IpAddress,
     options: net.IpAddress.ListenOptions,
-) net.IpAddress.ListenError!net.Server {
+) net.IpAddress.ListenError!net.Socket {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     _ = ev;
     _ = address;
@@ -4965,10 +4968,12 @@ fn netListenIpUnavailable(
 fn netAcceptUnavailable(
     userdata: ?*anyopaque,
     listen_handle: net.Socket.Handle,
-) net.Server.AcceptError!net.Stream {
+    options: net.Server.AcceptOptions,
+) net.Server.AcceptError!net.Socket {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     _ = ev;
     _ = listen_handle;
+    _ = options;
     return error.NetworkDown;
 }
 
@@ -4987,17 +4992,14 @@ fn netBindIp(
     var addr_len = addressToPosix(address, &storage);
     try ev.bind(&maybe_sync.cancel_region, socket_fd, &storage.any, addr_len);
     try ev.getsockname(try maybe_sync.enterSync(ev), socket_fd, &storage.any, &addr_len);
-    return .{
-        .handle = socket_fd,
-        .address = addressFromPosix(&storage),
-    };
+    return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
 
 fn netConnectIpUnavailable(
     userdata: ?*anyopaque,
     address: *const net.IpAddress,
     options: net.IpAddress.ConnectOptions,
-) net.IpAddress.ConnectError!net.Stream {
+) net.IpAddress.ConnectError!net.Socket {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     _ = ev;
     _ = address;
@@ -5618,7 +5620,7 @@ fn openat(
     path: [*:0]const u8,
     flags: linux.O,
     mode: linux.mode_t,
-) File.OpenError!fd_t {
+) !fd_t {
     var mut_flags = flags;
     if (@hasField(linux.O, "LARGEFILE")) mut_flags.LARGEFILE = true;
     while (true) {
@@ -5664,7 +5666,9 @@ fn openat(
             .PERM => return error.PermissionDenied,
             .EXIST => return error.PathAlreadyExists,
             .BUSY => return error.DeviceBusy,
-            .OPNOTSUPP => return error.FileLocksUnsupported,
+            // This can be triggered by file locking and TMPFILE, but those
+            // flags are mutually exclusive.
+            .OPNOTSUPP => return error.OperationUnsupported,
             .AGAIN => return error.WouldBlock,
             .TXTBSY => return error.FileBusy,
             .NXIO => return error.NoDevice,
@@ -5941,8 +5945,7 @@ fn socket(
     Unexpected,
     Canceled,
 }!fd_t {
-    const mode = posixSocketMode(options.mode);
-    const protocol = posixProtocol(options.protocol);
+    const mode, const protocol = try posixSocketModeProtocol(family, options.mode, options.protocol);
     const socket_fd = while (true) {
         const thread = try cancel_region.awaitIoUring();
         thread.enqueue().* = .{

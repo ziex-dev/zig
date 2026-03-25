@@ -33,6 +33,7 @@ const arch_bits = switch (native_arch) {
     .aarch64, .aarch64_be => @import("linux/aarch64.zig"),
     .arm, .armeb, .thumb, .thumbeb => @import("linux/arm.zig"),
     .hexagon => @import("linux/hexagon.zig"),
+    .loongarch32 => @import("linux/loongarch32.zig"),
     .loongarch64 => @import("linux/loongarch64.zig"),
     .m68k => @import("linux/m68k.zig"),
     .mips, .mipsel => @import("linux/mips.zig"),
@@ -194,7 +195,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .riscv32, .riscv64, .loongarch64 => packed struct(u32) {
+    .riscv32, .riscv64, .loongarch32, .loongarch64 => packed struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -330,7 +331,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
-    .x86, .riscv32, .riscv64, .loongarch64 => packed struct(u32) {
+    .x86, .riscv32, .riscv64, .loongarch32, .loongarch64 => packed struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -5949,11 +5950,6 @@ pub const S = struct {
     }
 };
 
-pub const UTIME = struct {
-    pub const NOW = 0x3fffffff;
-    pub const OMIT = 0x3ffffffe;
-};
-
 const TFD_TIMER = packed struct(u32) {
     ABSTIME: bool = false,
     CANCEL_ON_SET: bool = false,
@@ -6345,6 +6341,7 @@ pub const MINSIGSTKSZ = switch (native_arch) {
     .xtensa,
     .xtensaeb,
     => 2048,
+    .loongarch32,
     .loongarch64,
     .sparc,
     .sparc64,
@@ -6384,6 +6381,7 @@ pub const SIGSTKSZ = switch (native_arch) {
     => 8192,
     .aarch64,
     .aarch64_be,
+    .loongarch32,
     .loongarch64,
     .sparc,
     .sparc64,
@@ -8702,22 +8700,16 @@ pub const kernel_timespec = extern struct {
     };
 };
 
+/// For use with `utimensat` and `futimens`.
+pub const UTIME = struct {
+    pub const NOW: timespec = .{ .sec = 0, .nsec = 0x3fffffff };
+    pub const OMIT: timespec = .{ .sec = 0, .nsec = 0x3ffffffe };
+};
+
 // https://github.com/ziglang/zig/issues/4726#issuecomment-2190337877
 pub const timespec = if (native_arch == .hexagon or native_arch == .riscv32) kernel_timespec else extern struct {
     sec: isize,
     nsec: isize,
-
-    /// For use with `utimensat` and `futimens`.
-    pub const NOW: timespec = .{
-        .sec = 0,
-        .nsec = 0x3fffffff,
-    };
-
-    /// For use with `utimensat` and `futimens`.
-    pub const OMIT: timespec = .{
-        .sec = 0,
-        .nsec = 0x3ffffffe,
-    };
 };
 
 pub const XDP = struct {
@@ -9515,7 +9507,7 @@ pub const perf_event_attr = extern struct {
     sample_type: u64 = 0,
     read_format: u64 = 0,
 
-    flags: packed struct {
+    flags: packed struct(u64) {
         /// off by default
         disabled: bool = false,
         /// children inherit it

@@ -19,10 +19,6 @@ pub const BrkAllocator = @import("heap/BrkAllocator.zig");
 pub const DebugAllocatorConfig = @import("heap/debug_allocator.zig").Config;
 pub const DebugAllocator = @import("heap/debug_allocator.zig").DebugAllocator;
 pub const Check = enum { ok, leak };
-/// Deprecated; to be removed after 0.14.0 is tagged.
-pub const GeneralPurposeAllocatorConfig = DebugAllocatorConfig;
-/// Deprecated; to be removed after 0.14.0 is tagged.
-pub const GeneralPurposeAllocator = DebugAllocator;
 
 /// A memory pool that can allocate objects of a single type very quickly.
 /// Use this when you need to allocate a lot of objects of the same type,
@@ -49,10 +45,7 @@ pub const MemoryPoolOptions = memory_pool.Options;
 ///
 /// On many systems, the actual page size can only be determined at runtime
 /// with `pageSize`.
-pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min_default orelse 1);
-//`orelse 1` is a workaround for https://codeberg.org/ziglang/zig/issues/30842
-//@compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
-
+pub const page_size_min: usize = std.options.page_size_min orelse (page_size_min_default orelse @compileError(@tagName(builtin.cpu.arch) ++ "-" ++ @tagName(builtin.os.tag) ++ " has unknown page_size_min; populate std.options.page_size_min"));
 /// comptime-known maximum page size of the target.
 ///
 /// Targeting a system with a larger page size may require overriding
@@ -812,6 +805,11 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .x86, .x86_64 => 16 << 10,
         else => null,
     },
+    .psp => switch (builtin.cpu.arch) {
+        // minimum block allocation by testing sceKernel
+        .mips, .mipsel => 1 << 8, // 256
+        else => null,
+    },
     // system/lib/libc/musl/arch/emscripten/bits/limits.h
     .emscripten => 64 << 10,
     .linux => switch (builtin.cpu.arch) {
@@ -970,6 +968,11 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .x86, .x86_64 => 16 << 10,
         else => null,
     },
+    .psp => switch (builtin.cpu.arch) {
+        // minimum block allocation by testing sceKernel
+        .mips, .mipsel => 1 << 8, // 256
+        else => null,
+    },
     // system/lib/libc/musl/arch/emscripten/bits/limits.h
     .emscripten => 64 << 10,
     .linux => switch (builtin.cpu.arch) {
@@ -1006,7 +1009,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
 test {
     _ = @import("heap/memory_pool.zig");
     _ = ArenaAllocator;
-    _ = GeneralPurposeAllocator;
+    _ = DebugAllocator(.{});
     _ = FixedBufferAllocator;
     if (builtin.single_threaded) {
         if (builtin.cpu.arch.isWasm() or (builtin.os.tag == .linux and !builtin.link_libc)) {

@@ -69,19 +69,26 @@ pub const Id = if (InternPool.single_threaded) enum {
     /// will likely involve significant changes to the `InternPool` implementation.
     var available_tids: std.ArrayList(Id) = .empty;
     threadlocal var recursive_depth: usize = 0;
-    threadlocal var recursive_tid: Id = .main;
+    threadlocal var recursive_tid: Id = undefined;
 
     pub fn allocate(arena: Allocator, n: usize) Allocator.Error!void {
         assert(available_tids.items.len == 0);
         try available_tids.ensureTotalCapacityPrecise(arena, n - 1);
         for (1..n) |tid| available_tids.appendAssumeCapacity(@enumFromInt(tid));
+        switch (build_options.io_mode) {
+            .threaded => {
+                // Called from the main thread, so mark ourselves as such.
+                recursive_depth = 1;
+                recursive_tid = .main;
+            },
+            .evented => {},
+        }
     }
     pub fn acquire(io: std.Io) Id {
         switch (build_options.io_mode) {
             .threaded => {
                 recursive_depth += 1;
                 if (recursive_depth > 1) {
-                    assert(recursive_tid != .main);
                     return recursive_tid;
                 }
             },
@@ -106,7 +113,6 @@ pub const Id = if (InternPool.single_threaded) enum {
                 assert(recursive_tid == tid);
                 recursive_depth -= 1;
                 if (recursive_depth > 0) return;
-                recursive_tid = .main;
             },
             .evented => {},
         }
@@ -838,7 +844,7 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
             .zig => {}, // logic below
             .zon => {
                 if (file.zoir_invalidated) {
-                    try zcu.markDependeeOutdated(.not_marked_po, .{ .zon_file = file_index });
+                    try zcu.markDependeeOutdated(.not_marked_po, .{ .source_file = file_index });
                     file.zoir_invalidated = false;
                 }
                 continue;
@@ -988,8 +994,8 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
         // be re-analyzed (causing the struct's namespace to be re-scanned). It's fine to do this
         // now because this work is fast (no actual Sema work is happening, we're just updating the
         // namespace contents). We must do this after updating ZIR refs above, since `scanNamespace`
-        // will track some instructions.
-        try pt.updateFileNamespace(file_index);
+        // calls will track some instructions.
+        try pt.updateFileRootStructType(file_index);
     }
 }
 
@@ -1584,10 +1590,6 @@ pub fn ensureNavValUpToDate(
 
     try zcu.ensureNavValAnalysisQueued(nav_id);
 
-    // Determine whether or not this `Nav`'s value is outdated. This also includes checking if the
-    // status is `.unresolved`, which indicates that the value is outdated because it has *never*
-    // been analyzed so far.
-    //
     // Note that if the unit is PO, we pessimistically assume that it *does* require re-analysis, to
     // ensure that the unit is definitely up-to-date when this function returns. This mechanism could
     // result in over-analysis if analysis occurs in a poor order; we do our best to avoid this by
@@ -1603,7 +1605,7 @@ pub fn ensureNavValUpToDate(
     } else {
         // We can trust the current information about this unit.
         if (prev_failed) return error.AnalysisFail;
-        assert(nav.status == .fully_resolved);
+        assert(nav.resolved.?.value != .none);
         return;
     }
 
@@ -1740,7 +1742,7 @@ fn analyzeNavVal(
     const maybe_ty: ?Type = if (zir_decl.type_body != null) ty: {
         // Since we have a type body, the type is resolved separately!
         try sema.ensureNavResolved(&block, init_src, nav_id, .type);
-        break :ty .fromInterned(ip.getNav(nav_id).typeOf(ip));
+        break :ty .fromInterned(ip.getNav(nav_id).resolved.?.type);
     } else null;
 
     const final_val: ?Value = if (zir_decl.value_body) |value_body| val: {
@@ -1786,14 +1788,12 @@ fn analyzeNavVal(
     const modifiers: Sema.NavPtrModifiers = if (zir_decl.type_body != null) m: {
         // `analyzeNavType` (from the `ensureNavTypeUpToDate` call above) has already populated this data into
         // the `Nav`. Load the new one, and pull the modifiers out.
-        switch (ip.getNav(nav_id).status) {
-            .unresolved => unreachable, // `analyzeNavType` will never leave us in this state
-            inline .type_resolved, .fully_resolved => |r| break :m .{
-                .alignment = r.alignment,
-                .@"linksection" = r.@"linksection",
-                .@"addrspace" = r.@"addrspace",
-            },
-        }
+        const r = ip.getNav(nav_id).resolved.?;
+        break :m .{
+            .@"align" = r.@"align",
+            .@"linksection" = r.@"linksection",
+            .@"addrspace" = r.@"addrspace",
+        };
     } else m: {
         // `analyzeNavType` is essentially a stub which calls us. We are responsible for resolving this data.
         break :m try sema.resolveNavPtrModifiers(&block, zir_decl, inst_resolved.inst, nav_ty);
@@ -1803,15 +1803,7 @@ fn analyzeNavVal(
     // This isn't necessarily the same as `final_val`!
 
     const nav_val: Value = switch (zir_decl.linkage) {
-        .normal, .@"export" => switch (zir_decl.kind) {
-            .@"var" => .fromInterned(try pt.intern(.{ .variable = .{
-                .ty = nav_ty.toIntern(),
-                .init = final_val.?.toIntern(),
-                .owner_nav = nav_id,
-                .is_threadlocal = zir_decl.is_threadlocal,
-            } })),
-            else => final_val.?,
-        },
+        .normal, .@"export" => final_val.?,
         .@"extern" => val: {
             assert(final_val == null); // extern decls do not have a value body
             const lib_name: ?[]const u8 = if (zir_decl.lib_name != .empty) l: {
@@ -1832,7 +1824,7 @@ fn analyzeNavVal(
                 .relocation = .any,
                 .decoration = null,
                 .is_const = is_const,
-                .alignment = modifiers.alignment,
+                .alignment = modifiers.@"align",
                 .@"addrspace" = modifiers.@"addrspace",
                 .zir_index = old_nav.analysis.?.zir_index, // `declaration` instruction
                 .owner_nav = undefined, // ignored by `getExtern`
@@ -1852,11 +1844,7 @@ fn analyzeNavVal(
 
     const queue_linker_work, const is_owned_fn = switch (ip.indexToKey(nav_val.toIntern())) {
         .func => |f| .{ true, f.owner_nav == nav_id }, // note that this lets function aliases reach codegen
-        .variable => |v| .{ v.owner_nav == nav_id, false },
-        .@"extern" => |e| .{
-            false,
-            Type.fromInterned(e.ty).zigTypeTag(zcu) == .@"fn" and zir_decl.linkage == .@"extern",
-        },
+        .@"extern" => .{ false, nav_ty.zigTypeTag(zcu) == .@"fn" and zir_decl.linkage == .@"extern" },
         else => .{ true, false },
     };
 
@@ -1895,23 +1883,22 @@ fn analyzeNavVal(
             info.last_update_gen = zcu.generation;
             info.deps.clearRetainingCapacity();
         }
-        const type_changed: bool = switch (old_nav.status) {
-            .unresolved => true,
-            .type_resolved => |old| old.type != nav_ty.toIntern(),
-            .fully_resolved => |old| ip.typeOf(old.val) != nav_ty.toIntern(),
-        };
+        const type_changed: bool = if (old_nav.resolved) |r| r.type != nav_ty.toIntern() else true;
         if (type_changed) {
             try zcu.markDependeeOutdated(.marked_po, .{ .nav_ty = nav_id });
         } else {
             try zcu.markPoDependeeUpToDate(.{ .nav_ty = nav_id });
         }
     }
-    ip.resolveNavValue(io, nav_id, .{
-        .val = nav_val.toIntern(),
-        .is_const = is_const,
-        .alignment = modifiers.alignment,
+    ip.resolveNav(io, nav_id, .{
+        .type = nav_ty.toIntern(),
+        .@"align" = modifiers.@"align",
         .@"linksection" = modifiers.@"linksection",
         .@"addrspace" = modifiers.@"addrspace",
+        .@"const" = is_const,
+        .@"threadlocal" = zir_decl.is_threadlocal,
+        .is_extern_decl = zir_decl.linkage == .@"extern",
+        .value = nav_val.toIntern(),
     });
 
     if (zir_decl.linkage == .@"export") {
@@ -1943,9 +1930,10 @@ fn analyzeNavVal(
         try zcu.ensureFuncBodyAnalysisQueued(nav_val.toIntern());
     }
 
-    return switch (old_nav.status) {
-        .unresolved, .type_resolved => .{ .val_changed = true },
-        .fully_resolved => |old| .{ .val_changed = old.val != nav_val.toIntern() },
+    return if (old_nav.resolved) |old_resolved| .{
+        .val_changed = old_resolved.value != nav_val.toIntern(),
+    } else .{
+        .val_changed = true,
     };
 }
 
@@ -1971,10 +1959,6 @@ pub fn ensureNavTypeUpToDate(
 
     try zcu.ensureNavValAnalysisQueued(nav_id);
 
-    // Determine whether or not this `Nav`'s type is outdated. This also includes checking if the
-    // status is `.unresolved`, which indicates that the value is outdated because it has *never*
-    // been analyzed so far.
-    //
     // Note that if the unit is PO, we pessimistically assume that it *does* require re-analysis, to
     // ensure that the unit is definitely up-to-date when this function returns. This mechanism could
     // result in over-analysis if analysis occurs in a poor order; we do our best to avoid this by
@@ -1990,7 +1974,7 @@ pub fn ensureNavTypeUpToDate(
     } else {
         // We can trust the current information about this unit.
         if (prev_failed) return error.AnalysisFail;
-        assert(nav.status != .unresolved);
+        assert(nav.resolved != null);
         return;
     }
 
@@ -2124,24 +2108,16 @@ fn analyzeNavType(
         // the previous update. As such, after this call, we will be able to determine whether the
         // type changed.
         try sema.ensureNavResolved(&block, init_src, nav_id, .fully);
-        const new = ip.getNav(nav_id).status.fully_resolved;
-        const new_is_extern_decl = ip.indexToKey(new.val) == .@"extern";
-        const changed = switch (old_nav.status) {
-            .unresolved => true,
-            .type_resolved => |r| r.type != ip.typeOf(new.val) or
-                r.alignment != new.alignment or
-                r.@"linksection" != new.@"linksection" or
-                r.@"addrspace" != new.@"addrspace" or
-                r.is_const != new.is_const or
-                r.is_extern_decl != new_is_extern_decl,
-            .fully_resolved => |r| ip.typeOf(r.val) != ip.typeOf(new.val) or
-                r.alignment != new.alignment or
-                r.@"linksection" != new.@"linksection" or
-                r.@"addrspace" != new.@"addrspace" or
-                r.is_const != new.is_const or
-                (old_nav.getExtern(ip) != null) != new_is_extern_decl,
-        };
-        return .{ .type_changed = changed };
+        const new = ip.getNav(nav_id).resolved.?;
+        return if (old_nav.resolved) |old| .{
+            .type_changed = old.type != new.type or
+                old.@"align" != new.@"align" or
+                old.@"linksection" != new.@"linksection" or
+                old.@"addrspace" != new.@"addrspace" or
+                old.@"const" != new.@"const" or
+                old.@"threadlocal" != new.@"threadlocal" or
+                old.is_extern_decl != new.is_extern_decl,
+        } else .{ .type_changed = true };
     };
 
     block.comptime_reason = .{ .reason = .{
@@ -2169,37 +2145,34 @@ fn analyzeNavType(
 
     const is_extern_decl = zir_decl.linkage == .@"extern";
 
-    // Now for the question of the day: are the type and modifiers the same as before?
-    // If they are, then we should actually keep the `Nav` as `fully_resolved` if it currently is.
-    // That's because `analyzeNavVal` will later want to look at the resolved value to figure out
-    // whether it's changed: if we threw that data away now, it would have to assume that the value
-    // had changed, potentially spinning off loads of unnecessary re-analysis!
-    const changed = switch (old_nav.status) {
-        .unresolved => true,
-        .type_resolved => |r| r.type != resolved_ty.toIntern() or
-            r.alignment != modifiers.alignment or
-            r.@"linksection" != modifiers.@"linksection" or
-            r.@"addrspace" != modifiers.@"addrspace" or
-            r.is_const != is_const or
-            r.is_extern_decl != is_extern_decl,
-        .fully_resolved => |r| ip.typeOf(r.val) != resolved_ty.toIntern() or
-            r.alignment != modifiers.alignment or
-            r.@"linksection" != modifiers.@"linksection" or
-            r.@"addrspace" != modifiers.@"addrspace" or
-            r.is_const != is_const or
-            (old_nav.getExtern(ip) != null) != is_extern_decl,
-    };
+    // Now for the question of the day: are the type and modifiers the same as before? If they are,
+    // then we should actually avoid calling `ip.resolveNav`. This is because `analyzeNavVal` will
+    // later wanmt to look at the resolved *value* to figure out whether *that* has changed: if we
+    // threw that data away now, it would have to assume the value *had* changed even if it actually
+    // hadn't, which could spin off a bunch of unnecessary re-analysis! OTOH, if the type *has*
+    // changed, then we obviously know that the value will also have changed, so resetting the value
+    // to `.none` is fine in that case.
+    const changed: bool = if (old_nav.resolved) |old| changed: {
+        break :changed old.type != resolved_ty.toIntern() or
+            old.@"align" != modifiers.@"align" or
+            old.@"linksection" != modifiers.@"linksection" or
+            old.@"addrspace" != modifiers.@"addrspace" or
+            old.@"const" != is_const or
+            old.@"threadlocal" != zir_decl.is_threadlocal or
+            old.is_extern_decl != is_extern_decl;
+    } else true;
 
     if (!changed) return .{ .type_changed = false };
 
-    ip.resolveNavType(io, nav_id, .{
+    ip.resolveNav(io, nav_id, .{
         .type = resolved_ty.toIntern(),
-        .is_const = is_const,
-        .alignment = modifiers.alignment,
+        .@"align" = modifiers.@"align",
         .@"linksection" = modifiers.@"linksection",
         .@"addrspace" = modifiers.@"addrspace",
-        .is_threadlocal = zir_decl.is_threadlocal,
+        .@"const" = is_const,
+        .@"threadlocal" = zir_decl.is_threadlocal,
         .is_extern_decl = is_extern_decl,
+        .value = .none,
     });
 
     return .{ .type_changed = true };
@@ -2350,27 +2323,49 @@ fn analyzeFuncBody(
     return .{ .ies_outdated = ies_outdated };
 }
 
-/// Re-scan the namespace of a file's root struct type on an incremental update.
-/// The file must have successfully populated ZIR.
-/// If the file's root struct type is not populated (the file is unreferenced), nothing is done.
-/// This is called by `updateZirRefs` for all updated files before the main work loop.
-/// This function does not perform any semantic analysis.
-fn updateFileNamespace(pt: Zcu.PerThread, file_index: Zcu.File.Index) Allocator.Error!void {
+/// The given file has been modified on this incremental update, so if it has a populated root
+/// struct type, either re-scan its namespace, or clear it and invalidate dependencies if the
+/// type is no longer valid. See comments in body for more details.
+///
+/// Called by `updateZirRefs` for all updated Zig source files before the main update loop.
+///
+/// Asserts that the file has successfully populated ZIR.
+fn updateFileRootStructType(pt: Zcu.PerThread, file_index: Zcu.File.Index) Allocator.Error!void {
     const zcu = pt.zcu;
+    const ip = &zcu.intern_pool;
 
     const file = zcu.fileByIndex(file_index);
     const file_root_type = zcu.fileRootType(file_index);
-    if (file_root_type == .none) return;
+    if (file_root_type == .none) {
+        // We haven't analyzed any `@import` of this file so far, so there's nothing to update. If
+        // an `@import` gets analyzed, then `ensureFilePopulated` will create the root struct type
+        // and scan the namespace.
+        return;
+    }
 
-    log.debug("updateFileNamespace mod={s} sub_file_path={s}", .{
+    const loaded_struct = ip.loadStructType(file_root_type);
+
+    log.debug("updateFileRootStructType mod={s} sub_file_path={s}", .{
         file.mod.?.fully_qualified_name,
         file.sub_file_path,
     });
 
-    const namespace_index = Type.fromInterned(file_root_type).getNamespaceIndex(zcu);
-    const decls = file.zir.?.getStructDecl(.main_struct_inst).decls;
-    try pt.scanNamespace(namespace_index, decls);
-    zcu.namespacePtr(namespace_index).generation = zcu.generation;
+    if (loaded_struct.zir_index.resolve(ip) == null) {
+        // The file's root struct decl has been lost, so a new struct type must be interned at a new
+        // `InternPool.Index`. Clear the file's root type so that `ensureFilePopulated` will do that
+        // work, and invalidate dependencies on this file to force re-analysis of `@import` sites.
+        zcu.setFileRootType(file_index, .none);
+        try zcu.markDependeeOutdated(.not_marked_po, .{ .source_file = file_index });
+    } else {
+        // The existing struct type is valid, but the namespace contents might have changed. For
+        // most struct types, that would cause the surrounding declaration to be invalidated which
+        // causes `Sema.zirStructType` (or whatever) to call `ensureNamespaceUpToDate`. However,
+        // there is no "surrounding declaration" for the root struct type of a Zig source file, so
+        // update this namespace now.
+        const decls = file.zir.?.getStructDecl(.main_struct_inst).decls;
+        try pt.scanNamespace(loaded_struct.namespace, decls);
+        zcu.namespacePtr(loaded_struct.namespace).generation = zcu.generation;
+    }
 }
 
 /// Called by AstGen worker threads when an import is seen. If `new_file` is returned, the caller is
@@ -3336,13 +3331,13 @@ fn analyzeFuncBodyInner(
 
     if (func.generic_owner == .none) {
         try pt.ensureNavValUpToDate(func.owner_nav, reason);
-        if (ip.getNav(func.owner_nav).status.fully_resolved.val != func_index) {
+        if (ip.getNav(func.owner_nav).resolved.?.value != func_index) {
             return error.AnalysisFail;
         }
     } else {
         const go_nav = zcu.funcInfo(func.generic_owner).owner_nav;
         try pt.ensureNavValUpToDate(go_nav, reason);
-        if (ip.getNav(go_nav).status.fully_resolved.val != func.generic_owner) {
+        if (ip.getNav(go_nav).resolved.?.value != func.generic_owner) {
             return error.AnalysisFail;
         }
     }
@@ -3735,9 +3730,9 @@ fn processExportsInner(
                 if (zcu.failed_analysis.contains(unit)) break :failed true;
                 if (zcu.transitive_failed_analysis.contains(unit)) break :failed true;
             }
-            const val = switch (nav.status) {
-                .unresolved, .type_resolved => break :failed true,
-                .fully_resolved => |r| Value.fromInterned(r.val),
+            const val: Value = switch ((nav.resolved orelse break :failed true).value) {
+                .none => break :failed true,
+                else => |val| .fromInterned(val),
             };
             // If the value is a function, we also need to check if that function succeeded analysis.
             if (val.typeOf(zcu).zigTypeTag(zcu) == .@"fn") {
@@ -3783,14 +3778,16 @@ pub fn populateTestFunctions(pt: Zcu.PerThread) Allocator.Error!void {
     if (builtin_root_type == .none) return; // `@import("builtin")` never analyzed
     const builtin_namespace = Type.fromInterned(builtin_root_type).getNamespace(zcu).unwrap().?;
     // We know that the namespace has a `test_functions`...
-    const nav_index = zcu.namespacePtr(builtin_namespace).pub_decls.getKeyAdapted(
+    const test_fns_nav_index = zcu.namespacePtr(builtin_namespace).pub_decls.getKeyAdapted(
         try ip.getOrPutString(gpa, io, pt.tid, "test_functions", .no_embedded_nulls),
         Zcu.Namespace.NameAdapter{ .zcu = zcu },
     ).?;
+    const test_fns_nav = ip.getNav(test_fns_nav_index);
     // ...but it might not be populated, so let's check that!
-    if (zcu.failed_analysis.contains(.wrap(.{ .nav_val = nav_index })) or
-        zcu.transitive_failed_analysis.contains(.wrap(.{ .nav_val = nav_index })) or
-        ip.getNav(nav_index).status != .fully_resolved)
+    if (zcu.failed_analysis.contains(.wrap(.{ .nav_val = test_fns_nav_index })) or
+        zcu.transitive_failed_analysis.contains(.wrap(.{ .nav_val = test_fns_nav_index })) or
+        test_fns_nav.resolved == null or
+        test_fns_nav.resolved.?.value == .none)
     {
         // The value of `builtin.test_functions` was either never referenced, or failed analysis.
         // Either way, we don't need to do anything.
@@ -3800,8 +3797,7 @@ pub fn populateTestFunctions(pt: Zcu.PerThread) Allocator.Error!void {
     // Okay, `builtin.test_functions` is (potentially) referenced and valid. Our job now is to swap
     // its placeholder `&.{}` value for the actual list of all test functions.
 
-    const test_fns_val = zcu.navValue(nav_index);
-    const test_fn_ty = test_fns_val.typeOf(zcu).slicePtrFieldType(zcu).childType(zcu);
+    const test_fn_ty = Type.fromInterned(test_fns_nav.resolved.?.type).slicePtrFieldType(zcu).childType(zcu);
 
     const array_anon_decl: InternPool.Key.Ptr.BaseAddr.Uav = array: {
         // Add zcu.test_functions to an array decl then make the test_functions
@@ -3892,10 +3888,12 @@ pub fn populateTestFunctions(pt: Zcu.PerThread) Allocator.Error!void {
             } }),
             .len = (try pt.intValue(Type.usize, zcu.test_functions.count())).toIntern(),
         } });
-        ip.mutateVarInit(io, test_fns_val.toIntern(), new_init);
+        var new_resolved_test_fns = test_fns_nav.resolved.?;
+        new_resolved_test_fns.value = new_init;
+        ip.resolveNav(io, test_fns_nav_index, new_resolved_test_fns);
     }
     // The linker thread is not running, so we actually need to dispatch this task directly.
-    @import("../link.zig").linkTestFunctionsNav(pt, nav_index);
+    @import("../link.zig").linkTestFunctionsNav(pt, test_fns_nav_index);
 }
 
 /// Stores an error in `pt.zcu.failed_files` for this file, and sets the file
@@ -4380,17 +4378,13 @@ pub fn intBitsForValue(pt: Zcu.PerThread, val: Value, sign: bool) u16 {
 pub fn navPtrType(pt: Zcu.PerThread, nav_id: InternPool.Nav.Index) Allocator.Error!Type {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const ty, const alignment, const @"addrspace", const is_const = switch (ip.getNav(nav_id).status) {
-        .unresolved => unreachable,
-        .type_resolved => |r| .{ r.type, r.alignment, r.@"addrspace", r.is_const },
-        .fully_resolved => |r| .{ ip.typeOf(r.val), r.alignment, r.@"addrspace", r.is_const },
-    };
+    const resolved_nav = ip.getNav(nav_id).resolved.?;
     return pt.ptrType(.{
-        .child = ty,
+        .child = resolved_nav.type,
         .flags = .{
-            .alignment = alignment,
-            .address_space = @"addrspace",
-            .is_const = is_const,
+            .alignment = resolved_nav.@"align",
+            .address_space = resolved_nav.@"addrspace",
+            .is_const = resolved_nav.@"const",
         },
     });
 }

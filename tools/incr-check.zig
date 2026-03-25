@@ -129,7 +129,6 @@ pub fn main(init: std.process.Init) !void {
             "--global-cache-dir",
             ".global-cache",
         });
-        if (target.resolved.os.tag == .windows) try child_args.append(arena, "-lws2_32");
         try child_args.append(arena, "--listen=-");
 
         if (opt_resolved_lib_dir) |resolved_lib_dir| {
@@ -170,9 +169,6 @@ pub fn main(init: std.process.Init) !void {
                 "-I",
                 opt_resolved_lib_dir.?, // verified earlier
             });
-
-            if (target.resolved.os.tag == .windows)
-                try cc_child_args.append(arena, "-lws2_32");
 
             try cc_child_args.append(arena, "-o");
         }

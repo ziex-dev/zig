@@ -239,7 +239,6 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
         // values, not types
         .undef,
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -334,11 +333,10 @@ pub fn isSelfComparable(ty: Type, zcu: *const Zcu, is_equality_cmp: bool) bool {
         .undefined,
         .null,
         .error_union,
-        .@"union",
         .frame,
         => false,
 
-        .@"struct" => is_equality_cmp and ty.containerLayout(zcu) == .@"packed",
+        .@"struct", .@"union" => is_equality_cmp and ty.containerLayout(zcu) == .@"packed",
         .pointer => !ty.isSlice(zcu) and (is_equality_cmp or ty.isCPtr(zcu)),
         .optional => {
             if (!is_equality_cmp) return false;
@@ -676,7 +674,6 @@ pub fn print(ty: Type, writer: *std.Io.Writer, pt: Zcu.PerThread, ctx: ?*Compari
 
         // values, not types
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -815,7 +812,6 @@ pub fn hasWellDefinedLayout(ty: Type, zcu: *const Zcu) bool {
         // values, not types
         .undef,
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -1047,7 +1043,6 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
         // values, not types
         .undef,
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -1188,7 +1183,6 @@ pub fn abiSize(ty: Type, zcu: *const Zcu) u64 {
         // values, not types
         .undef,
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -1312,7 +1306,6 @@ pub fn bitSize(ty: Type, zcu: *const Zcu) u64 {
         // values, not types
         .undef,
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -1868,7 +1861,6 @@ pub fn intInfo(starting_ty: Type, zcu: *const Zcu) InternPool.Key.IntType {
             // values, not types
             .undef,
             .simple_value,
-            .variable,
             .@"extern",
             .func,
             .int,
@@ -1932,6 +1924,18 @@ pub fn floatBits(ty: Type, target: *const Target) u16 {
         .f128_type, .comptime_float_type => 128,
         .c_longdouble_type => target.cTypeBitSize(.longdouble),
 
+        else => unreachable,
+    };
+}
+
+/// Asserts the type is a fixed-size float or comptime_float.
+pub fn floatSignificandBits(ty: Type, target: *const Target) u16 {
+    return switch (ty.floatBits(target)) {
+        16 => 11,
+        32 => 24,
+        64 => 53,
+        80 => 64,
+        128 => 113,
         else => unreachable,
     };
 }
@@ -2151,7 +2155,6 @@ pub fn onePossibleValue(ty: Type, pt: Zcu.PerThread) !?Value {
         // values, not types
         .undef,
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -3273,7 +3276,6 @@ pub fn assertHasLayout(ty: Type, zcu: *const Zcu) void {
 
         // values, not types
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,
@@ -3351,7 +3353,6 @@ fn collectSubtypes(ty: Type, pt: Zcu.PerThread, visited: *std.AutoArrayHashMapUn
 
         // values, not types
         .simple_value,
-        .variable,
         .@"extern",
         .func,
         .int,

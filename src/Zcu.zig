@@ -723,11 +723,7 @@ pub const Exported = union(enum) {
 
     pub fn getAlign(exported: Exported, zcu: *Zcu) Alignment {
         return switch (exported) {
-            .nav => |nav| switch (zcu.intern_pool.getNav(nav).status) {
-                .unresolved => unreachable,
-                .type_resolved => |r| r.alignment,
-                .fully_resolved => |r| r.alignment,
-            },
+            .nav => |nav| zcu.intern_pool.getNav(nav).resolved.?.@"align",
             .uav => .none,
         };
     }
@@ -1014,7 +1010,7 @@ pub const File = struct {
     /// changed -- this field is just a simple boolean.
     ///
     /// When `zoir` is updated, this field is set to `true`. In `updateZirRefs`, if this is `true`,
-    /// we invalidate the corresponding `zon_file` dependency, and reset it to `false`.
+    /// we invalidate the corresponding `source_file` dependency, and reset it to `false`.
     zoir_invalidated: bool,
 
     pub const Path = struct {
@@ -1605,6 +1601,12 @@ pub const SrcLoc = struct {
                 else
                     // token points to the ')'
                     tree.tokenToSpan(data[1] - 1);
+            },
+            .asm_clobbers => |offset| {
+                const tree = try src_loc.file_scope.getTree(zcu);
+                const node = offset.toAbsolute(src_loc.base_node);
+                const full = tree.fullAsm(node).?;
+                return tree.nodeToSpan(full.ast.clobbers.unwrap().?); // this should only be reachable if the clobbers are written in the source
             },
             .for_input => |for_input| {
                 const tree = try src_loc.file_scope.getTree(zcu);
@@ -2556,6 +2558,8 @@ pub const LazySrcLoc = struct {
             offset: Ast.Node.Offset,
             output_index: u32,
         },
+        /// Points to the assembly node
+        asm_clobbers: Ast.Node.Offset,
         /// The source location points to a for loop input.
         for_input: struct {
             /// Points to the for loop AST node.
@@ -4252,8 +4256,8 @@ fn resolveReferencesInner(zcu: *Zcu) Allocator.Error!std.AutoArrayHashMapUnmanag
                         }
                     }
                     // Non-fatal AstGen errors could mean this test decl failed
-                    if (nav.status == .fully_resolved) {
-                        const gop = try units.getOrPut(gpa, .wrap(.{ .func = nav.status.fully_resolved.val }));
+                    if (nav.resolved != null and nav.resolved.?.value != .none) {
+                        const gop = try units.getOrPut(gpa, .wrap(.{ .func = nav.resolved.?.value }));
                         if (!gop.found_existing) gop.value_ptr.* = referencer;
                     }
                 }
@@ -4419,7 +4423,7 @@ pub fn navSrcLine(zcu: *Zcu, nav_index: InternPool.Nav.Index) u32 {
 }
 
 pub fn navValue(zcu: *const Zcu, nav_index: InternPool.Nav.Index) Value {
-    return Value.fromInterned(zcu.intern_pool.getNav(nav_index).status.fully_resolved.val);
+    return .fromInterned(zcu.intern_pool.getNav(nav_index).resolved.?.value);
 }
 
 pub fn navFileScopeIndex(zcu: *Zcu, nav: InternPool.Nav.Index) File.Index {
@@ -4431,14 +4435,12 @@ pub fn navFileScope(zcu: *Zcu, nav: InternPool.Nav.Index) *File {
     return zcu.fileByIndex(zcu.navFileScopeIndex(nav));
 }
 
-pub fn navAlignment(zcu: *Zcu, nav_index: InternPool.Nav.Index) InternPool.Alignment {
-    const ty: Type, const alignment = switch (zcu.intern_pool.getNav(nav_index).status) {
-        .unresolved => unreachable,
-        .type_resolved => |r| .{ .fromInterned(r.type), r.alignment },
-        .fully_resolved => |r| .{ Value.fromInterned(r.val).typeOf(zcu), r.alignment },
+pub fn navAlignment(zcu: *Zcu, nav_id: InternPool.Nav.Index) InternPool.Alignment {
+    const resolved = zcu.intern_pool.getNav(nav_id).resolved.?;
+    return switch (resolved.@"align") {
+        else => |a| a,
+        .none => Type.fromInterned(resolved.type).abiAlignment(zcu),
     };
-    if (alignment != .none) return alignment;
-    return ty.abiAlignment(zcu);
 }
 
 pub fn fmtAnalUnit(zcu: *Zcu, unit: AnalUnit) std.fmt.Alt(FormatAnalUnit, formatAnalUnit) {
@@ -4496,9 +4498,9 @@ fn formatDependee(data: FormatDependee, writer: *Io.Writer) Io.Writer.Error!void
             const fqn = ip.getNav(ip.indexToKey(ip_index).func.owner_nav).fqn;
             return writer.print("func_ies('{f}')", .{fqn.fmt(ip)});
         },
-        .zon_file => |file| {
+        .source_file => |file| {
             const file_path = zcu.fileByIndex(file).path;
-            return writer.print("zon_file('{f}')", .{file_path.fmt(zcu.comp)});
+            return writer.print("source_file('{f}')", .{file_path.fmt(zcu.comp)});
         },
         .embed_file => |ef_idx| {
             const ef = ef_idx.get(zcu);
