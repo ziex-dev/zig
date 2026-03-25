@@ -41,6 +41,7 @@ const Args = struct {
         @"preserve-tmp": struct { value: bool = false },
         @"zig-integration": struct {
             value: []const ZigIntegration = &.{},
+            pub const info: std.cli.NamedInfo = .{ .short = 'f' };
         },
         @"zig-cc-binary": struct { value: ?[]const u8 = null },
     },
