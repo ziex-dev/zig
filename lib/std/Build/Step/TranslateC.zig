@@ -12,6 +12,7 @@ step: Step,
 source: std.Build.LazyPath,
 include_dirs: std.array_list.Managed(std.Build.Module.IncludeDir),
 system_libs: std.ArrayList(std.Build.Module.SystemLib),
+lib_paths: std.ArrayList(LazyPath),
 c_macros: std.array_list.Managed([]const u8),
 out_basename: []const u8,
 target: std.Build.ResolvedTarget,
@@ -48,6 +49,7 @@ pub fn create(owner: *std.Build, options: Options) *TranslateC {
         .link_libc = options.link_libc,
         .use_clang = options.use_clang,
         .system_libs = .empty,
+        .lib_paths = .empty,
     };
     source.addStepDependencies(&translate_c.step);
     return translate_c;
@@ -95,6 +97,8 @@ fn setUpModule(translate_c: *TranslateC, module: *std.Build.Module) *std.Build.M
 
     if (translate_c.link_libc) module.link_libc = true;
 
+    module.lib_paths.appendSlice(arena, translate_c.lib_paths.items) catch @panic("OOM");
+
     for (translate_c.system_libs.items) |system_lib| {
         module.link_objects.append(arena, .{ .system_lib = system_lib }) catch @panic("OOM");
     }
@@ -121,6 +125,13 @@ pub fn addIncludePath(translate_c: *TranslateC, lazy_path: LazyPath) void {
     translate_c.include_dirs.append(.{ .path = lazy_path.dupe(b) }) catch
         @panic("OOM");
     lazy_path.addStepDependencies(&translate_c.step);
+}
+
+pub fn addLibraryPath(translate_c: *TranslateC, directory_path: LazyPath) void {
+    const b = translate_c.step.owner;
+    const arena = b.graph.arena;
+
+    translate_c.lib_paths.append(arena, directory_path.dupe(b)) catch @panic("OOM");
 }
 
 pub fn addConfigHeader(translate_c: *TranslateC, config_header: *Step.ConfigHeader) void {
@@ -206,6 +217,11 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
     var prev_search_strategy: std.Build.Module.SystemLib.SearchStrategy = .paths_first;
     var prev_preferred_link_mode: std.builtin.LinkMode = .dynamic;
+
+    try argv_list.ensureUnusedCapacity(translate_c.lib_paths.items.len);
+    for (translate_c.lib_paths.items) |lib_path| {
+        argv_list.appendAssumeCapacity(b.fmt("-L{s}", .{lib_path.getPath2(b, step)}));
+    }
 
     for (translate_c.system_libs.items) |*system_lib| {
         var seen_system_libs: std.StringHashMapUnmanaged([]const []const u8) = .empty;
