@@ -153,6 +153,9 @@ pub const kdf = struct {
     pub const hkdf = @import("crypto/hkdf.zig");
 };
 
+/// Hybrid Public Key Encryption (RFC 9180)
+pub const hpke = @import("crypto/hpke/hpke.zig");
+
 /// MAC functions requiring single-use secret keys.
 pub const onetimeauth = struct {
     pub const Ghash = @import("crypto/ghash_polyval.zig").Ghash;
