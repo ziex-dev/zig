@@ -110,7 +110,7 @@ pub const EndRecord = extern struct {
     /// TODO audit this logic
     pub fn findBuffer(buffer: []const u8) FindBufferError!EndRecord {
         const pos = std.mem.lastIndexOf(u8, buffer, &end_record_sig) orelse return error.ZipNoEndRecord;
-        if (pos + @sizeOf(EndRecord) > buffer.len) return error.EndOfStream;
+        if (pos + @sizeOf(EndRecord) > buffer.len) return error.ZipTruncated;
         const record_ptr: *EndRecord = @ptrCast(buffer[pos..][0..@sizeOf(EndRecord)]);
         var record = record_ptr.*;
         if (!is_le) std.mem.byteSwapAllFields(EndRecord, &record);
