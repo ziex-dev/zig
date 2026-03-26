@@ -137,6 +137,16 @@ pub fn isPrint(c: u8) bool {
     return isAscii(c) and !isControl(c);
 }
 
+/// Returns whether the character has some graphical representation,
+pub fn isGraphical(c: u8) bool {
+    return isPrint(c) and c != ' ';
+}
+
+/// Returns whether the character is a punctuation character.
+pub fn isPunctuation(c: u8) bool {
+    return isGraphical(c) and !isAlphanumeric(c);
+}
+
 /// Returns whether this character is included in `whitespace`.
 pub fn isWhitespace(c: u8) bool {
     return switch (c) {
@@ -264,6 +274,17 @@ test "ASCII character classes" {
     try testing.expect(!isPrint(control_code.esc));
     try testing.expect(!isPrint(0x80));
     try testing.expect(!isPrint(0xff));
+
+    try testing.expect(isGraphical('@'));
+    try testing.expect(isGraphical('!'));
+    try testing.expect(!isGraphical(' '));
+
+    try testing.expect(isPunctuation('@'));
+    try testing.expect(isPunctuation('!'));
+    try testing.expect(isPunctuation(';'));
+    try testing.expect(isPunctuation(','));
+    try testing.expect(!isPunctuation('A'));
+    try testing.expect(!isPunctuation('8'));
 }
 
 /// Writes a lower case copy of `ascii_string` to `output`.
@@ -441,6 +462,30 @@ pub fn orderIgnoreCase(lhs: []const u8, rhs: []const u8) std.math.Order {
         }
     }
     return std.math.order(lhs.len, rhs.len);
+}
+
+/// Returns the lexicographical order of two many-item pointers with NUL-termination. O(n).
+pub fn orderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8) std.math.Order {
+    return boundedOrderIgnoreCaseZ(lhs, rhs, std.math.maxInt(usize));
+}
+
+test orderIgnoreCaseZ {
+    try std.testing.expect(orderIgnoreCaseZ("aBcD", "Bee") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("AbC", "aBc") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("abC", "aBc0") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("", "") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("", "a") == .lt);
+
+    const s: [*:0]const u8 = "Abc";
+    try std.testing.expect(orderIgnoreCaseZ(s, s) == .eq);
+}
+
+/// Returns the lexicographical order of two many-item pointers with NUL-termination until some specified bound. O(n).
+pub fn boundedOrderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8, bound: usize) std.math.Order {
+    if (lhs == rhs) return .eq;
+    var i: usize = 0;
+    while (i < bound and toLower(lhs[i]) == toLower(rhs[i]) and lhs[i] != 0) : (i += 1) {}
+    return if (i < bound) std.math.order(toLower(lhs[i]), toLower(rhs[i])) else .eq;
 }
 
 /// Returns whether the lexicographical order of `lhs` is lower than `rhs`.

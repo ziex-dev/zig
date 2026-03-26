@@ -1295,13 +1295,33 @@ fn parseUnwindRecords(self: *Object, allocator: Allocator, cpu_arch: std.Target.
         const rec = self.getUnwindRecord(rec_index);
         const atom = rec.getAtom(macho_file);
         const addr = atom.getInputAddress(macho_file) + rec.atom_offset;
-        superposition.getPtr(addr).?.cu = rec_index;
+
+        try superposition.ensureUnusedCapacity(1);
+        const gop = superposition.getOrPutAssumeCapacity(addr);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{ .atom = rec.atom, .size = rec.length };
+        }
+        gop.value_ptr.cu = rec_index;
     }
+
+    const FdeRange = struct { start: u64, end: u64 };
+    var fde_ranges = try std.ArrayList(FdeRange).initCapacity(allocator, self.fdes.items.len);
+    defer fde_ranges.deinit(allocator);
 
     for (self.fdes.items, 0..) |fde, fde_index| {
         const atom = fde.getAtom(macho_file);
         const addr = atom.getInputAddress(macho_file) + fde.atom_offset;
-        superposition.getPtr(addr).?.fde = @intCast(fde_index);
+
+        try superposition.ensureUnusedCapacity(1);
+        const gop = superposition.getOrPutAssumeCapacity(addr);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{ .atom = fde.atom, .size = fde.pc_range };
+        }
+        gop.value_ptr.fde = @intCast(fde_index);
+
+        // Build FDE range for coverage check
+        const pc_range = fde.pc_range;
+        fde_ranges.appendAssumeCapacity(.{ .start = addr, .end = addr + pc_range });
     }
 
     for (superposition.keys(), superposition.values()) |addr, meta| {
@@ -1333,15 +1353,43 @@ fn parseUnwindRecords(self: *Object, allocator: Allocator, cpu_arch: std.Target.
                 }
             }
         } else if (meta.cu == null and meta.fde == null) {
-            // Create a null record
-            const rec_index = try self.addUnwindRecord(allocator);
-            const rec = self.getUnwindRecord(rec_index);
-            const atom = self.getAtom(meta.atom).?;
-            try self.unwind_records_indexes.append(allocator, rec_index);
-            rec.length = @intCast(meta.size);
-            rec.atom = meta.atom;
-            rec.atom_offset = @intCast(addr - atom.getInputAddress(macho_file));
-            rec.file = self.index;
+            // Check if this address is covered by an existing FDE.
+            // If so, don't create a null record - let the unwinder fall back to DWARF.
+            // This is important for local labels within a function that has DWARF unwind info.
+            const is_covered_by_fde = blk: {
+                if (fde_ranges.items.len == 0) break :blk false;
+
+                // Binary search: find the last FDE where start <= addr
+                var left: usize = 0;
+                var right: usize = fde_ranges.items.len;
+                while (left < right) {
+                    const mid = left + (right - left) / 2;
+                    if (fde_ranges.items[mid].start <= addr) {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
+                }
+
+                // Check if the FDE before insertion point covers this address
+                if (left > 0) {
+                    const range = fde_ranges.items[left - 1];
+                    break :blk addr < range.end;
+                }
+                break :blk false;
+            };
+
+            if (!is_covered_by_fde) {
+                // Create a null record only if not covered by DWARF
+                const rec_index = try self.addUnwindRecord(allocator);
+                const rec = self.getUnwindRecord(rec_index);
+                const atom = self.getAtom(meta.atom).?;
+                try self.unwind_records_indexes.append(allocator, rec_index);
+                rec.length = @intCast(meta.size);
+                rec.atom = meta.atom;
+                rec.atom_offset = @intCast(addr - atom.getInputAddress(macho_file));
+                rec.file = self.index;
+            }
         }
     }
 

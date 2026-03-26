@@ -17,6 +17,7 @@ pub const Options = struct {
 };
 
 underlying_writer: *Io.Writer,
+/// Assumed to use `/` for any path separators.
 prefix: []const u8 = "",
 
 const Error = error{
@@ -26,6 +27,7 @@ const Error = error{
 };
 
 /// Sets prefix for all other write* method paths.
+/// `root` is assumed to use `/` for any path separators.
 pub fn setRoot(w: *Writer, root: []const u8) Error!void {
     if (root.len > 0)
         try w.writeDir(root, .{});
@@ -41,6 +43,7 @@ pub const WriteFileError = Io.Writer.FileError || Error || Io.File.Reader.SizeEr
 
 pub fn writeFileTimestamp(
     w: *Writer,
+    /// Assumed to use `/` for any path separators.
     sub_path: []const u8,
     file_reader: *Io.File.Reader,
     mtime: Io.Timestamp,
@@ -50,6 +53,7 @@ pub fn writeFileTimestamp(
 
 pub fn writeFile(
     w: *Writer,
+    /// Assumed to use `/` for any path separators.
     sub_path: []const u8,
     file_reader: *Io.File.Reader,
     /// If you want to match the file format's expectations, it wants number of
@@ -76,6 +80,7 @@ pub const WriteFileStreamError = Error || Io.Reader.StreamError;
 /// from `reader`, or returns `error.EndOfStream`.
 pub fn writeFileStream(
     w: *Writer,
+    /// Assumed to use `/` for any path separators.
     sub_path: []const u8,
     size: u64,
     reader: *Io.Reader,
@@ -87,7 +92,13 @@ pub fn writeFileStream(
 }
 
 /// Writes file using bytes buffer `content` for size and file content.
-pub fn writeFileBytes(w: *Writer, sub_path: []const u8, content: []const u8, options: Options) Error!void {
+pub fn writeFileBytes(
+    w: *Writer,
+    /// Assumed to use `/` for all path separators.
+    sub_path: []const u8,
+    content: []const u8,
+    options: Options,
+) Error!void {
     try w.writeHeader(.regular, sub_path, "", content.len, options);
     try w.underlying_writer.writeAll(content);
     try w.writePadding(content.len);
@@ -114,7 +125,7 @@ fn writeHeader(
     if (typeflag == .symbolic_link)
         header.setLinkname(link_name) catch |err| switch (err) {
             error.NameTooLong => try w.writeExtendedHeader(.gnu_long_link, &.{link_name}),
-            else => return err,
+            else => |e| return e,
         };
     try header.write(w.underlying_writer);
 }
@@ -131,7 +142,7 @@ fn setPath(w: *Writer, header: *Header, sub_path: []const u8) Error!void {
                 &.{ w.prefix, "/", sub_path };
             try w.writeExtendedHeader(.gnu_long_name, buffers);
         },
-        else => return err,
+        else => |e| return e,
     };
 }
 

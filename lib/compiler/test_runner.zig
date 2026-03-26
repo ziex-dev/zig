@@ -17,7 +17,7 @@ var fba: std.heap.FixedBufferAllocator = .init(&fba_buffer);
 var fba_buffer: [8192]u8 = undefined;
 var stdin_buffer: [4096]u8 = undefined;
 var stdout_buffer: [4096]u8 = undefined;
-const runner_threaded_io: Io = Io.Threaded.global_single_threaded.ioBasic();
+const runner_threaded_io: Io = Io.Threaded.global_single_threaded.io();
 
 /// Keep in sync with logic in `std.Build.addRunArtifact` which decides whether
 /// the test runner will communicate with the build runner via `std.zig.Server`.
@@ -38,10 +38,10 @@ pub fn main(init: std.process.Init.Minimal) void {
     }
 
     if (need_simple) {
-        return mainSimple() catch @panic("test failure");
+        return mainSimple() catch |err| std.debug.panic("test failure: {t}", .{err});
     }
 
-    const args = init.args.toSlice(fba.allocator()) catch @panic("unable to parse command line args");
+    const args = init.args.toSlice(fba.allocator()) catch |err| std.debug.panic("unable to parse command line args: {t}", .{err});
 
     var listen = false;
     var opt_cache_dir: ?[]const u8 = null;
@@ -55,7 +55,7 @@ pub fn main(init: std.process.Init.Minimal) void {
         } else if (std.mem.startsWith(u8, arg, "--cache-dir")) {
             opt_cache_dir = arg["--cache-dir=".len..];
         } else {
-            @panic("unrecognized command line argument");
+            std.debug.panic("unrecognized command line argument: {s}", .{arg});
         }
     }
 
@@ -65,7 +65,7 @@ pub fn main(init: std.process.Init.Minimal) void {
     }
 
     if (listen) {
-        return mainServer(init) catch @panic("internal test runner failure");
+        return mainServer(init) catch |err| std.debug.panic("internal test runner failure: {t}", .{err});
     } else {
         return mainTerminal(init);
     }
@@ -129,6 +129,7 @@ fn mainServer(init: std.process.Init.Minimal) !void {
             },
 
             .run_test => {
+                testing.environ = init.environ;
                 testing.allocator_instance = .{};
                 testing.io_instance = .init(testing.allocator, .{
                     .argv0 = .init(init.args),
@@ -179,7 +180,23 @@ fn mainServer(init: std.process.Init.Minimal) !void {
                 // since they are not present.
                 if (!builtin.fuzz) unreachable;
 
-                const index = try server.receiveBody_u32();
+                const index: u32 = @intCast(index: {
+                    testing.allocator_instance = .{};
+                    defer if (testing.allocator_instance.deinit() == .leak) {
+                        @panic("internal test runner memory leak");
+                    };
+
+                    const name_len = try server.receiveBody_u32();
+                    const name = try server.in.readAlloc(testing.allocator, @intCast(name_len));
+                    defer testing.allocator.free(name);
+                    for (0.., builtin.test_functions) |i, test_fn| {
+                        if (std.mem.eql(u8, name, test_fn.name)) {
+                            break :index i;
+                        }
+                    } else {
+                        std.debug.panic("fuzz test {s} no longer exists", .{name});
+                    }
+                });
                 const mode: fuzz_abi.LimitKind = @enumFromInt(try server.receiveBody_u8());
                 const amount_or_instance = try server.receiveBody_u64();
 
@@ -244,6 +261,7 @@ fn mainTerminal(init: std.process.Init.Minimal) void {
             if (testing.allocator_instance.deinit() == .leak) leaks += 1;
         }
         testing.log_level = .warn;
+        testing.environ = init.environ;
 
         const test_node = root_node.start(test_fn.name, 0);
         if (!have_tty) {
@@ -377,7 +395,7 @@ var fuzz_amount_or_instance: u64 = undefined;
 
 pub fn fuzz(
     context: anytype,
-    comptime testOne: fn (context: @TypeOf(context), []const u8) anyerror!void,
+    comptime testOne: fn (context: @TypeOf(context), *std.testing.Smith) anyerror!void,
     options: testing.FuzzInputOptions,
 ) anyerror!void {
     // Prevent this function from confusing the fuzzer by omitting its own code
@@ -404,13 +422,13 @@ pub fn fuzz(
     const global = struct {
         var ctx: @TypeOf(context) = undefined;
 
-        fn test_one(input: fuzz_abi.Slice) callconv(.c) void {
+        fn test_one() callconv(.c) bool {
             @disableInstrumentation();
             testing.allocator_instance = .{};
             defer if (testing.allocator_instance.deinit() == .leak) std.process.exit(1);
             log_err_count = 0;
-            testOne(ctx, input.toSlice()) catch |err| switch (err) {
-                error.SkipZigTest => return,
+            testOne(ctx, @constCast(&testing.Smith{ .in = null })) catch |err| switch (err) {
+                error.SkipZigTest => return true,
                 else => {
                     const stderr = std.debug.lockStderr(&.{}).terminal();
                     p: {
@@ -427,19 +445,18 @@ pub fn fuzz(
                 stderr.writer.print("error logs detected\n", .{}) catch {};
                 std.process.exit(1);
             }
+            return false;
         }
     };
     if (builtin.fuzz) {
         const prev_allocator_state = testing.allocator_instance;
         testing.allocator_instance = .{};
         defer testing.allocator_instance = prev_allocator_state;
-
         global.ctx = context;
-        fuzz_abi.fuzzer_init_test(&global.test_one, .fromSlice(builtin.test_functions[fuzz_test_index].name));
 
+        fuzz_abi.fuzzer_set_test(&global.test_one, .fromSlice(builtin.test_functions[fuzz_test_index].name));
         for (options.corpus) |elem|
             fuzz_abi.fuzzer_new_input(.fromSlice(elem));
-
         fuzz_abi.fuzzer_main(fuzz_mode, fuzz_amount_or_instance);
         return;
     }
@@ -447,10 +464,12 @@ pub fn fuzz(
     // When the unit test executable is not built in fuzz mode, only run the
     // provided corpus.
     for (options.corpus) |input| {
-        try testOne(context, input);
+        var smith: testing.Smith = .{ .in = input };
+        try testOne(context, &smith);
     }
 
     // In case there is no provided corpus, also use an empty
     // string as a smoke test.
-    try testOne(context, "");
+    var smith: testing.Smith = .{ .in = "" };
+    try testOne(context, &smith);
 }

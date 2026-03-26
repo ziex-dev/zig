@@ -18,7 +18,7 @@ pub fn detect(
     arena: Allocator,
     io: Io,
     native_target: *const std.Target,
-    environ_map: *process.Environ.Map,
+    environ_map: *const process.Environ.Map,
 ) !NativePaths {
     var self: NativePaths = .{ .arena = arena };
     var is_nix = false;
@@ -40,10 +40,11 @@ pub fn detect(
                     break;
                 };
                 try self.addFrameworkDir(framework_path);
+            } else if (mem.startsWith(u8, word, "-frandom-seed=") or
+                mem.startsWith(u8, word, "-fmacro-prefix-map="))
+            {
+                // Ignore this argument.
             } else {
-                if (mem.startsWith(u8, word, "-frandom-seed=")) {
-                    continue;
-                }
                 try self.addWarningFmt("Unrecognized C flag from NIX_CFLAGS_COMPILE: {s}", .{word});
             }
         }

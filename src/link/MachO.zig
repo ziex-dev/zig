@@ -1707,7 +1707,9 @@ fn initSyntheticSections(self: *MachO) !void {
     } else false;
     if (needs_eh_frame) {
         assert(needs_unwind_info);
-        self.eh_frame_sect_index = try self.addSection("__TEXT", "__eh_frame", .{});
+        self.eh_frame_sect_index = try self.addSection("__TEXT", "__eh_frame", .{
+            .flags = macho.S_COALESCED | macho.S_ATTR_NO_TOC | macho.S_ATTR_STRIP_STATIC_SYMS | macho.S_ATTR_LIVE_SUPPORT,
+        });
     }
 
     if (self.getInternalObject()) |obj| {
@@ -1758,10 +1760,10 @@ fn initSyntheticSections(self: *MachO) !void {
 }
 
 fn getSegmentProt(segname: []const u8) macho.vm_prot_t {
-    if (mem.eql(u8, segname, "__PAGEZERO")) return macho.PROT.NONE;
-    if (mem.eql(u8, segname, "__TEXT")) return macho.PROT.READ | macho.PROT.EXEC;
-    if (mem.eql(u8, segname, "__LINKEDIT")) return macho.PROT.READ;
-    return macho.PROT.READ | macho.PROT.WRITE;
+    if (mem.eql(u8, segname, "__PAGEZERO")) return .{};
+    if (mem.eql(u8, segname, "__TEXT")) return .{ .READ = true, .EXEC = true };
+    if (mem.eql(u8, segname, "__LINKEDIT")) return .{ .READ = true };
+    return .{ .READ = true, .WRITE = true };
 }
 
 fn getSegmentRank(segname: []const u8) u8 {
@@ -2957,7 +2959,13 @@ fn writeLoadCommands(self: *MachO) !struct { usize, usize, u64 } {
 
 fn writeHeader(self: *MachO, ncmds: usize, sizeofcmds: usize) !void {
     var header: macho.mach_header_64 = .{};
-    header.flags = macho.MH_NOUNDEFS | macho.MH_DYLDLINK;
+    header.flags = macho.MH_DYLDLINK;
+
+    // Only set MH_NOUNDEFS if we're not allowing undefined symbols via dynamic lookup.
+    // When dynamic_lookup is enabled, undefined symbols are resolved at runtime by dyld.
+    if (self.undefined_treatment != .dynamic_lookup) {
+        header.flags |= macho.MH_NOUNDEFS;
+    }
 
     // TODO: if (self.options.namespace == .two_level) {
     header.flags |= macho.MH_TWOLEVEL;
@@ -3348,7 +3356,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
                 .filesize = filesize,
                 .vmaddr = base_vmaddr + 0x4000000,
                 .vmsize = filesize,
-                .prot = macho.PROT.READ | macho.PROT.EXEC,
+                .prot = .{ .READ = true, .EXEC = true },
             });
         }
 
@@ -3360,7 +3368,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
                 .filesize = filesize,
                 .vmaddr = base_vmaddr + 0xc000000,
                 .vmsize = filesize,
-                .prot = macho.PROT.READ | macho.PROT.WRITE,
+                .prot = .{ .READ = true, .WRITE = true },
             });
         }
 
@@ -3372,7 +3380,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
                 .filesize = filesize,
                 .vmaddr = base_vmaddr + 0x10000000,
                 .vmsize = filesize,
-                .prot = macho.PROT.READ | macho.PROT.WRITE,
+                .prot = .{ .READ = true, .WRITE = true },
             });
         }
 
@@ -3381,7 +3389,7 @@ fn initMetadata(self: *MachO, options: InitMetadataOptions) !void {
             self.zig_bss_seg_index = try self.addSegment("__BSS_ZIG", .{
                 .vmaddr = base_vmaddr + 0x14000000,
                 .vmsize = memsize,
-                .prot = macho.PROT.READ | macho.PROT.WRITE,
+                .prot = .{ .READ = true, .WRITE = true },
             });
         }
 
@@ -3711,7 +3719,7 @@ pub fn addSegment(self: *MachO, name: []const u8, opts: struct {
     vmsize: u64 = 0,
     fileoff: u64 = 0,
     filesize: u64 = 0,
-    prot: macho.vm_prot_t = macho.PROT.NONE,
+    prot: macho.vm_prot_t = .{},
 }) error{OutOfMemory}!u8 {
     const gpa = self.base.comp.gpa;
     const index = @as(u8, @intCast(self.segments.items.len));
@@ -4903,7 +4911,7 @@ pub const MachTask = extern struct {
         try task.setCurrProtection(
             address,
             buf.len,
-            std.c.PROT.READ | std.c.PROT.WRITE | std.c.PROT.COPY,
+            .{ .READ = true, .WRITE = true, .COPY = true },
         );
         defer {
             task.setCurrProtection(address, buf.len, curr_prot) catch {};

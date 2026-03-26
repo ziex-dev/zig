@@ -33,6 +33,7 @@ const arch_bits = switch (native_arch) {
     .aarch64, .aarch64_be => @import("linux/aarch64.zig"),
     .arm, .armeb, .thumb, .thumbeb => @import("linux/arm.zig"),
     .hexagon => @import("linux/hexagon.zig"),
+    .loongarch32 => @import("linux/loongarch32.zig"),
     .loongarch64 => @import("linux/loongarch64.zig"),
     .m68k => @import("linux/m68k.zig"),
     .mips, .mipsel => @import("linux/mips.zig"),
@@ -118,6 +119,7 @@ pub const SYS = switch (native_arch) {
     .arm, .armeb, .thumb, .thumbeb => syscalls.Arm,
     .csky => syscalls.CSky,
     .hexagon => syscalls.Hexagon,
+    .loongarch32 => syscalls.LoongArch32,
     .loongarch64 => syscalls.LoongArch64,
     .m68k => syscalls.M68k,
     .mips, .mipsel => syscalls.MipsO32,
@@ -146,6 +148,7 @@ pub const MAP_TYPE = enum(u4) {
     SHARED = 0x01,
     PRIVATE = 0x02,
     SHARED_VALIDATE = 0x03,
+    DROPPABLE = 0x08,
 };
 
 pub const MAP = switch (native_arch) {
@@ -192,7 +195,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .riscv32, .riscv64, .loongarch64 => packed struct(u32) {
+    .riscv32, .riscv64, .loongarch32, .loongarch64 => packed struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -328,7 +331,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
-    .x86, .riscv32, .riscv64, .loongarch64 => packed struct(u32) {
+    .x86, .riscv32, .riscv64, .loongarch32, .loongarch64 => packed struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -592,6 +595,10 @@ pub fn errno(r: usize) E {
     return @enumFromInt(int);
 }
 
+pub fn brk(addr: usize) usize {
+    return syscall1(.brk, addr);
+}
+
 pub fn dup(old: i32) usize {
     return syscall1(.dup, @as(usize, @bitCast(@as(isize, old))));
 }
@@ -630,6 +637,20 @@ pub fn chroot(path: [*:0]const u8) usize {
 
 pub fn execve(path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8) usize {
     return syscall3(.execve, @intFromPtr(path), @intFromPtr(argv), @intFromPtr(envp));
+}
+
+pub const EXECVEAT = packed struct(u32) {
+    _1: u8 = 0, // 0x00000001
+    /// Do not follow symbolic links.
+    SYMLINK_NOFOLLOW: bool, // 0x00000100
+    _200: u3 = 0, // 0x00000200
+    /// Allow empty relative pathname.
+    EMPTY_PATH: bool, // 0x00001000
+    _: u19 = 0,
+};
+
+pub fn execveat(dirfd: fd_t, path: [*:0]const u8, argv: [*:null]const ?[*:0]const u8, envp: [*:null]const ?[*:0]const u8, flags: EXECVEAT) usize {
+    return syscall5(.execveat, fd_to_usize(dirfd), @intFromPtr(path), @intFromPtr(argv), @intFromPtr(envp), @as(u32, @bitCast(flags)));
 }
 
 pub fn fork() usize {
@@ -982,20 +1003,140 @@ pub fn umount2(special: [*:0]const u8, flags: u32) usize {
     return syscall2(.umount2, @intFromPtr(special), flags);
 }
 
+pub const MOVE_MOUNT = packed struct(u32) {
+    /// Follow symlinks on from path.
+    F_SYMLINKS: bool, // 0x00000001
+    /// Follow automounts on from path.
+    F_AUTOMOUNTS: bool, // 0x00000002
+    /// Empty from path permitted.
+    F_EMPTY_PATH: bool, // 0x00000004
+    _8: bool = false, // 0x00000008
+    /// Follow symlinks on to path.
+    T_SYMLINKS: bool, // 0x00000010
+    /// Follow automounts on to path.
+    T_AUTOMOUNTS: bool, // 0x00000020
+    /// Empty to path permitted.
+    T_EMPTY_PATH: bool, // 0x00000040
+    _80: bool = false, // 0x00000080
+    /// Set sharing group instead.
+    SET_GROUP: bool, // 0x00000100
+    _: u23 = 0,
+};
+
+pub fn move_mount(from_dirfd: fd_t, from_path: [*:0]const u8, to_dirfd: fd_t, to_path: [*:0]const u8, flags: MOVE_MOUNT) usize {
+    return syscall5(.move_mount, fd_to_usize(from_dirfd), @intFromPtr(from_path), fd_to_usize(to_dirfd), @intFromPtr(to_path), @as(u32, @bitCast(flags)));
+}
+
+pub const MOUNT_ATTR = packed struct(u32) {
+    /// Update atime relative to mtime/ctime.
+    RELATIME: u0, // This is the default ATIME, it's true unless a different ATIME is set.
+    /// Mount read-only.
+    RDONLY: bool, // 0x00000001
+    /// Ignore suid and sgid bits.
+    NOSUID: bool, // 0x00000002
+    /// Disallow access to device special files.
+    NODEV: bool, // 0x00000004
+    /// Disallow program execution.
+    NOEXEC: bool, // 0x00000008
+    /// Do not update access times.
+    NOATIME: bool, // 0x00000010
+    /// Always perform atime updates.
+    STRICTATIME: bool, // 0x00000020
+    _40: bool = false, // 0x00000040
+    /// Do not update directory access times.
+    NODIRATIME: bool, // 0x00000080
+    _100: u12 = 0, // 0x00000100
+    /// Idmap mount to @userns_fd in struct mount_attr.
+    IDMAP: bool, // 0x00100000
+    /// Do not follow symlinks.
+    NOSYMFOLLOW: bool, // 0x00200000
+    _: u10 = 0,
+
+    // ATIME: u32, // 0x00000070 This is a mask, not a flag.
+};
+
+pub fn mount_setattr(dirfd: fd_t, path: [*:0]const u8, flags: MOUNT_ATTR) usize {
+    return syscall3(.mount_setattr, fd_to_usize(dirfd), @intFromPtr(path), @as(u32, @bitCast(flags)));
+}
+
+pub const FSOPEN = packed struct(u32) {
+    /// Set CLOEXEC on the new fd.
+    CLOEXEC: bool, // 0x00000001
+    _: u31 = 0,
+};
+
+pub fn fsopen(fsname: [*:0]const u8, flags: FSOPEN) usize {
+    return syscall2(.fsopen, @intFromPtr(fsname), @as(u32, @bitCast(flags)));
+}
+
+pub const FSCONFIG_CMD = enum(u32) {
+    /// Set parameter, supplying no value.
+    SET_FLAG,
+    /// Set parameter, supplying a string value.
+    SET_STRING,
+    /// Set parameter, supplying a binary blob value.
+    SET_BINARY,
+    /// Set parameter, supplying an object by path.
+    SET_PATH,
+    /// Set parameter, supplying an object by (empty) path.
+    SET_PATH_EMPTY,
+    /// Set parameter, supplying an object by fd.
+    SET_FD,
+    /// Invoke superblock creation.
+    CREATE,
+    /// Invoke superblock reconfiguration.
+    RECONFIGURE,
+};
+
+pub fn fsconfig(fd: fd_t, cmd: FSCONFIG_CMD, key: ?[*:0]const u8, value: ?[*:0]const u8, aux: u32) usize {
+    return syscall5(.fsconfig, fd_to_usize(fd), @intFromEnum(cmd), @intFromPtr(key), @intFromPtr(value), aux);
+}
+
+pub const FSMOUNT = packed struct(u32) {
+    /// Set CLOEXEC on the fd.
+    CLOEXEC: bool, // 0x00000001
+    _31: u31 = 0,
+};
+
+pub fn fsmount(fsfd: fd_t, flags: FSMOUNT, attr_flags: MOUNT_ATTR) usize {
+    return syscall3(.fsmount, fd_to_usize(fsfd), @as(u32, @bitCast(flags)), @as(u32, @bitCast(attr_flags)));
+}
+
+pub const FSPICK = packed struct(u32) {
+    /// Set CLOEXEC on the new fd.
+    CLOEXEC: bool, // 0x00000001
+    SYMLINK_NOFOLLOW: bool, // 0x00000002
+    NO_AUTOMOUNT: bool, // 0x00000004
+    EMPTY_PATH: bool, // 0x00000008
+    _28: u28 = 0,
+};
+
+pub fn fspick(dirfd: fd_t, path: [*:0]const u8, flags: FSPICK) usize {
+    return syscall3(.fspick, fd_to_usize(dirfd), @intFromPtr(path), @as(u32, @bitCast(flags)));
+}
+
 pub fn pivot_root(new_root: [*:0]const u8, put_old: [*:0]const u8) usize {
     return syscall2(.pivot_root, @intFromPtr(new_root), @intFromPtr(put_old));
 }
 
-pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, offset: i64) usize {
+fn mmap2Unit() u64 {
+    return switch (native_arch) {
+        .arc, .arceb, .m68k => std.heap.pageSize(),
+        .or1k => 8 << 10,
+        else => 4 << 10,
+    };
+}
+
+pub fn mmap(address: ?[*]u8, length: usize, prot: PROT, flags: MAP, fd: i32, offset: i64) usize {
     if (@hasField(SYS, "mmap2")) {
         return syscall6(
             .mmap2,
             @intFromPtr(address),
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
-            @truncate(@as(u64, @bitCast(offset)) / std.heap.pageSize()),
+            @truncate(@as(u64, @bitCast(offset)) / mmap2Unit()),
         );
     } else {
         // The s390x mmap() syscall existed before Linux supported syscalls with 5+ parameters, so
@@ -1005,7 +1146,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
             @intFromPtr(&[_]usize{
                 @intFromPtr(address),
                 length,
-                prot,
+                @as(u32, @bitCast(prot)),
                 @as(u32, @bitCast(flags)),
                 @bitCast(@as(isize, fd)),
                 @as(u64, @bitCast(offset)),
@@ -1014,7 +1155,7 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
             .mmap,
             @intFromPtr(address),
             length,
-            prot,
+            @as(u32, @bitCast(prot)),
             @as(u32, @bitCast(flags)),
             @bitCast(@as(isize, fd)),
             @as(u64, @bitCast(offset)),
@@ -1022,8 +1163,8 @@ pub fn mmap(address: ?[*]u8, length: usize, prot: usize, flags: MAP, fd: i32, of
     }
 }
 
-pub fn mprotect(address: [*]const u8, length: usize, protection: usize) usize {
-    return syscall3(.mprotect, @intFromPtr(address), length, protection);
+pub fn mprotect(address: [*]const u8, length: usize, protection: PROT) usize {
+    return syscall3(.mprotect, @intFromPtr(address), length, @as(u32, @bitCast(protection)));
 }
 
 pub fn mremap(old_addr: ?[*]const u8, old_len: usize, new_len: usize, flags: MREMAP, new_addr: ?[*]const u8) usize {
@@ -1265,6 +1406,10 @@ pub fn faccessat(dirfd: i32, path: [*:0]const u8, mode: u32, flags: u32) usize {
     return syscall4(.faccessat2, @as(usize, @bitCast(@as(isize, dirfd))), @intFromPtr(path), mode, flags);
 }
 
+pub fn acct(path: [*:0]const u8) usize {
+    return syscall1(.acct, @intFromPtr(path));
+}
+
 pub fn pipe(fd: *[2]i32) usize {
     if (comptime (native_arch.isMIPS() or native_arch.isSPARC())) {
         return syscall_pipe(fd);
@@ -1439,8 +1584,20 @@ pub fn clone2(flags: u32, child_stack_ptr: usize) usize {
     return syscall2(.clone, flags, child_stack_ptr);
 }
 
-pub fn close(fd: i32) usize {
+pub fn close(fd: fd_t) usize {
     return syscall1(.close, @as(usize, @bitCast(@as(isize, fd))));
+}
+
+pub const CLOSE_RANGE = packed struct(u32) {
+    /// Unshare the file descriptor table before closing file descriptors.
+    UNSHARE: bool, // 0x00000001
+    /// Set the FD_CLOEXEC bit instead of closing the file descriptor.
+    CLOEXEC: bool, // 0x00000002
+    _: u30 = 0,
+};
+
+pub fn close_range(first: fd_t, last: fd_t, flags: CLOSE_RANGE) usize {
+    return syscall3(.close_range, fd_to_usize(first), fd_to_usize(last), @as(u32, @bitCast(flags)));
 }
 
 pub fn fchmod(fd: i32, mode: mode_t) usize {
@@ -1460,6 +1617,30 @@ pub fn fchown(fd: i32, owner: uid_t, group: gid_t) usize {
         return syscall3(.fchown32, @as(usize, @bitCast(@as(isize, fd))), owner, group);
     } else {
         return syscall3(.fchown, @as(usize, @bitCast(@as(isize, fd))), owner, group);
+    }
+}
+
+pub fn fchownat(fd: i32, path: [*:0]const u8, owner: uid_t, group: gid_t, flags: u32) usize {
+    return syscall5(.fchownat, @as(usize, @bitCast(@as(isize, fd))), @intFromPtr(path), owner, group, flags);
+}
+
+pub fn chown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
+    if (@hasField(SYS, "chown32")) {
+        return syscall3(.chown32, @intFromPtr(path), owner, group);
+    } else if (@hasField(SYS, "chown")) {
+        return syscall3(.chown, @intFromPtr(path), owner, group);
+    } else {
+        return fchownat(AT.FDCWD, path, owner, group, 0);
+    }
+}
+
+pub fn lchown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
+    if (@hasField(SYS, "lchown32")) {
+        return syscall3(.lchown32, @intFromPtr(path), owner, group);
+    } else if (@hasField(SYS, "lchown")) {
+        return syscall3(.lchown, @intFromPtr(path), owner, group);
+    } else {
+        return fchownat(AT.FDCWD, path, owner, group, AT.SYMLINK_NOFOLLOW);
     }
 }
 
@@ -1681,6 +1862,32 @@ pub const F = struct {
     pub const RDLCK = if (is_sparc) 1 else 0;
     pub const WRLCK = if (is_sparc) 2 else 1;
     pub const UNLCK = if (is_sparc) 3 else 2;
+
+    pub const LINUX_SPECIFIC_BASE = 1024;
+
+    pub const SETLEASE = LINUX_SPECIFIC_BASE + 0;
+    pub const GETLEASE = LINUX_SPECIFIC_BASE + 1;
+    pub const NOTIFY = LINUX_SPECIFIC_BASE + 2;
+    pub const DUPFD_QUERY = LINUX_SPECIFIC_BASE + 3;
+    pub const CREATED_QUERY = LINUX_SPECIFIC_BASE + 4;
+    pub const CANCELLK = LINUX_SPECIFIC_BASE + 5;
+    pub const DUPFD_CLOEXEC = LINUX_SPECIFIC_BASE + 6;
+    pub const SETPIPE_SZ = LINUX_SPECIFIC_BASE + 7;
+    pub const GETPIPE_SZ = LINUX_SPECIFIC_BASE + 8;
+    pub const ADD_SEALS = LINUX_SPECIFIC_BASE + 9;
+    pub const GET_SEALS = LINUX_SPECIFIC_BASE + 10;
+
+    pub const SEAL_SEAL = 0x0001;
+    pub const SEAL_SHRINK = 0x0002;
+    pub const SEAL_GROW = 0x0004;
+    pub const SEAL_WRITE = 0x0008;
+    pub const SEAL_FUTURE_WRITE = 0x0010;
+    pub const SEAL_EXEC = 0x0020;
+
+    pub const GET_RW_HINT = LINUX_SPECIFIC_BASE + 11;
+    pub const SET_RW_HINT = LINUX_SPECIFIC_BASE + 12;
+    pub const GET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 13;
+    pub const SET_FILE_RW_HINT = LINUX_SPECIFIC_BASE + 14;
 };
 
 pub const F_OWNER = enum(i32) {
@@ -1747,21 +1954,21 @@ fn init_vdso_clock_gettime(clk: clockid_t, ts: *timespec) callconv(.c) usize {
     @atomicStore(?VdsoClockGettime, &vdso_clock_gettime, ptr, .monotonic);
     // Call into the VDSO if available
     if (ptr) |f| return f(clk, ts);
-    return @as(usize, @bitCast(-@as(isize, @intFromEnum(E.NOSYS))));
+    return @bitCast(-@as(isize, @intFromEnum(E.NOSYS)));
 }
 
-pub fn clock_getres(clk_id: i32, tp: *timespec) usize {
+pub fn clock_getres(clk_id: clockid_t, tp: *timespec) usize {
     return syscall2(
         if (@hasField(SYS, "clock_getres") and native_arch != .hexagon) .clock_getres else .clock_getres_time64,
-        @as(usize, @bitCast(@as(isize, clk_id))),
+        @as(usize, @intFromEnum(clk_id)),
         @intFromPtr(tp),
     );
 }
 
-pub fn clock_settime(clk_id: i32, tp: *const timespec) usize {
+pub fn clock_settime(clk_id: clockid_t, tp: *const timespec) usize {
     return syscall2(
         if (@hasField(SYS, "clock_settime") and native_arch != .hexagon) .clock_settime else .clock_settime64,
-        @as(usize, @bitCast(@as(isize, clk_id))),
+        @as(usize, @intFromEnum(clk_id)),
         @intFromPtr(tp),
     );
 }
@@ -1918,7 +2125,11 @@ pub fn setpgid(pid: pid_t, pgid: pid_t) usize {
     return syscall2(.setpgid, @intCast(pid), @intCast(pgid));
 }
 
-pub fn getgroups(size: usize, list: ?*gid_t) usize {
+pub fn getpgid(pid: pid_t) usize {
+    return syscall1(.getpgid, @intCast(pid));
+}
+
+pub fn getgroups(size: usize, list: ?[*]gid_t) usize {
     if (@hasField(SYS, "getgroups32")) {
         return syscall2(.getgroups32, size, @intFromPtr(list));
     } else {
@@ -1936,6 +2147,10 @@ pub fn setgroups(size: usize, list: [*]const gid_t) usize {
 
 pub fn setsid() usize {
     return syscall0(.setsid);
+}
+
+pub fn getsid(pid: pid_t) usize {
+    return syscall1(.getsid, @intCast(pid));
 }
 
 pub fn getpid() pid_t {
@@ -2477,7 +2692,7 @@ pub fn unshare(flags: usize) usize {
 }
 
 pub fn setns(fd: fd_t, flags: u32) usize {
-    return syscall2(.setns, fd, flags);
+    return syscall2(.setns, @as(usize, @bitCast(@as(isize, fd))), flags);
 }
 
 pub fn capget(hdrp: *cap_user_header_t, datap: *cap_user_data_t) usize {
@@ -2488,7 +2703,7 @@ pub fn capset(hdrp: *cap_user_header_t, datap: *const cap_user_data_t) usize {
     return syscall2(.capset, @intFromPtr(hdrp), @intFromPtr(datap));
 }
 
-pub fn sigaltstack(ss: ?*stack_t, old_ss: ?*stack_t) usize {
+pub fn sigaltstack(ss: ?*const stack_t, old_ss: ?*stack_t) usize {
     return syscall2(.sigaltstack, @intFromPtr(ss), @intFromPtr(old_ss));
 }
 
@@ -3616,24 +3831,30 @@ pub const FUTEX2_FLAGS = packed struct(u32) {
     _undefined: u24 = 0,
 };
 
-pub const PROT = struct {
-    /// page can not be accessed
-    pub const NONE = 0x0;
-    /// page can be read
-    pub const READ = 0x1;
-    /// page can be written
-    pub const WRITE = 0x2;
-    /// page can be executed
-    pub const EXEC = 0x4;
-    /// page may be used for atomic ops
-    pub const SEM = switch (native_arch) {
-        .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => 0x10,
-        else => 0x8,
-    };
-    /// mprotect flag: extend change to start of growsdown vma
-    pub const GROWSDOWN = 0x01000000;
-    /// mprotect flag: extend change to end of growsup vma
-    pub const GROWSUP = 0x02000000;
+pub const PROT = switch (native_arch) {
+    .mips, .mipsel, .mips64, .mips64el, .xtensa, .xtensaeb => packed struct(u32) {
+        READ: bool = false,
+        WRITE: bool = false,
+        EXEC: bool = false,
+        _: u1 = 0,
+        /// Page may be used for atomic ops.
+        SEM: bool = false,
+        __: u19 = 0,
+        GROWSDOWN: bool = false,
+        GROWSUP: bool = false,
+        ___: u6 = 0,
+    },
+    else => packed struct(u32) {
+        READ: bool = false,
+        WRITE: bool = false,
+        EXEC: bool = false,
+        /// Page may be used for atomic ops.
+        SEM: bool = false,
+        __: u20 = 0,
+        GROWSDOWN: bool = false,
+        GROWSUP: bool = false,
+        ___: u6 = 0,
+    },
 };
 
 pub const FD_CLOEXEC = 1;
@@ -5729,11 +5950,6 @@ pub const S = struct {
     }
 };
 
-pub const UTIME = struct {
-    pub const NOW = 0x3fffffff;
-    pub const OMIT = 0x3ffffffe;
-};
-
 const TFD_TIMER = packed struct(u32) {
     ABSTIME: bool = false,
     CANCEL_ON_SET: bool = false,
@@ -6125,6 +6341,7 @@ pub const MINSIGSTKSZ = switch (native_arch) {
     .xtensa,
     .xtensaeb,
     => 2048,
+    .loongarch32,
     .loongarch64,
     .sparc,
     .sparc64,
@@ -6164,6 +6381,7 @@ pub const SIGSTKSZ = switch (native_arch) {
     => 8192,
     .aarch64,
     .aarch64_be,
+    .loongarch32,
     .loongarch64,
     .sparc,
     .sparc64,
@@ -6510,9 +6728,10 @@ pub const IORING_ACCEPT_MULTISHOT = 1 << 0;
 /// IORING_OP_MSG_RING command types, stored in sqe->addr
 pub const IORING_MSG_RING_COMMAND = enum(u8) {
     /// pass sqe->len as 'res' and off as user_data
-    DATA,
+    DATA = 0,
     /// send a registered fd to another ring
-    SEND_FD,
+    SEND_FD = 1,
+    _,
 };
 
 // io_uring_sqe.msg_ring_flags (rw_flags in the Zig struct)
@@ -6565,6 +6784,8 @@ pub const IORING_CQE_F_SOCK_NONEMPTY = 1 << 2;
 pub const IORING_CQE_F_NOTIF = 1 << 3;
 /// If set, the buffer ID set in the completion will get more completions.
 pub const IORING_CQE_F_BUF_MORE = 1 << 4;
+pub const IORING_CQE_F_SKIP = 1 << 5;
+pub const IORING_CQE_F_32 = 1 << 15;
 
 pub const IORING_CQE_BUFFER_SHIFT = 16;
 
@@ -6861,7 +7082,7 @@ pub const IORING_RESTRICTION = enum(u16) {
     _,
 };
 
-pub const IO_URING_SOCKET_OP = enum(u16) {
+pub const IO_URING_SOCKET_OP = enum(u32) {
     SIOCIN = 0,
     SIOCOUTQ = 1,
     GETSOCKOPT = 2,
@@ -6890,7 +7111,7 @@ pub const io_uring_buf_reg = extern struct {
     flags: Flags,
     resv: [3]u64,
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u16) {
         _0: u1 = 0,
         /// Incremental buffer consumption.
         inc: bool,
@@ -7788,13 +8009,13 @@ pub const SIOCOUTQ = T.IOCOUTQ;
 
 pub const SOCK_IOC_TYPE = 0x89;
 
-pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, i64[2]);
+pub const SIOCGSTAMP_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x06, [2]i64);
 pub const SIOCGSTAMP_OLD = IOCTL.IOR('s', 100, timeval);
 
 /// Get stamp (timeval)
 pub const SIOCGSTAMP = if (native_arch == .x86_64 or @sizeOf(timeval) == 8) SIOCGSTAMP_OLD else SIOCGSTAMP_NEW;
 
-pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, i64[2]);
+pub const SIOCGSTAMPNS_NEW = IOCTL.IOR(SOCK_IOC_TYPE, 0x07, [2]i64);
 pub const SIOCGSTAMPNS_OLD = IOCTL.IOR('s', 101, kernel_timespec);
 
 /// Get stamp (timespec)
@@ -8479,22 +8700,16 @@ pub const kernel_timespec = extern struct {
     };
 };
 
+/// For use with `utimensat` and `futimens`.
+pub const UTIME = struct {
+    pub const NOW: timespec = .{ .sec = 0, .nsec = 0x3fffffff };
+    pub const OMIT: timespec = .{ .sec = 0, .nsec = 0x3ffffffe };
+};
+
 // https://github.com/ziglang/zig/issues/4726#issuecomment-2190337877
 pub const timespec = if (native_arch == .hexagon or native_arch == .riscv32) kernel_timespec else extern struct {
     sec: isize,
     nsec: isize,
-
-    /// For use with `utimensat` and `futimens`.
-    pub const NOW: timespec = .{
-        .sec = 0,
-        .nsec = 0x3fffffff,
-    };
-
-    /// For use with `utimensat` and `futimens`.
-    pub const OMIT: timespec = .{
-        .sec = 0,
-        .nsec = 0x3ffffffe,
-    };
 };
 
 pub const XDP = struct {
@@ -9292,7 +9507,7 @@ pub const perf_event_attr = extern struct {
     sample_type: u64 = 0,
     read_format: u64 = 0,
 
-    flags: packed struct {
+    flags: packed struct(u64) {
         /// off by default
         disabled: bool = false,
         /// children inherit it
@@ -9942,3 +10157,7 @@ pub const cmsghdr = extern struct {
     level: i32,
     type: i32,
 };
+
+inline fn fd_to_usize(fd: fd_t) usize {
+    return @as(usize, @bitCast(@as(isize, fd)));
+}

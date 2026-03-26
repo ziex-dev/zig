@@ -65,7 +65,7 @@ comptime {
             // case it's not required to provide an entrypoint such as main.
             if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
         } else switch (native_os) {
-            .other, .freestanding, .@"3ds", .vita => {},
+            .other, .freestanding, .@"3ds", .psp, .vita => {},
             else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
         }
     }
@@ -84,21 +84,21 @@ fn _DllMainCRTStartup(
         return root.DllMain(hinstDLL, fdwReason, lpReserved);
     }
 
-    return std.os.windows.TRUE;
+    return .TRUE;
 }
 
 fn wasm_freestanding_start() callconv(.c) void {
     // This is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
-    _ = @call(.always_inline, callMain, .{ {}, {} });
+    _ = @call(.always_inline, callMain, .{ {}, std.process.Environ.Block.global });
 }
 
 fn startWasi() callconv(.c) void {
     // The function call is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
     switch (builtin.wasi_exec_model) {
-        .reactor => _ = @call(.always_inline, callMain, .{ {}, {} }),
-        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{ {}, {} })),
+        .reactor => _ = @call(.always_inline, callMain, .{ {}, std.process.Environ.Block.global }),
+        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{ {}, std.process.Environ.Block.global })),
     }
 }
 
@@ -276,7 +276,15 @@ fn _start() callconv(.naked) noreturn {
             \\ ;;
             \\ goto %[posixCallMainAndExit]
             ,
-            .loongarch32, .loongarch64 =>
+            .loongarch32 =>
+            \\ move $fp, $zero
+            \\ move $ra, $zero
+            \\ move $a0, $sp
+            \\ srli.w $sp, $sp, 4
+            \\ slli.w $sp, $sp, 4
+            \\ b %[posixCallMainAndExit]
+            ,
+            .loongarch64 =>
             \\ move $fp, $zero
             \\ move $ra, $zero
             \\ move $a0, $sp
@@ -470,12 +478,12 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
         _ = @import("os/windows/tls.zig");
     }
 
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
 
-    const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
-    const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
-
-    std.os.windows.ntdll.RtlExitUserProcess(callMain(cmd_line_w, {}));
+    std.os.windows.ntdll.RtlExitUserProcess(
+        callMain(std.os.windows.peb().ProcessParameters.CommandLine.slice(), .global),
+    );
 }
 
 fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
@@ -486,6 +494,7 @@ fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
         _ = @import("os/windows/tls.zig");
     }
 
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
 
     const result: std.os.windows.INT = call_wWinMain();
@@ -618,12 +627,14 @@ fn expandStackSize(phdrs: []elf.Phdr) void {
 }
 
 inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8) u8 {
+    const env_block: std.process.Environ.Block = .{ .slice = envp };
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
-        t.environ = .{ .process_environ = .{ .block = envp } };
+        t.environ = .{ .process_environ = .{ .block = env_block } };
     }
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
-    return callMain(argv[0..argc], envp);
+    return callMain(argv[0..argc], env_block);
 }
 
 fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
@@ -641,10 +652,9 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
         .windows => {
             // On Windows, we ignore libc environment and argv and get those
             // values in their intended encoding from the PEB instead.
+            std.Thread.maybeAttachSignalStack();
             std.debug.maybeEnableSegfaultHandler();
-            const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
-            const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
-            return callMain(cmd_line_w, {});
+            return callMain(std.os.windows.peb().ProcessParameters.CommandLine.slice(), .global);
         },
         else => {},
     }
@@ -657,7 +667,7 @@ fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
         if (std.Options.debug_threaded_io) |t| t.argv0.value = argv[0];
     }
-    return callMain(argv, &.{});
+    return callMain(argv, .empty);
 }
 
 /// General error message for a malformed return type
@@ -771,8 +781,7 @@ fn call_wWinMain() std.os.windows.INT {
         // - With STARTF_USESHOWWINDOW unset:
         //   - nShowCmd is always SW_SHOWDEFAULT
         const SW_SHOWDEFAULT = 10;
-        const STARTF_USESHOWWINDOW = 1;
-        if (peb.ProcessParameters.dwFlags & STARTF_USESHOWWINDOW != 0) {
+        if (peb.ProcessParameters.dwFlags & std.os.windows.STARTF_USESHOWWINDOW != 0) {
             break :nShowCmd @truncate(peb.ProcessParameters.dwShowWindow);
         }
         break :nShowCmd SW_SHOWDEFAULT;

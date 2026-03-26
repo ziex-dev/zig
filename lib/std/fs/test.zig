@@ -20,6 +20,27 @@ const expectEqualStrings = std.testing.expectEqualStrings;
 const expectError = std.testing.expectError;
 const tmpDir = std.testing.tmpDir;
 
+// This is kept in sync with Io.Threaded.realPath .
+pub inline fn isRealPathSupported() bool {
+    return switch (native_os) {
+        .windows,
+        .driverkit,
+        .ios,
+        .maccatalyst,
+        .macos,
+        .tvos,
+        .visionos,
+        .watchos,
+        .linux,
+        .serenity,
+        .illumos,
+        .freebsd,
+        => true,
+        .dragonfly => builtin.os.version_range.semver.min.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
+        else => false,
+    };
+}
+
 const PathType = enum {
     relative,
     absolute,
@@ -28,25 +49,7 @@ const PathType = enum {
     fn isSupported(self: PathType, target_os: std.Target.Os) bool {
         return switch (self) {
             .relative => true,
-            .absolute => switch (target_os.tag) {
-                .windows,
-                .driverkit,
-                .ios,
-                .maccatalyst,
-                .macos,
-                .tvos,
-                .visionos,
-                .watchos,
-                .linux,
-                .illumos,
-                .freebsd,
-                .serenity,
-                => true,
-
-                .dragonfly => target_os.version_range.semver.max.order(.{ .major = 6, .minor = 0, .patch = 0 }) != .lt,
-                .netbsd => target_os.version_range.semver.max.order(.{ .major = 10, .minor = 0, .patch = 0 }) != .lt,
-                else => false,
-            },
+            .absolute => isRealPathSupported(),
             .unc => target_os.tag == .windows,
         };
     }
@@ -182,20 +185,21 @@ fn testWithPathTypeIfSupported(comptime path_type: PathType, comptime path_sep: 
 }
 
 // For use in test setup.  If the symlink creation fails on Windows with
-// AccessDenied, then make the test failure silent (it is not a Zig failure).
+// AccessDenied/PermissionDenied/FileSystem, then make the test failure silent (it is not a Zig failure).
 fn setupSymlink(io: Io, dir: Dir, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
     return dir.symLink(io, target, link, flags) catch |err| switch (err) {
-        // Symlink requires admin privileges on windows, so this test can legitimately fail.
-        error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
+        // On Windows, symlinks require admin privileges and the underlying filesystem must support symlinks
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
 }
 
 // For use in test setup.  If the symlink creation fails on Windows with
-// AccessDenied, then make the test failure silent (it is not a Zig failure).
+// AccessDeniedPermissionDenied/FileSystem, then make the test failure silent (it is not a Zig failure).
 fn setupSymlinkAbsolute(io: Io, target: []const u8, link: []const u8, flags: SymLinkFlags) !void {
     return Dir.symLinkAbsolute(io, target, link, flags) catch |err| switch (err) {
-        error.AccessDenied => if (native_os == .windows) return error.SkipZigTest else return err,
+        // On Windows, symlinks require admin privileges and the underlying filesystem must support symlinks
+        error.AccessDenied, error.PermissionDenied, error.FileSystem => if (native_os == .windows) return error.SkipZigTest else return err,
         else => return err,
     };
 }
@@ -294,6 +298,28 @@ test "File.stat on a File that is a symlink returns Kind.sym_link" {
     }.impl);
 }
 
+test "Dir.statFile on a symlink" {
+    const io = testing.io;
+
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const dir_target_path = try ctx.transformPath("test_file");
+            try ctx.dir.writeFile(io, .{
+                .sub_path = dir_target_path,
+                .data = "Some test content",
+            });
+
+            try setupSymlink(io, ctx.dir, dir_target_path, "symlink", .{});
+
+            const file_stat = try ctx.dir.statFile(io, "test_file", .{ .follow_symlinks = false });
+            try testing.expectEqual(File.Kind.file, file_stat.kind);
+
+            const link_stat = try ctx.dir.statFile(io, "symlink", .{ .follow_symlinks = false });
+            try testing.expectEqual(File.Kind.sym_link, link_stat.kind);
+        }
+    }.impl);
+}
+
 test "openDir" {
     const io = testing.io;
 
@@ -313,8 +339,7 @@ test "openDir" {
 }
 
 test "accessAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
     const gpa = testing.allocator;
@@ -329,8 +354,7 @@ test "accessAbsolute" {
 }
 
 test "openDirAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
     const gpa = testing.allocator;
@@ -427,8 +451,7 @@ test "openDir non-cwd parent '..'" {
 }
 
 test "readLinkAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -644,8 +667,7 @@ fn contains(entries: *const std.array_list.Managed(Dir.Entry), el: Dir.Entry) bo
 }
 
 test "Dir.realPath smoke test" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
@@ -826,11 +848,6 @@ test "file operations on directories" {
                     const buf = try ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited);
                     testing.allocator.free(buf);
                 },
-                .wasi => {
-                    // WASI return EBADF, which gets mapped to NotOpenForReading.
-                    // See https://github.com/bytecodealliance/wasmtime/issues/1935
-                    try expectError(error.NotOpenForReading, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
-                },
                 else => {
                     try expectError(error.IsDir, ctx.dir.readFileAlloc(io, test_dir_name, testing.allocator, .unlimited));
                 },
@@ -847,7 +864,14 @@ test "file operations on directories" {
 
             {
                 const handle = try ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = true, .mode = .read_only });
-                handle.close(io);
+                defer handle.close(io);
+
+                // Reading from the handle should fail
+                if (native_os != .netbsd) {
+                    var buf: [1]u8 = undefined;
+                    try expectError(error.IsDir, handle.readStreaming(io, &.{&buf}));
+                    try expectError(error.IsDir, handle.readPositional(io, &.{&buf}, 0));
+                }
             }
             try expectError(error.IsDir, ctx.dir.openFile(io, test_dir_name, .{ .allow_directory = false, .mode = .read_only }));
 
@@ -1073,8 +1097,7 @@ test "rename" {
 }
 
 test "renameAbsolute" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -1130,6 +1153,7 @@ test "renameAbsolute" {
 
 test "openExecutable" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -1139,6 +1163,7 @@ test "openExecutable" {
 
 test "executablePath" {
     if (native_os == .wasi) return error.SkipZigTest;
+    if (native_os == .openbsd) return error.SkipZigTest;
 
     const io = testing.io;
     var buf: [Dir.max_path_bytes]u8 = undefined;
@@ -1742,29 +1767,32 @@ test "open file with exclusive lock twice, make sure second lock waits" {
             errdefer file.close(io);
 
             const S = struct {
-                fn checkFn(inner_ctx: *TestContext, path: []const u8, started: *std.Thread.ResetEvent, locked: *std.Thread.ResetEvent) !void {
-                    started.set();
+                fn checkFn(inner_ctx: *TestContext, path: []const u8, started: *Io.Event, locked: *Io.Event) !void {
+                    started.set(inner_ctx.io);
                     const file1 = try inner_ctx.dir.createFile(inner_ctx.io, path, .{ .lock = .exclusive });
 
-                    locked.set();
+                    locked.set(inner_ctx.io);
                     file1.close(inner_ctx.io);
                 }
             };
 
-            var started: std.Thread.ResetEvent = .unset;
-            var locked: std.Thread.ResetEvent = .unset;
+            var started: Io.Event = .unset;
+            var locked: Io.Event = .unset;
 
             const t = try std.Thread.spawn(.{}, S.checkFn, .{ ctx, filename, &started, &locked });
             defer t.join();
 
             // Wait for the spawned thread to start trying to acquire the exclusive file lock.
             // Then wait a bit to make sure that can't acquire it since we currently hold the file lock.
-            started.wait();
-            try expectError(error.Timeout, locked.timedWait(10 * std.time.ns_per_ms));
+            try started.wait(io);
+            try expectError(error.Timeout, locked.waitTimeout(io, .{ .duration = .{
+                .raw = .fromMilliseconds(10),
+                .clock = .awake,
+            } }));
 
             // Release the file lock which should unlock the thread to lock it and set the locked event.
             file.close(io);
-            locked.wait();
+            try locked.wait(io);
         }
     }.impl);
 }
@@ -1784,7 +1812,7 @@ test "open file with exclusive nonblocking lock twice (absolute paths)" {
 
     const gpa = testing.allocator;
 
-    const cwd = try std.process.getCwdAlloc(gpa);
+    const cwd = try std.process.currentPathAlloc(io, gpa);
     defer gpa.free(cwd);
 
     const filename = try Dir.path.resolve(gpa, &.{ cwd, sub_path });
@@ -1835,6 +1863,33 @@ test "read from locked file" {
             }
         }
     }.impl);
+}
+
+test "use Lock.none to unlock files" {
+    if (native_os == .wasi) return error.SkipZigTest;
+
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Create a locked file.
+    const test_file = try tmp.dir.createFile(io, "test_file", .{ .lock = .exclusive, .lock_nonblocking = true });
+    defer test_file.close(io);
+
+    // Attempt to unlock the file via fs.lock with Lock.none.
+    try test_file.lock(io, .none);
+
+    // Attempt to open the file now that it should be unlocked.
+    const test_file2 = try tmp.dir.openFile(io, "test_file", .{ .lock = .exclusive, .lock_nonblocking = true });
+    defer test_file2.close(io);
+
+    // Make sure Lock.none works with tryLock as well.
+    try testing.expect(try test_file2.tryLock(io, .none));
+
+    // Attempt to open the file since it should be unlocked again.
+    const test_file3 = try tmp.dir.openFile(io, "test_file", .{ .lock = .exclusive, .lock_nonblocking = true });
+    test_file3.close(io);
 }
 
 test "walker" {
@@ -2026,8 +2081,7 @@ test "'.' and '..' in Dir functions" {
 }
 
 test "'.' and '..' in absolute functions" {
-    if (native_os == .wasi) return error.SkipZigTest;
-    if (native_os == .openbsd) return error.SkipZigTest;
+    if (!isRealPathSupported()) return error.SkipZigTest;
 
     const io = testing.io;
 
@@ -2362,13 +2416,7 @@ test "readlinkat" {
     try tmp.dir.writeFile(io, .{ .sub_path = "file.txt", .data = "nonsense" });
 
     // create a symbolic link
-    tmp.dir.symLink(io, "file.txt", "link", .{}) catch |err| switch (err) {
-        error.AccessDenied => {
-            // Symlink requires admin privileges on windows, so this test can legitimately fail.
-            if (native_os == .windows) return error.SkipZigTest;
-        },
-        else => |e| return e,
-    };
+    try setupSymlink(io, tmp.dir, "file.txt", "link", .{});
 
     // read the link
     var buffer: [Dir.max_path_bytes]u8 = undefined;

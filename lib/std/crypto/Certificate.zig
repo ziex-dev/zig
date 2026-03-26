@@ -2,6 +2,10 @@ buffer: []const u8,
 index: u32,
 
 pub const Bundle = @import("Certificate/Bundle.zig");
+pub const Chain = switch (builtin.os.tag) {
+    else => void, // not a shim to also avoid expensive caller logic
+    .windows => @import("Certificate/Chain.zig"),
+};
 
 pub const Version = enum { v1, v2, v3 };
 
@@ -341,8 +345,8 @@ pub const Parsed = struct {
     // the certificate (e.g., more than one DNSName name, a match in any one
     // of the set is considered acceptable.) Names may contain the wildcard
     // character * which is considered to match any single domain name
-    // component or component fragment. E.g., *.a.com matches foo.a.com but
-    // not bar.foo.a.com. f*.com matches foo.com but not bar.com.
+    // component. E.g., *.a.com matches foo.a.com but not bar.foo.a.com.
+    // Partial wildcards like f*.com are not supported.
     fn checkHostName(host_name: []const u8, dns_name: []const u8) bool {
         // Empty strings should not match
         if (host_name.len == 0 or dns_name.len == 0) return false;
@@ -844,6 +848,7 @@ fn verifyEd25519(
     };
 }
 
+const builtin = @import("builtin");
 const std = @import("../std.zig");
 const crypto = std.crypto;
 const mem = std.mem;

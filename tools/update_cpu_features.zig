@@ -1299,6 +1299,20 @@ const targets = [_]ArchTarget{
             .name = "Mips",
             .td_name = "Mips",
         },
+        .extra_features = &.{
+            .{
+                .zig_name = "notraps",
+                .desc = "Disable trap instructions",
+                .deps = &.{},
+            },
+        },
+        .extra_cpus = &.{
+            .{
+                .llvm_name = null,
+                .zig_name = "allegrex",
+                .features = &.{ "mips2", "single_float", "notraps" },
+            },
+        },
     },
     .{
         .zig_name = "nvptx",
@@ -1987,7 +2001,6 @@ fn processOneTarget(io: Io, job: Job) void {
 
         const child_result = try std.process.run(arena, io, .{
             .argv = &child_args,
-            .max_output_bytes = 500 * 1024 * 1024,
         });
         tblgen_progress.end();
         if (child_result.stderr.len != 0) {

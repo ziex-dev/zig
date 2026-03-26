@@ -53,6 +53,7 @@ pub const Os = struct {
         ps3,
         ps4,
         ps5,
+        psp,
         vita,
 
         emscripten,
@@ -194,6 +195,7 @@ pub const Os = struct {
 
                 .@"3ds",
 
+                .psp,
                 .vita,
 
                 .wasi,
@@ -443,7 +445,7 @@ pub const Os = struct {
 
                                 break :blk default_min;
                             },
-                            .max = .{ .major = 6, .minor = 17, .patch = 0 },
+                            .max = .{ .major = 6, .minor = 19, .patch = 0 },
                         },
                         .glibc = blk: {
                             // For 32-bit targets that traditionally used 32-bit time, we require
@@ -609,6 +611,15 @@ pub const Os = struct {
                         // The comment indicates the system version that release version was introduced (for minimum) and the latest (for maximum).
                         .min = .{ .major = 2, .minor = 27, .patch = 0 }, // 1.0.0-0
                         .max = .{ .major = 2, .minor = 58, .patch = 0 }, // 11.17.0-50
+                    },
+                },
+
+                .psp => .{
+                    .semver = .{
+                        // https://www.psdevwiki.com/psp/Official_Firmware_(OFW)#1.XX_Kernel
+                        // It appears that the kernel started with semver for 1.XX before later changing to MAJ.MINPATCH in later releases (e.g. 3.60, 6.61)
+                        .min = .{ .major = 1, .minor = 0, .patch = 3 },
+                        .max = .{ .major = 6, .minor = 61, .patch = 0 },
                     },
                 },
 
@@ -919,6 +930,7 @@ pub const Abi = enum {
             .tvos,
             .visionos,
             .watchos,
+            .psp,
             .ps3,
             .ps4,
             .ps5,
@@ -2023,7 +2035,10 @@ pub const Cpu = struct {
                 .lanai => &lanai.cpu.v11, // clang does not have a generic lanai model.
                 .loongarch64 => &loongarch.cpu.la64v1_0,
                 .m68k => &m68k.cpu.M68000,
-                .mips, .mipsel => &mips.cpu.mips32r2,
+                .mips, .mipsel => switch (os.tag) {
+                    .psp => &mips.cpu.allegrex,
+                    else => &mips.cpu.mips32r2,
+                },
                 .mips64, .mips64el => &mips.cpu.mips64r2,
                 .msp430 => &msp430.cpu.msp430,
                 .nvptx, .nvptx64 => &nvptx.cpu.sm_52,
@@ -2131,6 +2146,10 @@ pub inline fn isMuslLibC(target: *const Target) bool {
     return target.os.tag == .linux and target.abi.isMusl();
 }
 
+pub inline fn isBionicLibC(target: *const Target) bool {
+    return target.os.tag == .linux and target.abi.isAndroid();
+}
+
 pub inline fn isDarwinLibC(target: *const Target) bool {
     return switch (target.abi) {
         .none, .simulator => target.os.tag.isDarwin(),
@@ -2200,6 +2219,7 @@ pub fn requiresLibC(target: *const Target) bool {
         .amdhsa,
         .ps4,
         .ps5,
+        .psp,
         .vita,
         .mesa3d,
         .contiki,
@@ -2375,6 +2395,7 @@ pub const DynamicLinker = struct {
             .ps3,
             .ps4,
             .ps5,
+            .psp,
             .vita,
             => .none,
         };
@@ -2779,6 +2800,7 @@ pub const DynamicLinker = struct {
 
             .@"3ds",
 
+            .psp,
             .vita,
 
             .emscripten,
@@ -3334,7 +3356,7 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) u16 {
             .longlong, .ulonglong, .double => return 64,
             .longdouble => return 80,
         },
-        .vita => switch (c_type) {
+        .psp, .vita => switch (c_type) {
             .char => return 8,
             .short, .ushort => return 16,
             .int, .uint, .float => return 32,

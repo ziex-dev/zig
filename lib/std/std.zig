@@ -86,7 +86,6 @@ pub const math = @import("math.zig");
 pub const mem = @import("mem.zig");
 pub const meta = @import("meta.zig");
 pub const os = @import("os.zig");
-pub const once = @import("once.zig").once;
 pub const pdb = @import("pdb.zig");
 pub const pie = @import("pie.zig");
 pub const posix = @import("posix.zig");
@@ -114,6 +113,16 @@ pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
+    /// If set, `std.start` and `std.Thread` will configure an per-thread alternative signal stack
+    /// of this size. Importantly, if `enable_segfault_handler` is set, the segfault handler will
+    /// use this alternative stack, meaning it can still print stack traces even if a segmentation
+    /// fault is caused by a stack overflow.
+    ///
+    /// On POSIX targets, the signal stack is configured using 'sigaltstack(2)'.
+    ///
+    /// On Windows, this value is currently ignored.
+    signal_stack_size: ?u64 = 1 << 18, // 1<<17 observed to be sufficient for stack tracing with self-hosted x86_64 backend
+
     /// The current log level.
     log_level: log.Level = log.default_level,
 
@@ -125,8 +134,6 @@ pub const Options = struct {
         comptime format: []const u8,
         args: anytype,
     ) void = log.defaultLog,
-
-    logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode,
 
     /// Overrides `std.heap.page_size_min`.
     page_size_min: ?usize = null,
@@ -167,6 +174,13 @@ pub const Options = struct {
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
 
+    /// Allows disabling networking in std.Io implementations.
+    networking: bool = true,
+
+    /// TODO This is a separate decl instead of a field as a workaround around
+    /// compilation errors due to zig not being lazy enough.
+    pub const logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode;
+
     /// TODO This is a separate decl instead of a field as a workaround around
     /// compilation errors due to zig not being lazy enough.
     pub const elf_debug_info_search_paths: ?fn (exe_path: []const u8) switch (@import("builtin").object_format) {
@@ -191,7 +205,7 @@ pub const Options = struct {
     /// implementation based on coroutines, one likely wants `std.debug.print`
     /// to directly write to stderr without trying to interact with the code
     /// being debugged.
-    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.ioBasic();
+    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.io();
 
     /// Overrides `std.Io.File.Permissions`.
     pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;

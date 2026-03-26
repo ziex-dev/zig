@@ -128,6 +128,7 @@
       }
       .table-wrapper {
         width: 100%;
+        margin: 1em auto;
         overflow-x: auto;
       }
 
@@ -437,6 +438,25 @@
 
       {#header_close#}
       {#header_close#}
+
+      {#header_open|Identifiers#}
+      <p>
+      Identifiers must start with an alphabetic character or underscore and may be followed
+      by any number of alphanumeric characters or underscores.
+      They must not overlap with any keywords. See {#link|Keyword Reference#}.
+      </p>
+
+      {#header_open|String Identifier Syntax#}
+      <p>
+      If a name that does not fit these requirements is needed, such as for
+      linking with external libraries, the {#syntax#}@""{#endsyntax#} syntax
+      may be used.
+      </p>
+      {#code|identifiers.zig#}
+      {#header_close#}
+      {#header_close#}
+
+
       {#header_open|Values#}
       {#code|values.zig#}
 
@@ -962,28 +982,15 @@
       humans and computers to do when reading code, and creates more optimization opportunities.
       </p>
       <p>
+      Variables are never allowed to shadow {#link|Identifiers#} from an outer scope.
+      </p>
+      <p>
       The {#syntax#}extern{#endsyntax#} keyword or {#link|@extern#} builtin function can be used to link against a variable that is exported
       from another object. The {#syntax#}export{#endsyntax#} keyword or {#link|@export#} builtin function
       can be used to make a variable available to other objects at link time. In both cases,
       the type of the variable must be C ABI compatible.
       </p>
       {#see_also|Exporting a C Library#}
-
-      {#header_open|Identifiers#}
-      <p>
-      Variable identifiers are never allowed to shadow identifiers from an outer scope.
-      </p>
-      <p>
-      Identifiers must start with an alphabetic character or underscore and may be followed
-      by any number of alphanumeric characters or underscores.
-      They must not overlap with any keywords. See {#link|Keyword Reference#}.
-      </p>
-      <p>
-      If a name that does not fit these requirements is needed, such as for linking with external libraries, the {#syntax#}@""{#endsyntax#} syntax may be used.
-      </p>
-      {#code|identifiers.zig#}
-
-      {#header_close#}
 
       {#header_open|Container Level Variables#}
       <p>
@@ -1111,8 +1118,8 @@
 
       {#header_close#}
       {#header_open|Floating Point Operations#}
-      <p>By default floating point operations use {#syntax#}Strict{#endsyntax#} mode,
-          but you can switch to {#syntax#}Optimized{#endsyntax#} mode on a per-block basis:</p>
+      <p>By default floating point operations use {#syntax#}.strict{#endsyntax#} mode,
+          but you can switch to {#syntax#}.optimized{#endsyntax#} mode on a per-block basis:</p>
       {#code|float_mode_obj.zig#}
 
       <p>For this test we have to separate code into two object files -
@@ -1367,7 +1374,7 @@ a /= b{#endsyntax#}</pre></td>
             <ul>
               <li>Can cause {#link|overflow|Default Operations#} for integers.</li>
               <li>Can cause {#link|Division by Zero#} for integers.</li>
-              <li>Can cause {#link|Division by Zero#} for floats in {#link|FloatMode.Optimized Mode|Floating Point Operations#}.</li>
+              <li>Can cause {#link|Division by Zero#} for floats in {#link|FloatMode.optimized Mode|Floating Point Operations#}.</li>
               <li>Signed integer operands must be comptime-known and positive. In other cases, use
                 {#link|@divTrunc#},
                 {#link|@divFloor#}, or
@@ -1393,7 +1400,7 @@ a %= b{#endsyntax#}</pre></td>
           <td>
             <ul>
               <li>Can cause {#link|Division by Zero#} for integers.</li>
-              <li>Can cause {#link|Division by Zero#} for floats in {#link|FloatMode.Optimized Mode|Floating Point Operations#}.</li>
+              <li>Can cause {#link|Division by Zero#} for floats in {#link|FloatMode.optimized Mode|Floating Point Operations#}.</li>
               <li>Signed or floating-point operands must be comptime-known and positive. In other cases, use
                 {#link|@rem#} or
                 {#link|@mod#} instead.
@@ -2096,8 +2103,9 @@ or
       less than {#syntax#}1 << 29{#endsyntax#}.
       </p>
       <p>
-      In Zig, a pointer type has an alignment value. If the value is equal to the
-      alignment of the underlying type, it can be omitted from the type:
+      Pointer types may explicitly specify an alignment in bytes. If it is not
+      specified, the alignment is assumed to be equal to the alignment of the
+      underlying type.
       </p>
       {#code|test_variable_alignment.zig#}
 
@@ -2461,7 +2469,8 @@ or
       {#header_open|Tagged union#}
       <p>Unions can be declared with an enum tag type.
       This turns the union into a <em>tagged</em> union, which makes it eligible
-      to use with {#link|switch#} expressions.
+      to use with {#link|switch#} expressions. When switching on tagged unions,
+      the tag value can be obtained using an additional capture. 
       Tagged unions coerce to their tag type: {#link|Type Coercion: Unions and Enums#}.
       </p>
       {#code|test_tagged_union.zig#}
@@ -2504,6 +2513,13 @@ or
       <p>A {#syntax#}packed union{#endsyntax#} has well-defined in-memory layout and is eligible
           to be in a {#link|packed struct#}.</p>
       <p>All fields in a packed union must have the same {#link|@bitSizeOf#}.</p>
+
+      <p>
+      Equating packed unions results in a comparison of the backing integer,
+      and only works for the {#syntax#}=={#endsyntax#} and {#syntax#}!={#endsyntax#} {#link|Operators#}.
+      </p>
+      {#code|test_packed_union_equality.zig#}
+
       {#header_close#}
 
       {#header_open|Anonymous Union Literals#}
@@ -2594,6 +2610,13 @@ or
 
       {#header_close#}
 
+      {#header_open|Switching on Errors#}
+      <p>
+      When switching on errors, some special cases are allowed to simplify generic programming patterns:
+      </p>
+      {#code|test_switch_on_errors.zig#}
+      {#header_close#}
+
       {#header_open|Labeled switch#}
       <p>
       When a switch statement is labeled, it can be referenced from a
@@ -2659,12 +2682,13 @@ or
       {#code|test_inline_else.zig#}
 
       <p>
-      When using an inline prong switching on an union an additional
-      capture can be used to obtain the union's enum tag value.
+      When using an inline prong switching on an union an additional capture
+      can be used to obtain the union's enum tag value at comptime, even though
+      its payload might only be known at runtime.
       </p>
       {#code|test_inline_switch_union_tag.zig#}
 
-      {#see_also|inline while|inline for#}
+      {#see_also|inline while|inline for|Tagged union#}
       {#header_close#}
       {#header_close#}
 
@@ -3448,6 +3472,52 @@ void do_a_thing(struct Foo *foo) {
       {#link|Floats#} coerce to float types which can represent every value of the old type.
       </p>
       {#code|test_integer_widening.zig#}
+
+      {#header_close#}
+      {#header_open|Type Coercion: Int to Float#}
+      <p>
+      {#link|Integers#} coerce to {#link|Floats#} if every possible integer value can be stored in the float
+      without rounding (i.e. the integer's precision does not exceed the float's significand precision).
+      Larger integer types that cannot be safely coerced must be explicitly casted with {#link|@floatFromInt#}.
+      </p>
+      <div class="table-wrapper">
+      <table>
+        <thead>
+        <tr>
+          <th scope="col">Float Type</th>
+          <th scope="col">Largest Integer Types</th>
+        </tr>
+        </thead>
+        <tbody>
+        <tr>
+            <th scope="row">{#syntax#}f16{#endsyntax#}</th>
+            <td>{#syntax#}i12{#endsyntax#} and {#syntax#}u11{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f32{#endsyntax#}</th>
+            <td>{#syntax#}i25{#endsyntax#} and {#syntax#}u24{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f64{#endsyntax#}</th>
+            <td>{#syntax#}i54{#endsyntax#} and {#syntax#}u53{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f80{#endsyntax#}</th>
+            <td>{#syntax#}i65{#endsyntax#} and {#syntax#}u64{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}f128{#endsyntax#}</th>
+            <td>{#syntax#}i114{#endsyntax#} and {#syntax#}u113{#endsyntax#}</td>
+        </tr>
+        <tr>
+            <th scope="row">{#syntax#}c_longdouble{#endsyntax#}</th>
+            <td>Varies by target</td>
+        </tr>
+        </tbody>
+      </table>
+      </div>
+      {#code|test_int_to_float_coercion.zig#}
+      {#code|test_failed_int_to_float_coercion.zig#}
 
       {#header_close#}
       {#header_open|Type Coercion: Float to Int#}
@@ -4803,7 +4873,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       {#header_close#}
 
       {#header_open|@errorFromInt#}
-      <pre>{#syntax#}@errorFromInt(value: std.meta.Int(.unsigned, @bitSizeOf(anyerror))) anyerror{#endsyntax#}</pre>
+      <pre>{#syntax#}@errorFromInt(value: @Int(.unsigned, @bitSizeOf(anyerror))) anyerror{#endsyntax#}</pre>
       <p>
       Converts from the integer representation of an error into {#link|The Global Error Set#} type.
       </p>
@@ -5044,7 +5114,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       {#header_close#}
 
       {#header_open|@intFromError#}
-      <pre>{#syntax#}@intFromError(err: anytype) std.meta.Int(.unsigned, @bitSizeOf(anyerror)){#endsyntax#}</pre>
+      <pre>{#syntax#}@intFromError(err: anytype) @Int(.unsigned, @bitSizeOf(anyerror)){#endsyntax#}</pre>
       <p>
       Supports the following types:
       </p>
@@ -5353,10 +5423,10 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       <p>Changes the current scope's rules about how floating point operations are defined.</p>
       <ul>
         <li>
-            {#syntax#}Strict{#endsyntax#} (default) - Floating point operations follow strict IEEE compliance.
+            {#syntax#}.strict{#endsyntax#} (default) - Floating point operations follow strict IEEE compliance.
         </li>
         <li>
-            {#syntax#}Optimized{#endsyntax#} - Floating point operations may do all of the following:
+            {#syntax#}.optimized{#endsyntax#} - Floating point operations may do all of the following:
           <ul>
             <li>Assume the arguments and result are not NaN. Optimizations are required to retain legal behavior over NaNs, but the value of the result is undefined.</li>
             <li>Assume the arguments and result are not +/-Inf. Optimizations are required to retain legal behavior over +/-Inf, but the value of the result is undefined.</li>
@@ -5530,7 +5600,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       Note that {#syntax#}.Add{#endsyntax#} and {#syntax#}.Mul{#endsyntax#}
       reductions on integral types are wrapping; when applied on floating point
       types the operation associativity is preserved, unless the float mode is
-      set to {#syntax#}Optimized{#endsyntax#}.
+      set to {#syntax#}.optimized{#endsyntax#}.
       </p>
       {#code|test_reduce_builtin.zig#}
 
@@ -6305,7 +6375,7 @@ fn cmpxchgWeakButNotAtomic(comptime T: type, ptr: *T, expected_value: T, new_val
       </p>
       <p>
       Zig has a general purpose allocator available to be imported
-      with {#syntax#}std.heap.GeneralPurposeAllocator{#endsyntax#}. However, it is still recommended to
+      with {#syntax#}std.heap.DebugAllocator{#endsyntax#}. However, it is still recommended to
       follow the {#link|Choosing an Allocator#} guide.
       </p>
 
@@ -7089,6 +7159,7 @@ coding style.
         <li>Data</li>
         <li>Context</li>
         <li>Manager</li>
+        <li>State</li>
         <li>utils, misc, or somebody's initials</li>
       </ul>
       <p>Everything is a value, all types are data, everything is context, all logic manages state.
@@ -7112,6 +7183,31 @@ coding style.
       <p>This example is an exception to the rule specified in {#link|Avoid Redundancy in Names#}.
       The meaning of the type has been reduced to its core: it is a json value. The name
       cannot be any more specific without being incorrect.</p>
+      {#header_close#}
+
+      {#header_open|Refrain from Underscore Prefixes#}
+      <p>In some programming languages, it is common to prefix identifiers with
+      underscores {#syntax#}_like_this{#endsyntax#} to avoid keyword
+      collisions, name collisions, or indicate additional metadata associated with usage of the
+      identifier, such as: privacy, existence of complex data invariants, exclusion from
+      semantic versioning, or context-specific type reflection meaning.
+      </p>
+      <p>In Zig, there are no private fields, and this style guide recommends
+      against pretending otherwise. Instead, fields should be named carefully
+      based on their semantics and documentation should indicate how to use
+      fields without violating data invariants. If a field is not subject to
+      the same semantic versioning rules as everything else, the exception
+      should be noted in the {#link|Doc Comments#}.
+      </p>
+      <p>As for {#link|type reflection|@typeInfo#}, it is less error prone and
+      more maintainable to use the type system than to make field names
+      meaningful.</p>
+      <p>Regarding name collisions, an underscore is insufficient to explain
+      the difference between the two otherwise identical names. If there's no
+      danger in getting them mixed up, then this guide recommends more verbose
+      names at outer scopes and more abbreviated names at inner scopes.</p>
+      <p>Finally, keyword collisions are better avoided via
+      {#link|String Identifier Syntax#}.</p>
       {#header_close#}
 
       {#header_open|Whitespace#}

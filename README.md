@@ -87,9 +87,22 @@ therefore lacking these features:
 - Ability to compile C, C++, Objective-C, and Objective-C++ files
 
 Even when built this way, Zig provides an LLVM backend that produces bitcode
-files, which may be optimized and compiled into object files via a system Clang
-package. This can be used to produce system packages of Zig applications
-without the Zig package dependency on LLVM.
+files, which may be optimized and compiled into object files via separately
+installed Clang. Similarly, Zig provides a C backend that produces C source
+code, which may be optimized and compiled into object files via a separately
+installed C compiler toolchain.
+
+From here you can tinker with `zig2` or you can proceed to installation using
+the build system as usual:
+
+```
+./zig2 build
+```
+
+However, due to the above listed caveats, it is recommended to not proceed to
+this step until this issue is resolved:
+
+[completely eliminate dependency on LLVM library API calls](https://github.com/ziglang/zig/issues/25492)
 
 ## Building from Source Using Prebuilt Zig
 
@@ -616,17 +629,17 @@ a few releases old, or may be missing newer targets such as aarch64 and RISC-V.
 [ziglang/qemu-static](https://codeberg.org/ziglang/qemu-static) offers static
 binaries of the latest QEMU version.
 
-##### Testing Non-Native glibc Targets
+##### Testing Non-Native libc Targets
 
-Testing foreign architectures with dynamically linked glibc is one step trickier.
-This requires enabling `--glibc-runtimes /path/to/glibc/multi/install/glibcs`.
-This path is obtained by building glibc for multiple architectures. This
-process for me took an entire day to complete and takes up 65 GiB on my hard
-drive. The CI server does not provide this test coverage.
+Testing foreign architectures with dynamically linked libc is one step trickier.
+This requires enabling `--libc-runtimes /path/to/libcs`. This path is obtained
+by building glibc and musl for multiple architectures. This process for me took
+an entire day to complete and takes up 65 GiB on my hard drive.
 
-[Instructions for producing this path](https://codeberg.org/ziglang/infra/src/branch/master/building-libcs.md#linux-glibc) (just the part with `build-many-glibcs.py`).
+[Instructions for producing this path.](https://codeberg.org/ziglang/infra/src/branch/master/building-libcs.md)
 
-It is understood that most contributors will not have these tests enabled.
+It is understood that most contributors will not have these tests enabled. The
+CI machines provide coverage for these.
 
 #### Testing Windows from a Linux Machine with Wine
 
