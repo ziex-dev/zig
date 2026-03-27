@@ -6,11 +6,13 @@ const math = std.math;
 const testing = std.testing;
 const root = @import("root");
 
+const inflection = @import("meta/inflection.zig");
 pub const TrailerFlags = @import("meta/trailer_flags.zig").TrailerFlags;
 
 const Type = std.builtin.Type;
 
 test {
+    std.testing.refAllDecls(inflection);
     _ = TrailerFlags;
 }
 
@@ -1096,4 +1098,182 @@ test hasUniqueRepresentation {
     };
 
     try testing.expect(hasUniqueRepresentation(StructWithComptimeFields));
+}
+
+/// An enumeration containing the supported inflection cases.
+pub const InflectionCase = enum {
+    /// `snake_case`
+    snake,
+    /// `PascalCase`
+    pascal,
+    /// `camelCase`
+    camel,
+    /// `UPCASE_CASE`
+    upcase,
+    /// `kebab-case`
+    kebab,
+    /// `Capital_Case`
+    capital,
+
+    /// The case of Zig types.
+    pub const zig_type: InflectionCase = .pascal;
+    /// The case of Zig functions.
+    pub const zig_function: InflectionCase = .camel;
+    /// The case of Zig variables.
+    pub const zig_variable: InflectionCase = .snake;
+    /// The case of Zig modules.
+    pub const zig_module: InflectionCase = .snake;
+};
+
+/// The possible set of errors when attempting to get the length of
+/// an identifier in another case.
+pub const LengthError = error{
+    /// The identifier is invalid.
+    InvalidIdentifier,
+};
+
+/// Returns the number of characters in the identifier if it were in
+/// the given case.
+pub fn getCaseLength(case: InflectionCase, identifier: []const u8) LengthError!usize {
+    return switch (case) {
+        .snake => inflection.getSnakeCaseLength(identifier),
+        .pascal => inflection.getPascalCaseLength(identifier),
+        .camel => inflection.getCamelCaseLength(identifier),
+        .upcase => inflection.getUpcaseCaseLength(identifier),
+        .kebab => inflection.getKebabCaseLength(identifier),
+        .capital => inflection.getCapitalCaseLength(identifier),
+    };
+}
+
+test getCaseLength {
+    try std.testing.expectEqual(8, try getCaseLength(.snake, "Foo1Bar"));
+    try std.testing.expectEqual(7, try getCaseLength(.pascal, "foo1-bar"));
+    try std.testing.expectEqual(7, try getCaseLength(.camel, "FOO1_BAR"));
+    try std.testing.expectEqual(8, try getCaseLength(.upcase, "foo1-bar"));
+    try std.testing.expectEqual(8, try getCaseLength(.kebab, "foo1Bar"));
+    try std.testing.expectEqual(8, try getCaseLength(.capital, "Foo1_Bar"));
+}
+
+/// The possible set of errors when attempting to convert the case of
+/// an identifier.
+pub const ToCaseBufferError = error{
+    /// The identifier is invalid.
+    InvalidIdentifier,
+    /// The buffer is not large enough.
+    Overflow,
+};
+
+/// Converts an identifier to the given case, using the provided
+/// buffer to write the result to, while returning the actual number
+/// of elements written to.
+pub fn toCaseBuffer(case: InflectionCase, identifier: []const u8, buffer: []u8) ToCaseBufferError!usize {
+    return switch (case) {
+        .snake => inflection.toSnakeCaseBuffer(identifier, buffer),
+        .pascal => inflection.toPascalCaseBuffer(identifier, buffer),
+        .camel => inflection.toCamelCaseBuffer(identifier, buffer),
+        .upcase => inflection.toUpcaseCaseBuffer(identifier, buffer),
+        .kebab => inflection.toKebabCaseBuffer(identifier, buffer),
+        .capital => inflection.toCapitalCaseBuffer(identifier, buffer),
+    };
+}
+
+test toCaseBuffer {
+    var buffer: [16]u8 = undefined;
+
+    var written = try toCaseBuffer(.snake, "Foo1Bar", &buffer);
+    try std.testing.expectEqualStrings("foo1_bar", buffer[0..written]);
+
+    written = try toCaseBuffer(.pascal, "foo1-bar", &buffer);
+    try std.testing.expectEqualStrings("Foo1Bar", buffer[0..written]);
+
+    written = try toCaseBuffer(.camel, "FOO1_BAR", &buffer);
+    try std.testing.expectEqualStrings("foo1Bar", buffer[0..written]);
+
+    written = try toCaseBuffer(.upcase, "foo1-bar", &buffer);
+    try std.testing.expectEqualStrings("FOO1_BAR", buffer[0..written]);
+
+    written = try toCaseBuffer(.kebab, "foo1Bar", &buffer);
+    try std.testing.expectEqualStrings("foo1-bar", buffer[0..written]);
+
+    written = try toCaseBuffer(.capital, "Foo1_Bar", &buffer);
+    try std.testing.expectEqualStrings("Foo1_Bar", buffer[0..written]);
+}
+
+/// The possible set of errors when attempting to change case while
+/// allocating the resulting identifier.
+pub const ToCaseAllocError = std.mem.Allocator.Error || ToCaseBufferError;
+
+/// Converts an identifier to the given case, returning a newly
+/// allocated string.
+pub fn toCaseAlloc(allocator: mem.Allocator, case: InflectionCase, identifier: []const u8) ToCaseAllocError![]u8 {
+    const buffer = try allocator.alloc(u8, try getCaseLength(case, identifier));
+    errdefer allocator.free(buffer);
+
+    const written = try toCaseBuffer(case, identifier, buffer);
+    std.debug.assert(written == buffer.len);
+
+    return buffer;
+}
+
+test toCaseAlloc {
+    {
+        const result = try toCaseAlloc(std.testing.allocator, .snake, "Foo1Bar");
+        defer std.testing.allocator.free(result);
+        try std.testing.expectEqualStrings("foo1_bar", result);
+    }
+
+    {
+        const result = try toCaseAlloc(std.testing.allocator, .pascal, "foo1-bar");
+        defer std.testing.allocator.free(result);
+        try std.testing.expectEqualStrings("Foo1Bar", result);
+    }
+
+    {
+        const result = try toCaseAlloc(std.testing.allocator, .camel, "FOO1_BAR");
+        defer std.testing.allocator.free(result);
+        try std.testing.expectEqualStrings("foo1Bar", result);
+    }
+
+    {
+        const result = try toCaseAlloc(std.testing.allocator, .upcase, "foo1-bar");
+        defer std.testing.allocator.free(result);
+        try std.testing.expectEqualStrings("FOO1_BAR", result);
+    }
+
+    {
+        const result = try toCaseAlloc(std.testing.allocator, .kebab, "foo1Bar");
+        defer std.testing.allocator.free(result);
+        try std.testing.expectEqualStrings("foo1-bar", result);
+    }
+
+    {
+        const result = try toCaseAlloc(std.testing.allocator, .capital, "Foo1_Bar");
+        defer std.testing.allocator.free(result);
+        try std.testing.expectEqualStrings("Foo1_Bar", result);
+    }
+}
+
+/// Converts an identifier to the given case at compile-time,
+/// returning a constant string.
+pub fn toCase(comptime case: InflectionCase, comptime identifier: []const u8) return_type: {
+    const length = getCaseLength(case, identifier) catch @compileError("invalid identifier: " ++ identifier);
+    break :return_type *const [length:0]u8;
+} {
+    return switch (case) {
+        .snake => inflection.toSnakeCase(identifier),
+        .pascal => inflection.toPascalCase(identifier),
+        .camel => inflection.toCamelCase(identifier),
+        .upcase => inflection.toUpcaseCase(identifier),
+        .kebab => inflection.toKebabCase(identifier),
+        .capital => inflection.toCapitalCase(identifier),
+    };
+}
+
+test toCase {
+    try std.testing.expectEqualStrings("foo1_bar", comptime toCase(.snake, "Foo1Bar"));
+    try std.testing.expectEqualStrings("Foo1Bar", comptime toCase(.pascal, "foo1-bar"));
+    try std.testing.expectEqualStrings("foo1Bar", comptime toCase(.camel, "FOO1_BAR"));
+    try std.testing.expectEqualStrings("FOO1_BAR", comptime toCase(.upcase, "foo1-bar"));
+    try std.testing.expectEqualStrings("foo1-bar", comptime toCase(.kebab, "foo1Bar"));
+    try std.testing.expectEqualStrings("Foo1_Bar", comptime toCase(.capital, "Foo1_Bar"));
 }
