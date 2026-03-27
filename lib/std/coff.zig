@@ -389,6 +389,46 @@ pub const ImportDirectoryEntry = extern struct {
     import_address_table_rva: u32,
 };
 
+pub const ExportDirectoryEntry = extern struct {
+    /// Reserved, must be 0.
+    export_flags: u32,
+
+    /// The time and date that the export data was created.
+    time_date_stamp: u32,
+
+    /// The major version number. The major and minor version numbers can be set by the user.
+    major_version: u16,
+
+    /// The minor version number.
+    minor_version: u16,
+
+    /// The address of the ASCII string that contains the name of the DLL.
+    /// This address is relative to the image base.
+    name_rva: u32,
+
+    /// The starting ordinal number for exports in this image.
+    /// This field specifies the starting ordinal number for the export address table.
+    /// It is usually set to 1.
+    ordinal_base: u32,
+
+    /// The number of entries in the export address table.
+    address_table_entries: u32,
+
+    /// The number of entries in the name pointer table.
+    /// This is also the number of entries in the ordinal table.
+    number_of_name_pointers: u32,
+
+    /// The address of the export address table, relative to the image base.
+    export_address_table_rva: u32,
+
+    /// The address of the export name pointer table, relative to the image base.
+    /// The table size is given by the Number of Name Pointers field.
+    name_pointer_rva: u32,
+
+    /// The address of the ordinal table, relative to the image base.
+    ordinal_table_rva: u32,
+};
+
 pub const ImportLookupEntry32 = struct {
     pub const ByName = packed struct(u32) {
         name_table_rva: u31,
@@ -949,14 +989,7 @@ pub const DebugInfoDefinition = struct {
     unused_3: [2]u8,
 };
 
-pub const Error = error{
-    InvalidPEMagic,
-    InvalidPEHeader,
-    InvalidMachine,
-    MissingPEHeader,
-    MissingCoffSection,
-    MissingStringTable,
-};
+pub const Error = error{ InvalidPEMagic, InvalidPEHeader, InvalidMachine, MissingPEHeader, MissingCoffSection, MissingStringTable, AddressOutOfBounds, InvalidDebugDirectory };
 
 // Official documentation of the format: https://docs.microsoft.com/en-us/windows/win32/debug/pe-format
 pub const Coff = struct {
@@ -1001,6 +1034,18 @@ pub const Coff = struct {
         return coff;
     }
 
+    pub fn rvaToFileOffset(self: *Coff, virtual_address: u32) !usize {
+        if (self.is_loaded) return virtual_address;
+
+        for (self.getSectionHeaders()) |*sect| {
+            if (virtual_address >= sect.virtual_address and virtual_address < sect.virtual_address + sect.virtual_size) {
+                return sect.pointer_to_raw_data + (virtual_address - sect.virtual_address);
+            }
+        }
+
+        return error.AddressOutOfBounds;
+    }
+
     pub fn getPdbPath(self: *Coff) !?[]const u8 {
         assert(self.is_image);
 
@@ -1010,17 +1055,7 @@ pub const Coff = struct {
         const debug_dir = data_dirs[@intFromEnum(IMAGE.DIRECTORY_ENTRY.DEBUG)];
         var reader: std.Io.Reader = .fixed(self.data);
 
-        if (self.is_loaded) {
-            reader.seek = debug_dir.virtual_address;
-        } else {
-            // Find what section the debug_dir is in, in order to convert the RVA to a file offset
-            for (self.getSectionHeaders()) |*sect| {
-                if (debug_dir.virtual_address >= sect.virtual_address and debug_dir.virtual_address < sect.virtual_address + sect.virtual_size) {
-                    reader.seek = sect.pointer_to_raw_data + (debug_dir.virtual_address - sect.virtual_address);
-                    break;
-                }
-            } else return error.InvalidDebugDirectory;
-        }
+        reader.seek = rvaToFileOffset(self, debug_dir.virtual_address) catch return error.InvalidDebugDirectory;
 
         // Find the correct DebugDirectoryEntry, and where its data is stored.
         // It can be in any section.
