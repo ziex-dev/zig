@@ -1259,14 +1259,16 @@ pub fn toCase(comptime case: InflectionCase, comptime identifier: []const u8) re
     const length = getCaseLength(case, identifier) catch @compileError("invalid identifier: " ++ identifier);
     break :return_type *const [length:0]u8;
 } {
-    return switch (case) {
-        .snake => inflection.toSnakeCase(identifier),
-        .pascal => inflection.toPascalCase(identifier),
-        .camel => inflection.toCamelCase(identifier),
-        .upcase => inflection.toUpcaseCase(identifier),
-        .kebab => inflection.toKebabCase(identifier),
-        .capital => inflection.toCapitalCase(identifier),
+    const static = struct {
+        const length = getCaseLength(case, identifier) catch unreachable;
+        const inflected: [length:0]u8 = make_inflected: {
+            var buffer: [length:0]u8 = undefined;
+            _ = toCaseBuffer(case, identifier, &buffer) catch unreachable;
+            break :make_inflected buffer;
+        };
     };
+
+    return &static.inflected;
 }
 
 test toCase {

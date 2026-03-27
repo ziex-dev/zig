@@ -71,38 +71,6 @@ test toSnakeCaseBuffer {
     }
 }
 
-/// Converts an identifier to snake case at compile-time, returning
-/// a constant string.
-pub fn toSnakeCase(comptime identifier: []const u8) return_type: {
-    const length = getSnakeCaseLength(identifier) catch @compileError("invalid identifier: {s}" ++ identifier);
-    break :return_type *const [length:0]u8;
-} {
-    const static = struct {
-        const length = getSnakeCaseLength(identifier) catch unreachable;
-        const inflected: [length:0]u8 = make_inflected: {
-            var buffer: [length:0]u8 = undefined;
-            _ = toSnakeCaseBuffer(identifier, &buffer) catch unreachable;
-            break :make_inflected buffer;
-        };
-    };
-
-    return &static.inflected;
-}
-
-test toSnakeCase {
-    inline for ([_][]const u8{
-        "foo1_bar",
-        "FOO1_BAR",
-        "foo1-bar",
-        "foo1__bar",
-        "Foo1Bar",
-        "FOO1Bar",
-        "FOO1_BAR",
-    }) |identifier| {
-        try std.testing.expectEqualStrings("foo1_bar", comptime toSnakeCase(identifier));
-    }
-}
-
 /// Returns the number of characters in the identifier if it were in
 /// pascal case.
 pub fn getPascalCaseLength(identifier: []const u8) !usize {
@@ -164,38 +132,6 @@ test toPascalCaseBuffer {
 
         try std.testing.expectEqual(7, try toPascalCaseBuffer(identifier, buffer));
         try std.testing.expectEqualStrings("Foo1Bar", buffer);
-    }
-}
-
-/// Converts an identifier to snake case at compile-time, returning
-/// a constant string.
-pub fn toPascalCase(comptime identifier: []const u8) return_type: {
-    const length = getPascalCaseLength(identifier) catch @compileError("invalid identifier: {s}" ++ identifier);
-    break :return_type *const [length:0]u8;
-} {
-    const static = struct {
-        const length = getPascalCaseLength(identifier) catch unreachable;
-        const inflected: [length:0]u8 = make_inflected: {
-            var buffer: [length:0]u8 = undefined;
-            _ = toPascalCaseBuffer(identifier, &buffer) catch unreachable;
-            break :make_inflected buffer;
-        };
-    };
-
-    return &static.inflected;
-}
-
-test toPascalCase {
-    inline for ([_][]const u8{
-        "foo1_bar",
-        "FOO1_BAR",
-        "foo1-bar",
-        "foo1__bar",
-        "Foo1Bar",
-        "FOO1Bar",
-        "FOO1_BAR",
-    }) |identifier| {
-        try std.testing.expectEqualStrings("Foo1Bar", comptime toPascalCase(identifier));
     }
 }
 
@@ -263,38 +199,6 @@ test toCamelCaseBuffer {
 
         try std.testing.expectEqual(7, try toCamelCaseBuffer(identifier, buffer));
         try std.testing.expectEqualStrings("foo1Bar", buffer);
-    }
-}
-
-/// Converts an identifier to snake case at compile-time, returning
-/// a constant string.
-pub fn toCamelCase(comptime identifier: []const u8) return_type: {
-    const length = getCamelCaseLength(identifier) catch @compileError("invalid identifier: {s}" ++ identifier);
-    break :return_type *const [length:0]u8;
-} {
-    const static = struct {
-        const length = getCamelCaseLength(identifier) catch unreachable;
-        const inflected: [length:0]u8 = make_inflected: {
-            var buffer: [length:0]u8 = undefined;
-            _ = toCamelCaseBuffer(identifier, &buffer) catch unreachable;
-            break :make_inflected buffer;
-        };
-    };
-
-    return &static.inflected;
-}
-
-test toCamelCase {
-    inline for ([_][]const u8{
-        "foo1_bar",
-        "FOO1_BAR",
-        "foo1-bar",
-        "foo1__bar",
-        "Foo1Bar",
-        "FOO1Bar",
-        "FOO1_BAR",
-    }) |identifier| {
-        try std.testing.expectEqualStrings("Foo1Bar", comptime toPascalCase(identifier));
     }
 }
 
@@ -368,38 +272,6 @@ test toUpcaseCaseBuffer {
     }
 }
 
-/// Converts an identifier to upcase case at compile-time, returning
-/// a constant string.
-pub fn toUpcaseCase(comptime identifier: []const u8) return_type: {
-    const length = getUpcaseCaseLength(identifier) catch @compileError("invalid identifier: {s}" ++ identifier);
-    break :return_type *const [length:0]u8;
-} {
-    const static = struct {
-        const length = getUpcaseCaseLength(identifier) catch unreachable;
-        const inflected: [length:0]u8 = make_inflected: {
-            var buffer: [length:0]u8 = undefined;
-            _ = toUpcaseCaseBuffer(identifier, &buffer) catch unreachable;
-            break :make_inflected buffer;
-        };
-    };
-
-    return &static.inflected;
-}
-
-test toUpcaseCase {
-    inline for ([_][]const u8{
-        "foo1_bar",
-        "FOO1_BAR",
-        "foo1-bar",
-        "foo1__bar",
-        "Foo1Bar",
-        "FOO1Bar",
-        "FOO1_BAR",
-    }) |identifier| {
-        try std.testing.expectEqualStrings("FOO1_BAR", comptime toUpcaseCase(identifier));
-    }
-}
-
 /// Returns the number of characters in the identifier if it were in
 /// kebab case.
 pub fn getKebabCaseLength(identifier: []const u8) !usize {
@@ -467,38 +339,6 @@ test toKebabCaseBuffer {
 
         try std.testing.expectEqual(8, try toKebabCaseBuffer(identifier, buffer));
         try std.testing.expectEqualStrings("foo1-bar", buffer);
-    }
-}
-
-/// Converts an identifier to kebab case at compile-time, returning
-/// a constant string.
-pub fn toKebabCase(comptime identifier: []const u8) return_type: {
-    const length = getKebabCaseLength(identifier) catch @compileError("invalid identifier: {s}" ++ identifier);
-    break :return_type *const [length:0]u8;
-} {
-    const static = struct {
-        const length = getKebabCaseLength(identifier) catch unreachable;
-        const inflected: [length:0]u8 = make_inflected: {
-            var buffer: [length:0]u8 = undefined;
-            _ = toKebabCaseBuffer(identifier, &buffer) catch unreachable;
-            break :make_inflected buffer;
-        };
-    };
-
-    return &static.inflected;
-}
-
-test toKebabCase {
-    inline for ([_][]const u8{
-        "foo1_bar",
-        "FOO1_BAR",
-        "foo1-bar",
-        "foo1__bar",
-        "Foo1Bar",
-        "FOO1Bar",
-        "FOO1_BAR",
-    }) |identifier| {
-        try std.testing.expectEqualStrings("foo1-bar", comptime toKebabCase(identifier));
     }
 }
 
@@ -572,38 +412,6 @@ test toCapitalCaseBuffer {
 
         try std.testing.expectEqual(8, try toCapitalCaseBuffer(identifier, buffer));
         try std.testing.expectEqualStrings("Foo1_Bar", buffer);
-    }
-}
-
-/// Converts an identifier to capital case at compile-time, returning
-/// a constant string.
-pub fn toCapitalCase(comptime identifier: []const u8) return_type: {
-    const length = getCapitalCaseLength(identifier) catch @compileError("invalid identifier: {s}" ++ identifier);
-    break :return_type *const [length:0]u8;
-} {
-    const static = struct {
-        const length = getCapitalCaseLength(identifier) catch unreachable;
-        const inflected: [length:0]u8 = make_inflected: {
-            var buffer: [length:0]u8 = undefined;
-            _ = toCapitalCaseBuffer(identifier, &buffer) catch unreachable;
-            break :make_inflected buffer;
-        };
-    };
-
-    return &static.inflected;
-}
-
-test toCapitalCase {
-    inline for ([_][]const u8{
-        "foo1_bar",
-        "FOO1_BAR",
-        "foo1-bar",
-        "foo1__bar",
-        "Foo1Bar",
-        "FOO1Bar",
-        "FOO1_BAR",
-    }) |identifier| {
-        try std.testing.expectEqualStrings("Foo1_Bar", comptime toCapitalCase(identifier));
     }
 }
 
