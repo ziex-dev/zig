@@ -2704,7 +2704,7 @@ fn updateExportsInner(
             if (export_count > std.math.maxInt(@FieldType(std.coff.ExportDirectoryTable, "number_of_entries")))
                 return coff.base.comp.link_diags.fail("exceeded maximum number of exports", .{});
 
-            const name_index = coff.export_table.name_table_ni.fileLocation(&coff.mf, true).size;
+            const name_index: usize = @intCast(coff.export_table.name_table_ni.fileLocation(&coff.mf, true).size);
             const new_name_table_size = name_index + name.len + 1;
             if (new_name_table_size > std.math.maxInt(@FieldType(ExportTable.Entry, "name_index")))
                 return coff.base.comp.link_diags.fail("exports name table limit reached", .{});
