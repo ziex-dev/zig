@@ -136,13 +136,13 @@ pub fn PriorityDequeue(comptime T: type, comptime Context: type, comptime compar
 
         /// Look at the smallest element in the dequeue. Returns
         /// `null` if empty.
-        pub fn peekMin(self: *Self) ?T {
+        pub fn peekMin(self: Self) ?T {
             return if (self.len > 0) self.items[0] else null;
         }
 
         /// Look at the largest element in the dequeue. Returns
         /// `null` if empty.
-        pub fn peekMax(self: *Self) ?T {
+        pub fn peekMax(self: Self) ?T {
             if (self.len == 0) return null;
             if (self.len == 1) return self.items[0];
             if (self.len == 2) return self.items[1];
