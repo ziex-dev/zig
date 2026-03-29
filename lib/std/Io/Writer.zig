@@ -716,16 +716,19 @@ pub fn print(w: *Writer, comptime fmt: []const u8, args: anytype) Error!void {
         const arg_to_print = comptime arg_state.nextArg(arg_pos) orelse
             @compileError("too few arguments");
 
-        try w.printValue(
+        const options: std.fmt.Options = .{
+            .fill = placeholder.fill,
+            .alignment = placeholder.alignment,
+            .width = width,
+            .precision = precision,
+        };
+
+        try w.printValueImpl(
             placeholder.specifier_arg,
-            .{
-                .fill = placeholder.fill,
-                .alignment = placeholder.alignment,
-                .width = width,
-                .precision = precision,
-            },
+            options,
             @field(args, fields_info[arg_to_print].name),
             std.options.fmt_max_depth,
+            options,
         );
     }
 
@@ -1069,6 +1072,17 @@ pub fn printValue(
     value: anytype,
     max_depth: usize,
 ) Error!void {
+    return printValueImpl(w, fmt, options, value, max_depth, null);
+}
+
+fn printValueImpl(
+    w: *Writer,
+    comptime fmt: []const u8,
+    options: std.fmt.Options,
+    value: anytype,
+    max_depth: usize,
+    comptime from_print: ?std.fmt.Options,
+) Error!void {
     const T = @TypeOf(value);
 
     switch (fmt.len) {
@@ -1080,7 +1094,7 @@ pub fn printValue(
                 .int, .comptime_int => return printInt(w, value, 10, .lower, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.decimal, .lower)),
                 .@"enum" => return printInt(w, @intFromEnum(value), 10, .lower, options),
-                .vector => return printVector(w, fmt, options, value, max_depth),
+                .vector => return printVectorImpl(w, fmt, options, value, max_depth, from_print),
                 else => invalidFmtError(fmt, value),
             },
             'c' => return w.printAsciiChar(value, options),
@@ -1089,14 +1103,14 @@ pub fn printValue(
                 .int, .comptime_int => return printInt(w, value, 2, .lower, options),
                 .@"enum" => return printInt(w, @intFromEnum(value), 2, .lower, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.binary, .lower)),
-                .vector => return printVector(w, fmt, options, value, max_depth),
+                .vector => return printVectorImpl(w, fmt, options, value, max_depth, from_print),
                 else => invalidFmtError(fmt, value),
             },
             'o' => switch (@typeInfo(T)) {
                 .int, .comptime_int => return printInt(w, value, 8, .lower, options),
                 .@"enum" => return printInt(w, @intFromEnum(value), 8, .lower, options),
                 .@"struct" => return value.formatNumber(w, options.toNumber(.octal, .lower)),
-                .vector => return printVector(w, fmt, options, value, max_depth),
+                .vector => return printVectorImpl(w, fmt, options, value, max_depth, from_print),
                 else => invalidFmtError(fmt, value),
             },
             'x' => switch (@typeInfo(T)) {
@@ -1107,21 +1121,21 @@ pub fn printValue(
                 .pointer => |info| switch (info.size) {
                     .one, .slice => {
                         const slice: []const u8 = value;
-                        optionsForbidden(options);
+                        optionsForbidden(options, from_print);
                         return printHex(w, slice, .lower);
                     },
                     .many, .c => {
                         const slice: [:0]const u8 = std.mem.span(value);
-                        optionsForbidden(options);
+                        optionsForbidden(options, from_print);
                         return printHex(w, slice, .lower);
                     },
                 },
                 .array => {
                     const slice: []const u8 = &value;
-                    optionsForbidden(options);
+                    optionsForbidden(options, from_print);
                     return printHex(w, slice, .lower);
                 },
-                .vector => return printVector(w, fmt, options, value, max_depth),
+                .vector => return printVectorImpl(w, fmt, options, value, max_depth, from_print),
                 else => invalidFmtError(fmt, value),
             },
             'X' => switch (@typeInfo(T)) {
@@ -1132,21 +1146,21 @@ pub fn printValue(
                 .pointer => |info| switch (info.size) {
                     .one, .slice => {
                         const slice: []const u8 = value;
-                        optionsForbidden(options);
+                        optionsForbidden(options, from_print);
                         return printHex(w, slice, .upper);
                     },
                     .many, .c => {
                         const slice: [:0]const u8 = std.mem.span(value);
-                        optionsForbidden(options);
+                        optionsForbidden(options, from_print);
                         return printHex(w, slice, .upper);
                     },
                 },
                 .array => {
                     const slice: []const u8 = &value;
-                    optionsForbidden(options);
+                    optionsForbidden(options, from_print);
                     return printHex(w, slice, .upper);
                 },
-                .vector => return printVector(w, fmt, options, value, max_depth),
+                .vector => return printVectorImpl(w, fmt, options, value, max_depth, from_print),
                 else => invalidFmtError(fmt, value),
             },
             's' => switch (@typeInfo(T)) {
@@ -1203,18 +1217,18 @@ pub fn printValue(
             .pointer => |info| switch (info.size) {
                 .one, .slice => {
                     const slice: []const u8 = value;
-                    optionsForbidden(options);
+                    optionsForbidden(options, from_print);
                     return w.printBase64(slice);
                 },
                 .many, .c => {
                     const slice: [:0]const u8 = std.mem.span(value);
-                    optionsForbidden(options);
+                    optionsForbidden(options, from_print);
                     return w.printBase64(slice);
                 },
             },
             .array => {
                 const slice: []const u8 = &value;
-                optionsForbidden(options);
+                optionsForbidden(options, from_print);
                 return w.printBase64(slice);
             },
             else => invalidFmtError(fmt, value),
@@ -1250,7 +1264,7 @@ pub fn printValue(
             else
                 @compileError("cannot print optional without a specifier (i.e. {?} or {any})");
             if (value) |payload| {
-                return w.printValue(remaining_fmt, options, payload, max_depth);
+                return w.printValueImpl(remaining_fmt, options, payload, max_depth, from_print);
             } else {
                 return w.alignBufferOptions("null", options);
             }
@@ -1263,19 +1277,19 @@ pub fn printValue(
             else
                 @compileError("cannot print error union without a specifier (i.e. {!} or {any})");
             if (value) |payload| {
-                return w.printValue(remaining_fmt, options, payload, max_depth);
+                return w.printValueImpl(remaining_fmt, options, payload, max_depth, from_print);
             } else |err| {
-                return w.printValue("", options, err, max_depth);
+                return w.printValueImpl("", options, err, max_depth, from_print);
             }
         },
         .error_set => {
             if (!is_any and fmt.len != 0) invalidFmtError(fmt, value);
-            optionsForbidden(options);
+            optionsForbidden(options, from_print);
             return printErrorSet(w, value);
         },
         .@"enum" => |info| {
             if (!is_any and fmt.len != 0) invalidFmtError(fmt, value);
-            optionsForbidden(options);
+            optionsForbidden(options, from_print);
             if (info.is_exhaustive) {
                 return printEnumExhaustive(w, value);
             } else {
@@ -1285,7 +1299,7 @@ pub fn printValue(
         .@"union" => |info| {
             if (!is_any) {
                 if (fmt.len != 0) invalidFmtError(fmt, value);
-                return printValue(w, ANY, options, value, max_depth);
+                return printValueImpl(w, ANY, options, value, max_depth, from_print);
             }
             if (max_depth == 0) {
                 try w.writeAll(".{ ... }");
@@ -1297,7 +1311,7 @@ pub fn printValue(
                 try w.writeAll(" = ");
                 inline for (info.fields) |u_field| {
                     if (value == @field(UnionTagType, u_field.name)) {
-                        try w.printValue(ANY, options, @field(value, u_field.name), max_depth - 1);
+                        try w.printValueImpl(ANY, options, @field(value, u_field.name), max_depth - 1, from_print);
                     }
                 }
                 try w.writeAll(" }");
@@ -1312,7 +1326,7 @@ pub fn printValue(
                         try w.writeByte('.');
                         try w.writeAll(field.name);
                         try w.writeAll(" = ");
-                        try w.printValue(ANY, options, @field(value, field.name), max_depth - 1);
+                        try w.printValueImpl(ANY, options, @field(value, field.name), max_depth - 1, from_print);
                         try w.writeAll(if (i < info.fields.len) ", " else " }");
                     }
                 },
@@ -1321,7 +1335,7 @@ pub fn printValue(
         .@"struct" => |info| {
             if (!is_any) {
                 if (fmt.len != 0) invalidFmtError(fmt, value);
-                return printValue(w, ANY, options, value, max_depth);
+                return printValueImpl(w, ANY, options, value, max_depth, from_print);
             }
             if (info.is_tuple) {
                 // Skip the type and field names when formatting tuples.
@@ -1336,7 +1350,7 @@ pub fn printValue(
                     } else {
                         try w.writeAll(", ");
                     }
-                    try w.printValue(ANY, options, @field(value, f.name), max_depth - 1);
+                    try w.printValueImpl(ANY, options, @field(value, f.name), max_depth - 1, from_print);
                 }
                 try w.writeAll(" }");
                 return;
@@ -1354,14 +1368,14 @@ pub fn printValue(
                 }
                 try w.writeAll(f.name);
                 try w.writeAll(" = ");
-                try w.printValue(ANY, options, @field(value, f.name), max_depth - 1);
+                try w.printValueImpl(ANY, options, @field(value, f.name), max_depth - 1, from_print);
             }
             try w.writeAll(" }");
         },
         .pointer => |ptr_info| switch (ptr_info.size) {
             .one => switch (@typeInfo(ptr_info.child)) {
-                .array => |array_info| return w.printValue(fmt, options, @as([]const array_info.child, value), max_depth),
-                .@"enum", .@"union", .@"struct" => return w.printValue(fmt, options, value.*, max_depth),
+                .array => |array_info| return w.printValueImpl(fmt, options, @as([]const array_info.child, value), max_depth, from_print),
+                .@"enum", .@"union", .@"struct" => return w.printValueImpl(fmt, options, value.*, max_depth, from_print),
                 else => {
                     var buffers: [2][]const u8 = .{ @typeName(ptr_info.child), "@" };
                     try w.writeVecAll(&buffers);
@@ -1371,7 +1385,7 @@ pub fn printValue(
             },
             .many, .c => {
                 if (!is_any) @compileError("cannot format pointer without a specifier (i.e. {s} or {*})");
-                optionsForbidden(options);
+                optionsForbidden(options, from_print);
                 try w.printAddress(value);
             },
             .slice => {
@@ -1380,7 +1394,7 @@ pub fn printValue(
                 if (max_depth == 0) return w.writeAll("{ ... }");
                 try w.writeAll("{ ");
                 for (value, 0..) |elem, i| {
-                    try w.printValue(fmt, options, elem, max_depth - 1);
+                    try w.printValueImpl(fmt, options, elem, max_depth - 1, from_print);
                     if (i != value.len - 1) {
                         try w.writeAll(", ");
                     }
@@ -1390,12 +1404,12 @@ pub fn printValue(
         },
         .array => {
             if (!is_any) @compileError("cannot format array without a specifier (i.e. {s} or {any})");
-            return printArray(w, fmt, options, &value, max_depth);
+            return printArrayImpl(w, fmt, options, &value, max_depth, from_print);
         },
         .vector => |vector| {
             if (!is_any and fmt.len != 0) invalidFmtError(fmt, value);
             const array: [vector.len]vector.child = value;
-            return printArray(w, fmt, options, &array, max_depth);
+            return printArrayImpl(w, fmt, options, &array, max_depth, from_print);
         },
         .@"fn" => @compileError("unable to format function body type, use '*const " ++ @typeName(T) ++ "' for a function pointer type"),
         .type => {
@@ -1404,7 +1418,7 @@ pub fn printValue(
         },
         .enum_literal => {
             if (!is_any and fmt.len != 0) invalidFmtError(fmt, value);
-            optionsForbidden(options);
+            optionsForbidden(options, from_print);
             var vecs: [2][]const u8 = .{ ".", @tagName(value) };
             return w.writeVecAll(&vecs);
         },
@@ -1416,9 +1430,20 @@ pub fn printValue(
     }
 }
 
-fn optionsForbidden(options: std.fmt.Options) void {
-    assert(options.precision == null);
-    assert(options.width == null);
+fn optionsForbidden(
+    options: std.fmt.Options,
+    comptime from_print: ?std.fmt.Options,
+) void {
+    if (from_print) |comptime_options| {
+        if (comptime_options.precision != null) {
+            @compileError("can't have precision option");
+        } else if (comptime_options.width != null) {
+            @compileError("can't have width option");
+        }
+    } else {
+        assert(options.precision == null);
+        assert(options.width == null);
+    }
 }
 
 fn printErrorSet(w: *Writer, error_set: anyerror) Error!void {
@@ -1449,9 +1474,20 @@ pub fn printVector(
     value: anytype,
     max_depth: usize,
 ) Error!void {
+    return printVectorImpl(w, fmt, options, value, max_depth, null);
+}
+
+fn printVectorImpl(
+    w: *Writer,
+    comptime fmt: []const u8,
+    options: std.fmt.Options,
+    value: anytype,
+    max_depth: usize,
+    comptime from_print: ?std.fmt.Options,
+) Error!void {
     const vector = @typeInfo(@TypeOf(value)).vector;
     const array: [vector.len]vector.child = value;
-    return printArray(w, fmt, options, &array, max_depth);
+    return printArrayImpl(w, fmt, options, &array, max_depth, from_print);
 }
 
 pub fn printArray(
@@ -1461,10 +1497,21 @@ pub fn printArray(
     ptr_to_array: anytype,
     max_depth: usize,
 ) Error!void {
+    return printArrayImpl(w, fmt, options, ptr_to_array, max_depth, null);
+}
+
+fn printArrayImpl(
+    w: *Writer,
+    comptime fmt: []const u8,
+    options: std.fmt.Options,
+    ptr_to_array: anytype,
+    max_depth: usize,
+    comptime from_print: ?std.fmt.Options,
+) Error!void {
     if (max_depth == 0) return w.writeAll("{ ... }");
     try w.writeAll("{ ");
     for (ptr_to_array, 0..) |elem, i| {
-        try w.printValue(fmt, options, elem, max_depth - 1);
+        try w.printValueImpl(fmt, options, elem, max_depth - 1, from_print);
         if (i < ptr_to_array.len - 1) {
             try w.writeAll(", ");
         }
