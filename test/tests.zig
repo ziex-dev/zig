@@ -3043,29 +3043,98 @@ const libc_targets: []const std.Target.Query = &.{
         .os_tag = .linux,
         .abi = .muslx32,
     },
+
+    // windows targets don't run libc-test test cases
+    .{
+        .cpu_arch = .thumb,
+        .os_tag = .windows,
+        .abi = .gnu,
+    },
+    .{
+        .cpu_arch = .aarch64,
+        .os_tag = .windows,
+        .abi = .gnu,
+    },
+    .{
+        .cpu_arch = .x86,
+        .os_tag = .windows,
+        .abi = .gnu,
+    },
+    .{
+        .cpu_arch = .x86_64,
+        .os_tag = .windows,
+        .abi = .gnu,
+    },
 };
 
-pub fn addLibcTests(b: *std.Build, options: LibcContext.Options) ?*Step {
-    const step = b.step("test-libc", "Run libc-test test cases");
+pub fn addLibcTests(b: *std.Build, options: LibcContext.Options) struct { ?*Step, *Step } {
+    const step = b.step("test-libc", "Test the libc API of libzigc");
+
+    const libc_test_step = b.step("test-libc-libc-test", "Test the libc API of libzigc by running libc-test test cases");
+    step.dependOn(libc_test_step);
+
     const opt_libc_test_path = b.option(std.Build.LazyPath, "libc-test-path", "path to libc-test source directory");
-    if (opt_libc_test_path) |libc_test_path| {
+    const opt_context = if (opt_libc_test_path) |libc_test_path| blk: {
         var context: LibcContext = .{
             .b = b,
             .options = options,
-            .root_step = step,
+            .root_step = libc_test_step,
             .libc_test_src_path = libc_test_path.path(b, "src"),
         };
 
         libc.addCases(&context);
+        break :blk context;
+    } else blk: {
+        libc_test_step.dependOn(&b.addFail("The -Dlibc-test-path=... option is required for this step").step);
+        break :blk null;
+    };
 
-        for (libc_targets) |target_query| {
-            const target = b.resolveTargetQuery(target_query);
-            context.addTarget(target);
+    const libc_api_test_step = b.step("test-libc-api", "Test the libc API of libzigc by running libc_api tests");
+    step.dependOn(libc_api_test_step);
+
+    for (libc_targets) |target_query| {
+        if (options.skip_linux and target_query.os_tag.? == .linux) continue;
+        if (options.skip_windows and target_query.os_tag.? == .windows) continue;
+        if (options.skip_wasm and target_query.cpu_arch.?.isWasm()) continue;
+
+        if (options.test_target_filters.len > 0) {
+            const triple_txt = target_query.zigTriple(b.allocator) catch @panic("OOM");
+            for (options.test_target_filters) |filter| {
+                if (std.mem.indexOf(u8, triple_txt, filter)) |_| break;
+            } else continue;
         }
 
-        return step;
-    } else {
-        step.dependOn(&b.addFail("The -Dlibc-test-path=... option is required for this step").step);
-        return null;
+        const target = b.resolveTargetQuery(target_query);
+
+        // libc-test:
+        if (target_query.os_tag.? != .windows) {
+            if (opt_context) |context| {
+                context.addTarget(target);
+            }
+        }
+
+        // libc_api tests:
+        if (target.result.cpu.has(.loongarch, .lsx)) continue; // https://github.com/llvm/llvm-project/issues/159529
+        for (options.optimize_modes) |mode| {
+            const compile_test = b.addTest(.{
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("test/libc_api.zig"),
+                    .target = target,
+                    .optimize = mode,
+                    .link_libc = true,
+                }),
+                .max_rss = options.max_rss,
+                .filters = options.test_filters,
+            });
+
+            const run_test = b.addRunArtifact(compile_test);
+            run_test.skip_foreign_checks = true;
+            libc_api_test_step.dependOn(&run_test.step);
+        }
     }
+
+    return .{
+        if (opt_libc_test_path) |_| libc_test_step else null,
+        libc_api_test_step,
+    };
 }

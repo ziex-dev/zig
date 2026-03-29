@@ -370,8 +370,6 @@ test atoll {
     try std.testing.expectEqual(std.math.minInt(c_longlong), atoll(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.minInt(c_longlong)}))));
 }
 
-// FIXME: We cannot test strtol, strtoll, strtoul, etc.. here as it must modify errno and libc is not linked in tests
-
 test bsearch {
     const Comparison = struct {
         pub fn compare(a: *const anyopaque, b: *const anyopaque) callconv(.c) c_int {

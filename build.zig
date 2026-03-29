@@ -662,13 +662,18 @@ pub fn build(b: *std.Build) !void {
     try tests.addIncrementalTests(b, test_incremental_step, test_filters);
     if (!skip_test_incremental) test_step.dependOn(test_incremental_step);
 
-    if (tests.addLibcTests(b, .{
+    const opt_libc_test_step, const libc_api_test_step = tests.addLibcTests(b, .{
         .optimize_modes = optimization_modes,
         .test_filters = test_filters,
         .test_target_filters = test_target_filters,
+        .skip_linux = skip_linux,
+        .skip_windows = skip_windows,
         .skip_wasm = skip_wasm,
         .max_rss = 3_500_000_000,
-    })) |test_libc_step| test_step.dependOn(test_libc_step);
+    });
+
+    if (opt_libc_test_step) |libc_test_step| test_step.dependOn(libc_test_step);
+    test_step.dependOn(libc_api_test_step);
 }
 
 fn addWasiUpdateStep(b: *std.Build, version: [:0]const u8) !void {
