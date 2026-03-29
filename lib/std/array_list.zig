@@ -882,10 +882,11 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             const small = builtin.mode == .ReleaseSmall;
 
             const tail = self.items[start + len ..];
+            const vacated = self.items[self.items.len - (len -| new_items.len) ..];
             self.items.len = self.items.len - len + new_items.len;
             if (small or new_items.len != len) @memmove(self.items[start + new_items.len ..], tail);
             if (small or new_items.len != 0) @memcpy(self.items[start..][0..new_items.len], new_items);
-            if (small or new_items.len < len) @memset(self.items[self.items.len - (len -| new_items.len) ..], undefined);
+            if (small or vacated.len > 0) @memset(vacated, undefined);
         }
 
         /// Grows or shrinks the list as necessary.
