@@ -858,7 +858,7 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             len: usize,
             new_items: []const T,
         ) Allocator.Error!void {
-            try self.ensureTotalCapacity(gpa, try addOrOom(self.len - len, new_items.len));
+            try self.ensureTotalCapacity(gpa, try addOrOom(self.items.len - len, new_items.len));
             self.replaceRangeAssumeCapacity(start, len, new_items);
         }
 
