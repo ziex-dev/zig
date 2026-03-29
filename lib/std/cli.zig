@@ -354,7 +354,8 @@ test parseSlice {
 fn innerParseHelp(comptime Args: type, options: Options) error{Help}!noreturn {
     const terminal = options.terminal orelse std.debug.lockStderr(&.{}).terminal();
     defer if (options.terminal == null) std.debug.unlockStderr();
-    terminal.writer.print(getHelpFmt(Args), .{options.arg0.?}) catch {};
+    const info, _, _ = comptime reflectArgs(Args);
+    terminal.writer.print(getHelpFmt(Args), .{options.arg0 orelse info.arg0 orelse "<prog>"}) catch {};
     if (options.exit) std.process.exit(0);
     return error.Help;
 }
@@ -372,7 +373,8 @@ pub fn usageError(comptime Args: type, options: Options, comptime fmt: []const u
         term.writer.writeAll("error") catch break :print;
         term.setColor(.reset) catch break :print;
         term.writer.print(": " ++ fmt ++ "\n", args) catch break :print;
-        term.writer.print(getUsageFmt(Args), .{options.arg0.?}) catch break :print;
+        const info, _, _ = comptime reflectArgs(Args);
+        term.writer.print(getUsageFmt(Args), .{options.arg0 orelse info.arg0 orelse "<prog>"}) catch break :print;
     }
     if (options.exit) std.process.exit(1);
     return error.Usage;
