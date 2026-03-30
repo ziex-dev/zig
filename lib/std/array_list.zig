@@ -1,5 +1,4 @@
 const std = @import("std.zig");
-const builtin = @import("builtin");
 const debug = std.debug;
 const assert = debug.assert;
 const testing = std.testing;
@@ -875,18 +874,12 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
         ) void {
             std.debug.assert(self.capacity - self.items.len >= new_items.len -| len);
 
-            // The branches do not affect correctness, we put them in place
-            // just to avoid useless function calls. The branches do, however,
-            // cause more code to be emitted, so we short-circuit when
-            // optimising for size.
-            const small = builtin.mode == .ReleaseSmall;
-
             const tail = self.items[start + len ..];
             const vacated = self.items[self.items.len - (len -| new_items.len) ..];
             self.items.len = self.items.len - len + new_items.len;
-            if (small or new_items.len != len) @memmove(self.items[start + new_items.len ..], tail);
-            if (small or new_items.len != 0) @memcpy(self.items[start..][0..new_items.len], new_items);
-            if (small or vacated.len > 0) @memset(vacated, undefined);
+            @memmove(self.items[start + new_items.len ..], tail);
+            @memcpy(self.items[start..][0..new_items.len], new_items);
+            @memset(vacated, undefined);
         }
 
         /// Grows or shrinks the list as necessary.
