@@ -25,46 +25,44 @@ const usage =
     \\
     \\Options:
     \\   --code-dir dir         Path to directory containing code example outputs
-    \\   -h, --help             Print this help and exit
+    \\   --help                 Print this help and exit
     \\
 ;
+const command: std.cli.Command = .{
+    .name = "docgen",
+    .help = usage,
+    .named_args = &.{
+        .init([:0]const u8, .{
+            .name = "code-dir",
+            .count = .one,
+            .help = "Path to directory containing code example outputs",
+        }),
+    },
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "input", .count = .one }),
+        .init([:0]const u8, .{ .name = "output", .count = .one }),
+    },
+};
 
 pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    var args_it = try init.minimal.args.iterateAllocator(arena);
-    if (!args_it.skip()) @panic("expected self arg");
+    const parsed = try std.cli.parse(
+        command,
+        arena,
+        try init.minimal.args.toSlice(arena),
+        .{
+            .exit_help = true,
+            .exit_usage_error = true,
+            .render_help = true,
+            .render_usage_errors = true,
+        },
+    );
 
-    var opt_code_dir: ?[]const u8 = null;
-    var opt_input: ?[]const u8 = null;
-    var opt_output: ?[]const u8 = null;
-
-    while (args_it.next()) |arg| {
-        if (mem.startsWith(u8, arg, "-")) {
-            if (mem.eql(u8, arg, "-h") or mem.eql(u8, arg, "--help")) {
-                try Io.File.stdout().writeStreamingAll(io, usage);
-                process.exit(0);
-            } else if (mem.eql(u8, arg, "--code-dir")) {
-                if (args_it.next()) |param| {
-                    opt_code_dir = param;
-                } else {
-                    fatal("expected parameter after --code-dir", .{});
-                }
-            } else {
-                fatal("unrecognized option: '{s}'", .{arg});
-            }
-        } else if (opt_input == null) {
-            opt_input = arg;
-        } else if (opt_output == null) {
-            opt_output = arg;
-        } else {
-            fatal("unexpected positional argument: '{s}'", .{arg});
-        }
-    }
-    const input_path = opt_input orelse fatal("missing input file", .{});
-    const output_path = opt_output orelse fatal("missing output file", .{});
-    const code_dir_path = opt_code_dir orelse fatal("missing --code-dir argument", .{});
+    const input_path = parsed.kind.args.input;
+    const output_path = parsed.kind.args.output;
+    const code_dir_path = parsed.kind.args.@"code-dir";
 
     var in_file = try Dir.cwd().openFile(io, input_path, .{});
     defer in_file.close(io);
