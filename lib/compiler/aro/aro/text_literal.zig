@@ -67,10 +67,10 @@ pub const Kind = enum {
     /// character escapes, but may specify up to \xFF via hex escapes.
     pub fn maxCodepoint(kind: Kind, comp: *const Compilation) u21 {
         return @intCast(switch (kind) {
-            .char => std.math.maxInt(u7),
+            .char => std.math.intMax(u7),
             .wide => @min(0x10FFFF, comp.wcharMax()),
-            .utf_8 => std.math.maxInt(u7),
-            .utf_16 => std.math.maxInt(u16),
+            .utf_8 => std.math.intMax(u7),
+            .utf_16 => std.math.intMax(u16),
             .utf_32 => 0x10FFFF,
             .unterminated => unreachable,
         });
@@ -79,10 +79,10 @@ pub const Kind = enum {
     /// Largest integer that can be represented by this character kind
     pub fn maxInt(kind: Kind, comp: *const Compilation) u32 {
         return @intCast(switch (kind) {
-            .char, .utf_8 => std.math.maxInt(u8),
+            .char, .utf_8 => std.math.intMax(u8),
             .wide => comp.wcharMax(),
-            .utf_16 => std.math.maxInt(u16),
-            .utf_32 => std.math.maxInt(u32),
+            .utf_16 => std.math.intMax(u16),
+            .utf_32 => std.math.intMax(u32),
             .unterminated => unreachable,
         });
     }
@@ -421,7 +421,7 @@ pub const Parser = struct {
             return null;
         }
 
-        if (val > std.math.maxInt(u21) or !std.unicode.utf8ValidCodepoint(@intCast(val))) {
+        if (val > std.math.intMax(u21) or !std.unicode.utf8ValidCodepoint(@intCast(val))) {
             p.offset += @intCast(start + p.prefixLen());
             try p.err(.invalid_universal_character, .{});
             return null;

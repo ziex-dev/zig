@@ -357,7 +357,7 @@ fn discard(io_reader: *Io.Reader, limit: Io.Limit) Io.Reader.Error!usize {
                 return @intFromEnum(limit) - remaining;
             }
             const size = r.getSize() catch return 0;
-            const n = @min(size - r.pos, std.math.maxInt(i64), @intFromEnum(limit));
+            const n = @min(size - r.pos, std.math.intMax(i64), @intFromEnum(limit));
             io.vtable.fileSeekBy(io.userdata, file, n) catch |err| {
                 r.seek_err = err;
                 return 0;

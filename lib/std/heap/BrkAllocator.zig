@@ -33,7 +33,7 @@ pub const vtable: Allocator.VTable = .{
 
 pub const Error = Allocator.Error;
 
-const max_usize = math.maxInt(usize);
+const max_usize = math.intMax(usize);
 const ushift = math.Log2Int(usize);
 const bigpage_size: comptime_int = @max(64 * 1024, std.heap.page_size_max);
 const bigpage_count = max_usize / bigpage_size;
@@ -234,7 +234,7 @@ test "large allocations" {
 }
 
 test "very large allocation" {
-    try std.testing.expectError(error.OutOfMemory, test_ally.alloc(u8, math.maxInt(usize)));
+    try std.testing.expectError(error.OutOfMemory, test_ally.alloc(u8, math.intMax(usize)));
 }
 
 test "realloc" {

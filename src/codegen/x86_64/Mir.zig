@@ -1817,7 +1817,7 @@ pub const RegisterList = struct {
 };
 
 pub const NullTerminatedString = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn toSlice(nts: NullTerminatedString, mir: *const Mir) ?[:0]const u8 {

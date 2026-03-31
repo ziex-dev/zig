@@ -153,6 +153,6 @@ test log10_int {
             try testing.expectEqual(exponent, log10_int(power_of_ten + 1));
             try testing.expectEqual(exponent, log10_int(power_of_ten + 8));
         }
-        try testing.expectEqual(max_exponent, log10_int(@as(T, std.math.maxInt(T))));
+        try testing.expectEqual(max_exponent, log10_int(@as(T, std.math.intMax(T))));
     }
 }

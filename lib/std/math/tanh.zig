@@ -9,7 +9,7 @@ const math = std.math;
 const mem = std.mem;
 const expect = std.testing.expect;
 const expo2 = @import("expo2.zig").expo2;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 /// Returns the hyperbolic tangent of x.
 ///

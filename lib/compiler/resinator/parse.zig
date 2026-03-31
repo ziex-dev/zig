@@ -589,7 +589,7 @@ pub const Parser = struct {
                 while (try self.parseControlStatement(resource)) |control_node| {
                     // The number of controls must fit in a u16 in order for it to
                     // be able to be written into the relevant field in the .res data.
-                    if (controls.items.len >= std.math.maxInt(u16)) {
+                    if (controls.items.len >= std.math.intMax(u16)) {
                         try self.addErrorDetails(.{
                             .err = .too_many_dialog_controls_or_toolbar_buttons,
                             .token = id_token,
@@ -648,7 +648,7 @@ pub const Parser = struct {
                 while (try self.parseToolbarButtonStatement()) |button_node| {
                     // The number of buttons must fit in a u16 in order for it to
                     // be able to be written into the relevant field in the .res data.
-                    if (buttons.items.len >= std.math.maxInt(u16)) {
+                    if (buttons.items.len >= std.math.intMax(u16)) {
                         try self.addErrorDetails(.{
                             .err = .too_many_dialog_controls_or_toolbar_buttons,
                             .token = id_token,

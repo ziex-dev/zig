@@ -17,7 +17,7 @@ fn rand_r(seed: *c_uint) callconv(.c) c_int {
     var mix: std.Random.SplitMix64 = .init(seed.*);
     defer seed.* = @truncate(mix.s);
 
-    // Every bundled libc defines RAND_MAX as `std.math.maxInt(u31)` (except windows where it is `std.math.maxInt(u15)`)
+    // Every bundled libc defines RAND_MAX as `std.math.intMax(u31)` (except windows where it is `std.math.intMax(u15)`)
     return @as(u31, @truncate(mix.next() >> 33));
 }
 

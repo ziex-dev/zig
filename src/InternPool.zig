@@ -135,7 +135,7 @@ pub const TrackedInst = extern struct {
         inst: ZirIndex,
         pub const ZirIndex = enum(u32) {
             /// Tracking failed for this ZIR instruction. Uses of it should fail.
-            lost = std.math.maxInt(u32),
+            lost = std.math.intMax(u32),
             _,
             pub fn unwrap(inst: ZirIndex) ?Zir.Inst.Index {
                 return switch (inst) {
@@ -178,7 +178,7 @@ pub const TrackedInst = extern struct {
             return @enumFromInt(@intFromEnum(i));
         }
         pub const Optional = enum(u32) {
-            none = std.math.maxInt(u32),
+            none = std.math.intMax(u32),
             _,
             pub fn unwrap(opt: Optional) ?TrackedInst.Index {
                 return switch (opt) {
@@ -458,7 +458,7 @@ pub const AnalUnit = packed struct(u64) {
         return @enumFromInt(@as(u64, @bitCast(as)));
     }
     pub const Optional = enum(u64) {
-        none = std.math.maxInt(u64),
+        none = std.math.intMax(u64),
         _,
         pub fn unwrap(opt: Optional) ?AnalUnit {
             return switch (opt) {
@@ -695,7 +695,7 @@ pub const Nav = struct {
     pub const Index = enum(u32) {
         _,
         pub const Optional = enum(u32) {
-            none = std.math.maxInt(u32),
+            none = std.math.intMax(u32),
             _,
             pub fn unwrap(opt: Optional) ?Nav.Index {
                 return switch (opt) {
@@ -1031,7 +1031,7 @@ pub const DepEntry = extern struct {
             return @enumFromInt(@intFromEnum(dep));
         }
         pub const Optional = enum(u32) {
-            none = std.math.maxInt(u32),
+            none = std.math.intMax(u32),
             _,
             pub fn unwrap(opt: Optional) ?DepEntry.Index {
                 return switch (opt) {
@@ -1130,7 +1130,7 @@ const Local = struct {
         buckets_list: ListMutate,
         free_list: u32,
 
-        const free_list_sentinel = std.math.maxInt(u32);
+        const free_list_sentinel = std.math.intMax(u32);
 
         const empty: BucketListMutate = .{
             .last_bucket_len = 0,
@@ -1675,14 +1675,14 @@ fn getTidMask(ip: *const InternPool) u32 {
 }
 
 fn getIndexMask(ip: *const InternPool, comptime BackingInt: type) u32 {
-    return @as(u32, std.math.maxInt(BackingInt)) >> ip.tid_width;
+    return @as(u32, std.math.intMax(BackingInt)) >> ip.tid_width;
 }
 
 const FieldMap = std.ArrayHashMapUnmanaged(void, void, std.array_hash_map.AutoContext(void), false);
 
 /// An index into `maps` which might be `none`.
 pub const OptionalMapIndex = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn unwrap(oi: OptionalMapIndex) ?MapIndex {
@@ -1758,7 +1758,7 @@ pub const NamespaceIndex = enum(u32) {
 };
 
 pub const OptionalNamespaceIndex = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn init(oi: ?NamespaceIndex) OptionalNamespaceIndex {
@@ -1795,7 +1795,7 @@ pub const FileIndex = enum(u32) {
         return @enumFromInt(@intFromEnum(i));
     }
     pub const Optional = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
         pub fn unwrap(opt: Optional) ?FileIndex {
             return switch (opt) {
@@ -1866,7 +1866,7 @@ pub const String = enum(u32) {
 pub const OptionalString = enum(u32) {
     /// This is distinct from `none` - it is a valid index that represents empty string.
     empty = 0,
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn unwrap(string: OptionalString) ?String {
@@ -1988,7 +1988,7 @@ pub const NullTerminatedString = enum(u32) {
 pub const OptionalNullTerminatedString = enum(u32) {
     /// This is distinct from `none` - it is a valid index that represents empty string.
     empty = 0,
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn unwrap(string: OptionalNullTerminatedString) ?NullTerminatedString {
@@ -2149,7 +2149,7 @@ pub const Key = union(enum) {
         packed_offset: PackedOffset = .{ .bit_offset = 0, .host_size = 0 },
 
         pub const VectorIndex = enum(u16) {
-            none = std.math.maxInt(u16),
+            none = std.math.intMax(u16),
             _,
         };
 
@@ -3724,9 +3724,9 @@ pub const LoadedStructType = struct {
 
     pub const RuntimeOrder = enum(u32) {
         /// Placeholder until layout is resolved.
-        unresolved = std.math.maxInt(u32) - 0,
+        unresolved = std.math.intMax(u32) - 0,
         /// Field not present at runtime
-        omitted = std.math.maxInt(u32) - 1,
+        omitted = std.math.intMax(u32) - 1,
         _,
 
         pub const Slice = struct {
@@ -4512,7 +4512,7 @@ pub fn loadEnumType(ip: *const InternPool, index: Index) LoadedEnumType {
             if (extra.data.zir_index == .none) {
                 extra_index += 1; // owner_union
             }
-            const captures_len = if (extra.data.captures_len == std.math.maxInt(u32)) c: {
+            const captures_len = if (extra.data.captures_len == std.math.intMax(u32)) c: {
                 extra_index += 2; // type_hash: PackedU64
                 break :c 0;
             } else extra.data.captures_len;
@@ -4547,7 +4547,7 @@ pub fn loadEnumType(ip: *const InternPool, index: Index) LoadedEnumType {
     if (extra.data.zir_index == .none) {
         extra_index += 1; // owner_union
     }
-    const captures_len = if (extra.data.captures_len == std.math.maxInt(u32)) c: {
+    const captures_len = if (extra.data.captures_len == std.math.intMax(u32)) c: {
         extra_index += 2; // type_hash: PackedU64
         break :c 0;
     } else extra.data.captures_len;
@@ -4598,7 +4598,7 @@ pub fn loadOpaqueType(ip: *const InternPool, index: Index) LoadedOpaqueType {
     const item = unwrapped_index.getItem(ip);
     assert(item.tag == .type_opaque);
     const extra = extraDataTrail(unwrapped_index.getExtra(ip), Tag.TypeOpaque, item.data);
-    const captures_len = if (extra.data.captures_len == std.math.maxInt(u32))
+    const captures_len = if (extra.data.captures_len == std.math.intMax(u32))
         0
     else
         extra.data.captures_len;
@@ -4798,7 +4798,7 @@ pub const Index = enum(u32) {
     empty_tuple,
 
     /// Used by Air/Sema only.
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
 
     _,
 
@@ -6319,7 +6319,7 @@ pub const Tag = enum(u8) {
         namespace: NamespaceIndex,
         /// The index of the `opaque_decl` instruction.
         zir_index: TrackedInst.Index,
-        /// `std.math.maxInt(u32)` indicates this type is reified.
+        /// `std.math.intMax(u32)` indicates this type is reified.
         captures_len: u32,
     };
 };
@@ -6420,7 +6420,7 @@ pub const Alignment = enum(u6) {
     @"16" = 4,
     @"32" = 5,
     @"64" = 6,
-    none = std.math.maxInt(u6),
+    none = std.math.intMax(u6),
     _,
 
     pub fn toByteUnits(a: Alignment) ?u64 {
@@ -6599,13 +6599,13 @@ pub const Array = struct {
 /// Trailing:
 /// 0. owner_union: Index // if `zir_index == .none`
 /// 1. capture: CaptureValue // for each `captures_len`
-/// 2. type_hash: PackedU64 // if reified (`captures_len == std.math.maxInt(u32)`)
+/// 2. type_hash: PackedU64 // if reified (`captures_len == std.math.intMax(u32)`)
 /// 3. field name: NullTerminatedString for each fields_len; declaration order
 /// 4. tag value: Index for each fields_len; declaration order
 pub const EnumExplicit = struct {
     name: NullTerminatedString,
     name_nav: Nav.Index.Optional,
-    /// `std.math.maxInt(u32)` indicates this type is reified.
+    /// `std.math.intMax(u32)` indicates this type is reified.
     captures_len: u32,
     namespace: NamespaceIndex,
     /// An integer type which is used for the numerical value of the enum, which
@@ -6626,12 +6626,12 @@ pub const EnumExplicit = struct {
 /// Trailing:
 /// 0. owner_union: Index // if `zir_index == .none`
 /// 1. capture: CaptureValue // for each `captures_len`
-/// 2. type_hash: PackedU64 // if reified (`captures_len == std.math.maxInt(u32)`)
+/// 2. type_hash: PackedU64 // if reified (`captures_len == std.math.intMax(u32)`)
 /// 3. field name: NullTerminatedString for each fields_len; declaration order
 pub const EnumAuto = struct {
     name: NullTerminatedString,
     name_nav: Nav.Index.Optional,
-    /// `std.math.maxInt(u32)` indicates this type is reified.
+    /// `std.math.intMax(u32)` indicates this type is reified.
     captures_len: u32,
     namespace: NamespaceIndex,
     /// An integer type which is used for the numerical value of the enum, which
@@ -6912,7 +6912,7 @@ pub const MemoizedCall = struct {
 pub fn init(ip: *InternPool, gpa: Allocator, io: Io, available_threads: usize) !void {
     errdefer ip.deinit(gpa, io);
     assert(ip.locals.len == 0 and ip.shards.len == 0);
-    assert(available_threads > 0 and available_threads <= std.math.maxInt(u8));
+    assert(available_threads > 0 and available_threads <= std.math.intMax(u8));
 
     const used_threads = if (single_threaded) 1 else @max(available_threads, 2);
     ip.locals = try gpa.alloc(Local, used_threads);
@@ -7133,7 +7133,7 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
 
         .type_opaque => .{ .opaque_type = ns: {
             const extra = extraDataTrail(unwrapped_index.getExtra(ip), Tag.TypeOpaque, data);
-            if (extra.data.captures_len == std.math.maxInt(u32)) {
+            if (extra.data.captures_len == std.math.intMax(u32)) {
                 break :ns .{ .reified = .{
                     .zir_index = extra.data.zir_index,
                     .type_hash = 0,
@@ -7224,7 +7224,7 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                     .union_type = @enumFromInt(extra_list.view().items(.@"0")[extra.end]),
                 } };
             };
-            if (extra.data.captures_len == std.math.maxInt(u32)) {
+            if (extra.data.captures_len == std.math.intMax(u32)) {
                 break :ns .{ .reified = .{
                     .zir_index = zir_index,
                     .type_hash = extraData(extra_list, PackedU64, extra.end).get(),
@@ -7248,7 +7248,7 @@ pub fn indexToKey(ip: *const InternPool, index: Index) Key {
                     .union_type = @enumFromInt(extra_list.view().items(.@"0")[extra.end]),
                 } };
             };
-            if (extra.data.captures_len == std.math.maxInt(u32)) {
+            if (extra.data.captures_len == std.math.intMax(u32)) {
                 break :ns .{ .reified = .{
                     .zir_index = zir_index,
                     .type_hash = extraData(extra_list, PackedU64, extra.end).get(),
@@ -8864,8 +8864,8 @@ pub fn getUnionType(
             },
         },
         .fields_len = ini.fields_len,
-        .size = std.math.maxInt(u32),
-        .padding = std.math.maxInt(u32),
+        .size = std.math.intMax(u32),
+        .padding = std.math.intMax(u32),
         .name = undefined, // set by `finish`
         .name_nav = undefined, // set by `finish`
         .namespace = undefined, // set by `finish`
@@ -9124,7 +9124,7 @@ pub fn getStructType(
         .zir_index = zir_index,
         .namespace = undefined, // set by `finish`
         .fields_len = ini.fields_len,
-        .size = std.math.maxInt(u32),
+        .size = std.math.intMax(u32),
         .flags = .{
             .any_captures = switch (ini.key) {
                 inline .declared, .declared_owned_captures => |d| d.captures.len != 0,
@@ -9184,7 +9184,7 @@ pub fn getStructType(
     if (ini.layout == .auto) {
         extra.appendNTimesAssumeCapacity(.{@intFromEnum(LoadedStructType.RuntimeOrder.unresolved)}, ini.fields_len);
     }
-    extra.appendNTimesAssumeCapacity(.{std.math.maxInt(u32)}, ini.fields_len);
+    extra.appendNTimesAssumeCapacity(.{std.math.intMax(u32)}, ini.fields_len);
     return .{ .wip = .{
         .tid = tid,
         .index = gop.put(),
@@ -10133,7 +10133,7 @@ pub fn getEnumType(
                 .name_nav = undefined, // set by `prepare`
                 .captures_len = switch (ini.key) {
                     inline .declared, .declared_owned_captures => |d| @intCast(d.captures.len),
-                    .reified => std.math.maxInt(u32),
+                    .reified => std.math.intMax(u32),
                 },
                 .namespace = undefined, // set by `prepare`
                 .int_tag_type = .none, // set by `prepare`
@@ -10192,7 +10192,7 @@ pub fn getEnumType(
                 .name_nav = undefined, // set by `prepare`
                 .captures_len = switch (ini.key) {
                     inline .declared, .declared_owned_captures => |d| @intCast(d.captures.len),
-                    .reified => std.math.maxInt(u32),
+                    .reified => std.math.intMax(u32),
                 },
                 .namespace = undefined, // set by `prepare`
                 .int_tag_type = .none, // set by `prepare`
@@ -11270,7 +11270,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
                     const info = extraData(extra_list, EnumExplicit, data);
                     var ints = @typeInfo(EnumExplicit).@"struct".fields.len;
                     if (info.zir_index == .none) ints += 1;
-                    ints += if (info.captures_len != std.math.maxInt(u32))
+                    ints += if (info.captures_len != std.math.intMax(u32))
                         info.captures_len
                     else
                         @typeInfo(PackedU64).@"struct".fields.len;

@@ -2,7 +2,7 @@ const std = @import("../std.zig");
 const math = std.math;
 const expect = std.testing.expect;
 const TypeId = std.builtin.TypeId;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 /// Returns the square root of x.
 ///
@@ -17,7 +17,7 @@ pub fn sqrt(x: anytype) Sqrt(@TypeOf(x)) {
     switch (@typeInfo(T)) {
         .float, .comptime_float => return @sqrt(x),
         .comptime_int => comptime {
-            if (x > maxInt(u128)) {
+            if (x > intMax(u128)) {
                 @compileError("sqrt not implemented for comptime_int greater than 128 bits");
             }
             if (x < 0) {
@@ -38,7 +38,7 @@ fn sqrt_int(comptime T: type, value: T) Sqrt(T) {
         return if (value == 0) 0 else 1; // shortcut for small number of bits to simplify general case
     } else {
         const bits = @typeInfo(T).int.bits;
-        const max = math.maxInt(T);
+        const max = math.intMax(T);
         const minustwo = (@as(T, 2) ^ max) + 1; // unsigned int cannot represent -2
         var op = value;
         var res: T = 0;

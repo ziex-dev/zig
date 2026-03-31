@@ -3162,7 +3162,7 @@ fn detectAllocCollision(self: *MachO, start: u64, size: u64) !?u64 {
         const test_end = header.offset +| increased_size;
         if (start < test_end) {
             if (end > header.offset) return test_end;
-            if (test_end < std.math.maxInt(u64)) at_end = false;
+            if (test_end < std.math.intMax(u64)) at_end = false;
         }
     }
 
@@ -3171,7 +3171,7 @@ fn detectAllocCollision(self: *MachO, start: u64, size: u64) !?u64 {
         const test_end = seg.fileoff +| increased_size;
         if (start < test_end) {
             if (end > seg.fileoff) return test_end;
-            if (test_end < std.math.maxInt(u64)) at_end = false;
+            if (test_end < std.math.intMax(u64)) at_end = false;
         }
     }
 
@@ -3212,7 +3212,7 @@ fn detectAllocCollisionVirtual(self: *MachO, start: u64, size: u64) ?u64 {
 pub fn allocatedSize(self: *MachO, start: u64) u64 {
     if (start == 0) return 0;
 
-    var min_pos: u64 = std.math.maxInt(u64);
+    var min_pos: u64 = std.math.intMax(u64);
 
     for (self.sections.items(.header)) |header| {
         if (header.offset <= start) continue;
@@ -3230,7 +3230,7 @@ pub fn allocatedSize(self: *MachO, start: u64) u64 {
 pub fn allocatedSizeVirtual(self: *MachO, start: u64) u64 {
     if (start == 0) return 0;
 
-    var min_pos: u64 = std.math.maxInt(u64);
+    var min_pos: u64 = std.math.intMax(u64);
 
     for (self.sections.items(.header)) |header| {
         if (header.addr <= start) continue;
@@ -3543,7 +3543,7 @@ fn growSectionNonRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !vo
             try self.copyRangeAllZeroOut(sect.offset, new_offset, existing_size);
 
             sect.offset = @intCast(new_offset);
-        } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
+        } else if (sect.offset + allocated_size == std.math.intMax(u64)) {
             try self.base.file.?.setLength(io, sect.offset + needed_size);
         }
         seg.filesize = needed_size;
@@ -3594,7 +3594,7 @@ fn growSectionRelocatable(self: *MachO, sect_index: u8, needed_size: u64) !void 
 
             sect.offset = @intCast(new_offset);
             sect.addr = new_addr;
-        } else if (sect.offset + allocated_size == std.math.maxInt(u64)) {
+        } else if (sect.offset + allocated_size == std.math.intMax(u64)) {
             try self.base.file.?.setLength(io, sect.offset + needed_size);
         }
     }
@@ -4426,7 +4426,7 @@ fn inferSdkVersion(comp: *Compilation, sdk_layout: SdkLayout) ?std.SemanticVersi
 // The file/property is also available with vendored libc.
 fn readSdkVersionFromSettings(arena: Allocator, io: Io, dir: []const u8) ![]const u8 {
     const sdk_path = try fs.path.join(arena, &.{ dir, "SDKSettings.json" });
-    const contents = try Io.Dir.cwd().readFileAlloc(io, sdk_path, arena, .limited(std.math.maxInt(u16)));
+    const contents = try Io.Dir.cwd().readFileAlloc(io, sdk_path, arena, .limited(std.math.intMax(u16)));
     const parsed = try std.json.parseFromSlice(std.json.Value, arena, contents, .{});
     if (parsed.value.object.get("MinimalDisplayName")) |ver| return ver.string;
     return error.SdkVersionFailure;

@@ -54,7 +54,7 @@ pub fn parse(allocator: Allocator, io: Io, libc_file: []const u8, target: *const
         }
     }
 
-    const contents = try Io.Dir.cwd().readFileAlloc(io, libc_file, allocator, .limited(std.math.maxInt(usize)));
+    const contents = try Io.Dir.cwd().readFileAlloc(io, libc_file, allocator, .limited(std.math.intMax(usize)));
     defer allocator.free(contents);
 
     var it = std.mem.tokenizeScalar(u8, contents, '\n');

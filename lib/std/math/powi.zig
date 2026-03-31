@@ -31,7 +31,7 @@ pub fn powi(comptime T: type, x: T, y: T) (error{
     const bit_size = @typeInfo(T).int.bits;
 
     // `y & 1 == 0` won't compile when `does_one_overflow`.
-    const does_one_overflow = math.maxInt(T) < 1;
+    const does_one_overflow = math.intMax(T) < 1;
     const is_y_even = !does_one_overflow and y & 1 == 0;
 
     if (x == 1 or y == 0 or (x == -1 and is_y_even)) {
@@ -128,11 +128,11 @@ test powi {
     try testing.expectError(error.Overflow, powi(u17, 2723, 16));
     try testing.expectError(error.Overflow, powi(u42, 8234, 41));
 
-    const minInt = std.math.minInt;
-    try testing.expect((try powi(i8, -2, 7)) == minInt(i8));
-    try testing.expect((try powi(i16, -2, 15)) == minInt(i16));
-    try testing.expect((try powi(i32, -2, 31)) == minInt(i32));
-    try testing.expect((try powi(i64, -2, 63)) == minInt(i64));
+    const intMin = std.math.intMin;
+    try testing.expect((try powi(i8, -2, 7)) == intMin(i8));
+    try testing.expect((try powi(i16, -2, 15)) == intMin(i16));
+    try testing.expect((try powi(i32, -2, 31)) == intMin(i32));
+    try testing.expect((try powi(i64, -2, 63)) == intMin(i64));
 
     try testing.expectError(error.Underflow, powi(i8, 6, -2));
     try testing.expectError(error.Underflow, powi(i16, 5, -4));

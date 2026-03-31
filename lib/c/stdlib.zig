@@ -100,9 +100,9 @@ fn asciiToInteger(comptime T: type, buf: [*:0]const u8) T {
 
     // The behaviour *is* undefined if the result cannot be represented
     // but as they are usually called with untrusted input we can just handle overflow gracefully.
-    if (current[0] == '-') return parseDigitsWithSignGenericCharacter(T, u8, current + 1, null, 10, .neg) catch std.math.minInt(T);
+    if (current[0] == '-') return parseDigitsWithSignGenericCharacter(T, u8, current + 1, null, 10, .neg) catch std.math.intMin(T);
     if (current[0] == '+') current += 1;
-    return parseDigitsWithSignGenericCharacter(T, u8, current, null, 10, .pos) catch std.math.maxInt(T);
+    return parseDigitsWithSignGenericCharacter(T, u8, current, null, 10, .pos) catch std.math.intMax(T);
 }
 
 fn strtol(noalias str: [*:0]const c_char, noalias str_end: ?*[*:0]const c_char, base: c_int) callconv(.c) c_long {
@@ -182,7 +182,7 @@ fn stringToInteger(comptime T: type, noalias buf: [*:0]const u8, noalias maybe_e
     if (@typeInfo(T).int.signedness == .unsigned) {
         const result = parseDigitsWithSignGenericCharacter(T, u8, current, maybe_end, real_base, .pos) catch {
             std.c._errno().* = @intFromEnum(std.c.E.RANGE);
-            return std.math.maxInt(T);
+            return std.math.intMax(T);
         };
 
         return if (negative) -%result else result;
@@ -190,12 +190,12 @@ fn stringToInteger(comptime T: type, noalias buf: [*:0]const u8, noalias maybe_e
 
     if (negative) return parseDigitsWithSignGenericCharacter(T, u8, current, maybe_end, real_base, .neg) catch blk: {
         std.c._errno().* = @intFromEnum(std.c.E.RANGE);
-        break :blk std.math.minInt(T);
+        break :blk std.math.intMin(T);
     };
 
     return parseDigitsWithSignGenericCharacter(T, u8, current, maybe_end, real_base, .pos) catch blk: {
         std.c._errno().* = @intFromEnum(std.c.E.RANGE);
-        break :blk std.math.maxInt(T);
+        break :blk std.math.intMax(T);
     };
 }
 
@@ -336,8 +336,8 @@ test atoi {
     try std.testing.expectEqual(0, atoi(@ptrCast("0xAA")));
     try std.testing.expectEqual(700, atoi(@ptrCast("700B")));
     try std.testing.expectEqual(32453, atoi(@ptrCast("+32453more")));
-    try std.testing.expectEqual(std.math.maxInt(c_int), atoi(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.maxInt(c_int)}))));
-    try std.testing.expectEqual(std.math.minInt(c_int), atoi(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.minInt(c_int)}))));
+    try std.testing.expectEqual(std.math.intMax(c_int), atoi(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.intMax(c_int)}))));
+    try std.testing.expectEqual(std.math.intMin(c_int), atoi(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.intMin(c_int)}))));
 }
 
 test atol {
@@ -351,8 +351,8 @@ test atol {
     try std.testing.expectEqual(0, atol(@ptrCast("0xAA")));
     try std.testing.expectEqual(700, atol(@ptrCast("700B")));
     try std.testing.expectEqual(32453, atol(@ptrCast("+32453more")));
-    try std.testing.expectEqual(std.math.maxInt(c_long), atol(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.maxInt(c_long)}))));
-    try std.testing.expectEqual(std.math.minInt(c_long), atol(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.minInt(c_long)}))));
+    try std.testing.expectEqual(std.math.intMax(c_long), atol(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.intMax(c_long)}))));
+    try std.testing.expectEqual(std.math.intMin(c_long), atol(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.intMin(c_long)}))));
 }
 
 test atoll {
@@ -366,8 +366,8 @@ test atoll {
     try std.testing.expectEqual(0, atoll(@ptrCast("0xAA")));
     try std.testing.expectEqual(700, atoll(@ptrCast("700B")));
     try std.testing.expectEqual(32453, atoll(@ptrCast("   +32453more")));
-    try std.testing.expectEqual(std.math.maxInt(c_longlong), atoll(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.maxInt(c_longlong)}))));
-    try std.testing.expectEqual(std.math.minInt(c_longlong), atoll(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.minInt(c_longlong)}))));
+    try std.testing.expectEqual(std.math.intMax(c_longlong), atoll(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.intMax(c_longlong)}))));
+    try std.testing.expectEqual(std.math.intMin(c_longlong), atoll(@ptrCast(std.fmt.comptimePrint("{d}", .{std.math.intMin(c_longlong)}))));
 }
 
 // FIXME: We cannot test strtol, strtoll, strtoul, etc.. here as it must modify errno and libc is not linked in tests

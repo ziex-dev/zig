@@ -1304,40 +1304,40 @@ test "large enum field values" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     {
-        const E = enum(u64) { min = std.math.minInt(u64), max = std.math.maxInt(u64) };
+        const E = enum(u64) { min = std.math.intMin(u64), max = std.math.intMax(u64) };
         var e: E = .min;
         try expect(e == .min);
-        try expect(@intFromEnum(e) == std.math.minInt(u64));
+        try expect(@intFromEnum(e) == std.math.intMin(u64));
         e = .max;
         try expect(e == .max);
-        try expect(@intFromEnum(e) == std.math.maxInt(u64));
+        try expect(@intFromEnum(e) == std.math.intMax(u64));
     }
     {
-        const E = enum(i64) { min = std.math.minInt(i64), max = std.math.maxInt(i64) };
+        const E = enum(i64) { min = std.math.intMin(i64), max = std.math.intMax(i64) };
         var e: E = .min;
         try expect(e == .min);
-        try expect(@intFromEnum(e) == std.math.minInt(i64));
+        try expect(@intFromEnum(e) == std.math.intMin(i64));
         e = .max;
         try expect(e == .max);
-        try expect(@intFromEnum(e) == std.math.maxInt(i64));
+        try expect(@intFromEnum(e) == std.math.intMax(i64));
     }
     {
-        const E = enum(u128) { min = std.math.minInt(u128), max = std.math.maxInt(u128) };
+        const E = enum(u128) { min = std.math.intMin(u128), max = std.math.intMax(u128) };
         var e: E = .min;
         try expect(e == .min);
-        try expect(@intFromEnum(e) == std.math.minInt(u128));
+        try expect(@intFromEnum(e) == std.math.intMin(u128));
         e = .max;
         try expect(e == .max);
-        try expect(@intFromEnum(e) == std.math.maxInt(u128));
+        try expect(@intFromEnum(e) == std.math.intMax(u128));
     }
     {
-        const E = enum(i128) { min = std.math.minInt(i128), max = std.math.maxInt(i128) };
+        const E = enum(i128) { min = std.math.intMin(i128), max = std.math.intMax(i128) };
         var e: E = .min;
         try expect(e == .min);
-        try expect(@intFromEnum(e) == std.math.minInt(i128));
+        try expect(@intFromEnum(e) == std.math.intMin(i128));
         e = .max;
         try expect(e == .max);
-        try expect(@intFromEnum(e) == std.math.maxInt(i128));
+        try expect(@intFromEnum(e) == std.math.intMax(i128));
     }
 }
 

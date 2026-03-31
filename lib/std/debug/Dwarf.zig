@@ -19,7 +19,7 @@ const RLE = DW.RLE;
 const UT = DW.UT;
 const assert = std.debug.assert;
 const cast = std.math.cast;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const ArrayList = std.ArrayList;
 const Endian = std.builtin.Endian;
 const Reader = std.Io.Reader;
@@ -143,7 +143,7 @@ pub const CompileUnit = struct {
             pub const invalid: LineEntry = .{
                 .line = undefined,
                 .column = undefined,
-                .file = std.math.maxInt(u32),
+                .file = std.math.intMax(u32),
             };
 
             pub fn isInvalid(le: LineEntry) bool {
@@ -1384,8 +1384,8 @@ const LineNumberProgram = struct {
         }
         if (debug_debug_mode) assert(!table.contains(prog.address));
         try table.put(gpa, prog.address, .{
-            .line = cast(u32, prog.line) orelse maxInt(u32),
-            .column = cast(u32, prog.column) orelse maxInt(u32),
+            .line = cast(u32, prog.line) orelse intMax(u32),
+            .column = cast(u32, prog.column) orelse intMax(u32),
             .file = cast(u32, prog.file) orelse return bad(),
         });
     }

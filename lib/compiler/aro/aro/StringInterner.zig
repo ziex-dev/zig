@@ -5,7 +5,7 @@ const Compilation = @import("Compilation.zig");
 const StringInterner = @This();
 
 pub const StringId = enum(u32) {
-    empty = std.math.maxInt(u32),
+    empty = std.math.intMax(u32),
     _,
 
     pub fn lookup(id: StringId, comp: *const Compilation) []const u8 {

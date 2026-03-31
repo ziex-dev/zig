@@ -527,7 +527,7 @@ pub fn main(init: process.Init.Minimal) !void {
     }
 
     if (run.available_rss == 0) {
-        run.available_rss = process.totalSystemMemory() catch std.math.maxInt(u64);
+        run.available_rss = process.totalSystemMemory() catch std.math.intMax(u64);
         run.max_rss_is_default = true;
     }
 

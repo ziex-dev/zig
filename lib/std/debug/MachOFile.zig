@@ -307,7 +307,7 @@ const Symbol = struct {
     addr: u64,
     /// Value may be `unknown_ofile`.
     ofile: u32,
-    const unknown_ofile = std.math.maxInt(u32);
+    const unknown_ofile = std.math.intMax(u32);
     fn addressLessThan(context: void, lhs: Symbol, rhs: Symbol) bool {
         _ = context;
         return lhs.addr < rhs.addr;

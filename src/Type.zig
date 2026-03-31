@@ -3001,7 +3001,7 @@ pub fn minIntScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
     if (info.signedness == .unsigned or info.bits == 0) return pt.intValue(dest_ty, 0);
 
     if (std.math.cast(u6, info.bits - 1)) |shift| {
-        const n = @as(i64, std.math.minInt(i64)) >> (63 - shift);
+        const n = @as(i64, std.math.intMin(i64)) >> (63 - shift);
         return pt.intValue(dest_ty, n);
     }
 
@@ -3036,11 +3036,11 @@ pub fn maxIntScalar(ty: Type, pt: Zcu.PerThread, dest_ty: Type) !Value {
 
     if (std.math.cast(u6, info.bits - 1)) |shift| switch (info.signedness) {
         .signed => {
-            const n = @as(i64, std.math.maxInt(i64)) >> (63 - shift);
+            const n = @as(i64, std.math.intMax(i64)) >> (63 - shift);
             return pt.intValue(dest_ty, n);
         },
         .unsigned => {
-            const n = @as(u64, std.math.maxInt(u64)) >> (63 - shift);
+            const n = @as(u64, std.math.intMax(u64)) >> (63 - shift);
             return pt.intValue(dest_ty, n);
         },
     };

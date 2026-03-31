@@ -5,7 +5,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualSlices = std.testing.expectEqualSlices;
 const mem = std.mem;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const native_endian = builtin.target.cpu.arch.endian();
 
 test "int to ptr cast" {
@@ -172,17 +172,17 @@ test "type coercion from int to float" {
         // Exhaustively check that all possible values of the integer type can
         // safely be coerced to the float type.
         fn allValues(Float: type, Int: type) !void {
-            var int: Int = std.math.minInt(Int);
-            while (int < std.math.maxInt(Int)) : (int += 1)
+            var int: Int = std.math.intMin(Int);
+            while (int < std.math.intMax(Int)) : (int += 1)
                 try value(Float, int);
         }
 
         // Check that the min and max values of the integer type can safely be
         // coerced to the float type.
         fn edgeValues(Float: type, Int: type) !void {
-            var int: Int = std.math.minInt(Int);
+            var int: Int = std.math.intMin(Int);
             try value(Float, int);
-            int = std.math.maxInt(Int);
+            int = std.math.intMax(Int);
             try value(Float, int);
         }
     };
@@ -1348,7 +1348,7 @@ test "compile time int to ptr of function" {
 }
 
 // On some architectures function pointers must be aligned.
-const hardcoded_fn_addr = maxInt(usize) & ~@as(usize, 0xf);
+const hardcoded_fn_addr = intMax(usize) & ~@as(usize, 0xf);
 pub const FUNCTION_CONSTANT = @as(PFN_void, @ptrFromInt(hardcoded_fn_addr));
 pub const PFN_void = *const fn (*anyopaque) callconv(.c) void;
 

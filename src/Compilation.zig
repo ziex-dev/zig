@@ -2154,7 +2154,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             }
         }
 
-        const error_limit = options.error_limit orelse (std.math.maxInt(u16) - 1);
+        const error_limit = options.error_limit orelse (std.math.intMax(u16) - 1);
 
         // We put everything into the cache hash that *cannot be modified
         // during an incremental update*. For example, one cannot change the
@@ -6486,7 +6486,7 @@ fn updateCObject(comp: *Compilation, c_object: *CObject, c_obj_prog_node: std.Pr
                 });
 
                 var stderr_reader = child.stderr.?.readerStreaming(io, &.{});
-                const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
+                const stderr = try stderr_reader.interface.allocRemaining(arena, .limited(std.math.intMax(u32)));
 
                 const term = child.wait(io) catch |err|
                     return comp.failCObj(c_object, "failed to spawn zig clang {s}: {t}", .{ argv.items[0], err });

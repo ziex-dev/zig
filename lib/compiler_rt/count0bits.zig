@@ -171,7 +171,7 @@ inline fn ctzXi2(comptime T: type, a: T) i32 {
     };
     var n: T = 1;
     // Number of trailing zeroes as binary search, from Hacker's Delight
-    var mask: @TypeOf(x) = std.math.maxInt(@TypeOf(x));
+    var mask: @TypeOf(x) = std.math.intMax(@TypeOf(x));
     comptime var shift = @bitSizeOf(T);
     if (x == 0) return shift;
     inline while (shift > 1) {
@@ -201,7 +201,7 @@ inline fn ffsXi2(comptime T: type, a: T) i32 {
     var x: std.meta.Int(.unsigned, @typeInfo(T).int.bits) = @bitCast(a);
     var n: T = 1;
     // adapted from Number of trailing zeroes (see ctzXi2)
-    var mask: @TypeOf(x) = std.math.maxInt(@TypeOf(x));
+    var mask: @TypeOf(x) = std.math.intMax(@TypeOf(x));
     comptime var shift = @bitSizeOf(T);
     // In contrast to ctz return 0
     if (x == 0) return 0;

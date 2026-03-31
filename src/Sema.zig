@@ -139,7 +139,7 @@ branch_hint: ?std.builtin.BranchHint = null,
 
 const RuntimeIndex = enum(u32) {
     zero = 0,
-    comptime_field_ptr = std.math.maxInt(u32),
+    comptime_field_ptr = std.math.intMax(u32),
     _,
 
     pub fn increment(ri: *RuntimeIndex) void {
@@ -34283,7 +34283,7 @@ pub fn resolveStructLayout(sema: *Sema, ty: Type) SemaError!void {
         const msg = try sema.errMsg(
             ty.srcLoc(zcu),
             "struct layout requires size {d}, this compiler implementation supports up to {d}",
-            .{ big_align.forward(offset), std.math.maxInt(u32) },
+            .{ big_align.forward(offset), std.math.intMax(u32) },
         );
         return sema.failWithOwnedErrorMsg(null, msg);
     };
@@ -34369,7 +34369,7 @@ fn backingIntType(
         try sema.checkBackingIntType(&block, backing_int_src, backing_int_ty, fields_bit_sum);
         struct_type.setBackingIntType(ip, io, backing_int_ty.toIntern());
     } else {
-        if (fields_bit_sum > std.math.maxInt(u16)) {
+        if (fields_bit_sum > std.math.intMax(u16)) {
             return sema.fail(&block, block.nodeOffset(.zero), "size of packed struct '{d}' exceeds maximum bit width of 65535", .{fields_bit_sum});
         }
         const backing_int_ty = try pt.intType(.unsigned, @intCast(fields_bit_sum));
@@ -34584,7 +34584,7 @@ pub fn resolveUnionLayout(sema: *Sema, ty: Type) SemaError!void {
         const msg = try sema.errMsg(
             ty.srcLoc(pt.zcu),
             "union layout requires size {d}, this compiler implementation supports up to {d}",
-            .{ size, std.math.maxInt(u32) },
+            .{ size, std.math.intMax(u32) },
         );
         return sema.failWithOwnedErrorMsg(null, msg);
     };
@@ -35453,7 +35453,7 @@ fn unionFields(
         try field_aligns.ensureTotalCapacityPrecise(sema.arena, fields_len);
 
     var max_bits: u64 = 0;
-    var min_bits: u64 = std.math.maxInt(u64);
+    var min_bits: u64 = std.math.intMax(u64);
     var max_bits_src: LazySrcLoc = undefined;
     var min_bits_src: LazySrcLoc = undefined;
     var max_bits_ty: Type = undefined;

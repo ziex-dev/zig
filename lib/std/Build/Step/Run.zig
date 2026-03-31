@@ -1755,7 +1755,7 @@ fn evalZigTest(
 
                 // Report an error if the child terminated uncleanly or if we were still trying to run more tests.
                 run.step.result_stderr = stderr_owned;
-                const tests_done = test_metadata != null and test_metadata.?.next_index == std.math.maxInt(u32);
+                const tests_done = test_metadata != null and test_metadata.?.next_index == std.math.intMax(u32);
                 if (!tests_done or !termMatches(.{ .exited = 0 }, term)) {
                     // The individual unit test results are irrelevant: the test runner itself broke!
                     // Fail immediately without populating `s.test_results`.
@@ -1973,7 +1973,7 @@ fn waitZigTest(
                     .next_index = 0,
                     .prog_node = options.progress_node,
                 };
-                @memset(opt_metadata.*.?.ns_per_test, std.math.maxInt(u64));
+                @memset(opt_metadata.*.?.ns_per_test, std.math.intMax(u64));
 
                 active_test_index = null;
                 last_update = .now(io, .awake);
@@ -2115,7 +2115,7 @@ fn requestNextTest(io: Io, in: Io.File, metadata: *TestMetadata, sub_prog_node: 
         try sendRunTestMessage(io, in, .run_test, i);
         return;
     } else {
-        metadata.next_index = std.math.maxInt(u32); // indicate that all tests are done
+        metadata.next_index = std.math.intMax(u32); // indicate that all tests are done
         try sendMessage(io, in, .exit);
     }
 }

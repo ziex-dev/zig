@@ -79,7 +79,7 @@ fn strncpy(noalias dst: [*]c_char, noalias src: [*:0]const c_char, max: usize) c
 }
 
 fn strcat(noalias dst: [*:0]c_char, noalias src: [*:0]const c_char) callconv(.c) [*:0]c_char {
-    return strncat(dst, src, std.math.maxInt(usize));
+    return strncat(dst, src, std.math.intMax(usize));
 }
 
 fn strncat(noalias dst: [*:0]c_char, noalias src: [*:0]const c_char, max: usize) callconv(.c) [*:0]c_char {
@@ -92,7 +92,7 @@ fn strncat(noalias dst: [*:0]c_char, noalias src: [*:0]const c_char, max: usize)
 }
 
 fn strcmp(a: [*:0]const c_char, b: [*:0]const c_char) callconv(.c) c_int {
-    return strncmp(a, b, std.math.maxInt(usize));
+    return strncmp(a, b, std.math.intMax(usize));
 }
 
 fn strncmp(a: [*:0]const c_char, b: [*:0]const c_char, max: usize) callconv(.c) c_int {

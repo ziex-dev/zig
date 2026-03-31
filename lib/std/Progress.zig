@@ -203,7 +203,7 @@ pub const Node = struct {
 
         /// Not thread-safe.
         fn getIpcIndex(s: Storage) ?Ipc.Index {
-            return if (s.estimated_total_count == std.math.maxInt(u32)) @bitCast(s.completed_count) else null;
+            return if (s.estimated_total_count == std.math.intMax(u32)) @bitCast(s.completed_count) else null;
         }
 
         /// Thread-safe.
@@ -212,7 +212,7 @@ pub const Node = struct {
             // causes `completed_count` to be treated as a file descriptor, so
             // the order here matters.
             @atomicStore(u32, &s.completed_count, @bitCast(ipc_index), .monotonic);
-            @atomicStore(u32, &s.estimated_total_count, std.math.maxInt(u32), .release); // synchronizes with acquire in `serialize`
+            @atomicStore(u32, &s.estimated_total_count, std.math.intMax(u32), .release); // synchronizes with acquire in `serialize`
         }
 
         /// Not thread-safe.
@@ -236,9 +236,9 @@ pub const Node = struct {
 
     const Parent = enum(u8) {
         /// Unallocated storage.
-        unused = std.math.maxInt(u8) - 1,
+        unused = std.math.intMax(u8) - 1,
         /// Indicates root node.
-        none = std.math.maxInt(u8),
+        none = std.math.intMax(u8),
         /// Index into `node_storage`.
         _,
 
@@ -251,7 +251,7 @@ pub const Node = struct {
     };
 
     pub const OptionalIndex = enum(u8) {
-        none = std.math.maxInt(u8),
+        none = std.math.intMax(u8),
         /// Index into `node_storage`.
         _,
 
@@ -372,7 +372,7 @@ pub const Node = struct {
         const index = n.index.unwrap() orelse return;
         const storage = storageByIndex(index);
         // Avoid u32 max int which is used to indicate a special state.
-        const saturated_total_count = @min(std.math.maxInt(u32) - 1, count);
+        const saturated_total_count = @min(std.math.intMax(u32) - 1, count);
         @atomicStore(u32, &storage.estimated_total_count, saturated_total_count, .monotonic);
     }
 
@@ -381,7 +381,7 @@ pub const Node = struct {
         const index = n.index.unwrap() orelse return;
         const storage = storageByIndex(index);
         // Avoid u32 max int which is used to indicate a special state.
-        const saturated_total_count = @min(std.math.maxInt(u32) - 1, count);
+        const saturated_total_count = @min(std.math.intMax(u32) - 1, count);
         _ = @atomicRmw(u32, &storage.estimated_total_count, .Add, saturated_total_count, .monotonic);
     }
 
@@ -404,7 +404,7 @@ pub const Node = struct {
                     Ipc,
                     &global_progress.ipc[ipc_index.slot],
                     .And,
-                    .{ .locked = true, .valid = false, .generation = std.math.maxInt(Ipc.Generation) },
+                    .{ .locked = true, .valid = false, .generation = std.math.intMax(Ipc.Generation) },
                     .release,
                 );
                 assert(ipc.valid and ipc.generation == ipc_index.generation);
@@ -471,7 +471,7 @@ pub const Node = struct {
     /// Not thread-safe.
     pub fn takeIpcIndex(node: Node) ?Ipc.Index {
         const storage = storageByIndex(node.index.unwrap() orelse return null);
-        assert(storage.estimated_total_count == std.math.maxInt(u32));
+        assert(storage.estimated_total_count == std.math.intMax(u32));
         @atomicStore(u32, &storage.estimated_total_count, 0, .monotonic);
         return @bitCast(storage.completed_count);
     }
@@ -494,7 +494,7 @@ pub const Node = struct {
         const storage = storageByIndex(free_index);
         @atomicStore(u32, &storage.completed_count, 0, .monotonic);
         // Avoid u32 max int which is used to indicate a special state.
-        const saturated_total_count = @min(std.math.maxInt(u32) - 1, estimated_total_items);
+        const saturated_total_count = @min(std.math.intMax(u32) - 1, estimated_total_items);
         @atomicStore(u32, &storage.estimated_total_count, saturated_total_count, .monotonic);
         const name_len = @min(max_name_len, name.len);
         copyAtomicStore(storage.name[0..name_len], name[0..name_len]);
@@ -1098,7 +1098,7 @@ fn serialize(io: Io, serialized_buffer: *Serialized.Buffer) !Serialized {
                             .{
                                 .locked = false,
                                 .valid = true,
-                                .generation = std.math.maxInt(Ipc.Generation),
+                                .generation = std.math.intMax(Ipc.Generation),
                             },
                             .release,
                         );

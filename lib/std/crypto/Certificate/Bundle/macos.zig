@@ -18,7 +18,7 @@ pub fn rescanMac(cb: *Bundle, gpa: Allocator, io: Io, now: Io.Timestamp) RescanM
     };
 
     for (keychain_paths) |keychain_path| {
-        const bytes = Io.Dir.cwd().readFileAlloc(io, keychain_path, gpa, .limited(std.math.maxInt(u32))) catch |err| switch (err) {
+        const bytes = Io.Dir.cwd().readFileAlloc(io, keychain_path, gpa, .limited(std.math.intMax(u32))) catch |err| switch (err) {
             error.StreamTooLong => return error.FileTooBig,
             else => |e| return e,
         };

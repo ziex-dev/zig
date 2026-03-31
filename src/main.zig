@@ -3419,7 +3419,7 @@ fn buildOutputType(
 
     const thread_limit = @min(
         @max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1),
-        std.math.maxInt(Zcu.PerThread.IdBacking),
+        std.math.intMax(Zcu.PerThread.IdBacking),
     );
     try setThreadLimit(arena, thread_limit);
 
@@ -5206,7 +5206,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
 
     const thread_limit = @min(
         @max(n_jobs orelse std.Thread.getCpuCount() catch 1, 1),
-        std.math.maxInt(Zcu.PerThread.IdBacking),
+        std.math.intMax(Zcu.PerThread.IdBacking),
     );
     try setThreadLimit(arena, thread_limit);
 
@@ -5692,7 +5692,7 @@ fn jitCmd(
 
     const thread_limit = @min(
         @max(std.Thread.getCpuCount() catch 1, 1),
-        std.math.maxInt(Zcu.PerThread.IdBacking),
+        std.math.intMax(Zcu.PerThread.IdBacking),
     );
     try setThreadLimit(arena, thread_limit);
 
@@ -5882,7 +5882,7 @@ fn jitCmdInner(
 
         if (options.capture) |ptr| {
             var stdout_reader = child.stdout.?.readerStreaming(io, &.{});
-            ptr.* = try stdout_reader.interface.allocRemaining(arena, .limited(std.math.maxInt(u32)));
+            ptr.* = try stdout_reader.interface.allocRemaining(arena, .limited(std.math.intMax(u32)));
         }
 
         break :t try child.wait(io);

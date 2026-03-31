@@ -101,11 +101,11 @@ pub const Tag = struct {
         var writer2: std.Io.Writer = .init(&buffer);
 
         switch (@intFromEnum(self.number)) {
-            0...std.math.maxInt(u5) => |n| {
+            0...std.math.intMax(u5) => |n| {
                 tag1.number = @intCast(n);
                 writer2.writeByte(@bitCast(tag1)) catch unreachable;
             },
-            std.math.maxInt(u5) + 1...std.math.maxInt(u7) => |n| {
+            std.math.intMax(u5) + 1...std.math.intMax(u7) => |n| {
                 tag1.number = 15;
                 const tag2 = NextTag{ .number = @intCast(n), .continues = false };
                 writer2.writeByte(@bitCast(tag1)) catch unreachable;
@@ -188,7 +188,7 @@ pub const Element = struct {
     /// Safely decode a DER/BER/CER element at `index`:
     /// - Ensures length uses shortest form
     /// - Ensures length is within `bytes`
-    /// - Ensures length is less than `std.math.maxInt(Index)`
+    /// - Ensures length is less than `std.math.intMax(Index)`
     pub fn decode(bytes: []const u8, index: Index) DecodeError!Element {
         var reader: std.Io.Reader = .fixed(bytes[index..]);
 
@@ -201,7 +201,7 @@ pub const Element = struct {
         if (size_or_len_size < 128) {
             if (end > bytes.len) return error.InvalidLength;
         } else {
-            // long form between 0 and std.math.maxInt(u1024)
+            // long form between 0 and std.math.intMax(u1024)
             const len_size: u7 = @truncate(size_or_len_size);
             start += len_size;
             if (len_size > @sizeOf(Index)) return error.InvalidLength;

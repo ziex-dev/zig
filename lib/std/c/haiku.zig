@@ -1,7 +1,7 @@
 const std = @import("../std.zig");
 const assert = std.debug.assert;
 const builtin = @import("builtin");
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const iovec = std.posix.iovec;
 const iovec_const = std.posix.iovec_const;
 const socklen_t = std.c.socklen_t;
@@ -115,7 +115,7 @@ pub const team_id = i32;
 pub const thread_id = i32;
 
 pub const E = enum(i32) {
-    pub const B_GENERAL_ERROR_BASE: i32 = std.math.minInt(i32);
+    pub const B_GENERAL_ERROR_BASE: i32 = std.math.intMin(i32);
     pub const B_OS_ERROR_BASE = B_GENERAL_ERROR_BASE + 0x1000;
     pub const B_APP_ERROR_BASE = B_GENERAL_ERROR_BASE + 0x2000;
     pub const B_INTERFACE_ERROR_BASE = B_GENERAL_ERROR_BASE + 0x3000;

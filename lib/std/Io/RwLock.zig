@@ -21,8 +21,8 @@ pub const init: RwLock = .{
 const is_writing: usize = 1;
 const writer: usize = 1 << 1;
 const reader: usize = 1 << (1 + @bitSizeOf(Count));
-const writer_mask: usize = std.math.maxInt(Count) << @ctz(writer);
-const reader_mask: usize = std.math.maxInt(Count) << @ctz(reader);
+const writer_mask: usize = std.math.intMax(Count) << @ctz(writer);
+const reader_mask: usize = std.math.intMax(Count) << @ctz(reader);
 const Count = @Int(.unsigned, @divFloor(@bitSizeOf(usize) - 1, 2));
 
 pub fn tryLock(rl: *RwLock, io: Io) bool {

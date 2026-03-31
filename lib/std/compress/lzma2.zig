@@ -121,7 +121,7 @@ pub const Decode = struct {
     pub fn decompress(d: *Decode, reader: *Reader, allocating: *Writer.Allocating) !u64 {
         const gpa = allocating.allocator;
 
-        var accum = AccumBuffer.init(std.math.maxInt(usize));
+        var accum = AccumBuffer.init(std.math.intMax(usize));
         defer accum.deinit(gpa);
 
         var n_read: u64 = 0;

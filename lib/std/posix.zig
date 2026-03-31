@@ -13,7 +13,7 @@ const native_os = builtin.os.tag;
 const std = @import("std.zig");
 const Io = std.Io;
 const mem = std.mem;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const cast = std.math.cast;
 const assert = std.debug.assert;
 const page_size_min = std.heap.page_size_min;
@@ -379,7 +379,7 @@ pub const ReadError = std.Io.File.Reader.Error;
 /// on both 64-bit and 32-bit systems. This is due to using a signed C int as the return value, as
 /// well as stuffing the errno codes into the last `4096` values. This is noted on the `read` man page.
 /// The limit on Darwin is `0x7fffffff`, trying to read more than that returns EINVAL.
-/// The corresponding POSIX limit is `maxInt(isize)`.
+/// The corresponding POSIX limit is `intMax(isize)`.
 pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
     if (buf.len == 0) return 0;
     if (native_os == .windows) @compileError("unsupported OS");
@@ -388,8 +388,8 @@ pub fn read(fd: fd_t, buf: []u8) ReadError!usize {
     // Prevents EINVAL.
     const max_count = switch (native_os) {
         .linux => 0x7ffff000,
-        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => maxInt(i32),
-        else => maxInt(isize),
+        .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => intMax(i32),
+        else => intMax(isize),
     };
     while (true) {
         const rc = system.read(fd, buf.ptr, @min(buf.len, max_count));

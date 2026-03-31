@@ -150,7 +150,7 @@ fn translate(d: *aro.Driver, tc: *aro.Toolchain, args: []const [:0]const u8, zig
         var discard_buf: [256]u8 = undefined;
         var discarding: std.Io.Writer.Discarding = .init(&discard_buf);
         assert(!try d.parseArgs(&discarding.writer, &macro_buf, aro_args.items));
-        if (macro_buf.items.len > std.math.maxInt(u32)) {
+        if (macro_buf.items.len > std.math.intMax(u32)) {
             return d.fatal("user provided macro source exceeded max size", .{});
         }
 

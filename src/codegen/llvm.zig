@@ -2818,7 +2818,7 @@ pub const Object = struct {
             for (0..cc_info.inreg_param_count) |param_idx| {
                 try attributes.addParamAttr(param_idx, .inreg, &o.builder);
             }
-            for (cc_info.inreg_param_count..std.math.maxInt(u2)) |param_idx| {
+            for (cc_info.inreg_param_count..std.math.intMax(u2)) |param_idx| {
                 _ = try attributes.removeParamAttr(param_idx, .inreg);
             }
 
@@ -13126,7 +13126,7 @@ fn minIntConst(b: *Builder, min_ty: Type, as_ty: Builder.Type, zcu: *const Zcu) 
         return b.intConst(as_ty, 0);
     }
     if (std.math.cast(u6, info.bits - 1)) |shift| {
-        const min_val: i64 = @as(i64, std.math.minInt(i64)) >> (63 - shift);
+        const min_val: i64 = @as(i64, std.math.intMin(i64)) >> (63 - shift);
         return b.intConst(as_ty, min_val);
     }
     var res: std.math.big.int.Managed = try .init(zcu.gpa);

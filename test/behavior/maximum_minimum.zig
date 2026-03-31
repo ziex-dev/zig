@@ -348,11 +348,11 @@ test "@min/@max with runtime signed and unsigned integers of same size" {
         }
     };
 
-    const min = S.min(std.math.minInt(i32), std.math.maxInt(u32));
-    try expect(min == std.math.minInt(i32));
+    const min = S.min(std.math.intMin(i32), std.math.intMax(u32));
+    try expect(min == std.math.intMin(i32));
 
-    const max = S.max(std.math.minInt(i32), std.math.maxInt(u32));
-    try expect(max == std.math.maxInt(u32));
+    const max = S.max(std.math.intMin(i32), std.math.intMax(u32));
+    try expect(max == std.math.intMax(u32));
 }
 
 test "@min/@max with runtime vectors of signed and unsigned integers of same size" {
@@ -371,9 +371,9 @@ test "@min/@max with runtime vectors of signed and unsigned integers of same siz
         }
     };
 
-    const a: @Vector(2, i32) = .{ std.math.minInt(i32), std.math.maxInt(i32) };
-    const b: @Vector(2, u32) = .{ std.math.maxInt(u32), std.math.minInt(u32) };
+    const a: @Vector(2, i32) = .{ std.math.intMin(i32), std.math.intMax(i32) };
+    const b: @Vector(2, u32) = .{ std.math.intMax(u32), std.math.intMin(u32) };
 
-    try expectEqual(@Vector(2, i32){ std.math.minInt(i32), std.math.minInt(u32) }, S.min(a, b));
-    try expectEqual(@Vector(2, u32){ std.math.maxInt(u32), std.math.maxInt(i32) }, S.max(a, b));
+    try expectEqual(@Vector(2, i32){ std.math.intMin(i32), std.math.intMin(u32) }, S.min(a, b));
+    try expectEqual(@Vector(2, u32){ std.math.intMax(u32), std.math.intMax(i32) }, S.max(a, b));
 }

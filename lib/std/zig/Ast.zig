@@ -37,7 +37,7 @@ pub const TokenIndex = u32;
 
 /// Index into `tokens`, or null.
 pub const OptionalTokenIndex = enum(u32) {
-    none = std.math.maxInt(u32),
+    none = std.math.intMax(u32),
     _,
 
     pub fn unwrap(oti: OptionalTokenIndex) ?TokenIndex {
@@ -77,7 +77,7 @@ pub const TokenOffset = enum(i32) {
 
 /// A relative token index, or null.
 pub const OptionalTokenOffset = enum(i32) {
-    none = std.math.maxInt(i32),
+    none = std.math.intMax(i32),
     _,
 
     pub fn unwrap(oto: OptionalTokenOffset) ?TokenOffset {
@@ -2938,7 +2938,7 @@ pub const Node = struct {
     /// Index into `nodes`, or null.
     pub const OptionalIndex = enum(u32) {
         root = 0,
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn unwrap(oi: OptionalIndex) ?Index {
@@ -2968,7 +2968,7 @@ pub const Node = struct {
 
     /// A relative node index, or null.
     pub const OptionalOffset = enum(i32) {
-        none = std.math.maxInt(i32),
+        none = std.math.intMax(i32),
         _,
 
         pub fn unwrap(oo: OptionalOffset) ?Offset {

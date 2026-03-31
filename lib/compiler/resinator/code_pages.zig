@@ -436,5 +436,5 @@ pub const Codepoint = struct {
     value: u21,
     byte_len: usize,
 
-    pub const invalid: u21 = std.math.maxInt(u21);
+    pub const invalid: u21 = std.math.intMax(u21);
 };

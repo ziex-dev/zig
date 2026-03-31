@@ -466,7 +466,7 @@ pub fn orderIgnoreCase(lhs: []const u8, rhs: []const u8) std.math.Order {
 
 /// Returns the lexicographical order of two many-item pointers with NUL-termination. O(n).
 pub fn orderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8) std.math.Order {
-    return boundedOrderIgnoreCaseZ(lhs, rhs, std.math.maxInt(usize));
+    return boundedOrderIgnoreCaseZ(lhs, rhs, std.math.intMax(usize));
 }
 
 test orderIgnoreCaseZ {

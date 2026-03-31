@@ -262,7 +262,7 @@ pub fn runTestResultMessage(msg_bytes: []u8) error{OutOfMemory}!void {
         const test_name = trailing[offset..][0..test_name_len];
         offset += test_name_len + 1;
         try table_html.print(gpa, "<tr><th scope=\"row\"><code>{f}</code></th>", .{fmtEscapeHtml(test_name)});
-        if (test_ns == std.math.maxInt(u64)) {
+        if (test_ns == std.math.intMax(u64)) {
             try table_html.appendSlice(gpa, "<td class=\"empty-cell\"></td>"); // didn't run
         } else {
             try table_html.print(gpa, "<td>{D}</td>", .{test_ns});

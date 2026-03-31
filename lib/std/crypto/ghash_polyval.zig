@@ -83,7 +83,7 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
 
         /// Initialize the GHASH state with a key.
         pub fn init(key: *const [key_length]u8) Self {
-            return Self.initForBlockCount(key, math.maxInt(usize));
+            return Self.initForBlockCount(key, math.intMax(usize));
         }
 
         const Selector = enum { lo, hi, hi_lo };

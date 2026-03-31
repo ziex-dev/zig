@@ -1040,7 +1040,7 @@ fn genHtml(
                 });
                 defer allocator.free(out_basename);
 
-                const contents = code_dir.readFileAlloc(io, out_basename, allocator, .limited(std.math.maxInt(u32))) catch |err| {
+                const contents = code_dir.readFileAlloc(io, out_basename, allocator, .limited(std.math.intMax(u32))) catch |err| {
                     return parseError(tokenizer, code.token, "unable to open '{s}': {t}", .{ out_basename, err });
                 };
                 defer allocator.free(contents);

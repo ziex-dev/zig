@@ -387,9 +387,9 @@ test "allow any sentinel" {
 
     const S = struct {
         fn doTheTest() !void {
-            var array = [_:std.math.minInt(i32)]i32{ 1, 2, 3, 4 };
-            const ptr: [*:std.math.minInt(i32)]i32 = &array;
-            try expect(ptr[4] == std.math.minInt(i32));
+            var array = [_:std.math.intMin(i32)]i32{ 1, 2, 3, 4 };
+            const ptr: [*:std.math.intMin(i32)]i32 = &array;
+            try expect(ptr[4] == std.math.intMin(i32));
         }
     };
     try S.doTheTest();

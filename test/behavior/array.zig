@@ -745,7 +745,7 @@ test "runtime side-effects in comptime-known array init" {
         },
     };
     try expectEqual([4]u4{ 1, 2, 4, 8 }, init);
-    try expectEqual(@as(u4, std.math.maxInt(u4)), side_effects);
+    try expectEqual(@as(u4, std.math.intMax(u4)), side_effects);
 }
 
 test "slice initialized through reference to anonymous array init provides result types" {

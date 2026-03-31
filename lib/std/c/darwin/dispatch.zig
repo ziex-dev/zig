@@ -72,7 +72,7 @@ pub const queue_priority_t = enum(c_long) {
     HIGH = 2,
     DEFAULT = 0,
     LOW = -1,
-    BACKGROUND = std.math.minInt(i16),
+    BACKGROUND = std.math.intMin(i16),
     _,
 };
 pub const get_global_queue = dispatch_get_global_queue;

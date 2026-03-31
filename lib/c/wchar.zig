@@ -77,7 +77,7 @@ fn wmemset(dest: [*]wchar_t, elem: wchar_t, len: usize) callconv(.c) [*]wchar_t 
 }
 
 fn wcslen(str: [*:0]const wchar_t) callconv(.c) usize {
-    return wcsnlen(str, std.math.maxInt(usize));
+    return wcsnlen(str, std.math.intMax(usize));
 }
 
 fn wcsnlen(str: [*:0]const wchar_t, max: usize) callconv(.c) usize {
@@ -85,7 +85,7 @@ fn wcsnlen(str: [*:0]const wchar_t, max: usize) callconv(.c) usize {
 }
 
 fn wcscmp(a: [*:0]const wchar_t, b: [*:0]const wchar_t) callconv(.c) c_int {
-    return wcsncmp(a, b, std.math.maxInt(usize));
+    return wcsncmp(a, b, std.math.intMax(usize));
 }
 
 fn wcsncmp(a: [*:0]const wchar_t, b: [*:0]const wchar_t, max: usize) callconv(.c) c_int {
@@ -121,7 +121,7 @@ fn wcsncpy(noalias dst: [*]wchar_t, noalias src: [*:0]const wchar_t, max: usize)
 }
 
 fn wcscat(noalias dst: [*:0]wchar_t, noalias src: [*:0]const wchar_t) callconv(.c) [*:0]wchar_t {
-    return wcsncat(dst, src, std.math.maxInt(usize));
+    return wcsncat(dst, src, std.math.intMax(usize));
 }
 
 fn wcsncat(noalias dst: [*:0]wchar_t, noalias src: [*:0]const wchar_t, max: usize) callconv(.c) [*:0]wchar_t {

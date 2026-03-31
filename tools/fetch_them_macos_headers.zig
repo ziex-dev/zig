@@ -87,7 +87,7 @@ pub fn main(init: std.process.Init) !void {
 
     var sdk_dir = try Dir.cwd().openDir(io, sysroot_path, .{});
     defer sdk_dir.close(io);
-    const sdk_info = try sdk_dir.readFileAlloc(io, "SDKSettings.json", arena, .limited(std.math.maxInt(u32)));
+    const sdk_info = try sdk_dir.readFileAlloc(io, "SDKSettings.json", arena, .limited(std.math.intMax(u32)));
 
     const parsed_json = try std.json.parseFromSlice(struct {
         DefaultProperties: struct { MACOSX_DEPLOYMENT_TARGET: []const u8 },

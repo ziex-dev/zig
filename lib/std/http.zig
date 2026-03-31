@@ -751,7 +751,7 @@ pub const BodyWriter = struct {
     const chunk_header_template = ("0" ** chunk_len_digits) ++ "\r\n";
 
     comptime {
-        assert(max_chunk_len == std.math.maxInt(u32));
+        assert(max_chunk_len == std.math.intMax(u32));
     }
 
     pub const State = union(enum) {

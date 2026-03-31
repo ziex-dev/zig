@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const OutputTooLongError = std.crypto.errors.OutputTooLongError;
 const WeakParametersError = std.crypto.errors.WeakParametersError;
 
@@ -38,7 +38,7 @@ const WeakParametersError = std.crypto.errors.WeakParametersError;
 ///
 /// dk: Slice of appropriate size for generated key. Generally 16 or 32 bytes in length.
 ///             May be uninitialized. All bytes will be overwritten.
-///             Maximum size is `maxInt(u32) * Hash.digest_length`
+///             Maximum size is `intMax(u32) * Hash.digest_length`
 ///             It is a programming error to pass buffer longer than the maximum size.
 ///
 /// password: Arbitrary sequence of bytes of any length, including empty.
@@ -59,10 +59,10 @@ pub fn pbkdf2(dk: []u8, password: []const u8, salt: []const u8, rounds: u32, com
 
     // FromSpec:
     //
-    //   1. If dk_len > maxInt(u32) * h_len, output "derived key too long" and
+    //   1. If dk_len > intMax(u32) * h_len, output "derived key too long" and
     //      stop.
     //
-    if (dk_len / h_len >= maxInt(u32)) {
+    if (dk_len / h_len >= intMax(u32)) {
         // Counter starts at 1 and is 32 bit, so if we have to return more blocks, we would overflow
         return error.OutputTooLong;
     }

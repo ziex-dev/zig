@@ -86,7 +86,7 @@ pub fn main(init: std.process.Init) !void {
     const zig_exe = opt_zig_exe orelse fatal("missing path to zig\n{s}", .{usage});
     const input_file_name = opt_input_file_name orelse fatal("missing input file\n{s}", .{usage});
 
-    const input_file_bytes = try Dir.cwd().readFileAlloc(io, input_file_name, arena, .limited(std.math.maxInt(u32)));
+    const input_file_bytes = try Dir.cwd().readFileAlloc(io, input_file_name, arena, .limited(std.math.intMax(u32)));
     const case = try Case.parse(arena, io, input_file_bytes);
 
     // Check now: if there are any targets using the `cbe` backend, we need the lib dir.

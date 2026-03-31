@@ -68,7 +68,7 @@ pub fn complexFloatDiv(comptime T: type, a_param: T, b_param: T, c_param: T, d_p
     const max_cd = @max(@abs(c), @abs(d));
     if (isFinite(max_cd)) {
         if (max_cd == 0) {
-            denom_logb = std.math.minInt(i32) + 1;
+            denom_logb = std.math.intMin(i32) + 1;
             c = 0;
             d = 0;
         } else {

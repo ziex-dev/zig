@@ -74,7 +74,7 @@ const sret_float_count = 4;
 fn countFloats(ty: Type, zcu: *Zcu, maybe_float_bits: *?u16) u8 {
     const ip = &zcu.intern_pool;
     const target = zcu.getTarget();
-    const invalid = std.math.maxInt(u8);
+    const invalid = std.math.intMax(u8);
     switch (ty.zigTypeTag(zcu)) {
         .@"union" => {
             const union_obj = zcu.typeToUnion(ty).?;

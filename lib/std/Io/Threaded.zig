@@ -95,13 +95,13 @@ pub const Csprng = struct {
 
     pub const uninitialized: Csprng = .{ .rng = .{
         .state = undefined,
-        .offset = std.math.maxInt(usize),
+        .offset = std.math.intMax(usize),
     } };
 
     pub const seed_len = std.Random.DefaultCsprng.secret_seed_length;
 
     pub fn isInitialized(c: *const Csprng) bool {
-        return c.rng.offset != std.math.maxInt(usize);
+        return c.rng.offset != std.math.intMax(usize);
     }
 };
 
@@ -192,7 +192,7 @@ pub const Environ = struct {
                     environ.exist.CLICOLOR_FORCE = true;
                 } else if (windows.eqlIgnoreCaseWtf16(key_w, &.{ 'Z', 'I', 'G', '_', 'P', 'R', 'O', 'G', 'R', 'E', 'S', 'S' })) {
                     environ.zig_progress_file = file: {
-                        var value_buf: [std.fmt.count("{d}", .{std.math.maxInt(usize)})]u8 = undefined;
+                        var value_buf: [std.fmt.count("{d}", .{std.math.intMax(usize)})]u8 = undefined;
                         const len = std.unicode.calcWtf8Len(value_w);
                         if (len > value_buf.len) break :file error.UnrecognizedFormat;
                         assert(std.unicode.wtf16LeToWtf8(&value_buf, value_w) == len);
@@ -745,7 +745,7 @@ const AwaitableId = enum(@Int(.unsigned, @bitSizeOf(usize) - 3)) {
         assert(@sizeOf(Io.Group) >= 8);
     }
     null = 0,
-    all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 3)),
+    all_ones = std.math.intMax(@Int(.unsigned, @bitSizeOf(usize) - 3)),
     _,
     const Split = packed struct(usize) { low: u3, high: AwaitableId };
     fn fromGroup(g: *Io.Group) AwaitableId {
@@ -835,7 +835,7 @@ const Thread = struct {
     threadlocal var current: ?*Thread = null;
 
     /// A value that does not alias any other thread id.
-    const invalid_id: std.Thread.Id = std.math.maxInt(std.Thread.Id);
+    const invalid_id: std.Thread.Id = std.math.intMax(std.Thread.Id);
 
     fn currentId() std.Thread.Id {
         return if (current) |t| t.id else std.Thread.getCurrentId();
@@ -1024,7 +1024,7 @@ const Thread = struct {
             .dragonfly => {
                 var timeout_us: c_int = undefined;
                 if (timeout_ns) |ns| {
-                    timeout_us = std.math.cast(c_int, ns / std.time.ns_per_us) orelse std.math.maxInt(c_int);
+                    timeout_us = std.math.cast(c_int, ns / std.time.ns_per_us) orelse std.math.intMax(c_int);
                 } else {
                     timeout_us = 0;
                 }
@@ -1070,7 +1070,7 @@ const Thread = struct {
                 switch (linux.errno(linux.futex_3arg(
                     ptr,
                     .{ .cmd = .WAKE, .private = true },
-                    @min(max_waiters, std.math.maxInt(i32)),
+                    @min(max_waiters, std.math.intMax(i32)),
                 ))) {
                     .SUCCESS => return, // successful wake up
                     .INVAL => return, // invalid futex_wait() on ptr done elsewhere
@@ -1101,7 +1101,7 @@ const Thread = struct {
                 const rc = std.c._umtx_op(
                     @intFromPtr(ptr),
                     @intFromEnum(std.c.UMTX_OP.WAKE_PRIVATE),
-                    @as(c_ulong, @min(max_waiters, std.math.maxInt(c_int))),
+                    @as(c_ulong, @min(max_waiters, std.math.intMax(c_int))),
                     0, // there is no timeout struct
                     0, // there is no timeout struct pointer
                 );
@@ -1116,7 +1116,7 @@ const Thread = struct {
                 const rc = std.c.futex(
                     ptr,
                     std.c.FUTEX.WAKE | std.c.FUTEX.PRIVATE_FLAG,
-                    @min(max_waiters, std.math.maxInt(c_int)),
+                    @min(max_waiters, std.math.intMax(c_int)),
                     null, // timeout is ignored
                     null, // uaddr2 is ignored
                 );
@@ -1126,7 +1126,7 @@ const Thread = struct {
                 // will generally return 0 unless the address is bad
                 _ = std.c.umtx_wakeup(
                     @ptrCast(ptr),
-                    @min(max_waiters, std.math.maxInt(c_int)),
+                    @min(max_waiters, std.math.intMax(c_int)),
                 );
             },
             else => @compileError("unimplemented: futexWake"),
@@ -1265,7 +1265,7 @@ const Thread = struct {
     /// alignment) so that those two bits can be used in a `packed struct`.
     const PackedPtr = enum(@Int(.unsigned, @bitSizeOf(usize) - 2)) {
         null = 0,
-        all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 2)),
+        all_ones = std.math.intMax(@Int(.unsigned, @bitSizeOf(usize) - 2)),
         _,
 
         const Split = packed struct(usize) { low: u2, high: PackedPtr };
@@ -1513,7 +1513,7 @@ const AlertableSyscall = struct {
 };
 
 pub fn waitForApcOrAlert() void {
-    const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
+    const infinite_timeout: windows.LARGE_INTEGER = std.math.intMin(windows.LARGE_INTEGER);
     _ = windows.ntdll.NtDelayExecution(windows.TRUE, &infinite_timeout);
 }
 
@@ -2742,7 +2742,7 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         // opportunity to find additional ready operations.
                         break :t 0;
                     }
-                    break :t std.math.maxInt(i32);
+                    break :t std.math.intMax(i32);
                 };
                 const syscall = try Syscall.start();
                 const rc = posix.system.poll(&poll_buffer, poll_len, timeout_ms);
@@ -2820,7 +2820,7 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
         try batchDrainSubmittedWindows(b, true);
         while (b.pending.head != .none and b.completed.head == .none) {
             var delay_interval: windows.LARGE_INTEGER = interval: {
-                const d = deadline orelse break :interval std.math.minInt(windows.LARGE_INTEGER);
+                const d = deadline orelse break :interval std.math.intMin(windows.LARGE_INTEGER);
                 break :interval timeoutToWindowsInterval(.{ .deadline = d }).?;
             };
             const alertable_syscall = try AlertableSyscall.start();
@@ -2916,7 +2916,7 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
             }
             const d = deadline orelse break :t -1;
             const duration = d.durationFromNow(t_io);
-            break :t @min(@max(0, duration.raw.toMilliseconds()), std.math.maxInt(i32));
+            break :t @min(@max(0, duration.raw.toMilliseconds()), std.math.intMax(i32));
         };
         const syscall = try Syscall.start();
         const rc = posix.system.poll(&poll_buffer, poll_storage.len, timeout_ms);
@@ -6435,7 +6435,7 @@ pub fn QueryObjectName(handle: windows.HANDLE, out_buffer: []u16) QueryObjectNam
 
     const info: *windows.OBJECT.NAME_INFORMATION = @ptrCast(out_buffer_aligned);
     // buffer size is specified in bytes
-    const out_buffer_len = std.math.cast(windows.ULONG, out_buffer_aligned.len * 2) orelse std.math.maxInt(windows.ULONG);
+    const out_buffer_len = std.math.cast(windows.ULONG, out_buffer_aligned.len * 2) orelse std.math.intMax(windows.ULONG);
     // last argument would return the length required for full_buffer, not exposed here
     return switch (windows.ntdll.NtQueryObject(handle, .Name, info, out_buffer_len, null)) {
         .SUCCESS => {
@@ -10913,7 +10913,7 @@ fn fileWriteFileStreaming(
             break :b &hdtr_data;
         };
         var sbytes: std.c.off_t = 0;
-        const nbytes: usize = @min(file_limit, std.math.maxInt(usize));
+        const nbytes: usize = @min(file_limit, std.math.intMax(usize));
         const flags = 0;
 
         const syscall: Syscall = try .start();
@@ -10998,7 +10998,7 @@ fn fileWriteFileStreaming(
             };
             break :b &hdtr_data;
         };
-        const max_count = std.math.maxInt(i32); // Avoid EINVAL.
+        const max_count = std.math.intMax(i32); // Avoid EINVAL.
         var len: std.c.off_t = @min(file_limit, max_count);
         const flags = 0;
         const syscall: Syscall = try .start();
@@ -11151,7 +11151,7 @@ fn fileWriteFileStreaming(
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
             .positional_simple, .streaming_simple => return error.Unimplemented,
             .positional => p: {
-                len = @min(len, std.math.maxInt(usize) - file_reader.pos);
+                len = @min(len, std.math.intMax(usize) - file_reader.pos);
                 off_in = @intCast(file_reader.pos);
                 break :p &off_in;
             },
@@ -11322,12 +11322,12 @@ fn fileWriteFilePositional(
             file_reader.interface.toss(n -| header.len);
             return n;
         }
-        var len: usize = @min(@intFromEnum(limit), std.math.maxInt(usize) - offset);
+        var len: usize = @min(@intFromEnum(limit), std.math.intMax(usize) - offset);
         var off_in: i64 = undefined;
         const off_in_ptr: ?*i64 = switch (file_reader.mode) {
             .positional_simple, .streaming_simple => return error.Unimplemented,
             .positional => p: {
-                len = @min(len, std.math.maxInt(usize) - file_reader.pos);
+                len = @min(len, std.math.intMax(usize) - file_reader.pos);
                 off_in = @intCast(file_reader.pos);
                 break :p &off_in;
             },
@@ -11642,7 +11642,7 @@ fn sleepPosix(timeout: Io.Timeout) Io.Cancelable!void {
         .deadline => |d| d.clock,
     });
     const deadline_nanoseconds: i96 = switch (timeout) {
-        .none => std.math.maxInt(i96),
+        .none => std.math.intMax(i96),
         .duration => |duration| duration.raw.nanoseconds,
         .deadline => |deadline| deadline.raw.nanoseconds,
     };
@@ -11682,7 +11682,7 @@ fn sleepWasi(t: *Threaded, timeout: Io.Timeout) Io.Cancelable!void {
         .flags = 0,
     } else .{
         .id = .MONOTONIC,
-        .timeout = std.math.maxInt(u64),
+        .timeout = std.math.intMax(u64),
         .precision = 0,
         .flags = 0,
     };
@@ -11707,8 +11707,8 @@ fn sleepNanosleep(t: *Threaded, timeout: Io.Timeout) Io.Cancelable!void {
 
     var timespec: posix.timespec = t: {
         const d = timeout.toDurationFromNow(t_io) orelse break :t .{
-            .sec = std.math.maxInt(sec_type),
-            .nsec = std.math.maxInt(nsec_type),
+            .sec = std.math.intMax(sec_type),
+            .nsec = std.math.intMax(nsec_type),
         };
         break :t timestampToPosix(d.raw.toNanoseconds());
     };
@@ -12949,9 +12949,9 @@ fn netReadWindows(userdata: ?*anyopaque, handle: net.Socket.Handle, data: [][]u8
                 n += len;
                 continue;
             }
-            iovec_buffer[i] = .{ .buf = buf.ptr, .len = std.math.maxInt(u32) };
+            iovec_buffer[i] = .{ .buf = buf.ptr, .len = std.math.intMax(u32) };
             i += 1;
-            n += std.math.maxInt(u32);
+            n += std.math.intMax(u32);
             break;
         }
 
@@ -13321,7 +13321,7 @@ fn netReceivePosix(
             .AGAIN => while (true) {
                 if (message_i != 0) return .{ null, message_i };
 
-                const max_poll_ms = std.math.maxInt(u31);
+                const max_poll_ms = std.math.intMax(u31);
                 const timeout_ms: u31 = if (deadline) |d| t: {
                     const duration = d.durationFromNow(t_io);
                     if (duration.raw.nanoseconds <= 0) return .{ error.Timeout, message_i };
@@ -13584,7 +13584,7 @@ fn netWriteWindows(
 }
 
 fn addWsaBuf(v: []ws2_32.WSABUF, i: *u32, bytes: []const u8) void {
-    const cap = std.math.maxInt(u32);
+    const cap = std.math.intMax(u32);
     var remaining = bytes;
     while (remaining.len > cap) {
         if (v.len - i.* == 0) return;
@@ -15411,7 +15411,7 @@ fn childKillWindows(t: *Threaded, child: *process.Child, exit_code: windows.UINT
     _ = windows.ntdll.RtlReportSilentProcessExit(handle, @enumFromInt(exit_code));
     switch (windows.ntdll.NtTerminateProcess(handle, @enumFromInt(exit_code))) {
         .SUCCESS => {
-            const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
+            const infinite_timeout: windows.LARGE_INTEGER = std.math.intMin(windows.LARGE_INTEGER);
             _ = windows.ntdll.NtWaitForSingleObject(handle, windows.FALSE, &infinite_timeout);
             childCleanupWindows(child);
         },
@@ -15435,7 +15435,7 @@ fn childWaitWindows(child: *process.Child) process.Child.WaitError!process.Child
     const handle = child.id.?;
 
     const alertable_syscall: AlertableSyscall = try .start();
-    const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
+    const infinite_timeout: windows.LARGE_INTEGER = std.math.intMin(windows.LARGE_INTEGER);
     while (true) switch (windows.ntdll.NtWaitForSingleObject(handle, windows.TRUE, &infinite_timeout)) {
         windows.NTSTATUS.WAIT_0 => break alertable_syscall.finish(),
         .USER_APC, .ALERTED, .TIMEOUT => {
@@ -18881,7 +18881,7 @@ const WaitGroup = struct {
 
     fn start(wg: *WaitGroup) void {
         const prev_state = wg.state.fetchAdd(one_pending, .monotonic);
-        assert((prev_state / one_pending) < (std.math.maxInt(usize) / one_pending));
+        assert((prev_state / one_pending) < (std.math.intMax(usize) / one_pending));
     }
 
     fn value(wg: *WaitGroup) usize {
@@ -18925,7 +18925,7 @@ fn eventWait(event: *Io.Event) void {
 fn eventSet(event: *Io.Event) void {
     switch (@atomicRmw(Io.Event, event, .Xchg, .is_set, .release)) {
         .unset, .is_set => {},
-        .waiting => Thread.futexWake(@ptrCast(event), std.math.maxInt(u32)),
+        .waiting => Thread.futexWake(@ptrCast(event), std.math.intMax(u32)),
     }
 }
 
@@ -18975,7 +18975,7 @@ fn condWait(cond: *Io.Condition, mutex: *Io.Mutex) void {
 
     {
         const prev_state = cond.state.fetchAdd(.{ .waiters = 1, .signals = 0 }, .monotonic);
-        assert(prev_state.waiters < std.math.maxInt(u16)); // overflow caused by too many waiters
+        assert(prev_state.waiters < std.math.intMax(u16)); // overflow caused by too many waiters
     }
 
     mutexUnlock(mutex);

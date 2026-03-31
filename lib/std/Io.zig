@@ -386,7 +386,7 @@ pub const Operation = union(enum) {
     };
 
     pub const OptionalIndex = enum(u32) {
-        none = std.math.maxInt(u32),
+        none = std.math.intMax(u32),
         _,
 
         pub fn fromIndex(i: usize) OptionalIndex {
@@ -575,18 +575,18 @@ pub const Batch = struct {
 
 pub const Limit = enum(usize) {
     nothing = 0,
-    unlimited = math.maxInt(usize),
+    unlimited = math.intMax(usize),
     _,
 
-    /// `math.maxInt(usize)` is interpreted to mean `.unlimited`.
+    /// `math.intMax(usize)` is interpreted to mean `.unlimited`.
     pub fn limited(n: usize) Limit {
         return @enumFromInt(n);
     }
 
-    /// Any value grater than `math.maxInt(usize)` is interpreted to mean
+    /// Any value grater than `math.intMax(usize)` is interpreted to mean
     /// `.unlimited`.
     pub fn limited64(n: u64) Limit {
-        return @enumFromInt(@min(n, math.maxInt(usize)));
+        return @enumFromInt(@min(n, math.intMax(usize)));
     }
 
     pub fn countVec(data: []const []const u8) Limit {
@@ -915,7 +915,7 @@ pub const Duration = struct {
     nanoseconds: i96,
 
     pub const zero: Duration = .{ .nanoseconds = 0 };
-    pub const max: Duration = .{ .nanoseconds = math.maxInt(i96) };
+    pub const max: Duration = .{ .nanoseconds = math.intMax(i96) };
 
     pub fn fromNanoseconds(x: i96) Duration {
         return .{ .nanoseconds = x };
@@ -1467,7 +1467,7 @@ pub const Condition = struct {
 
         {
             const prev_state = cond.state.fetchAdd(.{ .waiters = 1, .signals = 0 }, .monotonic);
-            assert(prev_state.waiters < math.maxInt(u16)); // overflow caused by too many waiters
+            assert(prev_state.waiters < math.intMax(u16)); // overflow caused by too many waiters
         }
 
         mutex.unlock(io);
@@ -1639,7 +1639,7 @@ pub const Event = enum(u32) {
     pub fn set(e: *Event, io: Io) void {
         switch (@atomicRmw(Event, e, .Xchg, .is_set, .release)) {
             .unset, .is_set => {},
-            .waiting => io.futexWake(Event, e, math.maxInt(u32)),
+            .waiting => io.futexWake(Event, e, math.intMax(u32)),
         }
     }
 

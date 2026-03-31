@@ -629,7 +629,7 @@ const Os = switch (builtin.os.tag) {
                 try io.checkCancel();
                 if (attempt == 1) return .timeout;
                 const delay_interval: windows.LARGE_INTEGER = switch (timeout) {
-                    .none => std.math.minInt(windows.LARGE_INTEGER),
+                    .none => std.math.intMin(windows.LARGE_INTEGER),
                     .ms => |ms| -@as(windows.LARGE_INTEGER, ms) * (std.time.ns_per_ms / 100),
                 };
                 _ = windows.ntdll.NtDelayExecution(windows.TRUE, &delay_interval);

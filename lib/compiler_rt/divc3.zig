@@ -3,8 +3,8 @@ const isNan = std.math.isNan;
 const isInf = std.math.isInf;
 const scalbn = std.math.scalbn;
 const ilogb = std.math.ilogb;
-const maxInt = std.math.maxInt;
-const minInt = std.math.minInt;
+const intMax = std.math.intMax;
+const intMin = std.math.intMin;
 const isFinite = std.math.isFinite;
 const copysign = std.math.copysign;
 const Complex = @import("mulc3.zig").Complex;
@@ -16,7 +16,7 @@ pub inline fn divc3(comptime T: type, a: T, b: T, c_in: T, d_in: T) Complex(T) {
 
     // logbw used to prevent under/over-flow
     const logbw = ilogb(@max(@abs(c), @abs(d)));
-    const logbw_finite = logbw != maxInt(i32) and logbw != minInt(i32);
+    const logbw_finite = logbw != intMax(i32) and logbw != intMin(i32);
     const ilogbw = if (logbw_finite) b: {
         c = scalbn(c, -logbw);
         d = scalbn(d, -logbw);
@@ -46,7 +46,7 @@ pub inline fn divc3(comptime T: type, a: T, b: T, c_in: T, d_in: T) Complex(T) {
                 .real = std.math.inf(T) * (boxed_a * c - boxed_b * d),
                 .imag = std.math.inf(T) * (boxed_b * c - boxed_a * d),
             };
-        } else if (logbw == maxInt(i32) and isFinite(a) and isFinite(b)) {
+        } else if (logbw == intMax(i32) and isFinite(a) and isFinite(b)) {
             const boxed_c = copysign(if (isInf(c)) one else zero, c);
             const boxed_d = copysign(if (isInf(d)) one else zero, d);
             return .{

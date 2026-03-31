@@ -418,10 +418,10 @@ pub fn prefixScan(comptime op: std.builtin.ReduceOp, comptime hop: isize, vec: a
             else => @compileError("Invalid prefixScan operation " ++ @tagName(op) ++ " for vector of booleans."),
         },
         .int => switch (op) {
-            .Max => std.math.minInt(Child),
+            .Max => std.math.intMin(Child),
             .Add, .Or, .Xor => 0,
             .Mul => 1,
-            .And, .Min => std.math.maxInt(Child),
+            .And, .Min => std.math.intMax(Child),
         },
         .float => switch (op) {
             .Max => -std.math.inf(Child),

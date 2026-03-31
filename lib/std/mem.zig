@@ -662,7 +662,7 @@ pub fn order(comptime T: type, lhs: []const T, rhs: []const T) math.Order {
 
 /// Compares two many-item pointers with NUL-termination lexicographically.
 pub fn orderZ(comptime T: type, lhs: [*:0]const T, rhs: [*:0]const T) math.Order {
-    return boundedOrderZ(T, lhs, rhs, std.math.maxInt(usize));
+    return boundedOrderZ(T, lhs, rhs, std.math.intMax(usize));
 }
 
 /// Compares two many-item pointers with NUL-termination lexicographically until some specified bound.
@@ -4373,7 +4373,7 @@ test alignPointer {
     // Misaligned.
     try S.checkAlign([*]align(1) u32, 0x3, 2, 0);
     // Overflow.
-    try S.checkAlign([*]u32, math.maxInt(usize) - 3, 8, 0);
+    try S.checkAlign([*]u32, math.intMax(usize) - 3, 8, 0);
 }
 
 fn CopyPtrAttrs(
@@ -4736,10 +4736,10 @@ test "sliceAsBytes and bytesAsSlice back" {
     try testing.expect(big_thing_again[2] == 3);
 
     big_thing_again[2] = -1;
-    try testing.expect(bytes[8] == math.maxInt(u8));
-    try testing.expect(bytes[9] == math.maxInt(u8));
-    try testing.expect(bytes[10] == math.maxInt(u8));
-    try testing.expect(bytes[11] == math.maxInt(u8));
+    try testing.expect(bytes[8] == math.intMax(u8));
+    try testing.expect(bytes[9] == math.intMax(u8));
+    try testing.expect(bytes[10] == math.intMax(u8));
+    try testing.expect(bytes[11] == math.intMax(u8));
 }
 
 test "sliceAsBytes preserves pointer attributes" {
@@ -5044,10 +5044,10 @@ test "read/write(Var)PackedInt" {
                         continue;
 
                     for ([_]PackedType{
-                        ~@as(PackedType, 0), // all ones: -1 iN / maxInt uN
+                        ~@as(PackedType, 0), // all ones: -1 iN / intMax uN
                         @as(PackedType, 0), // all zeros: 0 iN / 0 uN
-                        @as(PackedType, @bitCast(@as(iPackedType, math.maxInt(iPackedType)))), // maxInt iN
-                        @as(PackedType, @bitCast(@as(iPackedType, math.minInt(iPackedType)))), // maxInt iN
+                        @as(PackedType, @bitCast(@as(iPackedType, math.intMax(iPackedType)))), // intMax iN
+                        @as(PackedType, @bitCast(@as(iPackedType, math.intMin(iPackedType)))), // intMax iN
                         random.int(PackedType), // random
                         random.int(PackedType), // random
                     }) |write_value| {

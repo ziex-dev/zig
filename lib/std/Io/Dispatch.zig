@@ -237,7 +237,7 @@ const Fiber = struct {
     /// alignment) so that those two bits can be used in a `packed struct`.
     const PackedPtr = enum(@Int(.unsigned, @bitSizeOf(usize) - 2)) {
         null = 0,
-        all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 2)),
+        all_ones = std.math.intMax(@Int(.unsigned, @bitSizeOf(usize) - 2)),
         _,
 
         const Split = packed struct(usize) { low: u2, high: PackedPtr };
@@ -960,7 +960,7 @@ const Mutex = struct {
     fn unlock(mutex: *Mutex) void {
         const state = @atomicRmw(State, &mutex.state, .And, .{
             .locked = false,
-            .num_waiters = std.math.maxInt(State.NumWaiters),
+            .num_waiters = std.math.intMax(State.NumWaiters),
         }, .release);
         if (state.num_waiters > 0) {
             @branchHint(.unlikely);
@@ -1203,7 +1203,7 @@ const Group = struct {
             Group.Mutex,
             mutex,
             .And,
-            .{ .locked = false, .contended = false, .shared2 = std.math.maxInt(u30) },
+            .{ .locked = false, .contended = false, .shared2 = std.math.intMax(u30) },
             .release,
         );
         assert(old_state.locked);
@@ -3094,8 +3094,8 @@ fn dirSetOwner(
 }
 
 fn fchown(fd: c.fd_t, owner: ?File.Uid, group: ?File.Gid) File.SetOwnerError!void {
-    const uid = owner orelse std.math.maxInt(c.uid_t);
-    const gid = group orelse std.math.maxInt(c.gid_t);
+    const uid = owner orelse std.math.intMax(c.uid_t);
+    const gid = group orelse std.math.intMax(c.gid_t);
     while (true) switch (c.errno(c.fchown(fd, uid, gid))) {
         .SUCCESS => return,
         .INTR => {},
@@ -3129,8 +3129,8 @@ fn dirSetFileOwner(
     while (true) switch (c.errno(c.fchownat(
         dir.handle,
         sub_path_posix,
-        owner orelse std.math.maxInt(c.uid_t),
-        group orelse std.math.maxInt(c.gid_t),
+        owner orelse std.math.intMax(c.uid_t),
+        group orelse std.math.intMax(c.gid_t),
         if (options.follow_symlinks) 0 else c.AT.SYMLINK_NOFOLLOW,
     ))) {
         .SUCCESS => return,
@@ -3405,7 +3405,7 @@ fn fileWriteFileStreaming(
         };
         break :b &hdtr_data;
     };
-    const max_count = std.math.maxInt(i32); // Avoid EINVAL.
+    const max_count = std.math.intMax(i32); // Avoid EINVAL.
     var len: c.off_t = @min(file_limit, max_count);
     const flags = 0;
     while (true) switch (c.errno(c.sendfile(in_fd, out_fd, offset, &len, hdtr, flags))) {

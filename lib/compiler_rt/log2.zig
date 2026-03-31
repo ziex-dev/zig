@@ -9,7 +9,7 @@ const builtin = @import("builtin");
 const math = std.math;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const arch = builtin.cpu.arch;
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
@@ -142,7 +142,7 @@ pub fn log2(x_: f64) callconv(.c) f64 {
     // hi + lo = f - hfsq + s * (hfsq + R) ~ log(1 + f)
     var hi = f - hfsq;
     var hii = @as(u64, @bitCast(hi));
-    hii &= @as(u64, maxInt(u64)) << 32;
+    hii &= @as(u64, intMax(u64)) << 32;
     hi = @bitCast(hii);
     const lo = f - hi - hfsq + s * (hfsq + R);
 

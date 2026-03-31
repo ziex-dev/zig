@@ -93,7 +93,7 @@ pub fn elfSym(symbol: Symbol, elf_file: *Elf) elf.Elf64_Sym {
 }
 
 pub fn symbolRank(symbol: Symbol, elf_file: *Elf) u32 {
-    const file_ptr = symbol.file(elf_file) orelse return std.math.maxInt(u32);
+    const file_ptr = symbol.file(elf_file) orelse return std.math.intMax(u32);
     const sym = symbol.elfSym(elf_file);
     const in_archive = switch (file_ptr) {
         .object => |x| !x.alive,

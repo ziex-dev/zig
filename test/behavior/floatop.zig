@@ -1298,7 +1298,7 @@ test "@ceil f80/f128/c_longdouble" {
     try comptime testCeil(c_longdouble);
 }
 
-test "@ceil f80 maxInt(u64)" {
+test "@ceil f80 intMax(u64)" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -1310,7 +1310,7 @@ test "@ceil f80 maxInt(u64)" {
         return error.SkipZigTest;
     }
 
-    var x: u64 = std.math.maxInt(u64);
+    var x: u64 = std.math.intMax(u64);
     x = x;
     const float: f80 = @floatFromInt(x);
     try std.testing.expect(float == @ceil(float));

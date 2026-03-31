@@ -573,7 +573,7 @@ fn fuzzAgainstArrayList(_: void, input: []const u8) anyerror!void {
                 );
             },
             .push_back_slice => {
-                var buffer: [std.math.maxInt(u3)]u32 = undefined;
+                var buffer: [std.math.intMax(u3)]u32 = undefined;
                 const items = buffer[0..random.int(u3)];
                 for (items) |*item| {
                     item.* = random.int(u8);
@@ -584,7 +584,7 @@ fn fuzzAgainstArrayList(_: void, input: []const u8) anyerror!void {
                 );
             },
             .push_front_slice => {
-                var buffer: [std.math.maxInt(u3)]u32 = undefined;
+                var buffer: [std.math.intMax(u3)]u32 = undefined;
                 const items = buffer[0..random.int(u3)];
                 for (items) |*item| {
                     item.* = random.int(u8);

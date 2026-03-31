@@ -4722,7 +4722,7 @@ test "zig fmt: Control flow statement as body of blockless if" {
 test "zig fmt: regression test for #5722" {
     try testCanonical(
         \\pub fn sendViewTags(self: Self) void {
-        \\    var it = ViewStack(View).iterator(self.output.views.first, std.math.maxInt(u32));
+        \\    var it = ViewStack(View).iterator(self.output.views.first, std.math.intMax(u32));
         \\    while (it.next()) |node|
         \\        view_tags.append(node.view.current_tags) catch {
         \\            c.wl_resource_post_no_memory(self.wl_resource);

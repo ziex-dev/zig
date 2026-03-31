@@ -395,7 +395,7 @@ fn parse(gpa: Allocator, io: Io, file_path: []const u8) !Ast {
         io,
         file_path,
         gpa,
-        .limited(std.math.maxInt(u32)),
+        .limited(std.math.intMax(u32)),
         .fromByteUnits(1),
         0,
     ) catch |err| {

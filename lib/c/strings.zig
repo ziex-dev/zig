@@ -61,7 +61,7 @@ fn ffsll(i: c_longlong) callconv(.c) c_longlong {
 }
 
 fn strcasecmp(a: [*:0]const c_char, b: [*:0]const c_char) callconv(.c) c_int {
-    return strncasecmp(a, b, std.math.maxInt(usize));
+    return strncasecmp(a, b, std.math.intMax(usize));
 }
 
 fn __strcasecmp_l(a: [*:0]const c_char, b: [*:0]const c_char, locale: *anyopaque) callconv(.c) c_int {

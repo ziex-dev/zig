@@ -321,7 +321,7 @@ pub const Section = struct {
         .dirty = true,
         .pad_entries_to_ideal = true,
         .alignment = .@"1",
-        .index = std.math.maxInt(u32),
+        .index = std.math.intMax(u32),
         .first = .none,
         .last = .none,
         .units = .empty,
@@ -548,7 +548,7 @@ const Unit = struct {
         _,
 
         const Optional = enum(u32) {
-            none = std.math.maxInt(u32),
+            none = std.math.intMax(u32),
             _,
 
             pub fn unwrap(uio: Optional) ?Index {
@@ -696,7 +696,7 @@ const Unit = struct {
         const len: usize = @intCast(end - start);
         assert(len >= unit.trailer_len);
         if (sec == &dwarf.debug_line.section) {
-            var buf: [1 + uleb128Bytes(std.math.maxInt(u32)) + 1]u8 = undefined;
+            var buf: [1 + uleb128Bytes(std.math.intMax(u32)) + 1]u8 = undefined;
             var fw: Writer = .fixed(&buf);
             fw.writeByte(DW.LNS.extended_op) catch unreachable;
             const extended_op_bytes = fw.end;
@@ -737,7 +737,7 @@ const Unit = struct {
                     switch (dwarf.format) {
                         .@"32" => tw.writeInt(u32, @intCast(unit_len), dwarf.endian) catch unreachable,
                         .@"64" => {
-                            tw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable;
+                            tw.writeInt(u32, std.math.intMax(u32), dwarf.endian) catch unreachable;
                             tw.writeInt(u64, unit_len, dwarf.endian) catch unreachable;
                         },
                     }
@@ -745,8 +745,8 @@ const Unit = struct {
                         .none => unreachable,
                         .debug_frame => {
                             switch (dwarf.format) {
-                                .@"32" => tw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable,
-                                .@"64" => tw.writeInt(u64, std.math.maxInt(u64), dwarf.endian) catch unreachable,
+                                .@"32" => tw.writeInt(u32, std.math.intMax(u32), dwarf.endian) catch unreachable,
+                                .@"64" => tw.writeInt(u64, std.math.intMax(u64), dwarf.endian) catch unreachable,
                             }
                             tw.writeByte(4) catch unreachable;
                             tw.writeAll("\x00") catch unreachable;
@@ -843,7 +843,7 @@ const Entry = struct {
         _,
 
         const Optional = enum(u32) {
-            none = std.math.maxInt(u32),
+            none = std.math.intMax(u32),
             _,
 
             pub fn unwrap(eio: Optional) ?Index {
@@ -885,8 +885,8 @@ const Entry = struct {
         var buf: [
             @max(
                 uleb128Bytes(@intFromEnum(AbbrevCode.pad_1)),
-                uleb128Bytes(@intFromEnum(AbbrevCode.pad_n)) + uleb128Bytes(std.math.maxInt(u32)),
-                1 + uleb128Bytes(std.math.maxInt(u32)) + 1,
+                uleb128Bytes(@intFromEnum(AbbrevCode.pad_n)) + uleb128Bytes(std.math.intMax(u32)),
+                1 + uleb128Bytes(std.math.intMax(u32)) + 1,
             )
         ]u8 = undefined;
         var fw: Writer = .fixed(&buf);
@@ -1663,7 +1663,7 @@ pub const WipNav = struct {
 
         const op_advance = @divExact(delta_pc, header.minimum_instruction_length) *
             header.maximum_operations_per_instruction + delta_op;
-        const max_op_advance: u9 = (std.math.maxInt(u8) - header.opcode_base) / header.line_range;
+        const max_op_advance: u9 = (std.math.intMax(u8) - header.opcode_base) / header.line_range;
         const remaining_op_advance: u8 = @intCast(if (op_advance >= 2 * max_op_advance) remaining: {
             try dlw.writeByte(DW.LNS.advance_pc);
             try dlw.writeUleb128(op_advance);
@@ -2770,7 +2770,7 @@ fn initWipNavInner(
                     switch (dwarf.format) {
                         .@"32" => try dfw.writeInt(u32, undefined, dwarf.endian),
                         .@"64" => {
-                            try dfw.writeInt(u32, std.math.maxInt(u32), dwarf.endian);
+                            try dfw.writeInt(u32, std.math.intMax(u32), dwarf.endian);
                             try dfw.writeInt(u64, undefined, dwarf.endian);
                         },
                     }
@@ -3856,7 +3856,7 @@ fn updateLazyType(
                 else
                     .struct_field);
                 {
-                    var field_name_buf: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
+                    var field_name_buf: [std.fmt.count("{d}", .{std.math.intMax(u32)})]u8 = undefined;
                     const field_name = std.fmt.bufPrint(&field_name_buf, "{d}", .{field_index}) catch unreachable;
                     try wip_nav.strp(field_name);
                 }
@@ -4278,7 +4278,7 @@ fn updateLazyValue(
                     },
                     .tuple_index => |index| {
                         try wip_nav.abbrevCode(.field);
-                        var field_name_buf: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
+                        var field_name_buf: [std.fmt.count("{d}", .{std.math.intMax(u32)})]u8 = undefined;
                         const field_name = std.fmt.bufPrint(&field_name_buf, "{d}", .{index}) catch unreachable;
                         try wip_nav.strp(field_name);
                     },
@@ -4383,7 +4383,7 @@ fn updateLazyValue(
                     else
                         continue);
                     {
-                        var field_name_buf: [std.fmt.count("{d}", .{std.math.maxInt(u32)})]u8 = undefined;
+                        var field_name_buf: [std.fmt.count("{d}", .{std.math.intMax(u32)})]u8 = undefined;
                         const field_name = std.fmt.bufPrint(&field_name_buf, "{d}", .{field_index}) catch unreachable;
                         try wip_nav.strp(field_name);
                     }
@@ -4894,7 +4894,7 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Erro
             switch (dwarf.format) {
                 .@"32" => hw.writeInt(u32, @intCast(unit_len), dwarf.endian) catch unreachable,
                 .@"64" => {
-                    hw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable;
+                    hw.writeInt(u32, std.math.intMax(u32), dwarf.endian) catch unreachable;
                     hw.writeInt(u64, unit_len, dwarf.endian) catch unreachable;
                 },
             }
@@ -4929,7 +4929,7 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Erro
                         switch (dwarf.format) {
                             .@"32" => hw.writeInt(u32, @intCast(unit_len), dwarf.endian) catch unreachable,
                             .@"64" => {
-                                hw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable;
+                                hw.writeInt(u32, std.math.intMax(u32), dwarf.endian) catch unreachable;
                                 hw.writeInt(u64, unit_len, dwarf.endian) catch unreachable;
                             },
                         }
@@ -4971,7 +4971,7 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Erro
             switch (dwarf.format) {
                 .@"32" => hw.writeInt(u32, @intCast(unit_len), dwarf.endian) catch unreachable,
                 .@"64" => {
-                    hw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable;
+                    hw.writeInt(u32, std.math.intMax(u32), dwarf.endian) catch unreachable;
                     hw.writeInt(u64, unit_len, dwarf.endian) catch unreachable;
                 },
             }
@@ -5071,7 +5071,7 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Erro
             switch (dwarf.format) {
                 .@"32" => hw.writeInt(u32, @intCast(unit_len), dwarf.endian) catch unreachable,
                 .@"64" => {
-                    hw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable;
+                    hw.writeInt(u32, std.math.intMax(u32), dwarf.endian) catch unreachable;
                     hw.writeInt(u64, unit_len, dwarf.endian) catch unreachable;
                 },
             }
@@ -5179,7 +5179,7 @@ fn flushWriterError(dwarf: *Dwarf, pt: Zcu.PerThread) (FlushError || Writer.Erro
             switch (dwarf.format) {
                 .@"32" => hw.writeInt(u32, @intCast(unit_len), dwarf.endian) catch unreachable,
                 .@"64" => {
-                    hw.writeInt(u32, std.math.maxInt(u32), dwarf.endian) catch unreachable;
+                    hw.writeInt(u32, std.math.intMax(u32), dwarf.endian) catch unreachable;
                     hw.writeInt(u64, unit_len, dwarf.endian) catch unreachable;
                 },
             }

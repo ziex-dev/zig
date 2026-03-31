@@ -588,7 +588,7 @@ const WindowsThreadImpl = struct {
     }
 
     fn join(self: Impl) void {
-        const infinite_timeout: windows.LARGE_INTEGER = std.math.minInt(windows.LARGE_INTEGER);
+        const infinite_timeout: windows.LARGE_INTEGER = std.math.intMin(windows.LARGE_INTEGER);
         switch (windows.ntdll.NtWaitForSingleObject(self.thread.thread_handle, windows.FALSE, &infinite_timeout)) {
             windows.NTSTATUS.WAIT_0 => {},
             else => |status| windows.unexpectedStatus(status) catch unreachable,

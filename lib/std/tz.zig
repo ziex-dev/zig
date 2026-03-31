@@ -149,12 +149,12 @@ pub const Tz = struct {
             const occur: i64 = if (legacy) try reader.takeInt(i32, .big) else try reader.takeInt(i64, .big);
             if (occur < 0) return error.Malformed; // rfc8536: occur [...] MUST be nonnegative
             if (i > 0 and leapseconds[i - 1].occurrence + 2419199 > occur) return error.Malformed; // rfc8536: occur [...] each later value MUST be at least 2419199 greater than the previous value
-            if (occur > std.math.maxInt(i48)) return error.Malformed; // Unreasonably far into the future
+            if (occur > std.math.intMax(i48)) return error.Malformed; // Unreasonably far into the future
 
             const corr = try reader.takeInt(i32, .big);
             if (i == 0 and corr != -1 and corr != 1) return error.Malformed; // rfc8536: The correction value in the first leap-second record, if present, MUST be either one (1) or minus one (-1)
             if (i > 0 and leapseconds[i - 1].correction != corr + 1 and leapseconds[i - 1].correction != corr - 1) return error.Malformed; // rfc8536: The correction values in adjacent leap-second records MUST differ by exactly one (1)
-            if (corr > std.math.maxInt(i16)) return error.Malformed; // Unreasonably large correction
+            if (corr > std.math.intMax(i16)) return error.Malformed; // Unreasonably large correction
 
             leapseconds[i] = .{
                 .occurrence = @as(i48, @intCast(occur)),

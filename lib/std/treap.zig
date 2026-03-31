@@ -510,7 +510,7 @@ test "getMin, getMax, random" {
     var iter = SliceIterRandomOrder(TestNode).init(&nodes, prng.random());
 
     var treap = TestTreap{};
-    var min: u64 = std.math.maxInt(u64);
+    var min: u64 = std.math.intMax(u64);
     var max: u64 = 0;
 
     try testing.expectEqual(null, treap.getMin());

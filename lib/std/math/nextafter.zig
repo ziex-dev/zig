@@ -120,16 +120,16 @@ test "int" {
         try expect(nextAfter(T, 5, 5) == 5);
         try expect(nextAfter(T, -5, -5) == -5);
         try expect(nextAfter(T, 0, 0) == 0);
-        try expect(nextAfter(T, math.minInt(T), math.minInt(T)) == math.minInt(T));
-        try expect(nextAfter(T, math.maxInt(T), math.maxInt(T)) == math.maxInt(T));
+        try expect(nextAfter(T, math.intMin(T), math.intMin(T)) == math.intMin(T));
+        try expect(nextAfter(T, math.intMax(T), math.intMax(T)) == math.intMax(T));
     }
     inline for (.{ u8, u16, u32, u64, u128, u333 }) |T| {
         try expect(nextAfter(T, 3, 7) == 4);
         try expect(nextAfter(T, 7, 3) == 6);
         try expect(nextAfter(T, 5, 5) == 5);
         try expect(nextAfter(T, 0, 0) == 0);
-        try expect(nextAfter(T, math.minInt(T), math.minInt(T)) == math.minInt(T));
-        try expect(nextAfter(T, math.maxInt(T), math.maxInt(T)) == math.maxInt(T));
+        try expect(nextAfter(T, math.intMin(T), math.intMin(T)) == math.intMin(T));
+        try expect(nextAfter(T, math.intMax(T), math.intMax(T)) == math.intMax(T));
     }
     comptime {
         try expect(nextAfter(comptime_int, 3, 7) == 4);
@@ -139,7 +139,7 @@ test "int" {
         try expect(nextAfter(comptime_int, 5, 5) == 5);
         try expect(nextAfter(comptime_int, -5, -5) == -5);
         try expect(nextAfter(comptime_int, 0, 0) == 0);
-        try expect(nextAfter(comptime_int, math.maxInt(u512), math.maxInt(u512)) == math.maxInt(u512));
+        try expect(nextAfter(comptime_int, math.intMax(u512), math.intMax(u512)) == math.intMax(u512));
     }
 }
 

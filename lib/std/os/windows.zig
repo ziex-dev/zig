@@ -12,7 +12,7 @@ const Io = std.Io;
 const mem = std.mem;
 const assert = std.debug.assert;
 const math = std.math;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 const UnexpectedError = std.posix.UnexpectedError;
 
 pub const advapi32 = @import("windows/advapi32.zig");
@@ -308,7 +308,7 @@ pub const FILE = struct {
             TimeoutSpecified: BOOLEAN,
             Name: [PATH_MAX_WIDE]WCHAR,
 
-            pub const WAIT_FOREVER: LARGE_INTEGER = std.math.minInt(LARGE_INTEGER);
+            pub const WAIT_FOREVER: LARGE_INTEGER = std.math.intMin(LARGE_INTEGER);
 
             pub fn init(opts: struct {
                 Timeout: ?LARGE_INTEGER = null,
@@ -1317,7 +1317,7 @@ pub const HEAP = opaque {
             CSR_PORT,
             _,
 
-            pub const MASK: CLASS = @enumFromInt(maxInt(@typeInfo(CLASS).@"enum".tag_type));
+            pub const MASK: CLASS = @enumFromInt(intMax(@typeInfo(CLASS).@"enum".tag_type));
         };
 
         pub const CREATE = packed struct(ULONG) {
@@ -1815,7 +1815,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                     .READ_EA = true,
                     .WRITE_EA = true,
                     .EXECUTE = true,
-                    .Reserved6 = maxInt(@FieldType(File, "Reserved6")),
+                    .Reserved6 = intMax(@FieldType(File, "Reserved6")),
                     .READ_ATTRIBUTES = true,
                     .WRITE_ATTRIBUTES = true,
                 } },
@@ -2001,7 +2001,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                 .SPECIFIC = .{ .SYMBOLIC_LINK = .{
                     .QUERY = true,
                     .SET = true,
-                    .Reserved2 = maxInt(@FieldType(SymbolicLink, "Reserved2")),
+                    .Reserved2 = intMax(@FieldType(SymbolicLink, "Reserved2")),
                 } },
             };
         };
@@ -2079,7 +2079,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                     .SUSPEND_RESUME = true,
                     .QUERY_LIMITED_INFORMATION = true,
                     .SET_LIMITED_INFORMATION = true,
-                    .Reserved14 = maxInt(@FieldType(Process, "Reserved14")),
+                    .Reserved14 = intMax(@FieldType(Process, "Reserved14")),
                 } },
             };
         };
@@ -2119,7 +2119,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                     .SET_LIMITED_INFORMATION = true,
                     .QUERY_LIMITED_INFORMATION = true,
                     .RESUME = true,
-                    .Reserved13 = maxInt(@FieldType(Thread, "Reserved13")),
+                    .Reserved13 = intMax(@FieldType(Thread, "Reserved13")),
                 } },
             };
         };
@@ -2554,13 +2554,13 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             pub const ALL_ACCESS: ACCESS_MASK = .{
                 .STANDARD = .{ .RIGHTS = .REQUIRED, .SYNCHRONIZE = true },
                 .SPECIFIC = .{ .IO_COMPLETION = .{
-                    .Reserved0 = maxInt(@FieldType(IoCompletion, "Reserved0")),
+                    .Reserved0 = intMax(@FieldType(IoCompletion, "Reserved0")),
                     .MODIFY_STATE = true,
                 } },
             };
         };
 
-        pub const RIGHTS_ALL: Specific = .{ .bits = maxInt(@FieldType(Specific, "bits")) };
+        pub const RIGHTS_ALL: Specific = .{ .bits = intMax(@FieldType(Specific, "bits")) };
     };
 
     pub const Standard = packed struct(u5) {
@@ -3025,7 +3025,7 @@ pub fn eqlIgnoreCaseWtf8(a: []const u8, b: []const u8) bool {
         const a_cp = a_wtf8_it.nextCodepoint() orelse break;
         const b_cp = b_wtf8_it.nextCodepoint() orelse return false;
 
-        if (a_cp <= maxInt(u16) and b_cp <= maxInt(u16)) {
+        if (a_cp <= intMax(u16) and b_cp <= intMax(u16)) {
             if (a_cp != b_cp and toUpperWtf16(@intCast(a_cp)) != toUpperWtf16(@intCast(b_cp))) {
                 return false;
             }
@@ -3373,9 +3373,9 @@ pub const UNICODE_STRING = STRING(WCHAR);
 pub const TRUE = 1;
 pub const FALSE = 0;
 
-pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(maxInt(usize));
+pub const INVALID_HANDLE_VALUE: HANDLE = @ptrFromInt(intMax(usize));
 
-pub const INVALID_FILE_ATTRIBUTES: DWORD = maxInt(DWORD);
+pub const INVALID_FILE_ATTRIBUTES: DWORD = intMax(DWORD);
 
 pub const IO_STATUS_BLOCK = extern struct {
     // "DUMMYUNIONNAME" expands to "u"

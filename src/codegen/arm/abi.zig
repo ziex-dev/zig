@@ -121,7 +121,7 @@ const byval_float_count = 4;
 fn countFloats(ty: Type, zcu: *Zcu, maybe_float_bits: *?u16) u32 {
     const ip = &zcu.intern_pool;
     const target = zcu.getTarget();
-    const invalid = std.math.maxInt(u32);
+    const invalid = std.math.intMax(u32);
     switch (ty.zigTypeTag(zcu)) {
         .@"union" => {
             const union_obj = zcu.typeToUnion(ty).?;

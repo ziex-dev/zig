@@ -2,7 +2,7 @@ const std = @import("std");
 
 /// Standard C Library bug: The absolute value of the most negative integer remains negative.
 pub inline fn abs(val: c_int) c_int {
-    return if (val == std.math.minInt(c_int)) val else @intCast(@abs(val));
+    return if (val == std.math.intMin(c_int)) val else @intCast(@abs(val));
 }
 
 pub inline fn assume(cond: bool) void {
@@ -124,12 +124,12 @@ pub inline fn isnan(x: anytype) c_int {
 
 /// Standard C Library bug: The absolute value of the most negative integer remains negative.
 pub inline fn labs(val: c_long) c_long {
-    return if (val == std.math.minInt(c_long)) val else @intCast(@abs(val));
+    return if (val == std.math.intMin(c_long)) val else @intCast(@abs(val));
 }
 
 /// Standard C Library bug: The absolute value of the most negative integer remains negative.
 pub inline fn llabs(val: c_longlong) c_longlong {
-    return if (val == std.math.minInt(c_longlong)) val else @intCast(@abs(val));
+    return if (val == std.math.intMin(c_longlong)) val else @intCast(@abs(val));
 }
 
 pub inline fn log10f(val: f32) f32 {

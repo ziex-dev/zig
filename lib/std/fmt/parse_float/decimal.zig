@@ -111,7 +111,7 @@ pub fn Decimal(comptime T: type) type {
             if (self.num_digits == 0 or self.decimal_point < 0) {
                 return 0;
             } else if (self.decimal_point > max_decimal_digits) {
-                return math.maxInt(MantissaT);
+                return math.intMax(MantissaT);
             }
 
             const dp = @as(usize, @intCast(self.decimal_point));

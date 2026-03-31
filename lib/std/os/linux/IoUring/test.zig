@@ -281,7 +281,7 @@ test "splice/read" {
     try file_src.writeStreamingAll(io, &buffer_write);
 
     const fds = try std.Io.Threaded.pipe2(.{});
-    const pipe_offset: u64 = std.math.maxInt(u64);
+    const pipe_offset: u64 = std.math.intMax(u64);
 
     const sqe_splice_to_pipe = try ring.splice(0x11111111, fd_src, 0, fds[1], pipe_offset, buffer_write.len);
     try testing.expectEqual(linux.IORING_OP.SPLICE, sqe_splice_to_pipe.opcode);

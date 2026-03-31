@@ -2,8 +2,8 @@ const std = @import("std");
 
 pub const Id = packed struct(u32) {
     index: enum(u31) {
-        unused = std.math.maxInt(u31) - 0,
-        generated = std.math.maxInt(u31) - 1,
+        unused = std.math.intMax(u31) - 0,
+        generated = std.math.intMax(u31) - 1,
         _,
     },
     alias: bool = false,

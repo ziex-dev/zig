@@ -145,7 +145,7 @@ pub fn printInstruction(dis: Disassemble, inst: aarch64.encoding.Instruction, wr
                     .unallocated => unreachable,
                     .movz => elide_shift or group.imm16 != 0,
                     .movn => (elide_shift or group.imm16 != 0) and switch (sf) {
-                        .word => group.imm16 != std.math.maxInt(u16),
+                        .word => group.imm16 != std.math.intMax(u16),
                         .doubleword => true,
                     },
                     .movk => false,

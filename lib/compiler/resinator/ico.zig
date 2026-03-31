@@ -116,8 +116,8 @@ pub const IconDir = struct {
     pub const res_header_byte_len = 6;
 
     pub fn getResDataSize(self: IconDir) u32 {
-        // maxInt(u16) * Entry.res_byte_len = 917,490 which is well within the u32 range.
-        // Note: self.entries.len is limited to maxInt(u16)
+        // intMax(u16) * Entry.res_byte_len = 917,490 which is well within the u32 range.
+        // Note: self.entries.len is limited to intMax(u16)
         return @intCast(IconDir.res_header_byte_len + self.entries.len * Entry.res_byte_len);
     }
 

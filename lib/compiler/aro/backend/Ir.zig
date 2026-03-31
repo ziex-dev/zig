@@ -234,7 +234,7 @@ pub fn render(
     return obj;
 }
 
-pub const Ref = enum(u32) { none = std.math.maxInt(u32), _ };
+pub const Ref = enum(u32) { none = std.math.intMax(u32), _ };
 
 pub const Inst = struct {
     tag: Tag,

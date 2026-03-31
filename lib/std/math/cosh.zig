@@ -8,7 +8,7 @@ const std = @import("../std.zig");
 const math = std.math;
 const expo2 = @import("expo2.zig").expo2;
 const expect = std.testing.expect;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 /// Returns the hyperbolic cosine of x.
 ///
@@ -55,8 +55,8 @@ fn cosh32(x: f32) f32 {
 
 fn cosh64(x: f64) f64 {
     const u = @as(u64, @bitCast(x));
-    const w = @as(u32, @intCast(u >> 32)) & (maxInt(u32) >> 1);
-    const ax = @as(f64, @bitCast(u & (maxInt(u64) >> 1)));
+    const w = @as(u32, @intCast(u >> 32)) & (intMax(u32) >> 1);
+    const ax = @as(f64, @bitCast(u & (intMax(u64) >> 1)));
 
     // TODO: Shouldn't need this explicit check.
     if (x == 0.0) {

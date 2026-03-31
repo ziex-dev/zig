@@ -5,8 +5,8 @@ const arch = builtin.cpu.arch;
 
 const std = @import("std");
 const testing = std.testing;
-const maxInt = std.math.maxInt;
-const minInt = std.math.minInt;
+const intMax = std.math.intMax;
+const intMin = std.math.intMin;
 
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;

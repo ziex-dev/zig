@@ -100,15 +100,15 @@ test sizeof {
 const promoteIntLiteral = helpers.promoteIntLiteral;
 
 test promoteIntLiteral {
-    const signed_hex = promoteIntLiteral(c_int, math.maxInt(c_int) + 1, .hex);
+    const signed_hex = promoteIntLiteral(c_int, math.intMax(c_int) + 1, .hex);
     try testing.expectEqual(c_uint, @TypeOf(signed_hex));
 
-    if (math.maxInt(c_longlong) == math.maxInt(c_int)) return;
+    if (math.intMax(c_longlong) == math.intMax(c_int)) return;
 
-    const signed_decimal = promoteIntLiteral(c_int, math.maxInt(c_int) + 1, .decimal);
-    const unsigned = promoteIntLiteral(c_uint, math.maxInt(c_uint) + 1, .hex);
+    const signed_decimal = promoteIntLiteral(c_int, math.intMax(c_int) + 1, .decimal);
+    const unsigned = promoteIntLiteral(c_uint, math.intMax(c_uint) + 1, .hex);
 
-    if (math.maxInt(c_long) > math.maxInt(c_int)) {
+    if (math.intMax(c_long) > math.intMax(c_int)) {
         try testing.expectEqual(c_long, @TypeOf(signed_decimal));
         try testing.expectEqual(c_ulong, @TypeOf(unsigned));
     } else {
@@ -208,11 +208,11 @@ const U_SUFFIX = helpers.U_SUFFIX;
 
 test U_SUFFIX {
     try testing.expect(@TypeOf(U_SUFFIX(1)) == c_uint);
-    if (math.maxInt(c_ulong) > math.maxInt(c_uint)) {
-        try testing.expect(@TypeOf(U_SUFFIX(math.maxInt(c_uint) + 1)) == c_ulong);
+    if (math.intMax(c_ulong) > math.intMax(c_uint)) {
+        try testing.expect(@TypeOf(U_SUFFIX(math.intMax(c_uint) + 1)) == c_ulong);
     }
-    if (math.maxInt(c_ulonglong) > math.maxInt(c_ulong)) {
-        try testing.expect(@TypeOf(U_SUFFIX(math.maxInt(c_ulong) + 1)) == c_ulonglong);
+    if (math.intMax(c_ulonglong) > math.intMax(c_ulong)) {
+        try testing.expect(@TypeOf(U_SUFFIX(math.intMax(c_ulong) + 1)) == c_ulonglong);
     }
 }
 
@@ -220,19 +220,19 @@ const L_SUFFIX = helpers.L_SUFFIX;
 
 test L_SUFFIX {
     try testing.expect(@TypeOf(L_SUFFIX(1)) == c_long);
-    if (math.maxInt(c_long) > math.maxInt(c_int)) {
-        try testing.expect(@TypeOf(L_SUFFIX(math.maxInt(c_int) + 1)) == c_long);
+    if (math.intMax(c_long) > math.intMax(c_int)) {
+        try testing.expect(@TypeOf(L_SUFFIX(math.intMax(c_int) + 1)) == c_long);
     }
-    if (math.maxInt(c_longlong) > math.maxInt(c_long)) {
-        try testing.expect(@TypeOf(L_SUFFIX(math.maxInt(c_long) + 1)) == c_longlong);
+    if (math.intMax(c_longlong) > math.intMax(c_long)) {
+        try testing.expect(@TypeOf(L_SUFFIX(math.intMax(c_long) + 1)) == c_longlong);
     }
 }
 const UL_SUFFIX = helpers.UL_SUFFIX;
 
 test UL_SUFFIX {
     try testing.expect(@TypeOf(UL_SUFFIX(1)) == c_ulong);
-    if (math.maxInt(c_ulonglong) > math.maxInt(c_ulong)) {
-        try testing.expect(@TypeOf(UL_SUFFIX(math.maxInt(c_ulong) + 1)) == c_ulonglong);
+    if (math.intMax(c_ulonglong) > math.intMax(c_ulong)) {
+        try testing.expect(@TypeOf(UL_SUFFIX(math.intMax(c_ulong) + 1)) == c_ulonglong);
     }
 }
 const LL_SUFFIX = helpers.LL_SUFFIX;
@@ -247,29 +247,29 @@ test ULL_SUFFIX {
 }
 
 test "Extended C ABI casting" {
-    if (math.maxInt(c_long) > math.maxInt(c_char)) {
-        try testing.expect(@TypeOf(L_SUFFIX(@as(c_char, math.maxInt(c_char) - 1))) == c_long); // c_char
+    if (math.intMax(c_long) > math.intMax(c_char)) {
+        try testing.expect(@TypeOf(L_SUFFIX(@as(c_char, math.intMax(c_char) - 1))) == c_long); // c_char
     }
-    if (math.maxInt(c_long) > math.maxInt(c_short)) {
-        try testing.expect(@TypeOf(L_SUFFIX(@as(c_short, math.maxInt(c_short) - 1))) == c_long); // c_short
-    }
-
-    if (math.maxInt(c_long) > math.maxInt(c_ushort)) {
-        try testing.expect(@TypeOf(L_SUFFIX(@as(c_ushort, math.maxInt(c_ushort) - 1))) == c_long); //c_ushort
+    if (math.intMax(c_long) > math.intMax(c_short)) {
+        try testing.expect(@TypeOf(L_SUFFIX(@as(c_short, math.intMax(c_short) - 1))) == c_long); // c_short
     }
 
-    if (math.maxInt(c_long) > math.maxInt(c_int)) {
-        try testing.expect(@TypeOf(L_SUFFIX(@as(c_int, math.maxInt(c_int) - 1))) == c_long); // c_int
+    if (math.intMax(c_long) > math.intMax(c_ushort)) {
+        try testing.expect(@TypeOf(L_SUFFIX(@as(c_ushort, math.intMax(c_ushort) - 1))) == c_long); //c_ushort
     }
 
-    if (math.maxInt(c_long) > math.maxInt(c_uint)) {
-        try testing.expect(@TypeOf(L_SUFFIX(@as(c_uint, math.maxInt(c_uint) - 1))) == c_long); // c_uint
-        try testing.expect(@TypeOf(L_SUFFIX(math.maxInt(c_uint) + 1)) == c_long); // comptime_int -> c_long
+    if (math.intMax(c_long) > math.intMax(c_int)) {
+        try testing.expect(@TypeOf(L_SUFFIX(@as(c_int, math.intMax(c_int) - 1))) == c_long); // c_int
     }
 
-    if (math.maxInt(c_longlong) > math.maxInt(c_long)) {
-        try testing.expect(@TypeOf(L_SUFFIX(@as(c_long, math.maxInt(c_long) - 1))) == c_long); // c_long
-        try testing.expect(@TypeOf(L_SUFFIX(math.maxInt(c_long) + 1)) == c_longlong); // comptime_int -> c_longlong
+    if (math.intMax(c_long) > math.intMax(c_uint)) {
+        try testing.expect(@TypeOf(L_SUFFIX(@as(c_uint, math.intMax(c_uint) - 1))) == c_long); // c_uint
+        try testing.expect(@TypeOf(L_SUFFIX(math.intMax(c_uint) + 1)) == c_long); // comptime_int -> c_long
+    }
+
+    if (math.intMax(c_longlong) > math.intMax(c_long)) {
+        try testing.expect(@TypeOf(L_SUFFIX(@as(c_long, math.intMax(c_long) - 1))) == c_long); // c_long
+        try testing.expect(@TypeOf(L_SUFFIX(math.intMax(c_long) + 1)) == c_longlong); // comptime_int -> c_longlong
     }
 }
 

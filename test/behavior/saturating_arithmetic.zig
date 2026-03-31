@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const minInt = std.math.minInt;
-const maxInt = std.math.maxInt;
+const intMin = std.math.intMin;
+const intMax = std.math.intMax;
 const expect = std.testing.expect;
 
 test "saturating add" {
@@ -19,7 +19,7 @@ test "saturating add" {
             try testSatAdd(i2, 1, 1, 1);
             try testSatAdd(i2, 1, -1, 0);
             try testSatAdd(i2, -1, -1, -2);
-            try testSatAdd(i64, maxInt(i64), 1, maxInt(i64));
+            try testSatAdd(i64, intMax(i64), 1, intMax(i64));
             try testSatAdd(i8, 127, 127, 127);
             try testSatAdd(u2, 0, 0, 0);
             try testSatAdd(u2, 0, 1, 1);
@@ -61,9 +61,9 @@ test "saturating add 128bit" {
 
     const S = struct {
         fn doTheTest() !void {
-            try testSatAdd(i128, maxInt(i128), -maxInt(i128), 0);
-            try testSatAdd(i128, minInt(i128), maxInt(i128), -1);
-            try testSatAdd(u128, maxInt(u128), 1, maxInt(u128));
+            try testSatAdd(i128, intMax(i128), -intMax(i128), 0);
+            try testSatAdd(i128, intMin(i128), intMax(i128), -1);
+            try testSatAdd(u128, intMax(u128), 1, intMax(u128));
         }
         fn testSatAdd(comptime T: type, lhs: T, rhs: T, expected: T) !void {
             try expect((lhs +| rhs) == expected);
@@ -94,7 +94,7 @@ test "saturating subtraction" {
             try testSatSub(i2, 1, 1, 0);
             try testSatSub(i2, 1, -1, 1);
             try testSatSub(i2, -2, -2, 0);
-            try testSatSub(i64, minInt(i64), 1, minInt(i64));
+            try testSatSub(i64, intMin(i64), 1, intMin(i64));
             try testSatSub(u2, 0, 0, 0);
             try testSatSub(u2, 0, 1, 0);
             try testSatSub(u5, 0, 31, 0);
@@ -134,9 +134,9 @@ test "saturating subtraction 128bit" {
 
     const S = struct {
         fn doTheTest() !void {
-            try testSatSub(i128, maxInt(i128), -1, maxInt(i128));
-            try testSatSub(i128, minInt(i128), -maxInt(i128), -1);
-            try testSatSub(u128, 0, maxInt(u128), 0);
+            try testSatSub(i128, intMax(i128), -1, intMax(i128));
+            try testSatSub(i128, intMin(i128), -intMax(i128), -1);
+            try testSatSub(u128, 0, intMax(u128), 0);
         }
 
         fn testSatSub(comptime T: type, lhs: T, rhs: T, expected: T) !void {
@@ -169,60 +169,60 @@ test "saturating multiplication <= 32 bits" {
         return error.SkipZigTest;
     }
 
-    try testSatMul(u8, 0, maxInt(u8), 0);
-    try testSatMul(u8, 1 << 7, 1 << 7, maxInt(u8));
-    try testSatMul(u8, maxInt(u8) - 1, 2, maxInt(u8));
-    try testSatMul(u8, 1 << 4, 1 << 4, maxInt(u8));
+    try testSatMul(u8, 0, intMax(u8), 0);
+    try testSatMul(u8, 1 << 7, 1 << 7, intMax(u8));
+    try testSatMul(u8, intMax(u8) - 1, 2, intMax(u8));
+    try testSatMul(u8, 1 << 4, 1 << 4, intMax(u8));
     try testSatMul(u8, 1 << 4, 1 << 3, 1 << 7);
-    try testSatMul(u8, 1 << 5, 1 << 3, maxInt(u8));
+    try testSatMul(u8, 1 << 5, 1 << 3, intMax(u8));
     try testSatMul(u8, 10, 20, 200);
 
-    try testSatMul(u16, 0, maxInt(u16), 0);
-    try testSatMul(u16, 1 << 15, 1 << 15, maxInt(u16));
-    try testSatMul(u16, maxInt(u16) - 1, 2, maxInt(u16));
-    try testSatMul(u16, 1 << 8, 1 << 8, maxInt(u16));
+    try testSatMul(u16, 0, intMax(u16), 0);
+    try testSatMul(u16, 1 << 15, 1 << 15, intMax(u16));
+    try testSatMul(u16, intMax(u16) - 1, 2, intMax(u16));
+    try testSatMul(u16, 1 << 8, 1 << 8, intMax(u16));
     try testSatMul(u16, 1 << 12, 1 << 3, 1 << 15);
-    try testSatMul(u16, 1 << 13, 1 << 3, maxInt(u16));
+    try testSatMul(u16, 1 << 13, 1 << 3, intMax(u16));
     try testSatMul(u16, 10, 20, 200);
 
-    try testSatMul(u32, 0, maxInt(u32), 0);
-    try testSatMul(u32, 1 << 31, 1 << 31, maxInt(u32));
-    try testSatMul(u32, maxInt(u32) - 1, 2, maxInt(u32));
-    try testSatMul(u32, 1 << 16, 1 << 16, maxInt(u32));
+    try testSatMul(u32, 0, intMax(u32), 0);
+    try testSatMul(u32, 1 << 31, 1 << 31, intMax(u32));
+    try testSatMul(u32, intMax(u32) - 1, 2, intMax(u32));
+    try testSatMul(u32, 1 << 16, 1 << 16, intMax(u32));
     try testSatMul(u32, 1 << 28, 1 << 3, 1 << 31);
-    try testSatMul(u32, 1 << 29, 1 << 3, maxInt(u32));
+    try testSatMul(u32, 1 << 29, 1 << 3, intMax(u32));
     try testSatMul(u32, 10, 20, 200);
 
-    try testSatMul(i8, 0, maxInt(i8), 0);
-    try testSatMul(i8, 0, minInt(i8), 0);
-    try testSatMul(i8, 1 << 6, 1 << 6, maxInt(i8));
-    try testSatMul(i8, minInt(i8), minInt(i8), maxInt(i8));
-    try testSatMul(i8, maxInt(i8) - 1, 2, maxInt(i8));
-    try testSatMul(i8, minInt(i8) + 1, 2, minInt(i8));
-    try testSatMul(i8, 1 << 4, 1 << 4, maxInt(i8));
-    try testSatMul(i8, minInt(i4), 1 << 4, minInt(i8));
+    try testSatMul(i8, 0, intMax(i8), 0);
+    try testSatMul(i8, 0, intMin(i8), 0);
+    try testSatMul(i8, 1 << 6, 1 << 6, intMax(i8));
+    try testSatMul(i8, intMin(i8), intMin(i8), intMax(i8));
+    try testSatMul(i8, intMax(i8) - 1, 2, intMax(i8));
+    try testSatMul(i8, intMin(i8) + 1, 2, intMin(i8));
+    try testSatMul(i8, 1 << 4, 1 << 4, intMax(i8));
+    try testSatMul(i8, intMin(i4), 1 << 4, intMin(i8));
     try testSatMul(i8, 10, 12, 120);
     try testSatMul(i8, 10, -12, -120);
 
-    try testSatMul(i16, 0, maxInt(i16), 0);
-    try testSatMul(i16, 0, minInt(i16), 0);
-    try testSatMul(i16, 1 << 14, 1 << 14, maxInt(i16));
-    try testSatMul(i16, minInt(i16), minInt(i16), maxInt(i16));
-    try testSatMul(i16, maxInt(i16) - 1, 2, maxInt(i16));
-    try testSatMul(i16, minInt(i16) + 1, 2, minInt(i16));
-    try testSatMul(i16, 1 << 8, 1 << 8, maxInt(i16));
-    try testSatMul(i16, minInt(i8), 1 << 8, minInt(i16));
+    try testSatMul(i16, 0, intMax(i16), 0);
+    try testSatMul(i16, 0, intMin(i16), 0);
+    try testSatMul(i16, 1 << 14, 1 << 14, intMax(i16));
+    try testSatMul(i16, intMin(i16), intMin(i16), intMax(i16));
+    try testSatMul(i16, intMax(i16) - 1, 2, intMax(i16));
+    try testSatMul(i16, intMin(i16) + 1, 2, intMin(i16));
+    try testSatMul(i16, 1 << 8, 1 << 8, intMax(i16));
+    try testSatMul(i16, intMin(i8), 1 << 8, intMin(i16));
     try testSatMul(i16, 10, 12, 120);
     try testSatMul(i16, 10, -12, -120);
 
-    try testSatMul(i32, 0, maxInt(i32), 0);
-    try testSatMul(i32, 0, minInt(i32), 0);
-    try testSatMul(i32, 1 << 30, 1 << 30, maxInt(i32));
-    try testSatMul(i32, minInt(i32), minInt(i32), maxInt(i32));
-    try testSatMul(i32, maxInt(i32) - 1, 2, maxInt(i32));
-    try testSatMul(i32, minInt(i32) + 1, 2, minInt(i32));
-    try testSatMul(i32, 1 << 16, 1 << 16, maxInt(i32));
-    try testSatMul(i32, minInt(i16), 1 << 16, minInt(i32));
+    try testSatMul(i32, 0, intMax(i32), 0);
+    try testSatMul(i32, 0, intMin(i32), 0);
+    try testSatMul(i32, 1 << 30, 1 << 30, intMax(i32));
+    try testSatMul(i32, intMin(i32), intMin(i32), intMax(i32));
+    try testSatMul(i32, intMax(i32) - 1, 2, intMax(i32));
+    try testSatMul(i32, intMin(i32) + 1, 2, intMin(i32));
+    try testSatMul(i32, 1 << 16, 1 << 16, intMax(i32));
+    try testSatMul(i32, intMin(i16), 1 << 16, intMin(i32));
     try testSatMul(i32, 10, 12, 120);
     try testSatMul(i32, 10, -12, -120);
 }
@@ -232,25 +232,25 @@ test "saturating mul i64, i128" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    try testSatMul(i64, 0, maxInt(i64), 0);
-    try testSatMul(i64, 0, minInt(i64), 0);
-    try testSatMul(i64, 1 << 62, 1 << 62, maxInt(i64));
-    try testSatMul(i64, minInt(i64), minInt(i64), maxInt(i64));
-    try testSatMul(i64, maxInt(i64) - 1, 2, maxInt(i64));
-    try testSatMul(i64, minInt(i64) + 1, 2, minInt(i64));
-    try testSatMul(i64, 1 << 32, 1 << 32, maxInt(i64));
-    try testSatMul(i64, minInt(i32), 1 << 32, minInt(i64));
+    try testSatMul(i64, 0, intMax(i64), 0);
+    try testSatMul(i64, 0, intMin(i64), 0);
+    try testSatMul(i64, 1 << 62, 1 << 62, intMax(i64));
+    try testSatMul(i64, intMin(i64), intMin(i64), intMax(i64));
+    try testSatMul(i64, intMax(i64) - 1, 2, intMax(i64));
+    try testSatMul(i64, intMin(i64) + 1, 2, intMin(i64));
+    try testSatMul(i64, 1 << 32, 1 << 32, intMax(i64));
+    try testSatMul(i64, intMin(i32), 1 << 32, intMin(i64));
     try testSatMul(i64, 10, 12, 120);
     try testSatMul(i64, 10, -12, -120);
 
-    try testSatMul(i128, 0, maxInt(i128), 0);
-    try testSatMul(i128, 0, minInt(i128), 0);
-    try testSatMul(i128, 1 << 126, 1 << 126, maxInt(i128));
-    try testSatMul(i128, minInt(i128), minInt(i128), maxInt(i128));
-    try testSatMul(i128, maxInt(i128) - 1, 2, maxInt(i128));
-    try testSatMul(i128, minInt(i128) + 1, 2, minInt(i128));
-    try testSatMul(i128, 1 << 64, 1 << 64, maxInt(i128));
-    try testSatMul(i128, minInt(i64), 1 << 64, minInt(i128));
+    try testSatMul(i128, 0, intMax(i128), 0);
+    try testSatMul(i128, 0, intMin(i128), 0);
+    try testSatMul(i128, 1 << 126, 1 << 126, intMax(i128));
+    try testSatMul(i128, intMin(i128), intMin(i128), intMax(i128));
+    try testSatMul(i128, intMax(i128) - 1, 2, intMax(i128));
+    try testSatMul(i128, intMin(i128) + 1, 2, intMin(i128));
+    try testSatMul(i128, 1 << 64, 1 << 64, intMax(i128));
+    try testSatMul(i128, intMin(i64), 1 << 64, intMin(i128));
     try testSatMul(i128, 10, 12, 120);
     try testSatMul(i128, 10, -12, -120);
 }
@@ -275,13 +275,13 @@ test "saturating multiplication" {
             try testSatMul(i4, 2, 4, 7);
             try testSatMul(i8, 2, 127, 127);
             try testSatMul(i8, -128, -128, 127);
-            try testSatMul(i8, maxInt(i8), maxInt(i8), maxInt(i8));
-            try testSatMul(i16, maxInt(i16), -1, minInt(i16) + 1);
-            try testSatMul(i128, maxInt(i128), -1, minInt(i128) + 1);
-            try testSatMul(i128, minInt(i128), -1, maxInt(i128));
+            try testSatMul(i8, intMax(i8), intMax(i8), intMax(i8));
+            try testSatMul(i16, intMax(i16), -1, intMin(i16) + 1);
+            try testSatMul(i128, intMax(i128), -1, intMin(i128) + 1);
+            try testSatMul(i128, intMin(i128), -1, intMax(i128));
             try testSatMul(u8, 10, 3, 30);
             try testSatMul(u8, 2, 255, 255);
-            try testSatMul(u128, maxInt(u128), maxInt(u128), maxInt(u128));
+            try testSatMul(u128, intMax(u128), intMax(u128), intMax(u128));
         }
     };
 
@@ -309,16 +309,16 @@ test "saturating shift-left" {
             // TODO: remove this check once #9668 is completed
             if (!builtin.cpu.arch.isWasm()) {
                 // skip testing ints > 64 bits on wasm due to miscompilation / wasmtime ci error
-                try testSatShl(i128, maxInt(i128), u128, 64, maxInt(i128));
-                try testSatShl(u128, maxInt(u128), u128, 64, maxInt(u128));
+                try testSatShl(i128, intMax(i128), u128, 64, intMax(i128));
+                try testSatShl(u128, intMax(u128), u128, 64, intMax(u128));
             }
             try testSatShl(u8, 1, u8, 2, 4);
             try testSatShl(u8, 255, u8, 1, 255);
-            try testSatShl(i8, -3, u4, 8, minInt(i8));
+            try testSatShl(i8, -3, u4, 8, intMin(i8));
             try testSatShl(i8, 0, u4, 8, 0);
-            try testSatShl(i8, 3, u4, 8, maxInt(i8));
+            try testSatShl(i8, 3, u4, 8, intMax(i8));
             try testSatShl(u8, 0, u4, 8, 0);
-            try testSatShl(u8, 3, u4, 8, maxInt(u8));
+            try testSatShl(u8, 3, u4, 8, intMax(u8));
         }
 
         fn testSatShl(comptime Lhs: type, lhs: Lhs, comptime Rhs: type, rhs: Rhs, expected: Lhs) !void {
@@ -352,8 +352,8 @@ test "saturating shift-left large rhs" {
         const ct_rhs: u1024 = 1 << 1023;
         var rt_rhs: u1024 = undefined;
         rt_rhs = ct_rhs;
-        try expect(lhs <<| ct_rhs == maxInt(u8));
-        try expect(lhs <<| rt_rhs == maxInt(u8));
+        try expect(lhs <<| ct_rhs == intMax(u8));
+        try expect(lhs <<| rt_rhs == intMax(u8));
     }
 }
 

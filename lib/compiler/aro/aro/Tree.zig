@@ -1808,7 +1808,7 @@ pub const Node = union(enum) {
     };
 
     pub const OptIndex = enum(u32) {
-        null = std.math.maxInt(u32),
+        null = std.math.intMax(u32),
         _,
 
         pub fn unpack(opt: OptIndex) ?Index {

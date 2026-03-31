@@ -4,8 +4,8 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectError = std.testing.expectError;
 const expectEqual = std.testing.expectEqual;
-const minInt = std.math.minInt;
-const maxInt = std.math.maxInt;
+const intMin = std.math.intMin;
+const intMax = std.math.intMax;
 
 test "switch with numbers" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
@@ -53,30 +53,30 @@ test "switch arbitrary int size" {
 
     try expect(testSwitchArbInt(u64, 0) == 0);
     try expect(testSwitchArbInt(u64, 12) == 1);
-    try expect(testSwitchArbInt(u64, maxInt(u64)) == 2);
+    try expect(testSwitchArbInt(u64, intMax(u64)) == 2);
     try expect(testSwitchArbInt(u64, 5555) == 3);
 
-    try expect(testSwitchArbInt(i64, minInt(i64)) == 0);
+    try expect(testSwitchArbInt(i64, intMin(i64)) == 0);
     try expect(testSwitchArbInt(i64, 12) == 1);
-    try expect(testSwitchArbInt(i64, maxInt(i64)) == 2);
+    try expect(testSwitchArbInt(i64, intMax(i64)) == 2);
     try expect(testSwitchArbInt(i64, -1000) == 3);
 
     try expect(testSwitchArbInt(u128, 0) == 0);
     try expect(testSwitchArbInt(u128, 12) == 1);
-    try expect(testSwitchArbInt(u128, maxInt(u128)) == 2);
+    try expect(testSwitchArbInt(u128, intMax(u128)) == 2);
     try expect(testSwitchArbInt(u128, 5555) == 3);
 
-    try expect(testSwitchArbInt(i128, minInt(i128)) == 0);
+    try expect(testSwitchArbInt(i128, intMin(i128)) == 0);
     try expect(testSwitchArbInt(i128, 12) == 1);
-    try expect(testSwitchArbInt(i128, maxInt(i128)) == 2);
+    try expect(testSwitchArbInt(i128, intMax(i128)) == 2);
     try expect(testSwitchArbInt(i128, -1000) == 3);
 }
 
 fn testSwitchArbInt(comptime T: type, x: T) u32 {
     return switch (x) {
-        minInt(T) => 0,
+        intMin(T) => 0,
         10...15 => 1,
-        maxInt(T) => 2,
+        intMax(T) => 2,
         else => 3,
     };
 }

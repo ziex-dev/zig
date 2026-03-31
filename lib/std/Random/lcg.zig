@@ -6,7 +6,7 @@
 
 const std = @import("std");
 
-/// Linear congruent generator where the modulo is `std.math.maxInt(T)`,
+/// Linear congruent generator where the modulo is `std.math.intMax(T)`,
 /// wrapping over the integer.
 pub fn Wrapping(comptime T: type) type {
     return struct {

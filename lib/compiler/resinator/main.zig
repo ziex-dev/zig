@@ -258,7 +258,7 @@ pub fn main(init: std.process.Init.Minimal) !void {
                     },
                     error.LineNumberOverflow => {
                         // TODO: Better error message
-                        try error_handler.emitMessage(gpa, io, .err, "line number count exceeded maximum of {}", .{std.math.maxInt(usize)});
+                        try error_handler.emitMessage(gpa, io, .err, "line number count exceeded maximum of {}", .{std.math.intMax(usize)});
                         std.process.exit(1);
                     },
                     error.OutOfMemory => |e| return e,

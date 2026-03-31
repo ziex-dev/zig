@@ -5,7 +5,7 @@ const assert = std.debug.assert;
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualSlices = std.testing.expectEqualSlices;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 top_level_field: i32,
 
@@ -644,29 +644,29 @@ test "packed array 24bits" {
     try expect(ptr.b1.field == 0);
     try expect(ptr.c == 0);
 
-    ptr.a = maxInt(u16);
-    try expect(ptr.a == maxInt(u16));
+    ptr.a = intMax(u16);
+    try expect(ptr.a == intMax(u16));
     try expect(ptr.b0.field == 0);
     try expect(ptr.b1.field == 0);
     try expect(ptr.c == 0);
 
-    ptr.b0.field = maxInt(u24);
-    try expect(ptr.a == maxInt(u16));
-    try expect(ptr.b0.field == maxInt(u24));
+    ptr.b0.field = intMax(u24);
+    try expect(ptr.a == intMax(u16));
+    try expect(ptr.b0.field == intMax(u24));
     try expect(ptr.b1.field == 0);
     try expect(ptr.c == 0);
 
-    ptr.b1.field = maxInt(u24);
-    try expect(ptr.a == maxInt(u16));
-    try expect(ptr.b0.field == maxInt(u24));
-    try expect(ptr.b1.field == maxInt(u24));
+    ptr.b1.field = intMax(u24);
+    try expect(ptr.a == intMax(u16));
+    try expect(ptr.b0.field == intMax(u24));
+    try expect(ptr.b1.field == intMax(u24));
     try expect(ptr.c == 0);
 
-    ptr.c = maxInt(u16);
-    try expect(ptr.a == maxInt(u16));
-    try expect(ptr.b0.field == maxInt(u24));
-    try expect(ptr.b1.field == maxInt(u24));
-    try expect(ptr.c == maxInt(u16));
+    ptr.c = intMax(u16);
+    try expect(ptr.a == intMax(u16));
+    try expect(ptr.b0.field == intMax(u24));
+    try expect(ptr.b1.field == intMax(u24));
+    try expect(ptr.c == intMax(u16));
 
     try expect(bytes[bytes.len - 1] == 0xbb);
 }
@@ -1670,7 +1670,7 @@ test "runtime side-effects in comptime-known struct init" {
         },
     };
     try expectEqual(S{ .a = 1, .b = 2, .c = 4, .d = 8 }, init);
-    try expectEqual(@as(u4, std.math.maxInt(u4)), side_effects);
+    try expectEqual(@as(u4, std.math.intMax(u4)), side_effects);
 }
 
 test "pointer to struct initialized through reference to anonymous initializer provides result types" {

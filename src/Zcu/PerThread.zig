@@ -319,7 +319,7 @@ pub fn updateFile(
     if (need_update) {
         var cache_file_writer: Io.File.Writer = .init(cache_file, io, &.{});
 
-        if (stat.size > std.math.maxInt(u32))
+        if (stat.size > std.math.intMax(u32))
             return error.FileTooBig;
 
         const source = try gpa.allocSentinel(u8, @intCast(stat.size), 0);
@@ -3941,7 +3941,7 @@ pub fn intBitsForValue(pt: Zcu.PerThread, val: Value, sign: bool) u16 {
             if (std.math.cast(u64, x)) |casted| return Type.smallestUnsignedBits(casted) + @intFromBool(sign);
             assert(sign);
             // Protect against overflow in the following negation.
-            if (x == std.math.minInt(i64)) return 64;
+            if (x == std.math.intMin(i64)) return 64;
             return Type.smallestUnsignedBits(@as(u64, @intCast(-(x + 1)))) + 1;
         },
         .u64 => |x| {

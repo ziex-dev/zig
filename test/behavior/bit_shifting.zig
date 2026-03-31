@@ -161,10 +161,10 @@ test "Saturating Shift Left" {
         fn testType(comptime T: type) !void {
             comptime var rhs: std.math.Log2Int(T) = 0;
             inline while (true) : (rhs += 1) {
-                comptime var lhs: T = std.math.minInt(T);
+                comptime var lhs: T = std.math.intMin(T);
                 inline while (true) : (lhs += 1) {
                     try expectEqual(lhs <<| rhs, shlSat(lhs, rhs));
-                    if (lhs == std.math.maxInt(T)) break;
+                    if (lhs == std.math.intMax(T)) break;
                 }
                 if (rhs == @bitSizeOf(T) - 1) break;
             }

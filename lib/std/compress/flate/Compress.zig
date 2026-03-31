@@ -156,7 +156,7 @@ const BitWriter = struct {
 };
 
 /// Number of tokens to accumulate before outputing as a block.
-/// The maximum value is `math.maxInt(u16) - 1` since one token is reserved for end-of-block.
+/// The maximum value is `math.intMax(u16) - 1` since one token is reserved for end-of-block.
 const block_tokens: u16 = 1 << 15;
 const lookup_hash_bits = 15;
 const Hash = u16; // `u[lookup_hash_bits]` is not used due to worse optimization (with LLVM 21)
@@ -218,7 +218,7 @@ fn outputBytes(c: *Compress, bytes: []const u8) Writer.Error!void {
             try c.writeBlock(false);
         }
 
-        const n = @min(remaining.len, block_tokens - c.buffered_tokens.n, math.maxInt(u15));
+        const n = @min(remaining.len, block_tokens - c.buffered_tokens.n, math.intMax(u15));
         assert(n != 0);
         const header: TokenBufferEntryHeader = .{ .kind = .bytes, .data = n };
         c.buffered_tokens.list[c.buffered_tokens.pos..][0..2].* = @bitCast(header);
@@ -300,9 +300,9 @@ pub fn init(
         .buffered_tokens = .empty,
         .lookup = .{
             // init `value` is max so there is 0xff pattern
-            .head = @splat(.{ .value = math.maxInt(u15), .is_null = true }),
+            .head = @splat(.{ .value = math.intMax(u15), .is_null = true }),
             .chain = undefined,
-            .chain_pos = math.maxInt(u15),
+            .chain_pos = math.intMax(u15),
         },
         .container = container,
         .opts = opts,
@@ -395,7 +395,7 @@ fn rebaseInner(w: *Writer, preserve: usize, capacity: usize, eos: bool) Writer.E
             var good = c.opts.good;
             if (match.len >= good) {
                 chain >>= 2;
-                good = math.maxInt(u8); // Reduce only once
+                good = math.intMax(u8); // Reduce only once
             }
 
             seq <<= 8;
@@ -644,7 +644,7 @@ fn matchAndAddHash(c: *Compress, i: usize, h: Hash, gt: u16, max_chain: u16, goo
                 if (best_len >= nice) break;
                 if (best_len >= good) {
                     chain_limit >>= 2;
-                    good = math.maxInt(u8); // Reduce only once
+                    good = math.intMax(u8); // Reduce only once
                 }
             }
 

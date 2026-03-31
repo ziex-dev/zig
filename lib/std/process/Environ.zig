@@ -441,7 +441,7 @@ pub const Map = struct {
                 &[_]u16{ 'Z', 'I', 'G', '_', 'P', 'R', 'O', 'G', 'R', 'E', 'S', 'S', '=' },
             );
             i += "ZIG_PROGRESS=".len;
-            var value_buf: [std.fmt.count("{d}", .{std.math.maxInt(usize)})]u8 = undefined;
+            var value_buf: [std.fmt.count("{d}", .{std.math.intMax(usize)})]u8 = undefined;
             const value = std.fmt.bufPrint(&value_buf, "{d}", .{@intFromPtr(handle)}) catch unreachable;
             for (block[i..][0..value.len], value) |*r, v| r.* = v;
             i += value.len;
@@ -815,7 +815,7 @@ pub fn createWindowsBlock(
     if (options.zig_progress_handle) |handle| if (handle != std.os.windows.INVALID_HANDLE_VALUE) {
         @memcpy(block[i..][0..zig_progress_key.len], &zig_progress_key);
         i += zig_progress_key.len;
-        var value_buf: [std.fmt.count("{d}", .{std.math.maxInt(usize)})]u8 = undefined;
+        var value_buf: [std.fmt.count("{d}", .{std.math.intMax(usize)})]u8 = undefined;
         const value = std.fmt.bufPrint(&value_buf, "{d}", .{@intFromPtr(handle)}) catch unreachable;
         for (block[i..][0..value.len], value) |*r, v| r.* = v;
         i += value.len;

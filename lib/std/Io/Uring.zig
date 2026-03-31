@@ -172,8 +172,8 @@ const Fiber = struct {
         const unrequested: CancelStatus = .{ .requested = false, .awaiting = .nothing };
 
         const Awaiting = enum(u31) {
-            nothing = std.math.maxInt(u31),
-            group = std.math.maxInt(u31) - 1,
+            nothing = std.math.intMax(u31),
+            group = std.math.intMax(u31) - 1,
             /// An io_uring fd.
             _,
 
@@ -340,7 +340,7 @@ const Fiber = struct {
     /// alignment) so that those two bits can be used in a `packed struct`.
     const PackedPtr = enum(@Int(.unsigned, @bitSizeOf(usize) - 2)) {
         null = 0,
-        all_ones = std.math.maxInt(@Int(.unsigned, @bitSizeOf(usize) - 2)),
+        all_ones = std.math.intMax(@Int(.unsigned, @bitSizeOf(usize) - 2)),
         _,
 
         const Split = packed struct(usize) { low: u2, high: PackedPtr };
@@ -596,7 +596,7 @@ const CachedFd = struct {
                 }
                 const fd = try ev.openat(cancel_region, linux.AT.FDCWD, path, flags, 0);
                 @atomicStore(Once, &cached_fd.once, .fromFd(fd), .monotonic);
-                futexWake(ev, @ptrCast(&cached_fd.once), std.math.maxInt(u32));
+                futexWake(ev, @ptrCast(&cached_fd.once), std.math.intMax(u32));
                 return fd;
             };
         }
@@ -1609,7 +1609,7 @@ const Group = struct {
             Mutex,
             mutex,
             .And,
-            .{ .locked = false, .contended = false, .shared2 = std.math.maxInt(u30) },
+            .{ .locked = false, .contended = false, .shared2 = std.math.intMax(u30) },
             .release,
         );
         assert(old_state.locked);
@@ -1990,7 +1990,7 @@ fn futexWait(
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
-        .addr3 = std.math.maxInt(u32),
+        .addr3 = std.math.intMax(u32),
         .resv = 0,
     };
     if (timespec) |*timespec_ptr| thread.enqueue().* = .{
@@ -2045,7 +2045,7 @@ fn futexWaitUncancelable(userdata: ?*anyopaque, ptr: *const u32, expected: u32) 
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
-        .addr3 = std.math.maxInt(u32),
+        .addr3 = std.math.intMax(u32),
         .resv = 0,
     };
     ev.yield(null, .nothing);
@@ -2076,7 +2076,7 @@ fn futexWake(userdata: ?*anyopaque, ptr: *const u32, max_waiters: u32) void {
         .buf_index = 0,
         .personality = 0,
         .splice_fd_in = 0,
-        .addr3 = std.math.maxInt(u32),
+        .addr3 = std.math.intMax(u32),
         .resv = 0,
     };
     thread.submit();
@@ -2345,7 +2345,7 @@ fn batchDrainSubmitted(
                     .flags = 0,
                     .ioprio = 0,
                     .fd = fd,
-                    .off = std.math.maxInt(u64),
+                    .off = std.math.intMax(u64),
                     .addr = @intFromPtr(buffer.ptr),
                     .len = @min(buffer.len, 0xfffff000),
                     .rw_flags = 0,
@@ -2378,7 +2378,7 @@ fn batchDrainSubmitted(
                     .flags = 0,
                     .ioprio = 0,
                     .fd = fd,
-                    .off = std.math.maxInt(u64),
+                    .off = std.math.intMax(u64),
                     .addr = @intFromPtr(buffer.ptr),
                     .len = @min(buffer.len, 0xfffff000),
                     .rw_flags = 0,
@@ -3426,8 +3426,8 @@ fn dirSetOwner(
         &sync,
         dir.handle,
         "",
-        owner orelse std.math.maxInt(linux.uid_t),
-        group orelse std.math.maxInt(linux.gid_t),
+        owner orelse std.math.intMax(linux.uid_t),
+        group orelse std.math.intMax(linux.gid_t),
         linux.AT.EMPTY_PATH,
     );
 }
@@ -3449,8 +3449,8 @@ fn dirSetFileOwner(
         &sync,
         dir.handle,
         sub_path_posix,
-        owner orelse std.math.maxInt(linux.uid_t),
-        group orelse std.math.maxInt(linux.gid_t),
+        owner orelse std.math.intMax(linux.uid_t),
+        group orelse std.math.intMax(linux.gid_t),
         if (options.follow_symlinks) 0 else linux.AT.SYMLINK_NOFOLLOW,
     );
 }
@@ -3853,8 +3853,8 @@ fn fileSetOwner(
         &sync,
         file.handle,
         "",
-        owner orelse std.math.maxInt(linux.uid_t),
-        group orelse std.math.maxInt(linux.gid_t),
+        owner orelse std.math.intMax(linux.uid_t),
+        group orelse std.math.intMax(linux.gid_t),
         linux.AT.EMPTY_PATH,
     );
 }
@@ -4856,7 +4856,7 @@ fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
     const timespec: linux.kernel_timespec, const clock: Io.Clock, const timeout_flags: u32 = timespec: switch (timeout) {
         .none => .{
             .{
-                .sec = std.math.maxInt(i64),
+                .sec = std.math.intMax(i64),
                 .nsec = std.time.ns_per_s - 1,
             },
             .awake,
@@ -5740,7 +5740,7 @@ fn preadv(
             .flags = 0,
             .ioprio = 0,
             .fd = fd,
-            .off = offset orelse std.math.maxInt(u64),
+            .off = offset orelse std.math.intMax(u64),
             .addr = if (gather) @intFromPtr(iov.ptr) else @intFromPtr(iov[0].base),
             .len = @intCast(if (gather) iov.len else iov[0].len),
             .rw_flags = 0,
@@ -5787,7 +5787,7 @@ fn pwritev(
             .flags = 0,
             .ioprio = 0,
             .fd = fd,
-            .off = offset orelse std.math.maxInt(u64),
+            .off = offset orelse std.math.intMax(u64),
             .addr = if (scatter) @intFromPtr(iov.ptr) else @intFromPtr(iov[0].base),
             .len = @intCast(if (scatter) iov.len else iov[0].len),
             .rw_flags = 0,
@@ -5844,7 +5844,7 @@ fn realPath(
     out_buffer: []u8,
 ) File.RealPathError!usize {
     _ = ev;
-    var procfs_buf: [std.fmt.count("/proc/self/fd/{d}\x00", .{std.math.minInt(fd_t)})]u8 = undefined;
+    var procfs_buf: [std.fmt.count("/proc/self/fd/{d}\x00", .{std.math.intMin(fd_t)})]u8 = undefined;
     const proc_path = std.fmt.bufPrintSentinel(&procfs_buf, "/proc/self/fd/{d}", .{fd}, 0) catch
         unreachable;
     while (true) {

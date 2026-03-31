@@ -48,7 +48,7 @@ pub fn pdqContext(a: usize, b: usize, context: anytype) void {
 
     // set upper bound on stack memory usage.
     const Range = struct { a: usize, b: usize, limit: usize };
-    const stack_size = math.log2(math.maxInt(usize) + 1);
+    const stack_size = math.log2(math.intMax(usize) + 1);
     var stack: [stack_size]Range = undefined;
     var range = Range{ .a = a, .b = b, .limit = max_limit };
     var top: usize = 0;

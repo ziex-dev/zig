@@ -8,7 +8,7 @@ const std = @import("../std.zig");
 const math = std.math;
 const expect = std.testing.expect;
 const expo2 = @import("expo2.zig").expo2;
-const maxInt = std.math.maxInt;
+const intMax = std.math.intMax;
 
 /// Returns the hyperbolic sine of x.
 ///
@@ -61,8 +61,8 @@ fn sinh32(x: f32) f32 {
 
 fn sinh64(x: f64) f64 {
     const u = @as(u64, @bitCast(x));
-    const w = @as(u32, @intCast(u >> 32)) & (maxInt(u32) >> 1);
-    const ax = @as(f64, @bitCast(u & (maxInt(u64) >> 1)));
+    const w = @as(u32, @intCast(u >> 32)) & (intMax(u32) >> 1);
+    const ax = @as(f64, @bitCast(u & (intMax(u64) >> 1)));
 
     if (x == 0.0 or math.isNan(x)) {
         return x;

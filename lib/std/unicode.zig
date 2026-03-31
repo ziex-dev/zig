@@ -199,7 +199,7 @@ pub fn utf8CountCodepoints(s: []const u8) !usize {
     var len: usize = 0;
 
     const N = @sizeOf(usize);
-    const MASK = 0x80 * (std.math.maxInt(usize) / 0xff);
+    const MASK = 0x80 * (std.math.intMax(usize) / 0xff);
 
     var i: usize = 0;
     while (i < s.len) {
