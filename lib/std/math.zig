@@ -1440,7 +1440,7 @@ test lerp {
 }
 
 /// Returns the maximum value of integer type T.
-pub fn maxInt(comptime T: type) comptime_int {
+pub fn intMax(comptime T: type) comptime_int {
     const info = @typeInfo(T);
     const bit_count = info.int.bits;
     if (bit_count == 0) return 0;
@@ -1448,13 +1448,19 @@ pub fn maxInt(comptime T: type) comptime_int {
 }
 
 /// Returns the minimum value of integer type T.
-pub fn minInt(comptime T: type) comptime_int {
+pub fn intMin(comptime T: type) comptime_int {
     const info = @typeInfo(T);
     const bit_count = info.int.bits;
     if (info.int.signedness == .unsigned) return 0;
     if (bit_count == 0) return 0;
     return -(1 << (bit_count - 1));
 }
+
+/// Deprecated: use `intMax`
+pub const maxInt = intMax;
+
+/// Deprecated: use `intMin`
+pub const minInt = intMin;
 
 test maxInt {
     try testing.expect(maxInt(u0) == 0);
