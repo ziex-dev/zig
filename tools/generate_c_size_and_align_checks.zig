@@ -1,11 +1,3 @@
-//! Usage: zig run tools/generate_c_size_and_align_checks.zig -- [target_triple]
-//! e.g. zig run tools/generate_c_size_and_align_checks.zig -- x86_64-linux-gnu
-//!
-//! Prints _Static_asserts for the size and alignment of all the basic built-in C
-//! types. The output can be run through a compiler for the specified target to
-//! verify that Zig's values are the same as those used by a C compiler for the
-//! target.
-
 const std = @import("std");
 const Io = std.Io;
 
@@ -28,16 +20,37 @@ fn cName(ty: std.Target.CType) []const u8 {
 
 var general_purpose_allocator: std.heap.DebugAllocator(.{}) = .init;
 
+const usage =
+    \\Usage: zig run tools/generate_c_size_and_align_checks.zig -- [target_triple]
+    \\e.g. zig run tools/generate_c_size_and_align_checks.zig -- x86_64-linux-gnu
+    \\
+    \\Prints _Static_asserts for the size and alignment of all the basic built-in C
+    \\types. The output can be run through a compiler for the specified target to
+    \\verify that Zig's values are the same as those used by a C compiler for the
+    \\target.
+    \\
+;
+const command: std.cli.Command = .{
+    .name = "generate_c_size_and_align_checks",
+    .help = usage,
+    .positional_args = &.{
+        .init([:0]const u8, .{ .name = "target_triple" }),
+    },
+};
+
 pub fn main(init: std.process.Init) !void {
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const arena = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(arena);
     const io = init.io;
 
-    if (args.len != 2) {
-        std.debug.print("Usage: {s} [target_triple]\n", .{args[0]});
-        std.process.exit(1);
-    }
+    const parsed = try std.cli.parse(command, arena, args, .{
+        .exit_help = true,
+        .exit_usage_error = true,
+        .render_usage_errors = true,
+        .render_help = true,
+    });
 
-    const query = try std.Target.Query.parse(.{ .arch_os_abi = args[1] });
+    const query = try std.Target.Query.parse(.{ .arch_os_abi = parsed.kind.args.target_triple });
     const target = try std.zig.system.resolveTargetQuery(io, query);
 
     var buffer: [2000]u8 = undefined;
