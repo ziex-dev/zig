@@ -99,6 +99,9 @@ release_mode: ReleaseMode,
 
 build_id: ?std.zig.BuildId = null,
 
+installed_paths: std.StringArrayHashMapUnmanaged(void),
+manifest_mutex: std.Io.Mutex,
+
 pub const ReleaseMode = enum {
     off,
     any,
@@ -295,6 +298,7 @@ pub fn create(
                 .id = TopLevelStep.base_id,
                 .name = "install",
                 .owner = b,
+                .makeFn = makeInstall,
             }),
             .description = "Copy build artifacts to prefix path",
         },
@@ -315,6 +319,8 @@ pub fn create(
         .pkg_hash = "",
         .available_deps = available_deps,
         .release_mode = .off,
+        .installed_paths = .{},
+        .manifest_mutex = std.Io.Mutex.init,
     };
     try b.top_level_steps.put(arena, b.install_tls.step.name, &b.install_tls);
     try b.top_level_steps.put(arena, b.uninstall_tls.step.name, &b.uninstall_tls);
@@ -353,6 +359,7 @@ fn createChildOnly(
                 .id = TopLevelStep.base_id,
                 .name = "install",
                 .owner = child,
+                .makeFn = makeInstall,
             }),
             .description = "Copy build artifacts to prefix path",
         },
@@ -1121,13 +1128,268 @@ pub fn getUninstallStep(b: *Build) *Step {
     return &b.uninstall_tls.step;
 }
 
+/// Writes the accumulated installed_paths to the install manifest file.
+/// The manifest is written atomically to avoid corruption on interruption.
+fn makeInstall(install_step: *Step, _: Step.MakeOptions) anyerror!void {
+    const install_tls: *TopLevelStep = @fieldParentPtr("step", install_step);
+    const b: *Build = @fieldParentPtr("install_tls", install_tls);
+    const arena = b.allocator;
+
+    // Build manifest content. Uses null delimiters so that paths
+    // containing newlines are handled correctly.
+    var content = std.array_list.Managed(u8).init(arena);
+
+    // Add versioning info to the manifest as a magic header to keep track of
+    // the format version and ensure compatibility on uninstall.
+    content.appendSlice("++ install-manifest:1") catch @panic("OOM");
+    content.append(0) catch @panic("OOM");
+
+    for (b.installed_paths.keys()) |p| {
+        content.appendSlice(p) catch @panic("OOM");
+        content.append(0) catch @panic("OOM");
+    }
+
+    // Write the manifest atomically: write to a temporary file first,
+    // then rename into place to avoid corruption on interruption.
+    const manifest_path = installManifestPath(b);
+    const tmp_manifest_path = b.cache_root.join(arena, &.{"install-manifest.tmp"}) catch @panic("OOM");
+    const cwd = Io.Dir.cwd();
+    const io = b.graph.io;
+
+    if (fs.path.dirname(manifest_path)) |dirname| {
+        cwd.createDirPath(io, dirname) catch {};
+    }
+    cwd.writeFile(io, .{ .sub_path = tmp_manifest_path, .data = content.items }) catch |err| {
+        return install_step.fail("unable to write install manifest '{s}': {t}", .{ tmp_manifest_path, err });
+    };
+    cwd.rename(tmp_manifest_path, cwd, manifest_path, io) catch |err| {
+        return install_step.fail("unable to rename install manifest '{s}' to '{s}': {t}", .{ tmp_manifest_path, manifest_path, err });
+    };
+}
+
 fn makeUninstall(uninstall_step: *Step, options: Step.MakeOptions) anyerror!void {
     _ = options;
     const uninstall_tls: *TopLevelStep = @fieldParentPtr("step", uninstall_step);
     const b: *Build = @fieldParentPtr("uninstall_tls", uninstall_tls);
 
-    _ = b;
-    @panic("TODO implement https://github.com/ziglang/zig/issues/14943");
+    var any_errors = false;
+    const manifest_path = installManifestPath(b);
+    const io = b.graph.io;
+
+    const paths = readManifest(b, manifest_path) catch |err| switch (err) {
+        error.UnsupportedManifest => return uninstall_step.fail("unrecognized install manifest format at '{s}'", .{manifest_path}),
+        error.UnexpectedEmptyManifest => return uninstall_step.fail("install manifest at '{s}' is empty", .{manifest_path}),
+        error.FileNotFound => return uninstall_step.fail("no install manifest found at '{s}'", .{manifest_path}),
+        else => return err,
+    };
+    for (paths) |dest_path| {
+        uninstallRemoveFile(b, uninstall_step, dest_path, &any_errors);
+    }
+
+    if (any_errors) return error.MakeFailed;
+
+    // Only clean up the manifest and directories after all files
+    // were successfully removed. If some removals failed, preserving
+    // the manifest allows retrying with `zig build uninstall`.
+    Io.Dir.cwd().deleteFile(io, manifest_path) catch {};
+
+    // Clean up empty directories left behind after file removal.
+    // For project-local prefixes (e.g. zig-out/) also remove the
+    // prefix directory itself. For system prefixes like /usr/local,
+    // only remove directories deeper than the prefix — first-level
+    // children like bin/, lib/, share/ are preserved even if empty.
+    const remove_prefix = isProjectLocalPrefix(b.build_root.path orelse "", b.install_path);
+    cleanupParentDirectories(b, paths, remove_prefix);
+}
+
+fn installManifestPath(b: *Build) []const u8 {
+    return b.cache_root.join(b.allocator, &.{"install-manifest"}) catch @panic("OOM");
+}
+
+/// Reads the install manifest at `manifest_path` and returns the list of paths.
+/// Returns an error if the manifest does not exist, is empty, is of an unsupported
+/// manifest version or can't be read for any other reason.
+fn readManifest(b: *Build, manifest_path: []const u8) anyerror![]const []const u8 {
+    const io = b.graph.io;
+    const arena = b.allocator;
+    const content = Io.Dir.cwd().readFileAlloc(io, manifest_path, arena, .limited(10 * 1024 * 1024)) catch |err| switch (err) {
+        error.FileNotFound => return error.FileNotFound,
+        else => return err,
+    };
+    if (content.len == 0) {
+        // Clean up empty manifest (e.g. from interrupted writes on
+        // filesystems without atomic rename support).
+        Io.Dir.cwd().deleteFile(io, manifest_path) catch {};
+        return error.UnexpectedEmptyManifest;
+    }
+
+    // Get the magic header line added by makeInstall
+    var it = mem.splitScalar(u8, content, 0);
+    const header = it.next() orelse return error.UnexpectedEmptyManifest;
+    // Supported schema versions only
+    if (!mem.eql(u8, header, "++ install-manifest:1")) {
+        return error.UnsupportedManifest;
+    }
+
+    var paths = std.array_list.Managed([]const u8).init(arena);
+    while (it.next()) |entry| {
+        if (entry.len > 0) {
+            paths.append(entry) catch @panic("OOM");
+        }
+    }
+    return paths.items;
+}
+
+fn uninstallRemoveFile(b: *Build, s: *Step, dest_path: []const u8, any_errors: *bool) void {
+    Step.handleVerbose(b, .inherit, &.{ "remove", dest_path }) catch @panic("OOM");
+    Io.Dir.cwd().deleteFile(b.graph.io, dest_path) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => {
+            s.addError("unable to remove '{s}': {t}", .{ dest_path, err }) catch @panic("OOM");
+            any_errors.* = true;
+        },
+    };
+}
+
+/// Returns true when the install_prefix (e.g. `zig-out/`) is located
+/// under the project's build root, meaning it is safe to remove empty
+/// directories during uninstall. Returns false for system destinations
+/// like `/usr/local` to avoid removing shared directories.
+fn isProjectLocalPrefix(build_root_path: []const u8, install_prefix: []const u8) bool {
+    if (build_root_path.len == 0) return false;
+    if (install_prefix.len < build_root_path.len) return false;
+    if (builtin.os.tag == .windows) {
+        if (!windowsPathStartsWith(install_prefix, build_root_path)) return false;
+    } else {
+        if (!mem.startsWith(u8, install_prefix, build_root_path)) return false;
+    }
+    // Ensure the match ends at a path boundary to avoid false positives
+    // (e.g. build root "/home/user/proj" must not match install_prefix "/home/user/project-out").
+    if (install_prefix.len == build_root_path.len) return true;
+    const next = install_prefix[build_root_path.len];
+    return next == '/' or next == '\\';
+}
+
+/// Case-insensitive path prefix match for Windows that treats '/' and '\'
+/// as equivalent separators.
+fn windowsPathStartsWith(haystack: []const u8, needle: []const u8) bool {
+    if (haystack.len < needle.len) return false;
+    for (haystack[0..needle.len], needle) |a, b| {
+        const na = if (a == '/') @as(u8, '\\') else std.ascii.toLower(a);
+        const nb = if (b == '/') @as(u8, '\\') else std.ascii.toLower(b);
+        if (na != nb) return false;
+    }
+    return true;
+}
+
+/// Counts actual path components, correctly handling trailing slashes,
+/// double slashes, and platform-specific separators.
+fn pathComponentCount(p: []const u8) usize {
+    var count: usize = 0;
+    var it = fs.path.componentIterator(p);
+    while (it.next()) |_| count += 1;
+    return count;
+}
+
+test "uninstall_windowsPathStartsWith" {
+    // Basic prefix match
+    try std.testing.expect(windowsPathStartsWith("C:\\Users\\foo\\project", "C:\\Users\\foo"));
+    // Case insensitivity
+    try std.testing.expect(windowsPathStartsWith("c:\\users\\FOO\\project", "C:\\Users\\foo"));
+    // Mixed separators
+    try std.testing.expect(windowsPathStartsWith("C:/Users/foo/project", "C:\\Users\\foo"));
+    try std.testing.expect(windowsPathStartsWith("C:\\Users\\foo\\project", "C:/Users/foo"));
+    // Exact match
+    try std.testing.expect(windowsPathStartsWith("C:\\Users\\foo", "C:\\Users\\foo"));
+    // Haystack shorter than needle
+    try std.testing.expect(!windowsPathStartsWith("C:\\Users", "C:\\Users\\foo"));
+    // Different paths
+    try std.testing.expect(!windowsPathStartsWith("C:\\Users\\bar\\project", "C:\\Users\\foo"));
+    // Empty strings
+    try std.testing.expect(windowsPathStartsWith("anything", ""));
+    try std.testing.expect(!windowsPathStartsWith("", "something"));
+}
+
+test "uninstall_pathComponentCount" {
+    // Basic paths
+    try std.testing.expectEqual(@as(usize, 3), pathComponentCount("/usr/local/bin"));
+    try std.testing.expectEqual(@as(usize, 1), pathComponentCount("nopath"));
+    try std.testing.expectEqual(@as(usize, 0), pathComponentCount(""));
+    // Trailing slashes don't inflate the count
+    try std.testing.expectEqual(@as(usize, 3), pathComponentCount("/usr/local/bin/"));
+    // Double slashes are handled
+    try std.testing.expectEqual(@as(usize, 3), pathComponentCount("//usr//local//bin"));
+    // Root-only
+    try std.testing.expectEqual(@as(usize, 0), pathComponentCount("/"));
+    // Backslashes on Windows
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(usize, 3), pathComponentCount("C:\\Users\\foo\\bar"));
+        // Mixed separators
+        try std.testing.expectEqual(@as(usize, 3), pathComponentCount("C:\\Users/foo\\bar"));
+    }
+}
+
+test "uninstall_isProjectLocalPrefix" {
+    try std.testing.expectEqual(@as(bool, true), isProjectLocalPrefix("/foo", "/foo/bar"));
+    try std.testing.expectEqual(@as(bool, false), isProjectLocalPrefix("/bar", ""));
+    try std.testing.expectEqual(@as(bool, true), isProjectLocalPrefix("/foo", "/foo"));
+    try std.testing.expectEqual(@as(bool, false), isProjectLocalPrefix("/foo", "/football"));
+    if (builtin.os.tag == .windows) {
+        try std.testing.expectEqual(@as(bool, true), isProjectLocalPrefix("C:\\Users\\foo\\bar", "C:\\Users\\foo\\bar"));
+        try std.testing.expectEqual(@as(bool, true), isProjectLocalPrefix("C:\\Users\\foo", "C:\\Users\\foo\\bar"));
+        try std.testing.expectEqual(@as(bool, false), isProjectLocalPrefix("C:\\Users\\football", "C:\\Users\\foo"));
+    }
+}
+
+/// For each removed file, walks up from its parent directory toward the
+/// install prefix, attempting to remove empty directories along the way.
+/// `deleteDir` silently fails on non-empty directories, so only dirs
+/// emptied by the uninstall are removed. When `remove_prefix` is false,
+/// directories at or below the prefix level (e.g. `/usr/local/bin`) are
+/// preserved — only deeper directories are candidates for removal.
+fn cleanupParentDirectories(b: *Build, removed_paths: []const []const u8, remove_prefix: bool) void {
+    const io = b.graph.io;
+    const arena = b.allocator;
+    const cwd = Io.Dir.cwd();
+    const prefix = b.install_path;
+
+    // Collect unique parent directories of removed files, walking
+    // up to and including the install prefix.
+    var dir_set = std.StringArrayHashMapUnmanaged(void).empty;
+    for (removed_paths) |file_path| {
+        var dir_path = fs.path.dirname(file_path) orelse continue;
+        while (true) {
+            if (dir_path.len < prefix.len) break;
+            if (dir_set.contains(dir_path)) break;
+            dir_set.put(arena, dir_path, {}) catch @panic("OOM");
+            dir_path = fs.path.dirname(dir_path) orelse break;
+        }
+    }
+
+    // Sort by descending depth (component count) so deepest directories
+    // are processed first. Within the same depth, sort by descending
+    // length as a tiebreaker.
+    const dirs = dir_set.keys();
+    mem.sortUnstable([]const u8, dirs, {}, struct {
+        fn lessThan(_: void, a: []const u8, b_arg: []const u8) bool {
+            const a_depth = pathComponentCount(a);
+            const b_depth = pathComponentCount(b_arg);
+            if (a_depth != b_depth) return a_depth > b_depth;
+            return a.len > b_arg.len;
+        }
+    }.lessThan);
+
+    const prefix_depth = pathComponentCount(prefix);
+    for (dirs) |dir_path| {
+        if (!remove_prefix) {
+            // For system prefixes, preserve the prefix itself and its
+            // direct children (e.g. /usr/local/bin, /usr/local/share).
+            // Only remove directories at least two levels below the prefix.
+            const dir_depth = pathComponentCount(dir_path);
+            if (dir_depth < prefix_depth + 2) continue;
+        }
+        cwd.deleteDir(io, dir_path) catch {};
+    }
 }
 
 /// Creates a configuration option to be passed to the build.zig script.

@@ -130,6 +130,10 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
 
         if (install_artifact.dylib_symlinks) |dls| {
             try Step.Compile.doAtomicSymLinks(step, full_dest_path, dls.major_only_filename, dls.name_only_filename);
+            try b.manifest_mutex.lock(b.graph.io);
+            defer b.manifest_mutex.unlock(b.graph.io);
+            b.installed_paths.put(b.allocator, b.pathJoin(&.{ std.fs.path.dirname(full_dest_path) orelse ".", dls.major_only_filename }), {}) catch @panic("OOM");
+            b.installed_paths.put(b.allocator, b.pathJoin(&.{ std.fs.path.dirname(full_dest_path) orelse ".", dls.name_only_filename }), {}) catch @panic("OOM");
         }
 
         install_artifact.artifact.installed_path = full_dest_path;

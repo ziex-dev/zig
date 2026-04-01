@@ -522,13 +522,18 @@ pub fn evalZigProcess(
 }
 
 /// Wrapper around `Io.Dir.updateFile` that handles verbose and error output.
+/// Also records the destination path in `installed_paths` for manifest generation.
 pub fn installFile(s: *Step, src_lazy_path: Build.LazyPath, dest_path: []const u8) !Io.Dir.PrevStatus {
     const b = s.owner;
     const io = b.graph.io;
     const src_path = src_lazy_path.getPath3(b, s);
     try handleVerbose(b, .inherit, &.{ "install", "-C", b.fmt("{f}", .{src_path}), dest_path });
-    return Io.Dir.updateFile(src_path.root_dir.handle, io, src_path.sub_path, .cwd(), dest_path, .{}) catch |err|
+    const result = Io.Dir.updateFile(src_path.root_dir.handle, io, src_path.sub_path, .cwd(), dest_path, .{}) catch |err|
         return s.fail("unable to update file from '{f}' to '{s}': {t}", .{ src_path, dest_path, err });
+    try b.manifest_mutex.lock(b.graph.io);
+    defer b.manifest_mutex.unlock(b.graph.io);
+    b.installed_paths.put(b.allocator, dest_path, {}) catch @panic("OOM");
+    return result;
 }
 
 /// Wrapper around `Io.Dir.createDirPathStatus` that handles verbose and error output.

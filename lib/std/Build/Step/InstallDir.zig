@@ -95,6 +95,9 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 for (install_dir.options.blank_extensions) |ext| {
                     if (mem.endsWith(u8, entry.path, ext)) {
                         try b.truncateFile(dest_path);
+                        try b.manifest_mutex.lock(b.graph.io);
+                        defer b.manifest_mutex.unlock(b.graph.io);
+                        b.installed_paths.put(b.allocator, dest_path, {}) catch @panic("OOM");
                         continue :next_entry;
                     }
                 }
