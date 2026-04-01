@@ -1291,7 +1291,7 @@ fn pathComponentCount(p: []const u8) usize {
     return count;
 }
 
-test "uninstall_windowsPathStartsWith" {
+test windowsPathStartsWith {
     // Basic prefix match
     try std.testing.expect(windowsPathStartsWith("C:\\Users\\foo\\project", "C:\\Users\\foo"));
     // Case insensitivity
@@ -1310,7 +1310,7 @@ test "uninstall_windowsPathStartsWith" {
     try std.testing.expect(!windowsPathStartsWith("", "something"));
 }
 
-test "uninstall_pathComponentCount" {
+test pathComponentCount {
     // Basic paths
     try std.testing.expectEqual(@as(usize, 3), pathComponentCount("/usr/local/bin"));
     try std.testing.expectEqual(@as(usize, 1), pathComponentCount("nopath"));
@@ -1329,7 +1329,7 @@ test "uninstall_pathComponentCount" {
     }
 }
 
-test "uninstall_isProjectLocalPrefix" {
+test isProjectLocalPrefix {
     try std.testing.expectEqual(@as(bool, true), isProjectLocalPrefix("/foo", "/foo/bar"));
     try std.testing.expectEqual(@as(bool, false), isProjectLocalPrefix("/bar", ""));
     try std.testing.expectEqual(@as(bool, true), isProjectLocalPrefix("/foo", "/foo"));
