@@ -1263,7 +1263,7 @@ pub const Request = struct {
         }
 
         const new_connection = if (mem.endsWith(u8, new_uri.scheme, "+unix"))
-            try r.client.connectUnix(new_host.bytes)
+            try r.client.connectUnix(new_host)
         else
             try r.client.connect(new_host, uriPort(new_uri, protocol), protocol);
 
@@ -1481,27 +1481,27 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     }
 }
 
-pub const ConnectUnixError = Allocator.Error || std.Io.net.UnixAddress.InitError || std.Io.net.UnixAddress.ConnectError;
+pub const ConnectUnixError = Allocator.Error || std.Io.net.UnixAddress.InitError || std.Io.net.UnixAddress.ConnectError || std.Io.net.HostName.ValidateError;
 
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
 /// This function is threadsafe.
-pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connection {
+pub fn connectUnix(client: *Client, path: HostName) ConnectUnixError!*Connection {
     const io = client.io;
 
     if (client.connection_pool.findConnection(io, .{
-        .host = HostName{ .bytes = path },
+        .host = path,
         .port = 0,
         .protocol = .plain,
     })) |node|
         return node;
 
-    const host = try std.Io.net.UnixAddress.init(path);
+    const host = try std.Io.net.UnixAddress.init(path.bytes);
 
     const stream = try host.connect(io);
     errdefer stream.close(io);
 
-    var connection = try Connection.Plain.create(client, HostName{ .bytes = path }, 0, stream);
+    var connection = try Connection.Plain.create(client, path, 0, stream);
     errdefer connection.destroy();
 
     client.connection_pool.addUsed(io, &connection.connection);
@@ -1718,7 +1718,7 @@ pub fn request(
         var host_name_buffer: [HostName.max_len]u8 = undefined;
         const host_name = try uri.getHost(&host_name_buffer);
         if (mem.endsWith(u8, uri.scheme, "+unix")) {
-            break :c try client.connectUnix(host_name.bytes);
+            break :c try client.connectUnix(host_name);
         } else {
             break :c try client.connect(host_name, uriPort(uri, protocol), protocol);
         }

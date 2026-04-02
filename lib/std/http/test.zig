@@ -290,8 +290,6 @@ test "echo content server with Unix sockets" {
         );
         try echoTests(&client, location_base);
     }
-
-    return error.sadasd;
 }
 
 test "Server.Request.respondStreaming non-chunked, unknown content-length" {
@@ -439,7 +437,169 @@ test "receiving arbitrary http headers from the client" {
     try expectEqualStrings(expected_response.items, response);
 }
 
-test "general client/server API coverage" {
+const CoverageServer = struct {
+    fn run(test_server: *TestServer) anyerror!void {
+        const net_server = &test_server.net_server;
+        const io = test_server.io;
+        var recv_buffer: [1024]u8 = undefined;
+        var send_buffer: [100]u8 = undefined;
+
+        outer: while (!test_server.shutting_down) {
+            var stream = try net_server.accept(io);
+            defer stream.close(io);
+
+            var connection_br = stream.reader(io, &recv_buffer);
+            var connection_bw = stream.writer(io, &send_buffer);
+            var http_server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+            while (http_server.reader.state == .ready) {
+                var request = http_server.receiveHead() catch |err| switch (err) {
+                    error.HttpConnectionClosing => continue :outer,
+                    else => |e| return e,
+                };
+
+                try handleRequest(io, &request, test_server.listen_address);
+            }
+        }
+    }
+
+    fn handleRequest(io: Io, request: *http.Server.Request, listen_address: TestServerAddress) !void {
+        const log = std.log.scoped(.server);
+        const gpa = std.testing.allocator;
+
+        log.info("{t} {t} {s}", .{ request.head.method, request.head.version, request.head.target });
+        const target = try gpa.dupe(u8, request.head.target);
+        defer gpa.free(target);
+
+        const reader = (try request.readerExpectContinue(&.{}));
+        const body = try reader.allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        if (mem.startsWith(u8, target, "/get")) {
+            var response = try request.respondStreaming(&.{}, .{
+                .content_length = if (mem.find(u8, target, "?chunked") == null)
+                    14
+                else
+                    null,
+                .respond_options = .{
+                    .extra_headers = &.{
+                        .{ .name = "content-type", .value = "text/plain" },
+                    },
+                },
+            });
+            const w = &response.writer;
+            try w.writeAll("Hello, ");
+            try w.writeAll("World!\n");
+            try response.end();
+            // Writing again would cause an assertion failure.
+        } else if (mem.startsWith(u8, target, "/large")) {
+            var response = try request.respondStreaming(&.{}, .{
+                .content_length = 14 * 1024 + 14 * 10,
+            });
+
+            try response.flush(); // Test an early flush to send the HTTP headers before the body.
+
+            const w = &response.writer;
+
+            var i: u32 = 0;
+            while (i < 5) : (i += 1) {
+                try w.writeAll("Hello, World!\n");
+            }
+
+            var vec: [1][]const u8 = .{"Hello, World!\n"};
+            try w.writeSplatAll(&vec, 1024);
+
+            i = 0;
+            while (i < 5) : (i += 1) {
+                try w.writeAll("Hello, World!\n");
+            }
+
+            try response.end();
+        } else if (mem.eql(u8, target, "/redirect/1")) {
+            var response = try request.respondStreaming(&.{}, .{
+                .respond_options = .{
+                    .status = .found,
+                    .extra_headers = &.{
+                        .{ .name = "location", .value = "../../get" },
+                    },
+                },
+            });
+
+            const w = &response.writer;
+            try w.writeAll("Hello, ");
+            try w.writeAll("Redirected!\n");
+            try response.end();
+        } else if (mem.eql(u8, target, "/redirect/2")) {
+            try request.respond("Hello, Redirected!\n", .{
+                .status = .found,
+                .extra_headers = &.{
+                    .{ .name = "location", .value = "/redirect/1" },
+                },
+            });
+        } else if (mem.eql(u8, target, "/redirect/3")) {
+            const location = switch (listen_address) {
+                .ip => |ip| try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/2", .{ip.getPort()}),
+                .unix => |unix| try std.fmt.allocPrint(
+                    gpa,
+                    "http+unix://{f}/redirect/2",
+                    .{std.fmt.alt(@as(std.Uri.Component, .{ .raw = unix.buf }), .formatEscaped)},
+                ),
+            };
+            defer gpa.free(location);
+
+            try request.respond("Hello, Redirected!\n", .{
+                .status = .found,
+                .extra_headers = &.{
+                    .{ .name = "location", .value = location },
+                },
+            });
+        } else if (mem.eql(u8, target, "/redirect/4")) {
+            try request.respond("Hello, Redirected!\n", .{
+                .status = .found,
+                .extra_headers = &.{
+                    .{ .name = "location", .value = "/redirect/3" },
+                },
+            });
+        } else if (mem.eql(u8, target, "/redirect/5")) {
+            try request.respond("Hello, Redirected!\n", .{
+                .status = .found,
+                .extra_headers = &.{
+                    .{ .name = "location", .value = "/%2525" },
+                },
+            });
+        } else if (mem.eql(u8, target, "/%2525")) {
+            try request.respond("Encoded redirect successful!\n", .{});
+        } else if (mem.eql(u8, target, "/redirect/invalid")) {
+            const invalid_port = try getUnusedTcpPort(io);
+            const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{invalid_port});
+            defer gpa.free(location);
+
+            try request.respond("", .{
+                .status = .found,
+                .extra_headers = &.{
+                    .{ .name = "location", .value = location },
+                },
+            });
+        } else if (mem.eql(u8, target, "/empty")) {
+            try request.respond("", .{
+                .extra_headers = &.{
+                    .{ .name = "empty", .value = "" },
+                },
+            });
+        } else {
+            try request.respond("", .{ .status = .not_found });
+        }
+    }
+
+    fn getUnusedTcpPort(io: Io) !u16 {
+        const addr = try net.IpAddress.parse("127.0.0.1", 0);
+        var s = try addr.listen(io, .{});
+        defer s.deinit(io);
+        return s.socket.address.getPort();
+    }
+};
+
+test "general client/server API coverage with TCP sockets" {
     if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
@@ -450,489 +610,52 @@ test "general client/server API coverage" {
         return error.SkipZigTest;
     }
 
-    const test_server = try createTestServer(io, struct {
-        fn run(test_server: *TestServer) anyerror!void {
-            const net_server = &test_server.net_server;
-            var recv_buffer: [1024]u8 = undefined;
-            var send_buffer: [100]u8 = undefined;
-
-            outer: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
-
-                var connection_br = stream.reader(io, &recv_buffer);
-                var connection_bw = stream.writer(io, &send_buffer);
-                var http_server = http.Server.init(&connection_br.interface, &connection_bw.interface);
-
-                while (http_server.reader.state == .ready) {
-                    var request = http_server.receiveHead() catch |err| switch (err) {
-                        error.HttpConnectionClosing => continue :outer,
-                        else => |e| return e,
-                    };
-
-                    try handleRequest(&request, net_server.socket.address.getPort());
-                }
-            }
-        }
-
-        fn handleRequest(request: *http.Server.Request, listen_port: u16) !void {
-            const log = std.log.scoped(.server);
-            const gpa = std.testing.allocator;
-
-            log.info("{t} {t} {s}", .{ request.head.method, request.head.version, request.head.target });
-            const target = try gpa.dupe(u8, request.head.target);
-            defer gpa.free(target);
-
-            const reader = (try request.readerExpectContinue(&.{}));
-            const body = try reader.allocRemaining(gpa, .unlimited);
-            defer gpa.free(body);
-
-            if (mem.startsWith(u8, target, "/get")) {
-                var response = try request.respondStreaming(&.{}, .{
-                    .content_length = if (mem.find(u8, target, "?chunked") == null)
-                        14
-                    else
-                        null,
-                    .respond_options = .{
-                        .extra_headers = &.{
-                            .{ .name = "content-type", .value = "text/plain" },
-                        },
-                    },
-                });
-                const w = &response.writer;
-                try w.writeAll("Hello, ");
-                try w.writeAll("World!\n");
-                try response.end();
-                // Writing again would cause an assertion failure.
-            } else if (mem.startsWith(u8, target, "/large")) {
-                var response = try request.respondStreaming(&.{}, .{
-                    .content_length = 14 * 1024 + 14 * 10,
-                });
-
-                try response.flush(); // Test an early flush to send the HTTP headers before the body.
-
-                const w = &response.writer;
-
-                var i: u32 = 0;
-                while (i < 5) : (i += 1) {
-                    try w.writeAll("Hello, World!\n");
-                }
-
-                var vec: [1][]const u8 = .{"Hello, World!\n"};
-                try w.writeSplatAll(&vec, 1024);
-
-                i = 0;
-                while (i < 5) : (i += 1) {
-                    try w.writeAll("Hello, World!\n");
-                }
-
-                try response.end();
-            } else if (mem.eql(u8, target, "/redirect/1")) {
-                var response = try request.respondStreaming(&.{}, .{
-                    .respond_options = .{
-                        .status = .found,
-                        .extra_headers = &.{
-                            .{ .name = "location", .value = "../../get" },
-                        },
-                    },
-                });
-
-                const w = &response.writer;
-                try w.writeAll("Hello, ");
-                try w.writeAll("Redirected!\n");
-                try response.end();
-            } else if (mem.eql(u8, target, "/redirect/2")) {
-                try request.respond("Hello, Redirected!\n", .{
-                    .status = .found,
-                    .extra_headers = &.{
-                        .{ .name = "location", .value = "/redirect/1" },
-                    },
-                });
-            } else if (mem.eql(u8, target, "/redirect/3")) {
-                const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/2", .{
-                    listen_port,
-                });
-                defer gpa.free(location);
-
-                try request.respond("Hello, Redirected!\n", .{
-                    .status = .found,
-                    .extra_headers = &.{
-                        .{ .name = "location", .value = location },
-                    },
-                });
-            } else if (mem.eql(u8, target, "/redirect/4")) {
-                try request.respond("Hello, Redirected!\n", .{
-                    .status = .found,
-                    .extra_headers = &.{
-                        .{ .name = "location", .value = "/redirect/3" },
-                    },
-                });
-            } else if (mem.eql(u8, target, "/redirect/5")) {
-                try request.respond("Hello, Redirected!\n", .{
-                    .status = .found,
-                    .extra_headers = &.{
-                        .{ .name = "location", .value = "/%2525" },
-                    },
-                });
-            } else if (mem.eql(u8, target, "/%2525")) {
-                try request.respond("Encoded redirect successful!\n", .{});
-            } else if (mem.eql(u8, target, "/redirect/invalid")) {
-                const invalid_port = try getUnusedTcpPort();
-                const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}", .{invalid_port});
-                defer gpa.free(location);
-
-                try request.respond("", .{
-                    .status = .found,
-                    .extra_headers = &.{
-                        .{ .name = "location", .value = location },
-                    },
-                });
-            } else if (mem.eql(u8, target, "/empty")) {
-                try request.respond("", .{
-                    .extra_headers = &.{
-                        .{ .name = "empty", .value = "" },
-                    },
-                });
-            } else {
-                try request.respond("", .{ .status = .not_found });
-            }
-        }
-
-        fn getUnusedTcpPort() !u16 {
-            const addr = try net.IpAddress.parse("127.0.0.1", 0);
-            var s = try addr.listen(io, .{});
-            defer s.deinit(io);
-            return s.socket.address.getPort();
-        }
-    });
+    const test_server = try createTestServer(io, CoverageServer);
     defer test_server.destroy();
 
-    const log = std.log.scoped(.client);
+    {
+        var client: http.Client = .{ .allocator = std.testing.allocator, .io = io };
+        defer client.deinit();
 
-    const gpa = std.testing.allocator;
-    var client: http.Client = .{ .allocator = gpa, .io = io };
-    defer client.deinit();
+        var location_base_buffer: [32]u8 = undefined;
+        const location_base = try std.fmt.bufPrint(&location_base_buffer, "http://127.0.0.1:{d}", .{test_server.port()});
+        try coverageTests(&client, location_base);
+    }
+}
 
-    const port = test_server.port();
+test "general client/server API coverage with Unix sockets" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
+    if (!std.Io.net.has_unix_sockets) return error.SkipZigTest;
 
-    { // read content-length response
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/get", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        try expectEqualStrings("text/plain", response.head.content_type.?);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("Hello, World!\n", body);
+    if (builtin.os.tag == .windows) {
+        // This test was never passing on Windows.
+        return error.SkipZigTest;
     }
 
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+    const io = std.testing.io;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
 
-    { // read large content-length response
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/large", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
+    const test_server = try createTestServerOnUnixSocket(
+        io,
+        CoverageServer,
+        tmp_dir.dir,
+    );
+    defer test_server.destroy();
 
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
+    {
+        var client: http.Client = .{ .allocator = std.testing.allocator, .io = io };
+        defer client.deinit();
 
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqual(@as(usize, 14 * 1024 + 14 * 10), body.len);
+        var location_base_buffer: [128]u8 = undefined;
+        const location_base = try std.fmt.bufPrint(
+            &location_base_buffer,
+            "http+unix://{f}",
+            .{std.fmt.alt(@as(std.Uri.Component, .{ .raw = test_server.listen_address.unix.buf }), .formatEscaped)},
+        );
+        try coverageTests(&client, location_base);
     }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // send head request and not read chunked
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/get", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.HEAD, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        try expectEqualStrings("text/plain", response.head.content_type.?);
-        try expectEqual(14, response.head.content_length.?);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("", body);
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // read chunked response
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/get?chunked", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        try expectEqualStrings("text/plain", response.head.content_type.?);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("Hello, World!\n", body);
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // send head request and not read chunked
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/get?chunked", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.HEAD, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        try expectEqualStrings("text/plain", response.head.content_type.?);
-        try expect(response.head.transfer_encoding == .chunked);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("", body);
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // read content-length response with connection close
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/get", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{
-            .keep_alive = false,
-        });
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        try expectEqualStrings("text/plain", response.head.content_type.?);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("Hello, World!\n", body);
-    }
-
-    // connection has been closed
-    try expect(client.connection_pool.free_len == 0);
-
-    { // handle empty header field value
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/empty", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{
-            .extra_headers = &.{
-                .{ .name = "empty", .value = "" },
-            },
-        });
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        try std.testing.expectEqual(.ok, response.head.status);
-
-        var it = response.head.iterateHeaders();
-        {
-            const header = it.next().?;
-            try expect(!it.is_trailer);
-            try expectEqualStrings("content-length", header.name);
-            try expectEqualStrings("0", header.value);
-        }
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("", body);
-
-        {
-            const header = it.next().?;
-            try expect(!it.is_trailer);
-            try expectEqualStrings("empty", header.name);
-            try expectEqualStrings("", header.value);
-        }
-        try expectEqual(null, it.next());
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // relative redirect
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/1", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("Hello, World!\n", body);
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // redirect from root
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/2", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("Hello, World!\n", body);
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // absolute redirect
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/3", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("Hello, World!\n", body);
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // too many redirects
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/4", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        if (req.receiveHead(&redirect_buffer)) |_| {
-            return error.TestFailed;
-        } else |err| switch (err) {
-            error.TooManyHttpRedirects => {},
-            else => return err,
-        }
-    }
-
-    { // redirect to encoded url
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/5", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        var response = try req.receiveHead(&redirect_buffer);
-
-        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
-        defer gpa.free(body);
-
-        try expectEqualStrings("Encoded redirect successful!\n", body);
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
-
-    { // check client without segfault by connection error after redirection
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/redirect/invalid", .{port});
-        defer gpa.free(location);
-        const uri = try std.Uri.parse(location);
-
-        log.info("{s}", .{location});
-        var redirect_buffer: [1024]u8 = undefined;
-        var req = try client.request(.GET, uri, .{});
-        defer req.deinit();
-
-        try req.sendBodiless();
-        const result = req.receiveHead(&redirect_buffer);
-
-        // a proxy without an upstream is likely to return a 5xx status.
-        if (client.http_proxy == null) {
-            try expectError(error.ConnectionRefused, result); // expects not segfault but the regular error
-        }
-    }
-
-    // connection has been kept alive
-    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
 }
 
 test "Server streams both reading and writing" {
@@ -1007,12 +730,12 @@ test "Server streams both reading and writing" {
     try expectEqualStrings("ONE FISH", body);
 }
 
-fn echoTests(client: *http.Client, port: u16) !void {
+fn echoTests(client: *http.Client, base: []const u8) !void {
     const gpa = std.testing.allocator;
     var location_buffer: [100]u8 = undefined;
 
     { // send content-length request
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/echo-content", .{port});
+        const location = try std.fmt.allocPrint(gpa, "{s}/echo-content", .{base});
         defer gpa.free(location);
         const uri = try std.Uri.parse(location);
 
@@ -1045,8 +768,8 @@ fn echoTests(client: *http.Client, port: u16) !void {
     { // send chunked request
         const uri = try std.Uri.parse(try std.fmt.bufPrint(
             &location_buffer,
-            "http://127.0.0.1:{d}/echo-content",
-            .{port},
+            "{s}/echo-content",
+            .{base},
         ));
 
         var redirect_buffer: [1024]u8 = undefined;
@@ -1077,7 +800,7 @@ fn echoTests(client: *http.Client, port: u16) !void {
 
     { // Client.fetch()
 
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/echo-content#fetch", .{port});
+        const location = try std.fmt.allocPrint(gpa, "{s}/echo-content#fetch", .{base});
         defer gpa.free(location);
 
         var body: std.Io.Writer.Allocating = .init(gpa);
@@ -1098,7 +821,7 @@ fn echoTests(client: *http.Client, port: u16) !void {
     }
 
     { // expect: 100-continue
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/echo-content#expect-100", .{port});
+        const location = try std.fmt.allocPrint(gpa, "{s}/echo-content#expect-100", .{base});
         defer gpa.free(location);
         const uri = try std.Uri.parse(location);
 
@@ -1128,7 +851,7 @@ fn echoTests(client: *http.Client, port: u16) !void {
     }
 
     { // expect: garbage
-        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/echo-content#expect-garbage", .{port});
+        const location = try std.fmt.allocPrint(gpa, "{s}/echo-content#expect-garbage", .{base});
         defer gpa.free(location);
         const uri = try std.Uri.parse(location);
 
@@ -1151,22 +874,358 @@ fn echoTests(client: *http.Client, port: u16) !void {
     }
 }
 
+fn coverageTests(client: *http.Client, base: []const u8) !void {
+    const log = std.log.scoped(.client);
+
+    const gpa = std.testing.allocator;
+    { // read content-length response
+        const location = try std.fmt.allocPrint(gpa, "{s}/get", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        try expectEqualStrings("text/plain", response.head.content_type.?);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // read large content-length response
+        const location = try std.fmt.allocPrint(gpa, "{s}/large", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqual(@as(usize, 14 * 1024 + 14 * 10), body.len);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // send head request and not read chunked
+        const location = try std.fmt.allocPrint(gpa, "{s}/get", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.HEAD, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        try expectEqualStrings("text/plain", response.head.content_type.?);
+        try expectEqual(14, response.head.content_length.?);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // read chunked response
+        const location = try std.fmt.allocPrint(gpa, "{s}/get?chunked", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        try expectEqualStrings("text/plain", response.head.content_type.?);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // send head request and not read chunked
+        const location = try std.fmt.allocPrint(gpa, "{s}/get?chunked", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.HEAD, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        try expectEqualStrings("text/plain", response.head.content_type.?);
+        try expect(response.head.transfer_encoding == .chunked);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // read content-length response with connection close
+        const location = try std.fmt.allocPrint(gpa, "{s}/get", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{
+            .keep_alive = false,
+        });
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        try expectEqualStrings("text/plain", response.head.content_type.?);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+    }
+
+    // connection has been closed
+    try expect(client.connection_pool.free_len == 0);
+
+    { // handle empty header field value
+        const location = try std.fmt.allocPrint(gpa, "{s}/empty", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{
+            .extra_headers = &.{
+                .{ .name = "empty", .value = "" },
+            },
+        });
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        try std.testing.expectEqual(.ok, response.head.status);
+
+        var it = response.head.iterateHeaders();
+        {
+            const header = it.next().?;
+            try expect(!it.is_trailer);
+            try expectEqualStrings("content-length", header.name);
+            try expectEqualStrings("0", header.value);
+        }
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("", body);
+
+        {
+            const header = it.next().?;
+            try expect(!it.is_trailer);
+            try expectEqualStrings("empty", header.name);
+            try expectEqualStrings("", header.value);
+        }
+        try expectEqual(null, it.next());
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // relative redirect
+        const location = try std.fmt.allocPrint(gpa, "{s}/redirect/1", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // redirect from root
+        const location = try std.fmt.allocPrint(gpa, "{s}/redirect/2", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // absolute redirect
+        const location = try std.fmt.allocPrint(gpa, "{s}/redirect/3", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // too many redirects
+        const location = try std.fmt.allocPrint(gpa, "{s}/redirect/4", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        if (req.receiveHead(&redirect_buffer)) |_| {
+            return error.TestFailed;
+        } else |err| switch (err) {
+            error.TooManyHttpRedirects => {},
+            else => return err,
+        }
+    }
+
+    { // redirect to encoded url
+        const location = try std.fmt.allocPrint(gpa, "{s}/redirect/5", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Encoded redirect successful!\n", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // check client without segfault by connection error after redirection
+        const location = try std.fmt.allocPrint(gpa, "{s}/redirect/invalid", .{base});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        const result = req.receiveHead(&redirect_buffer);
+
+        // a proxy without an upstream is likely to return a 5xx status.
+        if (client.http_proxy == null) {
+            try expectError(error.ConnectionRefused, result); // expects not segfault but the regular error
+        }
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+}
+
+const TestServerAddress = union(enum) { ip: std.Io.net.IpAddress, unix: struct { address: std.Io.net.UnixAddress, buf: []u8 } };
+
 const TestServer = struct {
     io: Io,
     shutting_down: bool,
     server_thread: std.Thread,
     net_server: net.Server,
+    listen_address: TestServerAddress,
 
     fn destroy(self: *@This()) void {
         const io = self.io;
+        const gpa = std.testing.allocator;
+
         self.shutting_down = true;
-        var stream = self.net_server.socket.address.connect(io, .{ .mode = .stream }) catch
-            @panic("shutdown failure");
+
+        var stream = switch (self.listen_address) {
+            .ip => |addr| addr.connect(self.io, .{ .mode = .stream }) catch @panic("shutdown failure"),
+            .unix => |unix| s: {
+                const stream = unix.address.connect(self.io) catch @panic("shutdown failure");
+                gpa.free(unix.buf);
+                break :s stream;
+            },
+        };
         stream.close(io);
 
         self.server_thread.join();
         self.net_server.deinit(io);
-        std.testing.allocator.destroy(self);
+        gpa.destroy(self);
     }
 
     fn port(self: @This()) u16 {
@@ -1197,6 +1256,44 @@ fn createTestServer(io: Io, S: type) !*TestServer {
         .net_server = net_server,
         .shutting_down = false,
         .server_thread = undefined, // set below
+        .listen_address = .{ .ip = net_server.socket.address },
+    };
+
+    test_server.server_thread = try .spawn(.{}, S.run, .{test_server});
+    errdefer comptime unreachable;
+
+    return test_server;
+}
+
+fn createTestServerOnUnixSocket(io: Io, S: type, socket_dir: Io.Dir) !*TestServer {
+    if (builtin.single_threaded) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm and native_endian == .big) {
+        // https://github.com/ziglang/zig/issues/13782
+        return error.SkipZigTest;
+    }
+    const gpa = std.testing.allocator;
+
+    var realpath_buf: [128]u8 = undefined;
+    const realpath_len = try socket_dir.realPath(io, &realpath_buf);
+
+    const socket_path = try std.fs.path.join(gpa, &[_][]const u8{ realpath_buf[0..realpath_len], "test.sock" });
+    errdefer gpa.free(socket_path);
+
+    const address = try Io.net.UnixAddress.init(socket_path);
+
+    const test_server = try gpa.create(TestServer);
+    errdefer gpa.destroy(test_server);
+
+    var net_server = try address.listen(io, .{});
+    errdefer net_server.deinit(io);
+
+    // populate `test_server` first so `S.run` can use it
+    test_server.* = .{
+        .io = io,
+        .net_server = net_server,
+        .shutting_down = false,
+        .server_thread = undefined, // set below
+        .listen_address = .{ .unix = .{ .address = address, .buf = socket_path } },
     };
 
     test_server.server_thread = try .spawn(.{}, S.run, .{test_server});
