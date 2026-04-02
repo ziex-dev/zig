@@ -701,6 +701,31 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             return cloned;
         }
 
+        pub fn findPos(self: Self, start_index: usize, value: T) ?usize {
+            switch (@typeInfo(T)) {
+                // self-comparable types
+                .int, .float, .comptime_int, .comptime_float, .bool, .type, .@"enum" => {
+                    return mem.findScalarPos(T, self.items, start_index, value);
+                },
+                // common use case
+                .pointer => |ptr| if (ptr.size == .slice and @typeInfo(ptr.child) == .int) {
+                    for (self.items, 0..) |item, i| {
+                        if (mem.eql(ptr.child, item, value)) return i;
+                    }
+                    return null;
+                } else {
+                    @compileError("Not supported for " ++ @typeName(T)); // don't know how to compare
+                },
+                else => @compileError("Not supported for " ++ @typeName(T)), // don't know how to compare
+            }
+        }
+
+        // Search for value in list and return the index of the first occurrence.
+        // Returns null if value is not found.
+        pub fn find(self: Self, value: T) ?usize {
+            return self.findPos(0, value);
+        }
+
         /// Insert `item` at index `i`. Moves `list[i .. list.len]` to higher indices to make room.
         /// If `i` is equal to the length of the list this operation is equivalent to append.
         /// This operation is O(N).
@@ -2505,4 +2530,58 @@ test "insertSlice*" {
 
     list.insertSliceAssumeCapacity(6, "ij");
     try testing.expectEqualStrings("abefghijcd", list.items);
+}
+
+test "find()" {
+    {
+        var list: ArrayList(i32) = .empty;
+        defer list.deinit(testing.allocator);
+
+        try list.appendSlice(testing.allocator, &.{ -5, 10, 42, 7, 42, -3 });
+
+        try testing.expectEqual(2, list.find(42));
+        try testing.expectEqual(0, list.find(-5));
+        try testing.expectEqual(5, list.find(-3));
+        try testing.expectEqual(null, list.find(99));
+        try testing.expectEqual(null, list.find(0));
+    }
+
+    {
+        var list: ArrayList(u8) = .empty;
+        defer list.deinit(testing.allocator);
+
+        try list.appendSlice(testing.allocator, "zig is awesome!");
+
+        try testing.expectEqual(0, list.find('z'));
+        try testing.expectEqual(1, list.find('i'));
+        try testing.expectEqual(8, list.find('w'));
+        try testing.expectEqual(null, list.find('x'));
+    }
+
+    {
+        const Color = enum { red, green, blue, yellow };
+
+        var list: ArrayList(Color) = .empty;
+        defer list.deinit(testing.allocator);
+
+        try list.appendSlice(testing.allocator, &.{ .red, .green, .blue, .green, .yellow });
+
+        try testing.expectEqual(0, list.find(.red));
+        try testing.expectEqual(1, list.find(.green));
+        try testing.expectEqual(2, list.find(.blue));
+        try testing.expectEqual(4, list.find(.yellow));
+    }
+
+    {
+        var list: ArrayList([]const u8) = .empty;
+        defer list.deinit(testing.allocator);
+
+        try list.appendSlice(testing.allocator, &.{ "one", "two", "three", "four" });
+
+        try testing.expectEqual(0, list.find("one"));
+        try testing.expectEqual(1, list.find("two"));
+        try testing.expectEqual(2, list.find("three"));
+        try testing.expectEqual(null, list.find("five"));
+        try testing.expectEqual(null, list.find(""));
+    }
 }
