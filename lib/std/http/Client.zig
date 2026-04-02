@@ -759,7 +759,7 @@ pub const Response = struct {
     pub fn reader(response: *Response, transfer_buffer: []u8) *Reader {
         response.head.invalidateStrings();
         const req = response.request;
-        if (!response.request.response_body_forbidden) return .ending;
+        if (!response.request.response_body_permitted) return .ending;
         const head = &response.head;
         return req.reader.bodyReader(transfer_buffer, head.transfer_encoding, head.content_length);
     }
@@ -786,7 +786,7 @@ pub const Response = struct {
             head.transfer_encoding,
             head.content_length,
             head.content_encoding,
-            response.request.response_body_forbidden,
+            response.request.response_body_permitted,
             decompress,
             decompress_buffer,
         );
@@ -837,7 +837,7 @@ pub const Request = struct {
 
     /// Populated in `receiveHead`; used in `deinit` to determine whether to
     /// discard the body to reuse the connection.
-    response_body_forbidden: bool = true,
+    response_body_permitted: bool = true,
     /// Populated in `receiveHead`; used in `deinit` to determine whether to
     /// discard the body to reuse the connection.
     response_content_length: ?u64 = null,
@@ -921,7 +921,7 @@ pub const Request = struct {
                 .ready => false,
                 .received_head => c: {
                     if (r.hasBody()) break :c true;
-                    if (!r.response_body_forbidden) break :c false;
+                    if (!r.response_body_permitted) break :c false;
                     const reader = r.reader.bodyReader(&.{}, r.response_transfer_encoding, r.response_content_length);
                     _ = reader.discardRemaining() catch |err| switch (err) {
                         error.ReadFailed => break :c true,
@@ -1099,6 +1099,15 @@ pub const Request = struct {
             try w.writeAll("\r\n");
         }
 
+        for (r.privileged_headers) |header| {
+            assert(header.name.len != 0);
+
+            try w.writeAll(header.name);
+            try w.writeAll(": ");
+            try w.writeAll(header.value);
+            try w.writeAll("\r\n");
+        }
+
         if (connection.proxied) proxy: {
             const proxy = switch (connection.protocol) {
                 .plain => r.client.http_proxy,
@@ -1166,13 +1175,13 @@ pub const Request = struct {
             };
             const head = &response.head;
 
-            r.response_body_forbidden = true;
+            r.response_body_permitted = true;
 
             if (head.status == .@"continue") {
                 if (r.handle_continue) continue;
                 r.response_transfer_encoding = head.transfer_encoding;
                 r.response_content_length = head.content_length;
-                r.response_body_forbidden = false;
+                r.response_body_permitted = false;
                 return response; // we're not handling the 100-continue
             }
 
@@ -1184,7 +1193,7 @@ pub const Request = struct {
             if (r.method == .CONNECT and head.status.class() == .success) {
                 // This connection is no longer doing HTTP.
                 connection.closing = false;
-                r.response_body_forbidden = false;
+                r.response_body_permitted = false;
                 r.response_transfer_encoding = head.transfer_encoding;
                 r.response_content_length = head.content_length;
                 return response;
@@ -1200,7 +1209,7 @@ pub const Request = struct {
             if (r.method == .HEAD or head.status.class() == .informational or
                 head.status == .no_content or head.status == .not_modified)
             {
-                r.response_body_forbidden = false;
+                r.response_body_permitted = false;
                 r.response_transfer_encoding = head.transfer_encoding;
                 r.response_content_length = head.content_length;
                 return response;
@@ -1729,6 +1738,7 @@ pub fn request(
         }
         for (options.privileged_headers) |header| {
             assert(header.name.len != 0);
+            assert(std.mem.findScalar(u8, header.name, ':') == null);
             assert(std.mem.findPosLinear(u8, header.name, 0, "\r\n") == null);
             assert(std.mem.findPosLinear(u8, header.value, 0, "\r\n") == null);
         }
