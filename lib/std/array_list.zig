@@ -1098,6 +1098,25 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             self.items.len = new_len;
         }
 
+        /// Grows or shrinks the list as necessary.
+        /// Invalidates element pointers if additional capacity is allocated.
+        /// Asserts that the range is in bounds.
+        /// Returns deleted elements, which are owned by caller.
+        pub fn splice(
+            self: *Self,
+            gpa: Allocator,
+            start: usize,
+            len: usize,
+            new_items: []const T,
+        ) Allocator.Error![]T {
+            const range = self.items[start .. start + len];
+            const range_copy = try gpa.dupe(T, range);
+            errdefer gpa.free(range_copy);
+
+            try self.replaceRange(gpa, start, len, new_items);
+            return range_copy;
+        }
+
         /// Append a value to the list `n` times.
         ///
         /// Never invalidates element pointers.
@@ -2505,4 +2524,75 @@ test "insertSlice*" {
 
     list.insertSliceAssumeCapacity(6, "ij");
     try testing.expectEqualStrings("abefghijcd", list.items);
+}
+
+test "splice" {
+    const a = testing.allocator;
+
+    {
+        var list: ArrayList(i32) = .empty;
+        defer list.deinit(a);
+        try list.appendSlice(a, &[_]i32{ 1, 2, 3, 4, 5 });
+
+        const deleted = try list.splice(a, 1, 0, &[_]i32{ 0, 0, 0 });
+        defer a.free(deleted);
+
+        try testing.expectEqual(deleted.len, 0);
+        try testing.expectEqualSlices(i32, &[_]i32{ 1, 0, 0, 0, 2, 3, 4, 5 }, list.items);
+    }
+    {
+        var list: ArrayList(i32) = .empty;
+        defer list.deinit(a);
+        try list.appendSlice(a, &[_]i32{ 1, 2, 3, 4, 5 });
+
+        const deleted = try list.splice(a, 1, 1, &[_]i32{ 0, 0, 0 });
+        defer a.free(deleted);
+
+        try testing.expectEqualSlices(i32, &.{2}, deleted);
+        try testing.expectEqualSlices(i32, &[_]i32{ 1, 0, 0, 0, 3, 4, 5 }, list.items);
+    }
+    {
+        var list: ArrayList(i32) = .empty;
+        defer list.deinit(a);
+        try list.appendSlice(a, &[_]i32{ 1, 2, 3, 4, 5 });
+
+        const deleted = try list.splice(a, 1, 2, &[_]i32{ 0, 0, 0 });
+        defer a.free(deleted);
+
+        try testing.expectEqualSlices(i32, &.{ 2, 3 }, deleted);
+        try testing.expectEqualSlices(i32, &[_]i32{ 1, 0, 0, 0, 4, 5 }, list.items);
+    }
+    {
+        var list: ArrayList(i32) = .empty;
+        defer list.deinit(a);
+        try list.appendSlice(a, &[_]i32{ 1, 2, 3, 4, 5 });
+
+        const deleted = try list.splice(a, 1, 3, &[_]i32{ 0, 0, 0 });
+        defer a.free(deleted);
+
+        try testing.expectEqualSlices(i32, &.{ 2, 3, 4 }, deleted);
+        try testing.expectEqualSlices(i32, &[_]i32{ 1, 0, 0, 0, 5 }, list.items);
+    }
+    {
+        var list: ArrayList(i32) = .empty;
+        defer list.deinit(a);
+        try list.appendSlice(a, &[_]i32{ 1, 2, 3, 4, 5 });
+
+        const deleted = try list.splice(a, 1, 4, &[_]i32{ 0, 0, 0 });
+        defer a.free(deleted);
+
+        try testing.expectEqualSlices(i32, &.{ 2, 3, 4, 5 }, deleted);
+        try testing.expectEqualSlices(i32, &[_]i32{ 1, 0, 0, 0 }, list.items);
+    }
+    {
+        var list: ArrayList(i32) = .empty;
+        defer list.deinit(a);
+        try list.appendSlice(a, &[_]i32{ 1, 2, 3, 4, 5 });
+
+        const deleted = try list.splice(a, 0, 4, &.{});
+        defer a.free(deleted);
+
+        try testing.expectEqualSlices(i32, &.{ 1, 2, 3, 4 }, deleted);
+        try testing.expectEqualSlices(i32, &[_]i32{5}, list.items);
+    }
 }
