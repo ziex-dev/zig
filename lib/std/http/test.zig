@@ -377,7 +377,7 @@ test "server.receiveHead rejects requests with both Content-Length and Transfer-
         var stream_writer = stream.writer(io, &.{});
         try stream_writer.interface.writeAll(request_bytes);
     }
-    
+
     // Transfer-Enconding: chunked first, then Content-Length
     {
         const request_bytes = "POST /bar HTTP/1.1\r\n" ++
@@ -643,6 +643,30 @@ test "general client/server API coverage" {
         log.info("{s}", .{location});
         var redirect_buffer: [1024]u8 = undefined;
         var req = try client.request(.GET, uri, .{});
+        defer req.deinit();
+
+        try req.sendBodiless();
+        var response = try req.receiveHead(&redirect_buffer);
+
+        try expectEqualStrings("text/plain", response.head.content_type.?);
+
+        const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+        defer gpa.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+    }
+
+    // connection has been kept alive
+    try expect(client.http_proxy != null or client.connection_pool.free_len == 1);
+
+    { // POST request without a body
+        const location = try std.fmt.allocPrint(gpa, "http://127.0.0.1:{d}/get", .{port});
+        defer gpa.free(location);
+        const uri = try std.Uri.parse(location);
+
+        log.info("{s}", .{location});
+        var redirect_buffer: [1024]u8 = undefined;
+        var req = try client.request(.POST, uri, .{});
         defer req.deinit();
 
         try req.sendBodiless();
@@ -1006,6 +1030,78 @@ test "Server streams both reading and writing" {
 
     var redirect_buffer: [555]u8 = undefined;
     var req = try client.request(.POST, .{
+        .scheme = "http",
+        .host = .{ .raw = "127.0.0.1" },
+        .port = test_server.port(),
+        .path = .{ .percent_encoded = "/" },
+    }, .{});
+    defer req.deinit();
+
+    req.transfer_encoding = .chunked;
+    var body_writer = try req.sendBody(&.{});
+    var response = try req.receiveHead(&redirect_buffer);
+
+    try body_writer.writer.writeAll("one ");
+    try body_writer.writer.writeAll("fish");
+    try body_writer.end();
+
+    const body = try response.reader(&.{}).allocRemaining(std.testing.allocator, .unlimited);
+    defer std.testing.allocator.free(body);
+
+    try expectEqualStrings("ONE FISH", body);
+}
+
+test "GET request with body" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
+
+    const io = std.testing.io;
+
+    const test_server = try createTestServer(io, struct {
+        fn run(test_server: *TestServer) anyerror!void {
+            const net_server = &test_server.net_server;
+            var recv_buffer: [1024]u8 = undefined;
+            var send_buffer: [777]u8 = undefined;
+
+            var stream = try net_server.accept(io);
+            defer stream.close(io);
+
+            var connection_br = stream.reader(io, &recv_buffer);
+            var connection_bw = stream.writer(io, &send_buffer);
+            var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+            var request = try server.receiveHead();
+            var read_buffer: [100]u8 = undefined;
+            var br = try request.readerExpectContinue(&read_buffer);
+            var response = try request.respondStreaming(&.{}, .{
+                .respond_options = .{
+                    .transfer_encoding = .none, // Causes keep_alive=false
+                },
+            });
+            const w = &response.writer;
+
+            while (true) {
+                try response.flush();
+                const buf = br.peekGreedy(1) catch |err| switch (err) {
+                    error.EndOfStream => break,
+                    error.ReadFailed => return error.ReadFailed,
+                };
+                br.toss(buf.len);
+                for (buf) |*b| b.* = std.ascii.toUpper(b.*);
+                try w.writeAll(buf);
+            }
+            try response.end();
+        }
+    });
+    defer test_server.destroy();
+
+    var client: http.Client = .{
+        .allocator = std.testing.allocator,
+        .io = io,
+    };
+    defer client.deinit();
+
+    var redirect_buffer: [555]u8 = undefined;
+    var req = try client.request(.GET, .{
         .scheme = "http",
         .host = .{ .raw = "127.0.0.1" },
         .port = test_server.port(),

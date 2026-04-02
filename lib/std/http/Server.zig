@@ -281,6 +281,11 @@ pub const Request = struct {
             if (h.expect) |*s| s.* = undefined;
             if (h.content_type) |*s| s.* = undefined;
         }
+
+        /// Returns whether the request contains a body or not
+        inline fn hasBody(h: *Head) bool {
+            return h.transfer_encoding != .none or h.content_length != null;
+        }
     };
 
     pub fn iterateHeaders(r: *const Request) http.HeaderIterator {
@@ -634,7 +639,7 @@ pub const Request = struct {
         assert(request.server.reader.state == .received_head);
         assert(request.head.expect == null);
         request.head.invalidateStrings();
-        if (!request.head.method.requestHasBody()) return .ending;
+        if (!request.head.hasBody()) return .ending;
         return request.server.reader.bodyReader(buffer, request.head.transfer_encoding, request.head.content_length);
     }
 
@@ -669,8 +674,7 @@ pub const Request = struct {
         const r = &request.server.reader;
         if (keep_alive and request.head.keep_alive) switch (r.state) {
             .received_head => {
-                if (request.head.method.requestHasBody()) {
-                    assert(request.head.transfer_encoding != .none or request.head.content_length != null);
+                if (request.head.hasBody()) {
                     const reader_interface = request.readerExpectContinue(&.{}) catch return false;
                     _ = reader_interface.discardRemaining() catch return false;
                     assert(r.state == .ready);

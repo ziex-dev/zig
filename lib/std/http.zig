@@ -474,10 +474,11 @@ pub const Reader = struct {
         transfer_encoding: TransferEncoding,
         content_length: ?u64,
         content_encoding: ContentEncoding,
+        has_body: bool,
         decompress: *Decompress,
         decompress_buffer: []u8,
     ) *std.Io.Reader {
-        if (transfer_encoding == .none and content_length == null) {
+        if ((transfer_encoding == .none and content_length == null) or !has_body) {
             assert(reader.state == .received_head);
             reader.state = .body_none;
             switch (content_encoding) {

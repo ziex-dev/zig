@@ -736,7 +736,7 @@ pub const Response = struct {
     pub fn reader(response: *Response, transfer_buffer: []u8) *Reader {
         response.head.invalidateStrings();
         const req = response.request;
-        if (!req.method.responseHasBody()) return .ending;
+        if (!response.request.response_body_forbidden) return .ending;
         const head = &response.head;
         return req.reader.bodyReader(transfer_buffer, head.transfer_encoding, head.content_length);
     }
@@ -763,6 +763,7 @@ pub const Response = struct {
             head.transfer_encoding,
             head.content_length,
             head.content_encoding,
+            response.request.response_body_forbidden,
             decompress,
             decompress_buffer,
         );
@@ -811,6 +812,9 @@ pub const Request = struct {
     /// Standard headers that have default, but overridable, behavior.
     headers: Headers,
 
+    /// Populated in `receiveHead`; used in `deinit` to determine whether to
+    /// discard the body to reuse the connection.
+    response_body_forbidden: bool = true,
     /// Populated in `receiveHead`; used in `deinit` to determine whether to
     /// discard the body to reuse the connection.
     response_content_length: ?u64 = null,
@@ -893,8 +897,8 @@ pub const Request = struct {
             connection.closing = connection.closing or switch (r.reader.state) {
                 .ready => false,
                 .received_head => c: {
-                    if (r.method.requestHasBody()) break :c true;
-                    if (!r.method.responseHasBody()) break :c false;
+                    if (r.hasBody()) break :c true;
+                    if (!r.response_body_forbidden) break :c false;
                     const reader = r.reader.bodyReader(&.{}, r.response_transfer_encoding, r.response_content_length);
                     _ = reader.discardRemaining() catch |err| switch (err) {
                         error.ReadFailed => break :c true,
@@ -917,7 +921,6 @@ pub const Request = struct {
     /// Sends but does not flush a complete request as only HTTP head, no body.
     pub fn sendBodilessUnflushed(r: *Request) Writer.Error!void {
         assert(r.transfer_encoding == .none);
-        assert(!r.method.requestHasBody());
         try sendHead(r);
     }
 
@@ -946,7 +949,7 @@ pub const Request = struct {
     /// See also:
     /// * `sendBody`
     pub fn sendBodyUnflushed(r: *Request, buffer: []u8) Writer.Error!http.BodyWriter {
-        assert(r.method.requestHasBody());
+        assert(r.hasBody());
         try sendHead(r);
         const http_protocol_output = r.connection.?.writer();
         return switch (r.transfer_encoding) {
@@ -1140,10 +1143,13 @@ pub const Request = struct {
             };
             const head = &response.head;
 
+            r.response_body_forbidden = true;
+
             if (head.status == .@"continue") {
                 if (r.handle_continue) continue;
                 r.response_transfer_encoding = head.transfer_encoding;
                 r.response_content_length = head.content_length;
+                r.response_body_forbidden = false;
                 return response; // we're not handling the 100-continue
             }
 
@@ -1155,6 +1161,7 @@ pub const Request = struct {
             if (r.method == .CONNECT and head.status.class() == .success) {
                 // This connection is no longer doing HTTP.
                 connection.closing = false;
+                r.response_body_forbidden = false;
                 r.response_transfer_encoding = head.transfer_encoding;
                 r.response_content_length = head.content_length;
                 return response;
@@ -1170,6 +1177,7 @@ pub const Request = struct {
             if (r.method == .HEAD or head.status.class() == .informational or
                 head.status == .no_content or head.status == .not_modified)
             {
+                r.response_body_forbidden = false;
                 r.response_transfer_encoding = head.transfer_encoding;
                 r.response_content_length = head.content_length;
                 return response;
@@ -1286,6 +1294,13 @@ pub const Request = struct {
                 return false;
             },
         }
+    }
+
+    inline fn hasBody(r: *const Request) bool {
+        return switch (r.transfer_encoding) {
+            .none => false,
+            .content_length, .chunked => true,
+        };
     }
 };
 
