@@ -151,6 +151,7 @@ pub const Request = struct {
                     head.content_type = header_value;
                 } else if (std.ascii.eqlIgnoreCase(header_name, "content-length")) {
                     if (head.content_length != null) return error.HttpHeadersInvalid;
+                    if (head.transfer_encoding != .none) return error.HttpHeadersInvalid;
                     head.content_length = std.fmt.parseInt(u64, header_value, 10) catch
                         return error.InvalidContentLength;
                 } else if (std.ascii.eqlIgnoreCase(header_name, "content-encoding")) {
@@ -175,6 +176,8 @@ pub const Request = struct {
                     if (std.meta.stringToEnum(http.TransferEncoding, trimmed_first)) |transfer| {
                         if (head.transfer_encoding != .none)
                             return error.HttpHeadersInvalid; // we already have a transfer encoding
+                        if (head.content_length != null)
+                            return error.HttpHeadersInvalid;
                         head.transfer_encoding = transfer;
 
                         next = iter.next();
@@ -199,26 +202,72 @@ pub const Request = struct {
         }
 
         test parse {
-            const request_bytes = "GET /hi HTTP/1.0\r\n" ++
-                "content-tYpe: text/plain\r\n" ++
-                "content-Length:10\r\n" ++
-                "expeCt:   100-continue \r\n" ++
-                "TRansfer-encoding:\tdeflate, chunked \r\n" ++
-                "connectioN:\t keep-alive \r\n\r\n";
+            {
+                const request_bytes = "GET /hi HTTP/1.0\r\n" ++
+                    "content-tYpe: text/plain\r\n" ++
+                    "expeCt:   100-continue \r\n" ++
+                    "TRansfer-encoding:\tdeflate, chunked \r\n" ++
+                    "connectioN:\t keep-alive \r\n\r\n";
 
-            const req = try parse(request_bytes);
+                const req = try parse(request_bytes);
 
-            try testing.expectEqual(.GET, req.method);
-            try testing.expectEqual(.@"HTTP/1.0", req.version);
-            try testing.expectEqualStrings("/hi", req.target);
+                try testing.expectEqual(.GET, req.method);
+                try testing.expectEqual(.@"HTTP/1.0", req.version);
+                try testing.expectEqualStrings("/hi", req.target);
 
-            try testing.expectEqualStrings("text/plain", req.content_type.?);
-            try testing.expectEqualStrings("100-continue", req.expect.?);
+                try testing.expectEqualStrings("text/plain", req.content_type.?);
+                try testing.expectEqualStrings("100-continue", req.expect.?);
 
-            try testing.expectEqual(true, req.keep_alive);
-            try testing.expectEqual(10, req.content_length.?);
-            try testing.expectEqual(.chunked, req.transfer_encoding);
-            try testing.expectEqual(.deflate, req.transfer_compression);
+                try testing.expectEqual(true, req.keep_alive);
+                try testing.expectEqual(.chunked, req.transfer_encoding);
+                try testing.expectEqual(.deflate, req.transfer_compression);
+            }
+
+            {
+                const request_bytes = "GET /hi HTTP/1.0\r\n" ++
+                    "content-tYpe: text/plain\r\n" ++
+                    "expeCt:   100-continue \r\n" ++
+                    "Content-LenGth:\t 10 \r\n" ++
+                    "connectioN:\t keep-alive \r\n\r\n";
+
+                const req = try parse(request_bytes);
+
+                try testing.expectEqual(.GET, req.method);
+                try testing.expectEqual(.@"HTTP/1.0", req.version);
+                try testing.expectEqualStrings("/hi", req.target);
+
+                try testing.expectEqualStrings("text/plain", req.content_type.?);
+                try testing.expectEqualStrings("100-continue", req.expect.?);
+
+                try testing.expectEqual(true, req.keep_alive);
+                try testing.expectEqual(10, req.content_length);
+                try testing.expectEqual(.none, req.transfer_encoding);
+                try testing.expectEqual(.identity, req.transfer_compression);
+            }
+
+            // reject requests that have both Content-Length and Transfer-Encoding chunked
+
+            // Content-Length first, then Transfer-Enconding: chunked
+            {
+                const request_bytes = "GET /hi HTTP/1.0\r\n" ++
+                    "Content-LenGth:\t 10 \r\n" ++
+                    "Transfer-Encoding: chunked\r\n" ++
+                    "connectioN:\t keep-alive \r\n\r\n";
+
+                const req = parse(request_bytes);
+                try testing.expectError(error.HttpHeadersInvalid, req);
+            }
+
+            // Transfer-Enconding: chunked first, then Content-Length
+            {
+                const request_bytes = "GET /hi HTTP/1.0\r\n" ++
+                    "Transfer-Encoding: chunked\r\n" ++
+                    "Content-LenGth:\t 10 \r\n" ++
+                    "connectioN:\t keep-alive \r\n\r\n";
+
+                const req = parse(request_bytes);
+                try testing.expectError(error.HttpHeadersInvalid, req);
+            }
         }
 
         inline fn int64(array: *const [8]u8) u64 {
@@ -242,7 +291,6 @@ pub const Request = struct {
     test iterateHeaders {
         const request_bytes = "GET /hi HTTP/1.0\r\n" ++
             "content-tYpe: text/plain\r\n" ++
-            "content-Length:10\r\n" ++
             "expeCt:   100-continue \r\n" ++
             "TRansfer-encoding:\tdeflate, chunked \r\n" ++
             "connectioN:\t keep-alive \r\n\r\n";
@@ -268,12 +316,6 @@ pub const Request = struct {
             const header = it.next().?;
             try testing.expectEqualStrings("content-tYpe", header.name);
             try testing.expectEqualStrings("text/plain", header.value);
-            try testing.expect(!it.is_trailer);
-        }
-        {
-            const header = it.next().?;
-            try testing.expectEqualStrings("content-Length", header.name);
-            try testing.expectEqualStrings("10", header.value);
             try testing.expect(!it.is_trailer);
         }
         {

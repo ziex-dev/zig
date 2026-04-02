@@ -337,6 +337,62 @@ test "Server.Request.respondStreaming non-chunked, unknown content-length" {
     try expectEqualStrings(expected_response.items, response);
 }
 
+test "server.receiveHead rejects requests with both Content-Length and Transfer-Encoding" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
+
+    const io = std.testing.io;
+
+    const test_server = try createTestServer(io, struct {
+        fn run(test_server: *TestServer) anyerror!void {
+            const net_server = &test_server.net_server;
+            var recv_buffer: [666]u8 = undefined;
+            var send_buffer: [777]u8 = undefined;
+            var remaining: usize = 2;
+            while (remaining != 0) : (remaining -= 1) {
+                var stream = try net_server.accept(io);
+                defer stream.close(io);
+
+                var connection_br = stream.reader(io, &recv_buffer);
+                var connection_bw = stream.writer(io, &send_buffer);
+                var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+                try expectEqual(.ready, server.reader.state);
+                const request = server.receiveHead();
+                try expectError(http.Server.ReceiveHeadError.HttpHeadersInvalid, request);
+            }
+        }
+    });
+    defer test_server.destroy();
+    // Content-Length first, then Transfer-Enconding: chunked
+    {
+        const request_bytes = "POST /bar HTTP/1.1\r\n" ++
+            "Content-Length: 19\r\n" ++
+            "Transfer-Encoding: chunked\r\n" ++
+            "\r\n" ++
+            "youshouldnotseethis";
+        const host_name: net.HostName = try .init("127.0.0.1");
+        var stream = try host_name.connect(io, test_server.port(), .{ .mode = .stream });
+        defer stream.close(io);
+        var stream_writer = stream.writer(io, &.{});
+        try stream_writer.interface.writeAll(request_bytes);
+    }
+    
+    // Transfer-Enconding: chunked first, then Content-Length
+    {
+        const request_bytes = "POST /bar HTTP/1.1\r\n" ++
+            "Transfer-Encoding: chunked\r\n" ++
+            "Content-Length: 19\r\n" ++
+            "\r\n" ++
+            "youshouldnotseethis";
+        const host_name: net.HostName = try .init("127.0.0.1");
+        var stream = try host_name.connect(io, test_server.port(), .{ .mode = .stream });
+        defer stream.close(io);
+        var stream_writer = stream.writer(io, &.{});
+        try stream_writer.interface.writeAll(request_bytes);
+    }
+}
+
 test "receiving arbitrary http headers from the client" {
     if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
