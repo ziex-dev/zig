@@ -965,7 +965,7 @@ pub fn statx(
     fd: linux.fd_t,
     path: [:0]const u8,
     flags: u32,
-    mask: linux.STATX,
+    mask: linux.Statx.Mask,
     buf: *linux.Statx,
 ) !*linux.io_uring_sqe {
     const sqe = try self.get_sqe();

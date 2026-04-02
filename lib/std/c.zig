@@ -2597,14 +2597,15 @@ pub const SEEK = switch (native_os) {
     },
     else => void,
 };
+
 pub const SHUT = switch (native_os) {
-    .linux => linux.SHUT,
-    .emscripten => emscripten.SHUT,
+    .emscripten, .linux => linux.SHUT,
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L40-L42
-    else => struct {
-        pub const RD = 0;
-        pub const WR = 1;
-        pub const RDWR = 2;
+    else => enum(u32) {
+        RD = 0,
+        WR = 1,
+        RDWR = 2,
+        _,
     },
 };
 
@@ -3706,264 +3707,354 @@ pub const VDSO = switch (native_os) {
     .linux => linux.VDSO,
     else => void,
 };
+
 pub const W = switch (native_os) {
-    .linux => linux.W,
-    .emscripten => emscripten.W,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
+    .emscripten, .linux => linux.W,
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
         /// [XSI] no hang in wait/no child to reap
-        pub const NOHANG = 0x00000001;
+        NOHANG: bool = false,
         /// [XSI] notify on stop, untraced child
-        pub const UNTRACED = 0x00000002;
+        UNTRACED: bool = false,
+        _3: u30 = 0,
 
-        pub fn EXITSTATUS(x: u32) u8 {
-            return @as(u8, @intCast(x >> 8));
-        }
-        pub fn TERMSIG(x: u32) SIG {
-            return @enumFromInt(status(x));
-        }
-        pub fn STOPSIG(x: u32) u32 {
-            return x >> 8;
-        }
-        pub fn IFEXITED(x: u32) bool {
-            return status(x) == 0;
-        }
-        pub fn IFSTOPPED(x: u32) bool {
-            return status(x) == stopped and STOPSIG(x) != 0x13;
-        }
-        pub fn IFSIGNALED(x: u32) bool {
-            return status(x) != stopped and status(x) != 0;
+        pub const STOPPED = 0o177;
+
+        pub fn EXITSTATUS(x: W) u8 {
+            return @intCast(x.toInt() >> 8);
         }
 
-        fn status(x: u32) u32 {
-            return x & 0o177;
+        pub fn TERMSIG(x: W) u32 {
+            return x.status();
         }
-        const stopped = 0o177;
-    },
-    .freebsd => struct {
-        pub const NOHANG = 1;
-        pub const UNTRACED = 2;
-        pub const STOPPED = UNTRACED;
-        pub const CONTINUED = 4;
-        pub const NOWAIT = 8;
-        pub const EXITED = 16;
-        pub const TRAPPED = 32;
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s & 0xff00) >> 8));
+        pub fn STOPSIG(x: W) u32 {
+            return x.toInt() >> 8;
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @enumFromInt(s & 0x7f);
+
+        pub fn IFEXITED(x: W) bool {
+            return x.status() == 0;
         }
-        pub fn STOPSIG(s: u32) u32 {
-            return EXITSTATUS(s);
+
+        pub fn IFSTOPPED(x: W) bool {
+            return x.status() == STOPPED and x.stopSig() != 0x13;
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+
+        pub fn IFSIGNALED(x: W) bool {
+            return x.status() != STOPPED and x.status() != 0;
         }
-        pub fn IFSTOPPED(s: u32) bool {
-            return @as(u16, @truncate((((s & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
+
+        fn status(x: W) u32 {
+            return x.toInt() & 0o177;
         }
-        pub fn IFSIGNALED(s: u32) bool {
-            return (s & 0xffff) -% 1 < 0xff;
+
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .illumos => struct {
-        pub const EXITED = 0o001;
-        pub const TRAPPED = 0o002;
-        pub const UNTRACED = 0o004;
-        pub const STOPPED = UNTRACED;
-        pub const CONTINUED = 0o010;
-        pub const NOHANG = 0o100;
-        pub const NOWAIT = 0o200;
+    .freebsd => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        _7: u26 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s >> 8) & 0xff));
-        }
-        pub fn TERMSIG(s: u32) SIG {
-            return @enumFromInt(s & 0x7f);
-        }
-        pub fn STOPSIG(s: u32) u32 {
-            return EXITSTATUS(s);
-        }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
-        }
+        pub const UNTRACED: W = .{ .stopped = true };
 
-        pub fn IFCONTINUED(s: u32) bool {
-            return ((s & 0o177777) == 0o177777);
+        pub fn EXITSTATUS(s: W) u8 {
+            return @intCast((s.toInt() & 0xff00) >> 8);
         }
 
-        pub fn IFSTOPPED(s: u32) bool {
+        pub fn TERMSIG(s: W) u32 {
+            return s.toInt() & 0x7f;
+        }
+
+        pub fn STOPsIG(s: W) u32 {
+            return s.exitStatus();
+        }
+
+        pub fn IFEXITED(s: W) bool {
+            return s.termSig() == 0;
+        }
+
+        pub fn IFSTOPPED(s: W) bool {
+            return @as(u16, @truncate((((s.toInt() & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
+        }
+
+        pub fn IFSIGNALED(s: W) bool {
+            return (s.toInt() & 0xffff) -% 1 < 0xff;
+        }
+
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
+        }
+    },
+    .illumos => packed struct(u32) {
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        _5: u2 = 0,
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _8: u24 = 0,
+
+        pub const UNTRACED: W = .{ .stopped = true };
+
+        pub fn EXITSTATUS(x: W) u8 {
+            return @intCast((x.toInt() >> 8) & 0xff);
+        }
+
+        pub fn TERMSIG(x: W) u32 {
+            return x.toInt() & 0x7f;
+        }
+
+        pub fn STOPSIG(x: W) u32 {
+            return x.exitStatus();
+        }
+
+        pub fn IFEXITED(x: W) bool {
+            return x.termSig() == 0;
+        }
+
+        pub fn IFCONTINUED(x: W) bool {
+            return (x.toInt() & 0o177777) == 0o177777;
+        }
+
+        pub fn IFSTOPPED(x: W) bool {
+            const s = x.toInt();
             return (s & 0x00ff != 0o177) and !(s & 0xff00 != 0);
         }
 
-        pub fn IFSIGNALED(s: u32) bool {
+        pub fn IFSIGNALED(x: W) bool {
+            const s = x.toInt();
             return s & 0x00ff > 0 and s & 0xff00 == 0;
         }
-    },
-    .netbsd => struct {
-        pub const NOHANG = 0x00000001;
-        pub const UNTRACED = 0x00000002;
-        pub const STOPPED = UNTRACED;
-        pub const CONTINUED = 0x00000010;
-        pub const NOWAIT = 0x00010000;
-        pub const EXITED = 0x00000020;
-        pub const TRAPPED = 0x00000040;
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s >> 8) & 0xff));
-        }
-        pub fn TERMSIG(s: u32) SIG {
-            return @enumFromInt(s & 0x7f);
-        }
-        pub fn STOPSIG(s: u32) u32 {
-            return EXITSTATUS(s);
-        }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
-        }
-
-        pub fn IFCONTINUED(s: u32) bool {
-            return (s == CONTINUED);
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return (((s & 0x7f) == STOPPED) and !IFCONTINUED(s));
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return !IFSTOPPED(s) and !IFCONTINUED(s) and !IFEXITED(s);
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .dragonfly => struct {
-        pub const NOHANG = 0x0001;
-        pub const UNTRACED = 0x0002;
-        pub const CONTINUED = 0x0004;
-        pub const STOPPED = UNTRACED;
-        pub const NOWAIT = 0x0008;
-        pub const EXITED = 0x0010;
-        pub const TRAPPED = 0x0020;
+    .netbsd => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        _3: u2 = 0,
+        /// process continued
+        CONTINUED: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        _8: u9 = 0,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _18: u15 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s & 0xff00) >> 8));
+        pub const UNTRACED: W = .{ .stopped = true };
+
+        pub fn EXITSTATUS(x: W) u8 {
+            return @intCast((x.toInt() >> 8) & 0xff);
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @enumFromInt(s & 0x7f);
+        pub fn TERMSIG(x: W) u32 {
+            return x.toInt() & 0x7f;
         }
-        pub fn STOPSIG(s: u32) u32 {
-            return EXITSTATUS(s);
+        pub fn STOPSIG(x: W) u32 {
+            return x.exitStatus();
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+        pub fn IFEXITED(x: W) bool {
+            return x.termSig() == 0;
         }
-        pub fn IFSTOPPED(s: u32) bool {
-            return @as(u16, @truncate((((s & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
+        pub fn IFCONTINUED(x: W) bool {
+            return (x.toInt() & 0x7f) == 0xffff;
         }
-        pub fn IFSIGNALED(s: u32) bool {
-            return (s & 0xffff) -% 1 < 0xff;
+        pub fn IFSTOPPED(x: W) bool {
+            const s = x.toInt();
+            return (s & 0x7f != 0x7f) and !x.ifContinued();
+        }
+        pub fn IFSIGNALED(x: W) bool {
+            return !x.IFSTOPPED() and !x.IFCONTINUED() and !x.IFEXITED();
+        }
+
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .haiku => struct {
-        pub const NOHANG = 0x1;
-        pub const UNTRACED = 0x2;
-        pub const CONTINUED = 0x4;
-        pub const EXITED = 0x08;
-        pub const STOPPED = 0x10;
-        pub const NOWAIT = 0x20;
+    .dragonfly => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process trapped
+        TRAPPED: bool = false,
+        _7: u26 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast(s & 0xff));
+        pub const UNTRACED: W = .{ .stopped = true };
+
+        pub fn EXITSTATUS(x: W) u8 {
+            return @intCast((x.toInt() & 0xff00) >> 8);
+        }
+        pub fn TERMSIG(x: W) u32 {
+            return x.toInt() & 0x7f;
+        }
+        pub fn STOPSIG(x: W) u32 {
+            return x.exitStatus();
+        }
+        pub fn IFEXITED(x: W) bool {
+            return x.termSig() == 0;
+        }
+        pub fn IFSTOPPED(x: W) bool {
+            return @as(u16, @truncate((((x.toInt() & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
+        }
+        pub fn IFSIGNALED(x: W) bool {
+            return (x.toInt() & 0xffff) -% 1 < 0xff;
         }
 
-        pub fn TERMSIG(s: u32) SIG {
-            return @enumFromInt((s >> 8) & 0xff);
-        }
-
-        pub fn STOPSIG(s: u32) u32 {
-            return (s >> 16) & 0xff;
-        }
-
-        pub fn IFEXITED(s: u32) bool {
-            return (s & ~@as(u32, 0xff)) == 0;
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return ((s >> 16) & 0xff) != 0;
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return ((s >> 8) & 0xff) != 0;
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
-    .openbsd => struct {
-        pub const NOHANG = 1;
-        pub const UNTRACED = 2;
-        pub const CONTINUED = 8;
+    .haiku => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        UNTRACED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process stopped
+        STOPPED: bool = false,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _7: u26 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @as(u8, @intCast((s >> 8) & 0xff));
+        pub fn EXITSTATUS(x: W) u8 {
+            return @intCast(x.toInt() & 0xff);
         }
-        pub fn TERMSIG(s: u32) SIG {
-            return @enumFromInt(s & 0x7f);
+        pub fn TERMSIG(x: W) u32 {
+            return (x.toInt() >> 8) & 0xff;
         }
-        pub fn STOPSIG(s: u32) u32 {
-            return EXITSTATUS(s);
+        pub fn STOPSIG(x: W) u32 {
+            return (x.toInt() >> 16) & 0xff;
         }
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
+        pub fn IFEXITED(x: W) bool {
+            return (x.toInt() & ~@as(u32, 0xff)) == 0;
         }
-
-        pub fn IFCONTINUED(s: u32) bool {
-            return ((s & 0o177777) == 0o177777);
+        pub fn IFSTOPPED(x: W) bool {
+            return ((x.toInt() >> 16) & 0xff) != 0;
         }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return (s & 0xff == 0o177);
+        pub fn IFSIGNALED(x: W) bool {
+            return ((x.toInt() >> 8) & 0xff) != 0;
         }
 
-        pub fn IFSIGNALED(s: u32) bool {
-            return (((s) & 0o177) != 0o177) and (((s) & 0o177) != 0);
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
+        }
+    },
+    .openbsd => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        UNTRACED: bool = false,
+        _3: u1 = 0,
+        /// process continued
+        CONTINUED: bool = false,
+        _5: u28 = 0,
+
+        pub fn EXITSTATUS(x: W) u8 {
+            return @intCast((x.toInt() >> 8) & 0xff);
+        }
+        pub fn TERMSIG(x: W) u32 {
+            return x.toInt() & 0x7f;
+        }
+        pub fn STOPSIG(x: W) u32 {
+            return x.exitStatus();
+        }
+        pub fn IFEXITED(x: W) bool {
+            return x.termSig() == 0;
+        }
+        pub fn IFCONTINUED(x: W) bool {
+            return (x.toInt() & 0o177777) == 0o177777;
+        }
+        pub fn IFSTOPPED(x: W) bool {
+            return (x.toInt() & 0xff == 0o177);
+        }
+        pub fn IFSIGNALED(x: W) bool {
+            const s = x.toInt();
+            return (s & 0o177) != 0o177 and (s & 0o177) != 0;
+        }
+
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
     // https://github.com/SerenityOS/serenity/blob/ec492a1a0819e6239ea44156825c4ee7234ca3db/Kernel/API/POSIX/sys/wait.h
-    .serenity => struct {
-        pub const NOHANG = 1;
-        pub const UNTRACED = 2;
-        pub const STOPPED = UNTRACED;
-        pub const EXITED = 4;
-        pub const CONTINUED = 8;
-        pub const NOWAIT = 0x1000000;
+    .serenity => packed struct(u32) {
+        /// no hang in wait/no child to reap
+        NOHANG: bool = false,
+        /// notify on stop, untraced child
+        STOPPED: bool = false,
+        /// process exited
+        EXITED: bool = false,
+        /// process continued
+        CONTINUED: bool = false,
+        _5: u20 = 0,
+        /// don't wait for processes to exit
+        NOWAIT: bool = false,
+        _26: u7 = 0,
 
-        pub fn EXITSTATUS(s: u32) u8 {
-            return @intCast((s & 0xff00) >> 8);
+        pub const UNTRACED: u32 = @bitCast(W{ .stopped = true });
+
+        pub fn EXITSTATUS(x: W) u8 {
+            return @intCast((x.toInt() & 0xff00) >> 8);
+        }
+        pub fn STOPSIG(x: W) u32 {
+            return x.exitStatus();
+        }
+        pub fn TERMSIG(x: W) u32 {
+            return x.toInt() & 0x7f;
+        }
+        pub fn IFEXITED(x: W) bool {
+            return x.termSig() == 0;
+        }
+        pub fn IFSTOPPED(x: W) bool {
+            return (x.toInt() & 0xff) == 0x7f;
+        }
+        pub fn IFSIGNALED(x: W) bool {
+            return (((x.toInt() & 0x7f) + 1) >> 1) > 0;
+        }
+        pub fn IFCONTINUED(x: W) bool {
+            return x.toInt() == 0xffff;
         }
 
-        pub fn STOPSIG(s: u32) u32 {
-            return EXITSTATUS(s);
-        }
-
-        pub fn TERMSIG(s: u32) SIG {
-            return @enumFromInt(s & 0x7f);
-        }
-
-        pub fn IFEXITED(s: u32) bool {
-            return (s & 0x7f) == 0;
-        }
-
-        pub fn IFSTOPPED(s: u32) bool {
-            return (s & 0xff) == 0x7f;
-        }
-
-        pub fn IFSIGNALED(s: u32) bool {
-            return (((s & 0x7f) + 1) >> 1) > 0;
-        }
-
-        pub fn IFCONTINUED(s: u32) bool {
-            return s == 0xffff;
+        fn toInt(s: W) u32 {
+            return @bitCast(s);
         }
     },
     else => void,
 };
+
 pub const accept_filter_arg = switch (native_os) {
     // https://github.com/freebsd/freebsd-src/blob/2024887abc7d1b931e00fbb0697658e98adf048d/sys/sys/socket.h#L205
     // https://github.com/DragonFlyBSD/DragonFlyBSD/blob/6098912863ed4c7b3f70d7483910ce2956cf4ed3/sys/sys/socket.h#L164
@@ -4186,7 +4277,7 @@ const posix_msghdr = extern struct {
     pad2: MuslOnlyPadding(.big) = 0,
     controllen: socklen_t,
     pad3: MuslOnlyPadding(.little) = 0,
-    flags: u32,
+    flags: MSG,
 };
 
 pub const msghdr_const = switch (native_os) {
@@ -4221,7 +4312,7 @@ const posix_msghdr_const = extern struct {
     pad2: MuslOnlyPadding(.big) = 0,
     controllen: socklen_t,
     pad3: MuslOnlyPadding(.little) = 0,
-    flags: u32,
+    flags: MSG,
 };
 
 pub const mmsghdr = switch (native_os) {
@@ -4849,14 +4940,14 @@ pub const sockaddr = switch (native_os) {
         };
         pub const in = extern struct {
             len: u8 = @sizeOf(in),
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: u32,
             zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
         };
         pub const in6 = extern struct {
             len: u8 = @sizeOf(in6),
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: [16]u8,
@@ -4866,7 +4957,7 @@ pub const sockaddr = switch (native_os) {
         /// UNIX domain socket
         pub const un = extern struct {
             len: u8 = @sizeOf(un),
-            family: sa_family_t = AF.UNIX,
+            family: sa_family_t = .UNIX,
             path: [104]u8,
         };
     },
@@ -4892,7 +4983,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in = extern struct {
             len: u8 = @sizeOf(in),
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: u32,
             zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -4900,7 +4991,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in6 = extern struct {
             len: u8 = @sizeOf(in6),
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: [16]u8,
@@ -4909,7 +5000,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const un = extern struct {
             len: u8 = @sizeOf(un),
-            family: sa_family_t = AF.UNIX,
+            family: sa_family_t = .UNIX,
             path: [104]u8,
         };
     },
@@ -4932,14 +5023,14 @@ pub const sockaddr = switch (native_os) {
         };
 
         pub const in = extern struct {
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: u32,
             zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
         };
 
         pub const in6 = extern struct {
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: [16]u8,
@@ -4949,7 +5040,7 @@ pub const sockaddr = switch (native_os) {
 
         /// Definitions for UNIX IPC domain.
         pub const un = extern struct {
-            family: sa_family_t = AF.UNIX,
+            family: sa_family_t = .UNIX,
             path: [108]u8,
         };
     },
@@ -4975,7 +5066,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in = extern struct {
             len: u8 = @sizeOf(in),
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: u32,
             zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -4983,7 +5074,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in6 = extern struct {
             len: u8 = @sizeOf(in6),
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: [16]u8,
@@ -4995,7 +5086,7 @@ pub const sockaddr = switch (native_os) {
             /// total sockaddr length
             len: u8 = @sizeOf(un),
 
-            family: sa_family_t = AF.LOCAL,
+            family: sa_family_t = .LOCAL,
 
             /// path name
             path: [104]u8,
@@ -5020,7 +5111,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in = extern struct {
             len: u8 = @sizeOf(in),
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: u32,
             zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -5028,7 +5119,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in6 = extern struct {
             len: u8 = @sizeOf(in6),
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: [16]u8,
@@ -5037,7 +5128,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const un = extern struct {
             len: u8 = @sizeOf(un),
-            family: sa_family_t = AF.UNIX,
+            family: sa_family_t = .UNIX,
             path: [104]u8,
         };
     },
@@ -5063,7 +5154,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in = extern struct {
             len: u8 = @sizeOf(in),
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: u32,
             zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -5071,7 +5162,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in6 = extern struct {
             len: u8 = @sizeOf(in6),
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: [16]u8,
@@ -5080,7 +5171,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const un = extern struct {
             len: u8 = @sizeOf(un),
-            family: sa_family_t = AF.UNIX,
+            family: sa_family_t = .UNIX,
             path: [104]u8,
         };
     },
@@ -5106,7 +5197,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in = extern struct {
             len: u8 = @sizeOf(in),
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: u32,
             zero: [8]u8 = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -5114,7 +5205,7 @@ pub const sockaddr = switch (native_os) {
 
         pub const in6 = extern struct {
             len: u8 = @sizeOf(in6),
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: [16]u8,
@@ -5126,7 +5217,7 @@ pub const sockaddr = switch (native_os) {
             /// total sockaddr length
             len: u8 = @sizeOf(un),
 
-            family: sa_family_t = AF.LOCAL,
+            family: sa_family_t = .LOCAL,
 
             /// path name
             path: [104]u8,
@@ -5141,13 +5232,13 @@ pub const sockaddr = switch (native_os) {
         const in_addr = u32;
         const in6_addr = [16]u8;
         pub const in = extern struct {
-            family: sa_family_t = AF.INET,
+            family: sa_family_t = .INET,
             port: in_port_t,
             addr: in_addr,
             zero: [8]u8 = @splat(0),
         };
         pub const in6 = extern struct {
-            family: sa_family_t = AF.INET6,
+            family: sa_family_t = .INET6,
             port: in_port_t,
             flowinfo: u32,
             addr: in6_addr,
@@ -5157,7 +5248,7 @@ pub const sockaddr = switch (native_os) {
         // https://github.com/SerenityOS/serenity/blob/b92e6b02e53b2927732f31b1442cad420b62d1ef/Kernel/API/POSIX/sys/un.h
         const UNIX_PATH_MAX = 108;
         pub const un = extern struct {
-            family: sa_family_t = AF.LOCAL,
+            family: sa_family_t = .LOCAL,
             path: [UNIX_PATH_MAX]u8,
         };
     },
@@ -5173,576 +5264,415 @@ pub const in_port_t = u16;
 pub const sa_family_t = switch (native_os) {
     .linux, .emscripten => linux.sa_family_t,
     .windows => ws2_32.ADDRESS_FAMILY,
-    .openbsd, .haiku, .dragonfly, .netbsd, .freebsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => u8,
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L66
-    .illumos, .serenity => u16,
+    .illumos, .serenity => AF,
+    .openbsd, .haiku, .dragonfly, .netbsd, .freebsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => AF,
     else => void,
 };
-pub const AF = if (builtin.abi.isAndroid()) struct {
-    pub const UNSPEC = 0;
-    pub const UNIX = 1;
-    pub const LOCAL = 1;
-    pub const INET = 2;
-    pub const AX25 = 3;
-    pub const IPX = 4;
-    pub const APPLETALK = 5;
-    pub const NETROM = 6;
-    pub const BRIDGE = 7;
-    pub const ATMPVC = 8;
-    pub const X25 = 9;
-    pub const INET6 = 10;
-    pub const ROSE = 11;
-    pub const DECnet = 12;
-    pub const NETBEUI = 13;
-    pub const SECURITY = 14;
-    pub const KEY = 15;
-    pub const NETLINK = 16;
-    pub const ROUTE = NETLINK;
-    pub const PACKET = 17;
-    pub const ASH = 18;
-    pub const ECONET = 19;
-    pub const ATMSVC = 20;
-    pub const RDS = 21;
-    pub const SNA = 22;
-    pub const IRDA = 23;
-    pub const PPPOX = 24;
-    pub const WANPIPE = 25;
-    pub const LLC = 26;
-    pub const CAN = 29;
-    pub const TIPC = 30;
-    pub const BLUETOOTH = 31;
-    pub const IUCV = 32;
-    pub const RXRPC = 33;
-    pub const ISDN = 34;
-    pub const PHONET = 35;
-    pub const IEEE802154 = 36;
-    pub const CAIF = 37;
-    pub const ALG = 38;
-    pub const NFC = 39;
-    pub const VSOCK = 40;
-    pub const KCM = 41;
-    pub const QIPCRTR = 42;
-    pub const MAX = 43;
+
+pub const AF = if (builtin.abi.isAndroid()) enum(u8) {
+    UNSPEC = 0,
+    UNIX = 1,
+    INET = 2,
+    AX25 = 3,
+    IPX = 4,
+    APPLETALK = 5,
+    NETROM = 6,
+    BRIDGE = 7,
+    ATMPVC = 8,
+    X25 = 9,
+    INET6 = 10,
+    ROSE = 11,
+    DECnet = 12,
+    NETBEUI = 13,
+    SECURITY = 14,
+    KEY = 15,
+    NETLINK = 16,
+    PACKET = 17,
+    ASH = 18,
+    ECONET = 19,
+    ATMSVC = 20,
+    RDS = 21,
+    SNA = 22,
+    IRDA = 23,
+    PPPOX = 24,
+    WANPIPE = 25,
+    LLC = 26,
+    CAN = 29,
+    TIPC = 30,
+    BLUETOOTH = 31,
+    IUCV = 32,
+    RXRPC = 33,
+    ISDN = 34,
+    PHONET = 35,
+    IEEE802154 = 36,
+    CAIF = 37,
+    ALG = 38,
+    NFC = 39,
+    VSOCK = 40,
+    KCM = 41,
+    QIPCRTR = 42,
+    MAX = 43,
+    _,
+
+    pub const LOCAL: AF = .UNIX;
+    pub const ROUTE: AF = .NETLINK;
 } else switch (native_os) {
     .linux, .emscripten => linux.AF,
     .windows => ws2_32.AF,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        pub const UNSPEC = 0;
-        pub const LOCAL = 1;
-        pub const UNIX = LOCAL;
-        pub const INET = 2;
-        pub const SYS_CONTROL = 2;
-        pub const IMPLINK = 3;
-        pub const PUP = 4;
-        pub const CHAOS = 5;
-        pub const NS = 6;
-        pub const ISO = 7;
-        pub const OSI = ISO;
-        pub const ECMA = 8;
-        pub const DATAKIT = 9;
-        pub const CCITT = 10;
-        pub const SNA = 11;
-        pub const DECnet = 12;
-        pub const DLI = 13;
-        pub const LAT = 14;
-        pub const HYLINK = 15;
-        pub const APPLETALK = 16;
-        pub const ROUTE = 17;
-        pub const LINK = 18;
-        pub const XTP = 19;
-        pub const COIP = 20;
-        pub const CNT = 21;
-        pub const RTIP = 22;
-        pub const IPX = 23;
-        pub const SIP = 24;
-        pub const PIP = 25;
-        pub const ISDN = 28;
-        pub const E164 = ISDN;
-        pub const KEY = 29;
-        pub const INET6 = 30;
-        pub const NATM = 31;
-        pub const SYSTEM = 32;
-        pub const NETBIOS = 33;
-        pub const PPP = 34;
-        pub const MAX = 40;
+    .illumos => enum(u16) {
+        UNSPEC = 0,
+        UNIX = 1,
+        INET = 2,
+        IMPLINK = 3,
+        PUP = 4,
+        CHAOS = 5,
+        NS = 6,
+        NBS = 7,
+        ECMA = 8,
+        DATAKIT = 9,
+        CCITT = 10,
+        SNA = 11,
+        DECnet = 12,
+        DLI = 13,
+        LAT = 14,
+        HYLINK = 15,
+        APPLETALK = 16,
+        NIT = 17,
+        @"802" = 18,
+        OSI = 19,
+        X25 = 20,
+        OSINET = 21,
+        GOSIP = 22,
+        IPX = 23,
+        ROUTE = 24,
+        LINK = 25,
+        INET6 = 26,
+        KEY = 27,
+        NCA = 28,
+        POLICY = 29,
+        INET_OFFLOAD = 30,
+        TRILL = 31,
+        PACKET = 32,
+        LX_NETLINK = 33,
+        MAX = 33,
+        _,
+
+        pub const LOCAL: AF = .UNIX;
+        pub const FILE: AF = .UNIX;
+    }, // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L17-L22
+    .serenity => enum(u16) {
+        UNSPEC = 0,
+        UNIX = 1,
+        INET = 2,
+        INET6 = 3,
+        MAX = 4,
+        _,
+
+        pub const LOCAL: AF = .UNIX;
     },
-    .freebsd => struct {
-        pub const UNSPEC = 0;
-        pub const UNIX = 1;
-        pub const LOCAL = UNIX;
-        pub const FILE = LOCAL;
-        pub const INET = 2;
-        pub const IMPLINK = 3;
-        pub const PUP = 4;
-        pub const CHAOS = 5;
-        pub const NETBIOS = 6;
-        pub const ISO = 7;
-        pub const OSI = ISO;
-        pub const ECMA = 8;
-        pub const DATAKIT = 9;
-        pub const CCITT = 10;
-        pub const SNA = 11;
-        pub const DECnet = 12;
-        pub const DLI = 13;
-        pub const LAT = 14;
-        pub const HYLINK = 15;
-        pub const APPLETALK = 16;
-        pub const ROUTE = 17;
-        pub const LINK = 18;
-        pub const pseudo_XTP = 19;
-        pub const COIP = 20;
-        pub const CNT = 21;
-        pub const pseudo_RTIP = 22;
-        pub const IPX = 23;
-        pub const SIP = 24;
-        pub const pseudo_PIP = 25;
-        pub const ISDN = 26;
-        pub const E164 = ISDN;
-        pub const pseudo_KEY = 27;
-        pub const INET6 = 28;
-        pub const NATM = 29;
-        pub const ATM = 30;
-        pub const pseudo_HDRCMPLT = 31;
-        pub const NETGRAPH = 32;
-        pub const SLOW = 33;
-        pub const SCLUSTER = 34;
-        pub const ARP = 35;
-        pub const BLUETOOTH = 36;
-        pub const IEEE80211 = 37;
-        pub const INET_SDP = 40;
-        pub const INET6_SDP = 42;
-        pub const MAX = 42;
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => enum(u8) {
+        UNSPEC = 0,
+        UNIX = 1,
+        INET = 2,
+        SYS_CONTROL = 2,
+        IMPLINK = 3,
+        PUP = 4,
+        CHAOS = 5,
+        NS = 6,
+        ISO = 7,
+        ECMA = 8,
+        DATAKIT = 9,
+        CCITT = 10,
+        SNA = 11,
+        DECnet = 12,
+        DLI = 13,
+        LAT = 14,
+        HYLINK = 15,
+        APPLETALK = 16,
+        ROUTE = 17,
+        LINK = 18,
+        XTP = 19,
+        COIP = 20,
+        CNT = 21,
+        RTIP = 22,
+        IPX = 23,
+        SIP = 24,
+        PIP = 25,
+        ISDN = 28,
+        KEY = 29,
+        INET6 = 30,
+        NATM = 31,
+        SYSTEM = 32,
+        NETBIOS = 33,
+        PPP = 34,
+        MAX = 40,
+        _,
+
+        pub const LOCAL: AF = .UNIX;
+        pub const OSI: AF = .ISO;
+        pub const E164: AF = .ISDN;
     },
-    .illumos => struct {
-        pub const UNSPEC = 0;
-        pub const UNIX = 1;
-        pub const LOCAL = UNIX;
-        pub const FILE = UNIX;
-        pub const INET = 2;
-        pub const IMPLINK = 3;
-        pub const PUP = 4;
-        pub const CHAOS = 5;
-        pub const NS = 6;
-        pub const NBS = 7;
-        pub const ECMA = 8;
-        pub const DATAKIT = 9;
-        pub const CCITT = 10;
-        pub const SNA = 11;
-        pub const DECnet = 12;
-        pub const DLI = 13;
-        pub const LAT = 14;
-        pub const HYLINK = 15;
-        pub const APPLETALK = 16;
-        pub const NIT = 17;
-        pub const @"802" = 18;
-        pub const OSI = 19;
-        pub const X25 = 20;
-        pub const OSINET = 21;
-        pub const GOSIP = 22;
-        pub const IPX = 23;
-        pub const ROUTE = 24;
-        pub const LINK = 25;
-        pub const INET6 = 26;
-        pub const KEY = 27;
-        pub const NCA = 28;
-        pub const POLICY = 29;
-        pub const INET_OFFLOAD = 30;
-        pub const TRILL = 31;
-        pub const PACKET = 32;
-        pub const LX_NETLINK = 33;
-        pub const MAX = 33;
+    .freebsd => enum(u8) {
+        UNSPEC = 0,
+        UNIX = 1,
+        INET = 2,
+        IMPLINK = 3,
+        PUP = 4,
+        CHAOS = 5,
+        NETBIOS = 6,
+        ISO = 7,
+        ECMA = 8,
+        DATAKIT = 9,
+        CCITT = 10,
+        SNA = 11,
+        DECnet = 12,
+        DLI = 13,
+        LAT = 14,
+        HYLINK = 15,
+        APPLETALK = 16,
+        ROUTE = 17,
+        LINK = 18,
+        pseudo_XTP = 19,
+        COIP = 20,
+        CNT = 21,
+        pseudo_RTIP = 22,
+        IPX = 23,
+        SIP = 24,
+        pseudo_PIP = 25,
+        ISDN = 26,
+        pseudo_KEY = 27,
+        INET6 = 28,
+        NATM = 29,
+        ATM = 30,
+        pseudo_HDRCMPLT = 31,
+        NETGRAPH = 32,
+        SLOW = 33,
+        SCLUSTER = 34,
+        ARP = 35,
+        BLUETOOTH = 36,
+        IEEE80211 = 37,
+        INET_SDP = 40,
+        INET6_SDP = 42,
+        MAX = 42,
+        _,
+
+        pub const LOCAL: AF = .UNIX;
+        pub const FILE: AF = .LOCAL;
+        pub const OSI: AF = .ISO;
+        pub const E164: AF = .ISDN;
     },
-    .netbsd => struct {
-        pub const UNSPEC = 0;
-        pub const LOCAL = 1;
-        pub const UNIX = LOCAL;
-        pub const INET = 2;
-        pub const IMPLINK = 3;
-        pub const PUP = 4;
-        pub const CHAOS = 5;
-        pub const NS = 6;
-        pub const ISO = 7;
-        pub const OSI = ISO;
-        pub const ECMA = 8;
-        pub const DATAKIT = 9;
-        pub const CCITT = 10;
-        pub const SNA = 11;
-        pub const DECnet = 12;
-        pub const DLI = 13;
-        pub const LAT = 14;
-        pub const HYLINK = 15;
-        pub const APPLETALK = 16;
-        pub const OROUTE = 17;
-        pub const LINK = 18;
-        pub const COIP = 20;
-        pub const CNT = 21;
-        pub const IPX = 23;
-        pub const INET6 = 24;
-        pub const ISDN = 26;
-        pub const E164 = ISDN;
-        pub const NATM = 27;
-        pub const ARP = 28;
-        pub const BLUETOOTH = 31;
-        pub const IEEE80211 = 32;
-        pub const MPLS = 33;
-        pub const ROUTE = 34;
-        pub const CAN = 35;
-        pub const ETHER = 36;
-        pub const MAX = 37;
+    .netbsd => enum(u8) {
+        UNSPEC = 0,
+        LOCAL = 1,
+        INET = 2,
+        IMPLINK = 3,
+        PUP = 4,
+        CHAOS = 5,
+        NS = 6,
+        ISO = 7,
+        ECMA = 8,
+        DATAKIT = 9,
+        CCITT = 10,
+        SNA = 11,
+        DECnet = 12,
+        DLI = 13,
+        LAT = 14,
+        HYLINK = 15,
+        APPLETALK = 16,
+        OROUTE = 17,
+        LINK = 18,
+        COIP = 20,
+        CNT = 21,
+        IPX = 23,
+        INET6 = 24,
+        ISDN = 26,
+        NATM = 27,
+        ARP = 28,
+        BLUETOOTH = 31,
+        IEEE80211 = 32,
+        MPLS = 33,
+        ROUTE = 34,
+        CAN = 35,
+        ETHER = 36,
+        MAX = 37,
+        _,
+
+        pub const UNIX: AF = .LOCAL;
+        pub const OSI: AF = .ISO;
+        pub const E164: AF = .ISDN;
     },
-    .dragonfly => struct {
-        pub const UNSPEC = 0;
-        pub const OSI = ISO;
-        pub const UNIX = LOCAL;
-        pub const LOCAL = 1;
-        pub const INET = 2;
-        pub const IMPLINK = 3;
-        pub const PUP = 4;
-        pub const CHAOS = 5;
-        pub const NETBIOS = 6;
-        pub const ISO = 7;
-        pub const ECMA = 8;
-        pub const DATAKIT = 9;
-        pub const CCITT = 10;
-        pub const SNA = 11;
-        pub const DLI = 13;
-        pub const LAT = 14;
-        pub const HYLINK = 15;
-        pub const APPLETALK = 16;
-        pub const ROUTE = 17;
-        pub const LINK = 18;
-        pub const COIP = 20;
-        pub const CNT = 21;
-        pub const IPX = 23;
-        pub const SIP = 24;
-        pub const ISDN = 26;
-        pub const INET6 = 28;
-        pub const NATM = 29;
-        pub const ATM = 30;
-        pub const NETGRAPH = 32;
-        pub const BLUETOOTH = 33;
-        pub const MPLS = 34;
-        pub const MAX = 36;
+    .dragonfly => enum(u8) {
+        UNSPEC = 0,
+        UNIX = 1,
+        INET = 2,
+        IMPLINK = 3,
+        PUP = 4,
+        CHAOS = 5,
+        NETBIOS = 6,
+        ISO = 7,
+        ECMA = 8,
+        DATAKIT = 9,
+        CCITT = 10,
+        SNA = 11,
+        DLI = 13,
+        LAT = 14,
+        HYLINK = 15,
+        APPLETALK = 16,
+        ROUTE = 17,
+        LINK = 18,
+        COIP = 20,
+        CNT = 21,
+        IPX = 23,
+        SIP = 24,
+        ISDN = 26,
+        INET6 = 28,
+        NATM = 29,
+        ATM = 30,
+        NETGRAPH = 32,
+        BLUETOOTH = 33,
+        MPLS = 34,
+        MAX = 36,
+        _,
+
+        pub const OSI: AF = .ISO;
+        pub const LOCAL: AF = .UNIX;
     },
-    .haiku => struct {
-        pub const UNSPEC = 0;
-        pub const INET = 1;
-        pub const APPLETALK = 2;
-        pub const ROUTE = 3;
-        pub const LINK = 4;
-        pub const INET6 = 5;
-        pub const DLI = 6;
-        pub const IPX = 7;
-        pub const NOTIFY = 8;
-        pub const LOCAL = 9;
-        pub const UNIX = LOCAL;
-        pub const BLUETOOTH = 10;
-        pub const MAX = 11;
+    .haiku => enum(u8) {
+        UNSPEC = 0,
+        INET = 1,
+        APPLETALK = 2,
+        ROUTE = 3,
+        LINK = 4,
+        INET6 = 5,
+        DLI = 6,
+        IPX = 7,
+        NOTIFY = 8,
+        UNIX = 9,
+        BLUETOOTH = 10,
+        MAX = 11,
+        _,
+
+        pub const LOCAL: AF = .UNIX;
     },
-    .openbsd => struct {
-        pub const UNSPEC = 0;
-        pub const UNIX = 1;
-        pub const LOCAL = UNIX;
-        pub const INET = 2;
-        pub const APPLETALK = 16;
-        pub const INET6 = 24;
-        pub const KEY = 30;
-        pub const ROUTE = 17;
-        pub const SNA = 11;
-        pub const MPLS = 33;
-        pub const BLUETOOTH = 32;
-        pub const ISDN = 26;
-        pub const MAX = 36;
-    },
-    // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L17-L22
-    .serenity => struct {
-        pub const UNSPEC = 0;
-        pub const LOCAL = 1;
-        pub const UNIX = LOCAL;
-        pub const INET = 2;
-        pub const INET6 = 3;
-        pub const MAX = 4;
+    .openbsd => enum(u8) {
+        UNSPEC = 0,
+        UNIX = 1,
+        INET = 2,
+        APPLETALK = 16,
+        INET6 = 24,
+        KEY = 30,
+        ROUTE = 17,
+        SNA = 11,
+        MPLS = 33,
+        BLUETOOTH = 32,
+        ISDN = 26,
+        MAX = 36,
+        _,
+
+        pub const LOCAL: AF = .UNIX;
     },
     else => void,
 };
-pub const PF = if (builtin.abi.isAndroid()) struct {
-    pub const UNSPEC = AF.UNSPEC;
-    pub const UNIX = AF.UNIX;
-    pub const LOCAL = AF.LOCAL;
-    pub const INET = AF.INET;
-    pub const AX25 = AF.AX25;
-    pub const IPX = AF.IPX;
-    pub const APPLETALK = AF.APPLETALK;
-    pub const NETROM = AF.NETROM;
-    pub const BRIDGE = AF.BRIDGE;
-    pub const ATMPVC = AF.ATMPVC;
-    pub const X25 = AF.X25;
-    pub const PF_INET6 = AF.INET6;
-    pub const PF_ROSE = AF.ROSE;
-    pub const PF_DECnet = AF.DECnet;
-    pub const PF_NETBEUI = AF.NETBEUI;
-    pub const PF_SECURITY = AF.SECURITY;
-    pub const PF_KEY = AF.KEY;
-    pub const PF_NETLINK = AF.NETLINK;
-    pub const PF_ROUTE = AF.ROUTE;
-    pub const PF_PACKET = AF.PACKET;
-    pub const PF_ASH = AF.ASH;
-    pub const PF_ECONET = AF.ECONET;
-    pub const PF_ATMSVC = AF.ATMSVC;
-    pub const PF_RDS = AF.RDS;
-    pub const PF_SNA = AF.SNA;
-    pub const PF_IRDA = AF.IRDA;
-    pub const PF_PPPOX = AF.PPPOX;
-    pub const PF_WANPIPE = AF.WANPIPE;
-    pub const PF_LLC = AF.LLC;
-    pub const PF_CAN = AF.CAN;
-    pub const PF_TIPC = AF.TIPC;
-    pub const PF_BLUETOOTH = AF.BLUETOOTH;
-    pub const PF_IUCV = AF.IUCV;
-    pub const PF_RXRPC = AF.RXRPC;
-    pub const PF_ISDN = AF.ISDN;
-    pub const PF_PHONET = AF.PHONET;
-    pub const PF_IEEE802154 = AF.IEEE802154;
-    pub const PF_CAIF = AF.CAIF;
-    pub const PF_ALG = AF.ALG;
-    pub const PF_NFC = AF.NFC;
-    pub const PF_VSOCK = AF.VSOCK;
-    pub const PF_KCM = AF.KCM;
-    pub const PF_QIPCRTR = AF.QIPCRTR;
-    pub const PF_MAX = AF.MAX;
+
+pub const PF = if (builtin.abi.isAndroid()) enum(u8) {
+    UNSPEC = AF.UNSPEC,
+    UNIX = AF.UNIX,
+    INET = AF.INET,
+    AX25 = AF.AX25,
+    IPX = AF.IPX,
+    APPLETALK = AF.APPLETALK,
+    NETROM = AF.NETROM,
+    BRIDGE = AF.BRIDGE,
+    ATMPVC = AF.ATMPVC,
+    X25 = AF.X25,
+    PF_INET6 = AF.INET6,
+    PF_ROSE = AF.ROSE,
+    PF_DECnet = AF.DECnet,
+    PF_NETBEUI = AF.NETBEUI,
+    PF_SECURITY = AF.SECURITY,
+    PF_KEY = AF.KEY,
+    PF_NETLINK = AF.NETLINK,
+    PF_PACKET = AF.PACKET,
+    PF_ASH = AF.ASH,
+    PF_ECONET = AF.ECONET,
+    PF_ATMSVC = AF.ATMSVC,
+    PF_RDS = AF.RDS,
+    PF_SNA = AF.SNA,
+    PF_IRDA = AF.IRDA,
+    PF_PPPOX = AF.PPPOX,
+    PF_WANPIPE = AF.WANPIPE,
+    PF_LLC = AF.LLC,
+    PF_CAN = AF.CAN,
+    PF_TIPC = AF.TIPC,
+    PF_BLUETOOTH = AF.BLUETOOTH,
+    PF_IUCV = AF.IUCV,
+    PF_RXRPC = AF.RXRPC,
+    PF_ISDN = AF.ISDN,
+    PF_PHONET = AF.PHONET,
+    PF_IEEE802154 = AF.IEEE802154,
+    PF_CAIF = AF.CAIF,
+    PF_ALG = AF.ALG,
+    PF_NFC = AF.NFC,
+    PF_VSOCK = AF.VSOCK,
+    PF_KCM = AF.KCM,
+    PF_QIPCRTR = AF.QIPCRTR,
+    PF_MAX = AF.MAX,
+    _,
+
+    pub const LOCAL: PF = .UNIX;
+    pub const PF_ROUTE: PF = .NETLINK;
 } else switch (native_os) {
     .linux, .emscripten => linux.PF,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        pub const UNSPEC = AF.UNSPEC;
-        pub const LOCAL = AF.LOCAL;
-        pub const UNIX = PF.LOCAL;
-        pub const INET = AF.INET;
-        pub const IMPLINK = AF.IMPLINK;
-        pub const PUP = AF.PUP;
-        pub const CHAOS = AF.CHAOS;
-        pub const NS = AF.NS;
-        pub const ISO = AF.ISO;
-        pub const OSI = AF.ISO;
-        pub const ECMA = AF.ECMA;
-        pub const DATAKIT = AF.DATAKIT;
-        pub const CCITT = AF.CCITT;
-        pub const SNA = AF.SNA;
-        pub const DECnet = AF.DECnet;
-        pub const DLI = AF.DLI;
-        pub const LAT = AF.LAT;
-        pub const HYLINK = AF.HYLINK;
-        pub const APPLETALK = AF.APPLETALK;
-        pub const ROUTE = AF.ROUTE;
-        pub const LINK = AF.LINK;
-        pub const XTP = AF.XTP;
-        pub const COIP = AF.COIP;
-        pub const CNT = AF.CNT;
-        pub const SIP = AF.SIP;
-        pub const IPX = AF.IPX;
-        pub const RTIP = AF.RTIP;
-        pub const PIP = AF.PIP;
-        pub const ISDN = AF.ISDN;
-        pub const KEY = AF.KEY;
-        pub const INET6 = AF.INET6;
-        pub const NATM = AF.NATM;
-        pub const SYSTEM = AF.SYSTEM;
-        pub const NETBIOS = AF.NETBIOS;
-        pub const PPP = AF.PPP;
-        pub const MAX = AF.MAX;
-    },
-    .freebsd => struct {
-        pub const UNSPEC = AF.UNSPEC;
-        pub const LOCAL = AF.LOCAL;
-        pub const UNIX = PF.LOCAL;
-        pub const INET = AF.INET;
-        pub const IMPLINK = AF.IMPLINK;
-        pub const PUP = AF.PUP;
-        pub const CHAOS = AF.CHAOS;
-        pub const NETBIOS = AF.NETBIOS;
-        pub const ISO = AF.ISO;
-        pub const OSI = AF.ISO;
-        pub const ECMA = AF.ECMA;
-        pub const DATAKIT = AF.DATAKIT;
-        pub const CCITT = AF.CCITT;
-        pub const DECnet = AF.DECnet;
-        pub const DLI = AF.DLI;
-        pub const LAT = AF.LAT;
-        pub const HYLINK = AF.HYLINK;
-        pub const APPLETALK = AF.APPLETALK;
-        pub const ROUTE = AF.ROUTE;
-        pub const LINK = AF.LINK;
-        pub const XTP = AF.pseudo_XTP;
-        pub const COIP = AF.COIP;
-        pub const CNT = AF.CNT;
-        pub const SIP = AF.SIP;
-        pub const IPX = AF.IPX;
-        pub const RTIP = AF.pseudo_RTIP;
-        pub const PIP = AF.pseudo_PIP;
-        pub const ISDN = AF.ISDN;
-        pub const KEY = AF.pseudo_KEY;
-        pub const INET6 = AF.pseudo_INET6;
-        pub const NATM = AF.NATM;
-        pub const ATM = AF.ATM;
-        pub const NETGRAPH = AF.NETGRAPH;
-        pub const SLOW = AF.SLOW;
-        pub const SCLUSTER = AF.SCLUSTER;
-        pub const ARP = AF.ARP;
-        pub const BLUETOOTH = AF.BLUETOOTH;
-        pub const IEEE80211 = AF.IEEE80211;
-        pub const INET_SDP = AF.INET_SDP;
-        pub const INET6_SDP = AF.INET6_SDP;
-        pub const MAX = AF.MAX;
-    },
-    .illumos => struct {
-        pub const UNSPEC = AF.UNSPEC;
-        pub const UNIX = AF.UNIX;
-        pub const LOCAL = UNIX;
-        pub const FILE = UNIX;
-        pub const INET = AF.INET;
-        pub const IMPLINK = AF.IMPLINK;
-        pub const PUP = AF.PUP;
-        pub const CHAOS = AF.CHAOS;
-        pub const NS = AF.NS;
-        pub const NBS = AF.NBS;
-        pub const ECMA = AF.ECMA;
-        pub const DATAKIT = AF.DATAKIT;
-        pub const CCITT = AF.CCITT;
-        pub const SNA = AF.SNA;
-        pub const DECnet = AF.DECnet;
-        pub const DLI = AF.DLI;
-        pub const LAT = AF.LAT;
-        pub const HYLINK = AF.HYLINK;
-        pub const APPLETALK = AF.APPLETALK;
-        pub const NIT = AF.NIT;
-        pub const @"802" = AF.@"802";
-        pub const OSI = AF.OSI;
-        pub const X25 = AF.X25;
-        pub const OSINET = AF.OSINET;
-        pub const GOSIP = AF.GOSIP;
-        pub const IPX = AF.IPX;
-        pub const ROUTE = AF.ROUTE;
-        pub const LINK = AF.LINK;
-        pub const INET6 = AF.INET6;
-        pub const KEY = AF.KEY;
-        pub const NCA = AF.NCA;
-        pub const POLICY = AF.POLICY;
-        pub const TRILL = AF.TRILL;
-        pub const PACKET = AF.PACKET;
-        pub const LX_NETLINK = AF.LX_NETLINK;
-        pub const MAX = AF.MAX;
-    },
-    .netbsd => struct {
-        pub const UNSPEC = AF.UNSPEC;
-        pub const LOCAL = AF.LOCAL;
-        pub const UNIX = PF.LOCAL;
-        pub const INET = AF.INET;
-        pub const IMPLINK = AF.IMPLINK;
-        pub const PUP = AF.PUP;
-        pub const CHAOS = AF.CHAOS;
-        pub const NS = AF.NS;
-        pub const ISO = AF.ISO;
-        pub const OSI = AF.ISO;
-        pub const ECMA = AF.ECMA;
-        pub const DATAKIT = AF.DATAKIT;
-        pub const CCITT = AF.CCITT;
-        pub const SNA = AF.SNA;
-        pub const DECnet = AF.DECnet;
-        pub const DLI = AF.DLI;
-        pub const LAT = AF.LAT;
-        pub const HYLINK = AF.HYLINK;
-        pub const APPLETALK = AF.APPLETALK;
-        pub const OROUTE = AF.OROUTE;
-        pub const LINK = AF.LINK;
-        pub const COIP = AF.COIP;
-        pub const CNT = AF.CNT;
-        pub const INET6 = AF.INET6;
-        pub const IPX = AF.IPX;
-        pub const ISDN = AF.ISDN;
-        pub const E164 = AF.E164;
-        pub const NATM = AF.NATM;
-        pub const ARP = AF.ARP;
-        pub const BLUETOOTH = AF.BLUETOOTH;
-        pub const MPLS = AF.MPLS;
-        pub const ROUTE = AF.ROUTE;
-        pub const CAN = AF.CAN;
-        pub const ETHER = AF.ETHER;
-        pub const MAX = AF.MAX;
-    },
-    .dragonfly => struct {
-        pub const INET6 = AF.INET6;
-        pub const IMPLINK = AF.IMPLINK;
-        pub const ROUTE = AF.ROUTE;
-        pub const ISO = AF.ISO;
-        pub const PIP = AF.pseudo_PIP;
-        pub const CHAOS = AF.CHAOS;
-        pub const DATAKIT = AF.DATAKIT;
-        pub const INET = AF.INET;
-        pub const APPLETALK = AF.APPLETALK;
-        pub const SIP = AF.SIP;
-        pub const OSI = AF.ISO;
-        pub const CNT = AF.CNT;
-        pub const LINK = AF.LINK;
-        pub const HYLINK = AF.HYLINK;
-        pub const MAX = AF.MAX;
-        pub const KEY = AF.pseudo_KEY;
-        pub const PUP = AF.PUP;
-        pub const COIP = AF.COIP;
-        pub const SNA = AF.SNA;
-        pub const LOCAL = AF.LOCAL;
-        pub const NETBIOS = AF.NETBIOS;
-        pub const NATM = AF.NATM;
-        pub const BLUETOOTH = AF.BLUETOOTH;
-        pub const UNSPEC = AF.UNSPEC;
-        pub const NETGRAPH = AF.NETGRAPH;
-        pub const ECMA = AF.ECMA;
-        pub const IPX = AF.IPX;
-        pub const DLI = AF.DLI;
-        pub const ATM = AF.ATM;
-        pub const CCITT = AF.CCITT;
-        pub const ISDN = AF.ISDN;
-        pub const RTIP = AF.pseudo_RTIP;
-        pub const LAT = AF.LAT;
-        pub const UNIX = PF.LOCAL;
-        pub const XTP = AF.pseudo_XTP;
-        pub const DECnet = AF.DECnet;
-    },
-    .haiku => struct {
-        pub const UNSPEC = AF.UNSPEC;
-        pub const INET = AF.INET;
-        pub const ROUTE = AF.ROUTE;
-        pub const LINK = AF.LINK;
-        pub const INET6 = AF.INET6;
-        pub const LOCAL = AF.LOCAL;
-        pub const UNIX = AF.UNIX;
-        pub const BLUETOOTH = AF.BLUETOOTH;
-    },
-    .openbsd => struct {
-        pub const UNSPEC = AF.UNSPEC;
-        pub const LOCAL = AF.LOCAL;
-        pub const UNIX = AF.UNIX;
-        pub const INET = AF.INET;
-        pub const APPLETALK = AF.APPLETALK;
-        pub const INET6 = AF.INET6;
-        pub const DECnet = AF.DECnet;
-        pub const KEY = AF.KEY;
-        pub const ROUTE = AF.ROUTE;
-        pub const SNA = AF.SNA;
-        pub const MPLS = AF.MPLS;
-        pub const BLUETOOTH = AF.BLUETOOTH;
-        pub const ISDN = AF.ISDN;
-        pub const MAX = AF.MAX;
-    },
-    // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L24-L29
-    .serenity => struct {
-        pub const LOCAL = AF.LOCAL;
-        pub const UNIX = AF.LOCAL;
-        pub const INET = AF.INET;
-        pub const INET6 = AF.INET6;
-        pub const UNSPEC = AF.UNSPEC;
-        pub const MAX = AF.MAX;
+    .dragonfly, .haiku, .openbsd, .serenity, .netbsd, .illumos, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => AF,
+    .freebsd => enum(u8) {
+        UNSPEC = AF.UNSPEC,
+        UNIX = AF.LOCAL,
+        INET = AF.INET,
+        IMPLINK = AF.IMPLINK,
+        PUP = AF.PUP,
+        CHAOS = AF.CHAOS,
+        NETBIOS = AF.NETBIOS,
+        ISO = AF.ISO,
+        ECMA = AF.ECMA,
+        DATAKIT = AF.DATAKIT,
+        CCITT = AF.CCITT,
+        DECnet = AF.DECnet,
+        DLI = AF.DLI,
+        LAT = AF.LAT,
+        HYLINK = AF.HYLINK,
+        APPLETALK = AF.APPLETALK,
+        ROUTE = AF.ROUTE,
+        LINK = AF.LINK,
+        XTP = AF.pseudo_XTP,
+        COIP = AF.COIP,
+        CNT = AF.CNT,
+        SIP = AF.SIP,
+        IPX = AF.IPX,
+        RTIP = AF.pseudo_RTIP,
+        PIP = AF.pseudo_PIP,
+        ISDN = AF.ISDN,
+        KEY = AF.pseudo_KEY,
+        INET6 = AF.pseudo_INET6,
+        NATM = AF.NATM,
+        ATM = AF.ATM,
+        NETGRAPH = AF.NETGRAPH,
+        SLOW = AF.SLOW,
+        SCLUSTER = AF.SCLUSTER,
+        ARP = AF.ARP,
+        BLUETOOTH = AF.BLUETOOTH,
+        IEEE80211 = AF.IEEE80211,
+        INET_SDP = AF.INET_SDP,
+        INET6_SDP = AF.INET6_SDP,
+        MAX = AF.MAX,
+        _,
+
+        pub const LOCAL: PF = .UNIX;
+        pub const OSI: PF = .ISO;
     },
     else => void,
 };
+
 pub const DT = switch (native_os) {
     .linux => linux.DT,
     // https://github.com/SerenityOS/serenity/blob/1262a7d1424d0d2e89d80644409721cbf056ab17/Kernel/API/POSIX/dirent.h#L16-L35
@@ -5771,227 +5701,416 @@ pub const DT = switch (native_os) {
     },
     else => void,
 };
+
 pub const MSG = switch (native_os) {
     .linux => linux.MSG,
     .emscripten => emscripten.MSG,
     .windows => ws2_32.MSG,
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.MSG,
-    .haiku => struct {
-        pub const OOB = 0x0001;
-        pub const PEEK = 0x0002;
-        pub const DONTROUTE = 0x0004;
-        pub const EOR = 0x0008;
-        pub const TRUNC = 0x0010;
-        pub const CTRUNC = 0x0020;
-        pub const WAITALL = 0x0040;
-        pub const DONTWAIT = 0x0080;
-        pub const BCAST = 0x0100;
-        pub const MCAST = 0x0200;
-        pub const EOF = 0x0400;
-        pub const NOSIGNAL = 0x0800;
+    .haiku => packed struct(u32) {
+        /// process out-of-band data
+        OOB: bool = false,
+        /// peek at incoming message
+        PEEK: bool = false,
+        /// send without using routing tables
+        DONTROUTE: bool = false,
+        /// data completes record
+        EOR: bool = false,
+        /// data discarded before delivery
+        TRUNC: bool = false,
+        /// control data lost before delivery
+        CTRUNC: bool = false,
+        /// wait for full request or error
+        WAITALL: bool = false,
+        /// this message should be nonblocking
+        DONTWAIT: bool = false,
+        /// message was sent to a broadcast address
+        BCAST: bool = false,
+        /// message was sent to a multicast address
+        MCAST: bool = false,
+        /// data completes connection
+        EOF: bool = false,
+        /// do not generate SIGPIPE on EOF
+        NOSIGNAL: bool = false, // bit 11 (0x0800)
+        _13: u20 = 0, // bits 12-31
     },
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L56-L64
-    .serenity => struct {
-        pub const TRUNC = 0x1;
-        pub const CTRUNC = 0x2;
-        pub const PEEK = 0x4;
-        pub const OOB = 0x8;
-        pub const DONTROUTE = 0x10;
-        pub const WAITALL = 0x20;
-        pub const DONTWAIT = 0x40;
-        pub const NOSIGNAL = 0x80;
-        pub const EOR = 0x100;
+    .serenity => packed struct(u32) {
+        /// data discarded before delivery
+        TRUNC: bool = false,
+        /// control data lost before delivery
+        CTRUNC: bool = false,
+        /// peek at incoming message
+        PEEK: bool = false,
+        /// process out-of-band data
+        OOB: bool = false,
+        /// send without using routing tables
+        DONTROUTE: bool = false,
+        /// wait for full request or error
+        WAITALL: bool = false,
+        /// this message should be nonblocking
+        DONTWAIT: bool = false,
+        /// do not generate SIGPIPE on EOF
+        NOSIGNAL: bool = false,
+        /// data completes record
+        EOR: bool = false,
+        _10: u23 = 0,
     },
-    .freebsd => struct {
-        pub const OOB = 0x00000001;
-        pub const PEEK = 0x00000002;
-        pub const DONTROUTE = 0x00000004;
-        pub const EOR = 0x00000008;
-        pub const TRUNC = 0x00000010;
-        pub const CTRUNC = 0x00000020;
-        pub const WAITALL = 0x00000040;
-        pub const DONTWAIT = 0x00000080;
-        pub const EOF = 0x00000100;
-        pub const NOTIFICATION = 0x00002000;
-        pub const NBIO = 0x00004000;
-        pub const COMPAT = 0x00008000;
-        pub const SOCALLBCK = 0x00010000;
-        pub const NOSIGNAL = 0x00020000;
-        pub const CMSG_CLOEXEC = 0x00040000;
-        pub const WAITFORONE = 0x00080000;
-        pub const MORETOCOME = 0x00100000;
-        pub const TLSAPPDATA = 0x00200000;
+    .freebsd => packed struct(u32) {
+        /// process out-of-band data
+        OOB: bool = false,
+        /// peek at incoming message
+        PEEK: bool = false,
+        /// send without using routing tables
+        DONTROUTE: bool = false,
+        /// data completes record
+        EOR: bool = false,
+        /// data discarded before delivery
+        TRUNC: bool = false,
+        /// control data lost before delivery
+        CTRUNC: bool = false,
+        /// wait for full request or error
+        WAITALL: bool = false,
+        /// this message should be nonblocking
+        DONTWAIT: bool = false,
+        /// data completes connection
+        EOF: bool = false,
+        _10: u4 = 0,
+        /// notification, not data
+        NOTIFICATION: bool = false,
+        /// non-blocking I/O
+        NBIO: bool = false,
+        /// compat flag
+        COMPAT: bool = false,
+        /// socket callback
+        SOCALLBCK: bool = false,
+        /// do not generate SIGPIPE on EOF
+        NOSIGNAL: bool = false,
+        /// close-on-exec for cmsg fds
+        CMSG_CLOEXEC: bool = false,
+        /// receive multiple datagrams in one call
+        WAITFORONE: bool = false,
+        /// more data to come from sender
+        MORETOCOME: bool = false,
+        /// TLS application data
+        TLSAPPDATA: bool = false,
+        _23: u10 = 0,
     },
-    .netbsd => struct {
-        pub const OOB = 0x0001;
-        pub const PEEK = 0x0002;
-        pub const DONTROUTE = 0x0004;
-        pub const EOR = 0x0008;
-        pub const TRUNC = 0x0010;
-        pub const CTRUNC = 0x0020;
-        pub const WAITALL = 0x0040;
-        pub const DONTWAIT = 0x0080;
-        pub const BCAST = 0x0100;
-        pub const MCAST = 0x0200;
-        pub const NOSIGNAL = 0x0400;
-        pub const CMSG_CLOEXEC = 0x0800;
-        pub const NBIO = 0x1000;
-        pub const WAITFORONE = 0x2000;
-        pub const NOTIFICATION = 0x4000;
+    .netbsd => packed struct(u32) {
+        /// process out-of-band data
+        OOB: bool = false,
+        /// peek at incoming message
+        PEEK: bool = false,
+        /// send without using routing tables
+        DONTROUTE: bool = false,
+        /// data completes record
+        EOR: bool = false,
+        /// data discarded before delivery
+        TRUNC: bool = false,
+        /// control data lost before delivery
+        CTRUNC: bool = false,
+        /// wait for full request or error
+        WAITALL: bool = false,
+        /// this message should be nonblocking
+        DONTWAIT: bool = false,
+        /// message was sent to a broadcast address
+        BCAST: bool = false,
+        /// message was sent to a multicast address
+        MCAST: bool = false,
+        /// do not generate SIGPIPE on EOF
+        NOSIGNAL: bool = false,
+        /// close-on-exec for cmsg fds
+        CMSG_CLOEXEC: bool = false,
+        /// non-blocking I/O
+        NBIO: bool = false,
+        /// receive multiple datagrams in one call
+        WAITFORONE: bool = false,
+        /// notification, not data
+        NOTIFICATION: bool = false,
+        _16: u17 = 0,
     },
     // https://github.com/openbsd/src/blob/42a7be81bef70c04732f45ec573622effe56b563/sys/sys/socket.h#L506
-    .openbsd => struct {
-        pub const OOB = 0x1;
-        pub const PEEK = 0x2;
-        pub const DONTROUTE = 0x4;
-        pub const EOR = 0x8;
-        pub const TRUNC = 0x10;
-        pub const CTRUNC = 0x20;
-        pub const WAITALL = 0x40;
-        pub const DONTWAIT = 0x80;
-        pub const BCAST = 0x100;
-        pub const MCAST = 0x200;
-        pub const NOSIGNAL = 0x400;
-        pub const CMSG_CLOEXEC = 0x800;
-        pub const WAITFORONE = 0x1000;
-        pub const CMSG_CLOFORK = 0x2000;
+    .openbsd => packed struct(u32) {
+        /// process out-of-band data
+        OOB: bool = false,
+        /// peek at incoming message
+        PEEK: bool = false,
+        /// send without using routing tables
+        DONTROUTE: bool = false,
+        /// data completes record
+        EOR: bool = false,
+        /// data discarded before delivery
+        TRUNC: bool = false,
+        /// control data lost before delivery
+        CTRUNC: bool = false,
+        /// wait for full request or error
+        WAITALL: bool = false,
+        /// this message should be nonblocking
+        DONTWAIT: bool = false,
+        /// message was sent to a broadcast address
+        BCAST: bool = false,
+        /// message was sent to a multicast address
+        MCAST: bool = false,
+        /// do not generate SIGPIPE on EOF
+        NOSIGNAL: bool = false,
+        /// close-on-exec for cmsg fds
+        CMSG_CLOEXEC: bool = false,
+        /// receive multiple datagrams in one call
+        WAITFORONE: bool = false,
+        /// close-on-fork for cmsg fds
+        CMSG_CLOFORK: bool = false,
+        _15: u18 = 0,
     },
-    .dragonfly => struct {
-        pub const OOB = 0x0001;
-        pub const PEEK = 0x0002;
-        pub const DONTROUTE = 0x0004;
-        pub const EOR = 0x0008;
-        pub const TRUNC = 0x0010;
-        pub const CTRUNC = 0x0020;
-        pub const WAITALL = 0x0040;
-        pub const DONTWAIT = 0x0080;
-        pub const NOSIGNAL = 0x0400;
-        pub const SYNC = 0x0800;
-        pub const CMSG_CLOEXEC = 0x1000;
-        pub const CMSG_CLOFORK = 0x2000;
-        pub const FBLOCKING = 0x10000;
-        pub const FNONBLOCKING = 0x20000;
+    .dragonfly => packed struct(u32) {
+        /// process out-of-band data
+        OOB: bool = false,
+        /// peek at incoming message
+        PEEK: bool = false,
+        /// send without using routing tables
+        DONTROUTE: bool = false,
+        /// data completes record
+        EOR: bool = false,
+        /// data discarded before delivery
+        TRUNC: bool = false,
+        /// control data lost before delivery
+        CTRUNC: bool = false,
+        /// wait for full request or error
+        WAITALL: bool = false,
+        /// this message should be nonblocking
+        DONTWAIT: bool = false,
+        _9: u2 = 0,
+        /// do not generate SIGPIPE on EOF
+        NOSIGNAL: bool = false,
+        /// synchronous message
+        SYNC: bool = false,
+        /// close-on-exec for cmsg fds
+        CMSG_CLOEXEC: bool = false,
+        /// close-on-fork for cmsg fds
+        CMSG_CLOFORK: bool = false,
+        _15: u2 = 0,
+        /// force blocking operation
+        FBLOCKING: bool = false,
+        /// force non-blocking operation
+        FNONBLOCKING: bool = false,
+        _19: u14 = 0,
     },
-    .illumos => struct {
-        pub const OOB = 0x0001;
-        pub const PEEK = 0x0002;
-        pub const DONTROUTE = 0x0004;
-        pub const EOR = 0x0008;
-        pub const CTRUNC = 0x0010;
-        pub const TRUNC = 0x0020;
-        pub const WAITALL = 0x0040;
-        pub const DONTWAIT = 0x0080;
-        pub const NOTIFICATION = 0x0100;
-        pub const NOSIGNAL = 0x0200;
-        pub const CMSG_CLOEXEC = 0x1000;
-        pub const CMSG_CLOFORK = 0x2000;
+    .illumos => packed struct(u32) {
+        /// process out-of-band data
+        OOB: bool = false,
+        /// peek at incoming message
+        PEEK: bool = false,
+        /// send without using routing tables
+        DONTROUTE: bool = false,
+        /// data completes record
+        EOR: bool = false,
+        /// control data lost before delivery
+        CTRUNC: bool = false,
+        /// data discarded before delivery
+        TRUNC: bool = false,
+        /// wait for full request or error
+        WAITALL: bool = false,
+        /// this message should be nonblocking
+        DONTWAIT: bool = false,
+        /// notification, not data
+        NOTIFICATION: bool = false,
+        /// do not generate SIGPIPE on EOF
+        NOSIGNAL: bool = false,
+        _11: u2 = 0,
+        /// close-on-exec for cmsg fds
+        CMSG_CLOEXEC: bool = false,
+        /// close-on-fork for cmsg fds
+        CMSG_CLOFORK: bool = false,
+        _15: u18 = 0,
     },
     else => void,
 };
+
 pub const SOCK = switch (native_os) {
-    .linux => linux.SOCK,
-    .emscripten => emscripten.SOCK,
+    .emscripten, .linux => linux.SOCK,
     .windows => ws2_32.SOCK,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        pub const STREAM = 1;
-        pub const DGRAM = 2;
-        pub const RAW = 3;
-        pub const RDM = 4;
-        pub const SEQPACKET = 5;
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        _: u25 = 0, // doesn't support socket flags
+
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            STREAM = 1,
+            DGRAM = 2,
+            RAW = 3,
+            RDM = 4,
+            SEQPACKET = 5,
+            _,
+        };
+
         pub const MAXADDRLEN = 255;
-
-        /// Not actually supported by Darwin, but Zig supplies a shim.
-        /// This numerical value is not ABI-stable. It need only not conflict
-        /// with any other `SOCK` bits.
-        pub const CLOEXEC = 1 << 15;
-        /// Not actually supported by Darwin, but Zig supplies a shim.
-        /// This numerical value is not ABI-stable. It need only not conflict
-        /// with any other `SOCK` bits.
-        pub const NONBLOCK = 1 << 16;
     },
-    .freebsd => struct {
-        pub const STREAM = 1;
-        pub const DGRAM = 2;
-        pub const RAW = 3;
-        pub const RDM = 4;
-        pub const SEQPACKET = 5;
+    .freebsd => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        flags: Flags = .{},
 
-        pub const CLOEXEC = 0x10000000;
-        pub const NONBLOCK = 0x20000000;
-    },
-    .illumos => struct {
-        /// Datagram.
-        pub const DGRAM = 1;
-        /// STREAM.
-        pub const STREAM = 2;
-        /// Raw-protocol interface.
-        pub const RAW = 4;
-        /// Reliably-delivered message.
-        pub const RDM = 5;
-        /// Sequenced packed stream.
-        pub const SEQPACKET = 6;
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            STREAM = 1,
+            DGRAM = 2,
+            RAW = 3,
+            RDM = 4,
+            SEQPACKET = 5,
+            _,
+        };
 
-        pub const NONBLOCK = 0x100000;
-        pub const NDELAY = 0x200000;
-        pub const CLOEXEC = 0x080000;
+        pub const Flags = packed struct(u25) {
+            _8: u21 = 0,
+            CLOEXEC: bool = false,
+            NONBLOCK: bool = false,
+            _31: u2 = 0,
+        };
     },
-    .netbsd => struct {
-        pub const STREAM = 1;
-        pub const DGRAM = 2;
-        pub const RAW = 3;
-        pub const RDM = 4;
-        pub const SEQPACKET = 5;
-        pub const CONN_DGRAM = 6;
-        pub const DCCP = CONN_DGRAM;
+    .illumos => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        flags: Flags = .{},
 
-        pub const CLOEXEC = 0x10000000;
-        pub const NONBLOCK = 0x20000000;
-        pub const NOSIGPIPE = 0x40000000;
-        pub const FLAGS_MASK = 0xf0000000;
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            /// Datagram.
+            DGRAM = 1,
+            /// Stream.
+            STREAM = 2,
+            /// Raw-protocol interface.
+            RAW = 4,
+            /// Reliably-delivered message.
+            RDM = 5,
+            /// Sequenced packet stream.
+            SEQPACKET = 6,
+            _,
+        };
+
+        pub const Flags = packed struct(u25) {
+            _8: u12 = 0,
+            CLOEXEC: bool = false,
+            NONBLOCK: bool = false,
+            NDELAY: bool = false,
+            _23: u10 = 0,
+        };
     },
-    .dragonfly => struct {
-        pub const STREAM = 1;
-        pub const DGRAM = 2;
-        pub const RAW = 3;
-        pub const RDM = 4;
-        pub const SEQPACKET = 5;
+    .netbsd => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        flags: Flags = .{},
+
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            STREAM = 1,
+            DGRAM = 2,
+            RAW = 3,
+            RDM = 4,
+            SEQPACKET = 5,
+            /// Also known as CONN_DGRAM
+            DCCP = 6,
+            _,
+        };
+        pub const CONN_DGRAM: TYPE = .DCCP;
+
+        pub const Flags = packed struct(u25) {
+            _8: u21 = 0,
+            CLOEXEC: bool = false,
+            NONBLOCK: bool = false,
+            NOSIGPIPE: bool = false,
+            _32: u1 = 0,
+        };
+        /// Mask covering all socket flag bits (bits 28-31).
+        pub const FLAGS_MASK: Flags = @bitCast(0xf0000000);
+    },
+    .dragonfly => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        flags: Flags = .{},
+
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            STREAM = 1,
+            DGRAM = 2,
+            RAW = 3,
+            RDM = 4,
+            SEQPACKET = 5,
+            _,
+        };
+
+        pub const Flags = packed struct(u25) {
+            _8: u21 = 0,
+            CLOEXEC: bool = false,
+            NONBLOCK: bool = false,
+            _31: u2 = 0,
+        };
         pub const MAXADDRLEN = 255;
-        pub const CLOEXEC = 0x10000000;
-        pub const NONBLOCK = 0x20000000;
     },
-    .haiku => struct {
-        pub const STREAM = 1;
-        pub const DGRAM = 2;
-        pub const RAW = 3;
-        pub const SEQPACKET = 5;
+    // https://github.com/haiku/haiku/blob/734225977f3b4b2148bc5d94f3b82db5f4899c11/headers/posix/sys/socket.h#L44
+    .haiku => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        flags: Flags = .{},
+
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            STREAM = 1,
+            DGRAM = 2,
+            RAW = 3,
+            SEQPACKET = 5,
+            _,
+        };
+
+        pub const Flags = packed struct(u25) {
+            _8: u11 = 0,
+            NONBLOCK: bool = false,
+            CLOEXEC: bool = false,
+            CLOFORK: bool = false,
+            _22: u11 = 0,
+        };
         pub const MISC = 255;
-
-        pub const NONBLOCK = 0x40000;
-        pub const CLOEXEC = 0x80000;
     },
-    .openbsd => struct {
-        pub const STREAM = 1;
-        pub const DGRAM = 2;
-        pub const RAW = 3;
-        pub const RDM = 4;
-        pub const SEQPACKET = 5;
+    .openbsd => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        flags: Flags = .{},
 
-        pub const CLOEXEC = 0x8000;
-        pub const NONBLOCK = 0x4000;
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            STREAM = 1,
+            DGRAM = 2,
+            RAW = 3,
+            RDM = 4,
+            SEQPACKET = 5,
+            _,
+        };
+
+        pub const Flags = packed struct(u25) {
+            _8: u7 = 0,
+            NONBLOCK: bool = false,
+            CLOEXEC: bool = false,
+            _17: u16 = 0,
+        };
     },
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L31-L38
-    .serenity => struct {
-        pub const STREAM = 1;
-        pub const DGRAM = 2;
-        pub const RAW = 3;
-        pub const RDM = 4;
-        pub const SEQPACKET = 5;
+    .serenity => packed struct(u32) {
+        type: TYPE = .DEFAULT,
+        flags: Flags = .{},
 
-        pub const NONBLOCK = 0o4000;
-        pub const CLOEXEC = 0o2000000;
+        pub const TYPE = enum(u7) {
+            DEFAULT = 0,
+            STREAM = 1,
+            DGRAM = 2,
+            RAW = 3,
+            RDM = 4,
+            SEQPACKET = 5,
+            _,
+        };
+
+        pub const Flags = packed struct(u25) {
+            _8: u4 = 0,
+            NONBLOCK: bool = false,
+            _13: u7 = 0,
+            CLOEXEC: bool = false,
+            _21: u12 = 0,
+        };
     },
     else => void,
 };
+
 pub const TCP = switch (native_os) {
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => darwin.TCP,
     .linux => linux.TCP,
@@ -6004,605 +6123,621 @@ pub const TCP = switch (native_os) {
     },
     else => void,
 };
+
 pub const IPPROTO = switch (native_os) {
     .linux, .emscripten => linux.IPPROTO,
     .windows => ws2_32.IPPROTO,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        pub const ICMP = 1;
-        pub const ICMPV6 = 58;
-        pub const TCP = 6;
-        pub const UDP = 17;
-        pub const IP = 0;
-        pub const IPV6 = 41;
-        pub const RAW = 255;
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => enum(u8) {
+        ICMP = 1,
+        ICMPV6 = 58,
+        TCP = 6,
+        UDP = 17,
+        IP = 0,
+        IPV6 = 41,
+        RAW = 255,
+        _,
     },
-    .freebsd => struct {
+    .freebsd => enum(u8) {
         /// dummy for IP
-        pub const IP = 0;
+        IP = 0,
         /// control message protocol
-        pub const ICMP = 1;
+        ICMP = 1,
         /// tcp
-        pub const TCP = 6;
+        TCP = 6,
         /// user datagram protocol
-        pub const UDP = 17;
+        UDP = 17,
         /// IP6 header
-        pub const IPV6 = 41;
+        IPV6 = 41,
         /// raw IP packet
-        pub const RAW = 255;
+        RAW = 255,
         /// IP6 hop-by-hop options
-        pub const HOPOPTS = 0;
+        HOPOPTS = 0,
         /// group mgmt protocol
-        pub const IGMP = 2;
+        IGMP = 2,
         /// gateway^2 (deprecated)
-        pub const GGP = 3;
+        GGP = 3,
         /// IPv4 encapsulation
-        pub const IPV4 = 4;
-        /// for compatibility
-        pub const IPIP = IPV4;
+        IPV4 = 4,
         /// Stream protocol II
-        pub const ST = 7;
+        ST = 7,
         /// exterior gateway protocol
-        pub const EGP = 8;
+        EGP = 8,
         /// private interior gateway
-        pub const PIGP = 9;
+        PIGP = 9,
         /// BBN RCC Monitoring
-        pub const RCCMON = 10;
+        RCCMON = 10,
         /// network voice protocol
-        pub const NVPII = 11;
+        NVPII = 11,
         /// pup
-        pub const PUP = 12;
+        PUP = 12,
         /// Argus
-        pub const ARGUS = 13;
+        ARGUS = 13,
         /// EMCON
-        pub const EMCON = 14;
+        EMCON = 14,
         /// Cross Net Debugger
-        pub const XNET = 15;
+        XNET = 15,
         /// Chaos
-        pub const CHAOS = 16;
+        CHAOS = 16,
         /// Multiplexing
-        pub const MUX = 18;
+        MUX = 18,
         /// DCN Measurement Subsystems
-        pub const MEAS = 19;
+        MEAS = 19,
         /// Host Monitoring
-        pub const HMP = 20;
+        HMP = 20,
         /// Packet Radio Measurement
-        pub const PRM = 21;
+        PRM = 21,
         /// xns idp
-        pub const IDP = 22;
+        IDP = 22,
         /// Trunk-1
-        pub const TRUNK1 = 23;
+        TRUNK1 = 23,
         /// Trunk-2
-        pub const TRUNK2 = 24;
+        TRUNK2 = 24,
         /// Leaf-1
-        pub const LEAF1 = 25;
+        LEAF1 = 25,
         /// Leaf-2
-        pub const LEAF2 = 26;
+        LEAF2 = 26,
         /// Reliable Data
-        pub const RDP = 27;
+        RDP = 27,
         /// Reliable Transaction
-        pub const IRTP = 28;
+        IRTP = 28,
         /// tp-4 w/ class negotiation
-        pub const TP = 29;
+        TP = 29,
         /// Bulk Data Transfer
-        pub const BLT = 30;
+        BLT = 30,
         /// Network Services
-        pub const NSP = 31;
+        NSP = 31,
         /// Merit Internodal
-        pub const INP = 32;
+        INP = 32,
         /// Datagram Congestion Control Protocol
-        pub const DCCP = 33;
+        DCCP = 33,
         /// Third Party Connect
-        pub const @"3PC" = 34;
+        @"3PC" = 34,
         /// InterDomain Policy Routing
-        pub const IDPR = 35;
+        IDPR = 35,
         /// XTP
-        pub const XTP = 36;
+        XTP = 36,
         /// Datagram Delivery
-        pub const DDP = 37;
+        DDP = 37,
         /// Control Message Transport
-        pub const CMTP = 38;
+        CMTP = 38,
         /// TP++ Transport
-        pub const TPXX = 39;
+        TPXX = 39,
         /// IL transport protocol
-        pub const IL = 40;
+        IL = 40,
         /// Source Demand Routing
-        pub const SDRP = 42;
+        SDRP = 42,
         /// IP6 routing header
-        pub const ROUTING = 43;
+        ROUTING = 43,
         /// IP6 fragmentation header
-        pub const FRAGMENT = 44;
+        FRAGMENT = 44,
         /// InterDomain Routing
-        pub const IDRP = 45;
+        IDRP = 45,
         /// resource reservation
-        pub const RSVP = 46;
+        RSVP = 46,
         /// General Routing Encap.
-        pub const GRE = 47;
+        GRE = 47,
         /// Mobile Host Routing
-        pub const MHRP = 48;
+        MHRP = 48,
         /// BHA
-        pub const BHA = 49;
+        BHA = 49,
         /// IP6 Encap Sec. Payload
-        pub const ESP = 50;
+        ESP = 50,
         /// IP6 Auth Header
-        pub const AH = 51;
+        AH = 51,
         /// Integ. Net Layer Security
-        pub const INLSP = 52;
+        INLSP = 52,
         /// IP with encryption
-        pub const SWIPE = 53;
+        SWIPE = 53,
         /// Next Hop Resolution
-        pub const NHRP = 54;
+        NHRP = 54,
         /// IP Mobility
-        pub const MOBILE = 55;
+        MOBILE = 55,
         /// Transport Layer Security
-        pub const TLSP = 56;
+        TLSP = 56,
         /// SKIP
-        pub const SKIP = 57;
+        SKIP = 57,
         /// ICMP6
-        pub const ICMPV6 = 58;
+        ICMPV6 = 58,
         /// IP6 no next header
-        pub const NONE = 59;
+        NONE = 59,
         /// IP6 destination option
-        pub const DSTOPTS = 60;
+        DSTOPTS = 60,
         /// any host internal protocol
-        pub const AHIP = 61;
+        AHIP = 61,
         /// CFTP
-        pub const CFTP = 62;
+        CFTP = 62,
         /// "hello" routing protocol
-        pub const HELLO = 63;
+        HELLO = 63,
         /// SATNET/Backroom EXPAK
-        pub const SATEXPAK = 64;
+        SATEXPAK = 64,
         /// Kryptolan
-        pub const KRYPTOLAN = 65;
+        KRYPTOLAN = 65,
         /// Remote Virtual Disk
-        pub const RVD = 66;
+        RVD = 66,
         /// Pluribus Packet Core
-        pub const IPPC = 67;
+        IPPC = 67,
         /// Any distributed FS
-        pub const ADFS = 68;
+        ADFS = 68,
         /// Satnet Monitoring
-        pub const SATMON = 69;
+        SATMON = 69,
         /// VISA Protocol
-        pub const VISA = 70;
+        VISA = 70,
         /// Packet Core Utility
-        pub const IPCV = 71;
+        IPCV = 71,
         /// Comp. Prot. Net. Executive
-        pub const CPNX = 72;
+        CPNX = 72,
         /// Comp. Prot. HeartBeat
-        pub const CPHB = 73;
+        CPHB = 73,
         /// Wang Span Network
-        pub const WSN = 74;
+        WSN = 74,
         /// Packet Video Protocol
-        pub const PVP = 75;
+        PVP = 75,
         /// BackRoom SATNET Monitoring
-        pub const BRSATMON = 76;
+        BRSATMON = 76,
         /// Sun net disk proto (temp.)
-        pub const ND = 77;
+        ND = 77,
         /// WIDEBAND Monitoring
-        pub const WBMON = 78;
+        WBMON = 78,
         /// WIDEBAND EXPAK
-        pub const WBEXPAK = 79;
+        WBEXPAK = 79,
         /// ISO cnlp
-        pub const EON = 80;
+        EON = 80,
         /// VMTP
-        pub const VMTP = 81;
+        VMTP = 81,
         /// Secure VMTP
-        pub const SVMTP = 82;
+        SVMTP = 82,
         /// Banyon VINES
-        pub const VINES = 83;
+        VINES = 83,
         /// TTP
-        pub const TTP = 84;
+        TTP = 84,
         /// NSFNET-IGP
-        pub const IGP = 85;
+        IGP = 85,
         /// dissimilar gateway prot.
-        pub const DGP = 86;
+        DGP = 86,
         /// TCF
-        pub const TCF = 87;
+        TCF = 87,
         /// Cisco/GXS IGRP
-        pub const IGRP = 88;
+        IGRP = 88,
         /// OSPFIGP
-        pub const OSPFIGP = 89;
+        OSPFIGP = 89,
         /// Strite RPC protocol
-        pub const SRPC = 90;
+        SRPC = 90,
         /// Locus Address Resoloution
-        pub const LARP = 91;
+        LARP = 91,
         /// Multicast Transport
-        pub const MTP = 92;
+        MTP = 92,
         /// AX.25 Frames
-        pub const AX25 = 93;
+        AX25 = 93,
         /// IP encapsulated in IP
-        pub const IPEIP = 94;
+        IPEIP = 94,
         /// Mobile Int.ing control
-        pub const MICP = 95;
+        MICP = 95,
         /// Semaphore Comm. security
-        pub const SCCSP = 96;
+        SCCSP = 96,
         /// Ethernet IP encapsulation
-        pub const ETHERIP = 97;
+        ETHERIP = 97,
         /// encapsulation header
-        pub const ENCAP = 98;
+        ENCAP = 98,
         /// any private encr. scheme
-        pub const APES = 99;
+        APES = 99,
         /// GMTP
-        pub const GMTP = 100;
+        GMTP = 100,
         /// payload compression (IPComp)
-        pub const IPCOMP = 108;
+        IPCOMP = 108,
         /// SCTP
-        pub const SCTP = 132;
+        SCTP = 132,
         /// IPv6 Mobility Header
-        pub const MH = 135;
+        MH = 135,
         /// UDP-Lite
-        pub const UDPLITE = 136;
+        UDPLITE = 136,
         /// IP6 Host Identity Protocol
-        pub const HIP = 139;
+        HIP = 139,
         /// IP6 Shim6 Protocol
-        pub const SHIM6 = 140;
+        SHIM6 = 140,
         /// Protocol Independent Mcast
-        pub const PIM = 103;
+        PIM = 103,
         /// CARP
-        pub const CARP = 112;
+        CARP = 112,
         /// PGM
-        pub const PGM = 113;
+        PGM = 113,
         /// MPLS-in-IP
-        pub const MPLS = 137;
+        MPLS = 137,
         /// PFSYNC
-        pub const PFSYNC = 240;
+        PFSYNC = 240,
         /// Reserved
-        pub const RESERVED_253 = 253;
+        RESERVED_253 = 253,
         /// Reserved
-        pub const RESERVED_254 = 254;
+        RESERVED_254 = 254,
+        _,
+
+        /// for compatibility
+        pub const IPIP: IPPROTO = .IPV4;
     },
-    .illumos => struct {
+    .illumos => enum(u16) {
         /// dummy for IP
-        pub const IP = 0;
-        /// Hop by hop header for IPv6
-        pub const HOPOPTS = 0;
+        IP = 0,
         /// control message protocol
-        pub const ICMP = 1;
+        ICMP = 1,
         /// group control protocol
-        pub const IGMP = 2;
+        IGMP = 2,
         /// gateway^2 (deprecated)
-        pub const GGP = 3;
+        GGP = 3,
         /// IP in IP encapsulation
-        pub const ENCAP = 4;
+        ENCAP = 4,
         /// tcp
-        pub const TCP = 6;
+        TCP = 6,
         /// exterior gateway protocol
-        pub const EGP = 8;
+        EGP = 8,
         /// pup
-        pub const PUP = 12;
+        PUP = 12,
         /// user datagram protocol
-        pub const UDP = 17;
+        UDP = 17,
         /// xns idp
-        pub const IDP = 22;
+        IDP = 22,
         /// IPv6 encapsulated in IP
-        pub const IPV6 = 41;
+        IPV6 = 41,
         /// Routing header for IPv6
-        pub const ROUTING = 43;
+        ROUTING = 43,
         /// Fragment header for IPv6
-        pub const FRAGMENT = 44;
+        FRAGMENT = 44,
         /// rsvp
-        pub const RSVP = 46;
+        RSVP = 46,
         /// IPsec Encap. Sec. Payload
-        pub const ESP = 50;
+        ESP = 50,
         /// IPsec Authentication Hdr.
-        pub const AH = 51;
+        AH = 51,
         /// ICMP for IPv6
-        pub const ICMPV6 = 58;
+        ICMPV6 = 58,
         /// No next header for IPv6
-        pub const NONE = 59;
+        NONE = 59,
         /// Destination options
-        pub const DSTOPTS = 60;
+        DSTOPTS = 60,
         /// "hello" routing protocol
-        pub const HELLO = 63;
+        HELLO = 63,
         /// UNOFFICIAL net disk proto
-        pub const ND = 77;
+        ND = 77,
         /// ISO clnp
-        pub const EON = 80;
+        EON = 80,
         /// OSPF
-        pub const OSPF = 89;
+        OSPF = 89,
         /// PIM routing protocol
-        pub const PIM = 103;
+        PIM = 103,
         /// Stream Control
-        pub const SCTP = 132;
+        SCTP = 132,
         /// raw IP packet
-        pub const RAW = 255;
+        RAW = 255,
         /// Sockets Direct Protocol
-        pub const PROTO_SDP = 257;
+        PROTO_SDP = 257,
+        _,
+
+        /// Hop by hop header for IPv6
+        pub const HOPOPTS: IPPROTO = .IP;
     },
-    .netbsd => struct {
+    .netbsd => enum(u8) {
         /// dummy for IP
-        pub const IP = 0;
-        /// IP6 hop-by-hop options
-        pub const HOPOPTS = 0;
+        IP = 0,
         /// control message protocol
-        pub const ICMP = 1;
+        ICMP = 1,
         /// group mgmt protocol
-        pub const IGMP = 2;
+        IGMP = 2,
         /// gateway^2 (deprecated)
-        pub const GGP = 3;
+        GGP = 3,
         /// IP header
-        pub const IPV4 = 4;
+        IPV4 = 4,
         /// IP inside IP
-        pub const IPIP = 4;
+        IPIP = 4,
         /// tcp
-        pub const TCP = 6;
+        TCP = 6,
         /// exterior gateway protocol
-        pub const EGP = 8;
+        EGP = 8,
         /// pup
-        pub const PUP = 12;
+        PUP = 12,
         /// user datagram protocol
-        pub const UDP = 17;
+        UDP = 17,
         /// xns idp
-        pub const IDP = 22;
+        IDP = 22,
         /// tp-4 w/ class negotiation
-        pub const TP = 29;
+        TP = 29,
         /// DCCP
-        pub const DCCP = 33;
+        DCCP = 33,
         /// IP6 header
-        pub const IPV6 = 41;
+        IPV6 = 41,
         /// IP6 routing header
-        pub const ROUTING = 43;
+        ROUTING = 43,
         /// IP6 fragmentation header
-        pub const FRAGMENT = 44;
+        FRAGMENT = 44,
         /// resource reservation
-        pub const RSVP = 46;
+        RSVP = 46,
         /// GRE encaps RFC 1701
-        pub const GRE = 47;
+        GRE = 47,
         /// encap. security payload
-        pub const ESP = 50;
+        ESP = 50,
         /// authentication header
-        pub const AH = 51;
+        AH = 51,
         /// IP Mobility RFC 2004
-        pub const MOBILE = 55;
+        MOBILE = 55,
         /// IPv6 ICMP
-        pub const IPV6_ICMP = 58;
+        IPV6_ICMP = 58,
         /// ICMP6
-        pub const ICMPV6 = 58;
+        ICMPV6 = 58,
         /// IP6 no next header
-        pub const NONE = 59;
+        NONE = 59,
         /// IP6 destination option
-        pub const DSTOPTS = 60;
+        DSTOPTS = 60,
         /// ISO cnlp
-        pub const EON = 80;
+        EON = 80,
         /// Ethernet-in-IP
-        pub const ETHERIP = 97;
+        ETHERIP = 97,
         /// encapsulation header
-        pub const ENCAP = 98;
+        ENCAP = 98,
         /// Protocol indep. multicast
-        pub const PIM = 103;
+        PIM = 103,
         /// IP Payload Comp. Protocol
-        pub const IPCOMP = 108;
+        IPCOMP = 108,
         /// VRRP RFC 2338
-        pub const VRRP = 112;
+        VRRP = 112,
         /// Common Address Resolution Protocol
-        pub const CARP = 112;
+        CARP = 112,
         /// L2TPv3
-        pub const L2TP = 115;
+        L2TP = 115,
         /// SCTP
-        pub const SCTP = 132;
+        SCTP = 132,
         /// PFSYNC
-        pub const PFSYNC = 240;
+        PFSYNC = 240,
         /// raw IP packet
-        pub const RAW = 255;
-    },
-    .dragonfly => struct {
-        pub const IP = 0;
-        pub const ICMP = 1;
-        pub const TCP = 6;
-        pub const UDP = 17;
-        pub const IPV6 = 41;
-        pub const RAW = 255;
-        pub const HOPOPTS = 0;
-        pub const IGMP = 2;
-        pub const GGP = 3;
-        pub const IPV4 = 4;
-        pub const IPIP = IPV4;
-        pub const ST = 7;
-        pub const EGP = 8;
-        pub const PIGP = 9;
-        pub const RCCMON = 10;
-        pub const NVPII = 11;
-        pub const PUP = 12;
-        pub const ARGUS = 13;
-        pub const EMCON = 14;
-        pub const XNET = 15;
-        pub const CHAOS = 16;
-        pub const MUX = 18;
-        pub const MEAS = 19;
-        pub const HMP = 20;
-        pub const PRM = 21;
-        pub const IDP = 22;
-        pub const TRUNK1 = 23;
-        pub const TRUNK2 = 24;
-        pub const LEAF1 = 25;
-        pub const LEAF2 = 26;
-        pub const RDP = 27;
-        pub const IRTP = 28;
-        pub const TP = 29;
-        pub const BLT = 30;
-        pub const NSP = 31;
-        pub const INP = 32;
-        pub const SEP = 33;
-        pub const @"3PC" = 34;
-        pub const IDPR = 35;
-        pub const XTP = 36;
-        pub const DDP = 37;
-        pub const CMTP = 38;
-        pub const TPXX = 39;
-        pub const IL = 40;
-        pub const SDRP = 42;
-        pub const ROUTING = 43;
-        pub const FRAGMENT = 44;
-        pub const IDRP = 45;
-        pub const RSVP = 46;
-        pub const GRE = 47;
-        pub const MHRP = 48;
-        pub const BHA = 49;
-        pub const ESP = 50;
-        pub const AH = 51;
-        pub const INLSP = 52;
-        pub const SWIPE = 53;
-        pub const NHRP = 54;
-        pub const MOBILE = 55;
-        pub const TLSP = 56;
-        pub const SKIP = 57;
-        pub const ICMPV6 = 58;
-        pub const NONE = 59;
-        pub const DSTOPTS = 60;
-        pub const AHIP = 61;
-        pub const CFTP = 62;
-        pub const HELLO = 63;
-        pub const SATEXPAK = 64;
-        pub const KRYPTOLAN = 65;
-        pub const RVD = 66;
-        pub const IPPC = 67;
-        pub const ADFS = 68;
-        pub const SATMON = 69;
-        pub const VISA = 70;
-        pub const IPCV = 71;
-        pub const CPNX = 72;
-        pub const CPHB = 73;
-        pub const WSN = 74;
-        pub const PVP = 75;
-        pub const BRSATMON = 76;
-        pub const ND = 77;
-        pub const WBMON = 78;
-        pub const WBEXPAK = 79;
-        pub const EON = 80;
-        pub const VMTP = 81;
-        pub const SVMTP = 82;
-        pub const VINES = 83;
-        pub const TTP = 84;
-        pub const IGP = 85;
-        pub const DGP = 86;
-        pub const TCF = 87;
-        pub const IGRP = 88;
-        pub const OSPFIGP = 89;
-        pub const SRPC = 90;
-        pub const LARP = 91;
-        pub const MTP = 92;
-        pub const AX25 = 93;
-        pub const IPEIP = 94;
-        pub const MICP = 95;
-        pub const SCCSP = 96;
-        pub const ETHERIP = 97;
-        pub const ENCAP = 98;
-        pub const APES = 99;
-        pub const GMTP = 100;
-        pub const IPCOMP = 108;
-        pub const PIM = 103;
-        pub const CARP = 112;
-        pub const PGM = 113;
-        pub const PFSYNC = 240;
-        pub const DIVERT = 254;
-        pub const MAX = 256;
-        pub const DONE = 257;
-        pub const UNKNOWN = 258;
-    },
-    .haiku => struct {
-        pub const IP = 0;
-        pub const HOPOPTS = 0;
-        pub const ICMP = 1;
-        pub const IGMP = 2;
-        pub const TCP = 6;
-        pub const UDP = 17;
-        pub const IPV6 = 41;
-        pub const ROUTING = 43;
-        pub const FRAGMENT = 44;
-        pub const ESP = 50;
-        pub const AH = 51;
-        pub const ICMPV6 = 58;
-        pub const NONE = 59;
-        pub const DSTOPTS = 60;
-        pub const ETHERIP = 97;
-        pub const RAW = 255;
-        pub const MAX = 256;
-    },
-    .openbsd => struct {
-        /// dummy for IP
-        pub const IP = 0;
+        RAW = 255,
+        _,
+
         /// IP6 hop-by-hop options
-        pub const HOPOPTS = IPPROTO.IP;
+        pub const HOPOPTS: IPPROTO = .IP;
+    },
+    .dragonfly => enum(u16) {
+        IP = 0,
+        ICMP = 1,
+        TCP = 6,
+        UDP = 17,
+        IPV6 = 41,
+        RAW = 255,
+        HOPOPTS = 0,
+        IGMP = 2,
+        GGP = 3,
+        IPV4 = 4,
+        ST = 7,
+        EGP = 8,
+        PIGP = 9,
+        RCCMON = 10,
+        NVPII = 11,
+        PUP = 12,
+        ARGUS = 13,
+        EMCON = 14,
+        XNET = 15,
+        CHAOS = 16,
+        MUX = 18,
+        MEAS = 19,
+        HMP = 20,
+        PRM = 21,
+        IDP = 22,
+        TRUNK1 = 23,
+        TRUNK2 = 24,
+        LEAF1 = 25,
+        LEAF2 = 26,
+        RDP = 27,
+        IRTP = 28,
+        TP = 29,
+        BLT = 30,
+        NSP = 31,
+        INP = 32,
+        SEP = 33,
+        @"3PC" = 34,
+        IDPR = 35,
+        XTP = 36,
+        DDP = 37,
+        CMTP = 38,
+        TPXX = 39,
+        IL = 40,
+        SDRP = 42,
+        ROUTING = 43,
+        FRAGMENT = 44,
+        IDRP = 45,
+        RSVP = 46,
+        GRE = 47,
+        MHRP = 48,
+        BHA = 49,
+        ESP = 50,
+        AH = 51,
+        INLSP = 52,
+        SWIPE = 53,
+        NHRP = 54,
+        MOBILE = 55,
+        TLSP = 56,
+        SKIP = 57,
+        ICMPV6 = 58,
+        NONE = 59,
+        DSTOPTS = 60,
+        AHIP = 61,
+        CFTP = 62,
+        HELLO = 63,
+        SATEXPAK = 64,
+        KRYPTOLAN = 65,
+        RVD = 66,
+        IPPC = 67,
+        ADFS = 68,
+        SATMON = 69,
+        VISA = 70,
+        IPCV = 71,
+        CPNX = 72,
+        CPHB = 73,
+        WSN = 74,
+        PVP = 75,
+        BRSATMON = 76,
+        ND = 77,
+        WBMON = 78,
+        WBEXPAK = 79,
+        EON = 80,
+        VMTP = 81,
+        SVMTP = 82,
+        VINES = 83,
+        TTP = 84,
+        IGP = 85,
+        DGP = 86,
+        TCF = 87,
+        IGRP = 88,
+        OSPFIGP = 89,
+        SRPC = 90,
+        LARP = 91,
+        MTP = 92,
+        AX25 = 93,
+        IPEIP = 94,
+        MICP = 95,
+        SCCSP = 96,
+        ETHERIP = 97,
+        ENCAP = 98,
+        APES = 99,
+        GMTP = 100,
+        IPCOMP = 108,
+        PIM = 103,
+        CARP = 112,
+        PGM = 113,
+        PFSYNC = 240,
+        DIVERT = 254,
+        MAX = 256,
+        DONE = 257,
+        UNKNOWN = 258,
+        _,
+
+        pub const IPIP: IPPROTO = .IPV4;
+    },
+    .haiku => enum(u16) {
+        IP = 0,
+        ICMP = 1,
+        IGMP = 2,
+        TCP = 6,
+        UDP = 17,
+        IPV6 = 41,
+        ROUTING = 43,
+        FRAGMENT = 44,
+        ESP = 50,
+        AH = 51,
+        ICMPV6 = 58,
+        NONE = 59,
+        DSTOPTS = 60,
+        ETHERIP = 97,
+        RAW = 255,
+        MAX = 256,
+        _,
+
+        pub const HOPOPTS: IPPROTO = .IP;
+    },
+    .openbsd => enum(u8) {
+        /// dummy for IP
+        IP = 0,
         /// control message protocol
-        pub const ICMP = 1;
+        ICMP = 1,
         /// group mgmt protocol
-        pub const IGMP = 2;
+        IGMP = 2,
         /// gateway^2 (deprecated)
-        pub const GGP = 3;
-        /// IP header
-        pub const IPV4 = IPIP;
+        GGP = 3,
         /// IP inside IP
-        pub const IPIP = 4;
+        IPV4 = 4,
         /// tcp
-        pub const TCP = 6;
+        TCP = 6,
         /// exterior gateway protocol
-        pub const EGP = 8;
+        EGP = 8,
         /// pup
-        pub const PUP = 12;
+        PUP = 12,
         /// user datagram protocol
-        pub const UDP = 17;
+        UDP = 17,
         /// xns idp
-        pub const IDP = 22;
+        IDP = 22,
         /// tp-4 w/ class negotiation
-        pub const TP = 29;
+        TP = 29,
         /// IP6 header
-        pub const IPV6 = 41;
+        IPV6 = 41,
         /// IP6 routing header
-        pub const ROUTING = 43;
+        ROUTING = 43,
         /// IP6 fragmentation header
-        pub const FRAGMENT = 44;
+        FRAGMENT = 44,
         /// resource reservation
-        pub const RSVP = 46;
+        RSVP = 46,
         /// GRE encaps RFC 1701
-        pub const GRE = 47;
+        GRE = 47,
         /// encap. security payload
-        pub const ESP = 50;
+        ESP = 50,
         /// authentication header
-        pub const AH = 51;
+        AH = 51,
         /// IP Mobility RFC 2004
-        pub const MOBILE = 55;
+        MOBILE = 55,
         /// IPv6 ICMP
-        pub const IPV6_ICMP = 58;
+        IPV6_ICMP = 58,
         /// ICMP6
-        pub const ICMPV6 = 58;
+        ICMPV6 = 58,
         /// IP6 no next header
-        pub const NONE = 59;
+        NONE = 59,
         /// IP6 destination option
-        pub const DSTOPTS = 60;
+        DSTOPTS = 60,
         /// ISO cnlp
-        pub const EON = 80;
+        EON = 80,
         /// Ethernet-in-IP
-        pub const ETHERIP = 97;
+        ETHERIP = 97,
         /// encapsulation header
-        pub const ENCAP = 98;
+        ENCAP = 98,
         /// Protocol indep. multicast
-        pub const PIM = 103;
+        PIM = 103,
         /// IP Payload Comp. Protocol
-        pub const IPCOMP = 108;
+        IPCOMP = 108,
         /// VRRP RFC 2338
-        pub const VRRP = 112;
+        VRRP = 112,
         /// Common Address Resolution Protocol
-        pub const CARP = 112;
+        CARP = 112,
         /// PFSYNC
-        pub const PFSYNC = 240;
+        PFSYNC = 240,
         /// raw IP packet
-        pub const RAW = 255;
+        RAW = 255,
+        _,
+
+        /// IP6 hop-by-hop options
+        pub const HOPOPTS: IPPROTO = .IP;
+        /// IP header
+        pub const IPIP: IPPROTO = .IPV4;
     },
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L44-L54
-    .serenity => struct {
-        pub const IP = 0;
-        pub const ICMP = 1;
-        pub const IGMP = 2;
-        pub const IPIP = 4;
-        pub const TCP = 6;
-        pub const UDP = 17;
-        pub const IPV6 = 41;
-        pub const ESP = 50;
-        pub const AH = 51;
-        pub const ICMPV6 = 58;
-        pub const RAW = 255;
+    .serenity => enum(u8) {
+        IP = 0,
+        ICMP = 1,
+        IGMP = 2,
+        IPIP = 4,
+        TCP = 6,
+        UDP = 17,
+        IPV6 = 41,
+        ESP = 50,
+        AH = 51,
+        ICMPV6 = 58,
+        RAW = 255,
+        _,
     },
     else => void,
 };
+
 pub const IP = switch (native_os) {
     .linux => linux.IP,
     .freebsd => freebsd.IP,
@@ -6614,6 +6749,7 @@ pub const IP = switch (native_os) {
     .serenity => serenity.IP,
     else => void,
 };
+
 pub const IPV6 = switch (native_os) {
     .linux => linux.IPV6,
     .freebsd => freebsd.IPV6,
@@ -6625,6 +6761,7 @@ pub const IPV6 = switch (native_os) {
     .serenity => serenity.IPV6,
     else => void,
 };
+
 pub const IPTOS = switch (native_os) {
     .linux => linux.IPTOS,
     .freebsd => freebsd.IPTOS,
@@ -6636,265 +6773,279 @@ pub const IPTOS = switch (native_os) {
     .serenity => serenity.IPTOS,
     else => void,
 };
+
 pub const SOL = switch (native_os) {
-    .linux => linux.SOL,
-    .emscripten => emscripten.SOL,
+    .linux, .emscripten => linux.SOL,
     .windows => ws2_32.SOL,
-    .openbsd, .haiku, .dragonfly, .netbsd, .freebsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        pub const SOCKET = 0xffff;
+    .openbsd, .haiku, .dragonfly, .netbsd, .freebsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => enum(u16) {
+        SOCKET = 0xffff,
+        _,
     },
-    .illumos => struct {
-        pub const SOCKET = 0xffff;
-        pub const ROUTE = 0xfffe;
-        pub const PACKET = 0xfffd;
-        pub const FILTER = 0xfffc;
+    .illumos => enum(u16) {
+        SOCKET = 0xffff,
+        ROUTE = 0xfffe,
+        PACKET = 0xfffd,
+        FILTER = 0xfffc,
+        _,
     },
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L127
-    .serenity => struct {
-        pub const SOCKET = 1;
+    .serenity => enum(u16) {
+        SOCKET = 1,
+        _,
     },
     else => void,
 };
+
 pub const SO = switch (native_os) {
     .linux => linux.SO,
     .emscripten => emscripten.SO,
     .windows => ws2_32.SO,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        pub const DEBUG = 0x0001;
-        pub const ACCEPTCONN = 0x0002;
-        pub const REUSEADDR = 0x0004;
-        pub const KEEPALIVE = 0x0008;
-        pub const DONTROUTE = 0x0010;
-        pub const BROADCAST = 0x0020;
-        pub const USELOOPBACK = 0x0040;
-        pub const LINGER = 0x0080;
-        pub const OOBINLINE = 0x0100;
-        pub const REUSEPORT = 0x0200;
-        pub const ACCEPTFILTER = 0x1000;
-        pub const SNDBUF = 0x1001;
-        pub const RCVBUF = 0x1002;
-        pub const SNDLOWAT = 0x1003;
-        pub const RCVLOWAT = 0x1004;
-        pub const SNDTIMEO = 0x1005;
-        pub const RCVTIMEO = 0x1006;
-        pub const ERROR = 0x1007;
-        pub const TYPE = 0x1008;
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => enum(u16) {
+        DEBUG = 0x0001,
+        ACCEPTCONN = 0x0002,
+        REUSEADDR = 0x0004,
+        KEEPALIVE = 0x0008,
+        DONTROUTE = 0x0010,
+        BROADCAST = 0x0020,
+        USELOOPBACK = 0x0040,
+        LINGER = 0x0080,
+        OOBINLINE = 0x0100,
+        REUSEPORT = 0x0200,
+        ACCEPTFILTER = 0x1000,
+        SNDBUF = 0x1001,
+        RCVBUF = 0x1002,
+        SNDLOWAT = 0x1003,
+        RCVLOWAT = 0x1004,
+        SNDTIMEO = 0x1005,
+        RCVTIMEO = 0x1006,
+        ERROR = 0x1007,
+        TYPE = 0x1008,
 
-        pub const NREAD = 0x1020;
-        pub const NKE = 0x1021;
-        pub const NOSIGPIPE = 0x1022;
-        pub const NOADDRERR = 0x1023;
-        pub const NWRITE = 0x1024;
-        pub const REUSESHAREUID = 0x1025;
-        pub const LINGER_SEC = 0x1080;
+        NREAD = 0x1020,
+        NKE = 0x1021,
+        NOSIGPIPE = 0x1022,
+        NOADDRERR = 0x1023,
+        NWRITE = 0x1024,
+        REUSESHAREUID = 0x1025,
+        LINGER_SEC = 0x1080,
+        _,
     },
-    .freebsd => struct {
-        pub const DEBUG = 0x00000001;
-        pub const ACCEPTCONN = 0x00000002;
-        pub const REUSEADDR = 0x00000004;
-        pub const KEEPALIVE = 0x00000008;
-        pub const DONTROUTE = 0x00000010;
-        pub const BROADCAST = 0x00000020;
-        pub const USELOOPBACK = 0x00000040;
-        pub const LINGER = 0x00000080;
-        pub const OOBINLINE = 0x00000100;
-        pub const REUSEPORT = 0x00000200;
-        pub const TIMESTAMP = 0x00000400;
-        pub const NOSIGPIPE = 0x00000800;
-        pub const ACCEPTFILTER = 0x00001000;
-        pub const BINTIME = 0x00002000;
-        pub const NO_OFFLOAD = 0x00004000;
-        pub const NO_DDP = 0x00008000;
-        pub const REUSEPORT_LB = 0x00010000;
+    .freebsd => enum(u16) {
+        DEBUG = 0x00000001,
+        ACCEPTCONN = 0x00000002,
+        REUSEADDR = 0x00000004,
+        KEEPALIVE = 0x00000008,
+        DONTROUTE = 0x00000010,
+        BROADCAST = 0x00000020,
+        USELOOPBACK = 0x00000040,
+        LINGER = 0x00000080,
+        OOBINLINE = 0x00000100,
+        REUSEPORT = 0x00000200,
+        TIMESTAMP = 0x00000400,
+        NOSIGPIPE = 0x00000800,
+        ACCEPTFILTER = 0x00001000,
+        BINTIME = 0x00002000,
+        NO_OFFLOAD = 0x00004000,
+        NO_DDP = 0x00008000,
+        REUSEPORT_LB = 0x00010000,
 
-        pub const SNDBUF = 0x1001;
-        pub const RCVBUF = 0x1002;
-        pub const SNDLOWAT = 0x1003;
-        pub const RCVLOWAT = 0x1004;
-        pub const SNDTIMEO = 0x1005;
-        pub const RCVTIMEO = 0x1006;
-        pub const ERROR = 0x1007;
-        pub const TYPE = 0x1008;
-        pub const LABEL = 0x1009;
-        pub const PEERLABEL = 0x1010;
-        pub const LISTENQLIMIT = 0x1011;
-        pub const LISTENQLEN = 0x1012;
-        pub const LISTENINCQLEN = 0x1013;
-        pub const SETFIB = 0x1014;
-        pub const USER_COOKIE = 0x1015;
-        pub const PROTOCOL = 0x1016;
-        pub const PROTOTYPE = PROTOCOL;
-        pub const TS_CLOCK = 0x1017;
-        pub const MAX_PACING_RATE = 0x1018;
-        pub const DOMAIN = 0x1019;
+        SNDBUF = 0x1001,
+        RCVBUF = 0x1002,
+        SNDLOWAT = 0x1003,
+        RCVLOWAT = 0x1004,
+        SNDTIMEO = 0x1005,
+        RCVTIMEO = 0x1006,
+        ERROR = 0x1007,
+        TYPE = 0x1008,
+        LABEL = 0x1009,
+        PEERLABEL = 0x1010,
+        LISTENQLIMIT = 0x1011,
+        LISTENQLEN = 0x1012,
+        LISTENINCQLEN = 0x1013,
+        SETFIB = 0x1014,
+        USER_COOKIE = 0x1015,
+        PROTOCOL = 0x1016,
+        TS_CLOCK = 0x1017,
+        MAX_PACING_RATE = 0x1018,
+        DOMAIN = 0x1019,
+        _,
+
+        pub const PROTOTYPE: SO = .PROTOCOL;
     },
-    .illumos => struct {
-        pub const DEBUG = 0x0001;
-        pub const ACCEPTCONN = 0x0002;
-        pub const REUSEADDR = 0x0004;
-        pub const KEEPALIVE = 0x0008;
-        pub const DONTROUTE = 0x0010;
-        pub const BROADCAST = 0x0020;
-        pub const USELOOPBACK = 0x0040;
-        pub const LINGER = 0x0080;
-        pub const OOBINLINE = 0x0100;
-        pub const DGRAM_ERRIND = 0x0200;
-        pub const RECVUCRED = 0x0400;
+    .illumos => enum(u16) {
+        DEBUG = 0x0001,
+        ACCEPTCONN = 0x0002,
+        REUSEADDR = 0x0004,
+        KEEPALIVE = 0x0008,
+        DONTROUTE = 0x0010,
+        BROADCAST = 0x0020,
+        USELOOPBACK = 0x0040,
+        LINGER = 0x0080,
+        OOBINLINE = 0x0100,
+        DGRAM_ERRIND = 0x0200,
+        RECVUCRED = 0x0400,
 
-        pub const SNDBUF = 0x1001;
-        pub const RCVBUF = 0x1002;
-        pub const SNDLOWAT = 0x1003;
-        pub const RCVLOWAT = 0x1004;
-        pub const SNDTIMEO = 0x1005;
-        pub const RCVTIMEO = 0x1006;
-        pub const ERROR = 0x1007;
-        pub const TYPE = 0x1008;
-        pub const PROTOTYPE = 0x1009;
-        pub const ANON_MLP = 0x100a;
-        pub const MAC_EXEMPT = 0x100b;
-        pub const DOMAIN = 0x100c;
-        pub const RCVPSH = 0x100d;
+        SNDBUF = 0x1001,
+        RCVBUF = 0x1002,
+        SNDLOWAT = 0x1003,
+        RCVLOWAT = 0x1004,
+        SNDTIMEO = 0x1005,
+        RCVTIMEO = 0x1006,
+        ERROR = 0x1007,
+        TYPE = 0x1008,
+        PROTOTYPE = 0x1009,
+        ANON_MLP = 0x100a,
+        MAC_EXEMPT = 0x100b,
+        DOMAIN = 0x100c,
+        RCVPSH = 0x100d,
 
-        pub const SECATTR = 0x1011;
-        pub const TIMESTAMP = 0x1013;
-        pub const ALLZONES = 0x1014;
-        pub const EXCLBIND = 0x1015;
-        pub const MAC_IMPLICIT = 0x1016;
-        pub const VRRP = 0x1017;
+        SECATTR = 0x1011,
+        TIMESTAMP = 0x1013,
+        ALLZONES = 0x1014,
+        EXCLBIND = 0x1015,
+        MAC_IMPLICIT = 0x1016,
+        VRRP = 0x1017,
+        _,
     },
-    .netbsd => struct {
-        pub const DEBUG = 0x0001;
-        pub const ACCEPTCONN = 0x0002;
-        pub const REUSEADDR = 0x0004;
-        pub const KEEPALIVE = 0x0008;
-        pub const DONTROUTE = 0x0010;
-        pub const BROADCAST = 0x0020;
-        pub const USELOOPBACK = 0x0040;
-        pub const LINGER = 0x0080;
-        pub const OOBINLINE = 0x0100;
-        pub const REUSEPORT = 0x0200;
-        pub const NOSIGPIPE = 0x0800;
-        pub const ACCEPTFILTER = 0x1000;
-        pub const TIMESTAMP = 0x2000;
-        pub const RERROR = 0x4000;
+    .netbsd => enum(u16) {
+        DEBUG = 0x0001,
+        ACCEPTCONN = 0x0002,
+        REUSEADDR = 0x0004,
+        KEEPALIVE = 0x0008,
+        DONTROUTE = 0x0010,
+        BROADCAST = 0x0020,
+        USELOOPBACK = 0x0040,
+        LINGER = 0x0080,
+        OOBINLINE = 0x0100,
+        REUSEPORT = 0x0200,
+        NOSIGPIPE = 0x0800,
+        ACCEPTFILTER = 0x1000,
+        TIMESTAMP = 0x2000,
+        RERROR = 0x4000,
 
-        pub const SNDBUF = 0x1001;
-        pub const RCVBUF = 0x1002;
-        pub const SNDLOWAT = 0x1003;
-        pub const RCVLOWAT = 0x1004;
-        pub const ERROR = 0x1007;
-        pub const TYPE = 0x1008;
-        pub const OVERFLOWED = 0x1009;
+        SNDBUF = 0x1001,
+        RCVBUF = 0x1002,
+        SNDLOWAT = 0x1003,
+        RCVLOWAT = 0x1004,
+        ERROR = 0x1007,
+        TYPE = 0x1008,
+        OVERFLOWED = 0x1009,
 
-        pub const NOHEADER = 0x100a;
-        pub const SNDTIMEO = 0x100b;
-        pub const RCVTIMEO = 0x100c;
+        NOHEADER = 0x100a,
+        SNDTIMEO = 0x100b,
+        RCVTIMEO = 0x100c,
+        _,
     },
-    .dragonfly => struct {
-        pub const DEBUG = 0x0001;
-        pub const ACCEPTCONN = 0x0002;
-        pub const REUSEADDR = 0x0004;
-        pub const KEEPALIVE = 0x0008;
-        pub const DONTROUTE = 0x0010;
-        pub const BROADCAST = 0x0020;
-        pub const USELOOPBACK = 0x0040;
-        pub const LINGER = 0x0080;
-        pub const OOBINLINE = 0x0100;
-        pub const REUSEPORT = 0x0200;
-        pub const TIMESTAMP = 0x0400;
-        pub const NOSIGPIPE = 0x0800;
-        pub const ACCEPTFILTER = 0x1000;
-        pub const RERROR = 0x2000;
-        pub const PASSCRED = 0x4000;
+    .dragonfly => enum(u16) {
+        DEBUG = 0x0001,
+        ACCEPTCONN = 0x0002,
+        REUSEADDR = 0x0004,
+        KEEPALIVE = 0x0008,
+        DONTROUTE = 0x0010,
+        BROADCAST = 0x0020,
+        USELOOPBACK = 0x0040,
+        LINGER = 0x0080,
+        OOBINLINE = 0x0100,
+        REUSEPORT = 0x0200,
+        TIMESTAMP = 0x0400,
+        NOSIGPIPE = 0x0800,
+        ACCEPTFILTER = 0x1000,
+        RERROR = 0x2000,
+        PASSCRED = 0x4000,
 
-        pub const SNDBUF = 0x1001;
-        pub const RCVBUF = 0x1002;
-        pub const SNDLOWAT = 0x1003;
-        pub const RCVLOWAT = 0x1004;
-        pub const SNDTIMEO = 0x1005;
-        pub const RCVTIMEO = 0x1006;
-        pub const ERROR = 0x1007;
-        pub const TYPE = 0x1008;
-        pub const SNDSPACE = 0x100a;
-        pub const CPUHINT = 0x1030;
+        SNDBUF = 0x1001,
+        RCVBUF = 0x1002,
+        SNDLOWAT = 0x1003,
+        RCVLOWAT = 0x1004,
+        SNDTIMEO = 0x1005,
+        RCVTIMEO = 0x1006,
+        ERROR = 0x1007,
+        TYPE = 0x1008,
+        SNDSPACE = 0x100a,
+        CPUHINT = 0x1030,
+        _,
     },
-    .haiku => struct {
-        pub const ACCEPTCONN = 0x00000001;
-        pub const BROADCAST = 0x00000002;
-        pub const DEBUG = 0x00000004;
-        pub const DONTROUTE = 0x00000008;
-        pub const KEEPALIVE = 0x00000010;
-        pub const OOBINLINE = 0x00000020;
-        pub const REUSEADDR = 0x00000040;
-        pub const REUSEPORT = 0x00000080;
-        pub const USELOOPBACK = 0x00000100;
-        pub const LINGER = 0x00000200;
+    .haiku => enum(u32) {
+        ACCEPTCONN = 0x00000001,
+        BROADCAST = 0x00000002,
+        DEBUG = 0x00000004,
+        DONTROUTE = 0x00000008,
+        KEEPALIVE = 0x00000010,
+        OOBINLINE = 0x00000020,
+        REUSEADDR = 0x00000040,
+        REUSEPORT = 0x00000080,
+        USELOOPBACK = 0x00000100,
+        LINGER = 0x00000200,
 
-        pub const SNDBUF = 0x40000001;
-        pub const SNDLOWAT = 0x40000002;
-        pub const SNDTIMEO = 0x40000003;
-        pub const RCVBUF = 0x40000004;
-        pub const RCVLOWAT = 0x40000005;
-        pub const RCVTIMEO = 0x40000006;
-        pub const ERROR = 0x40000007;
-        pub const TYPE = 0x40000008;
-        pub const NONBLOCK = 0x40000009;
-        pub const BINDTODEVICE = 0x4000000a;
-        pub const PEERCRED = 0x4000000b;
+        SNDBUF = 0x40000001,
+        SNDLOWAT = 0x40000002,
+        SNDTIMEO = 0x40000003,
+        RCVBUF = 0x40000004,
+        RCVLOWAT = 0x40000005,
+        RCVTIMEO = 0x40000006,
+        ERROR = 0x40000007,
+        TYPE = 0x40000008,
+        NONBLOCK = 0x40000009,
+        BINDTODEVICE = 0x4000000a,
+        PEERCRED = 0x4000000b,
+        _,
     },
-    .openbsd => struct {
-        pub const DEBUG = 0x0001;
-        pub const ACCEPTCONN = 0x0002;
-        pub const REUSEADDR = 0x0004;
-        pub const KEEPALIVE = 0x0008;
-        pub const DONTROUTE = 0x0010;
-        pub const BROADCAST = 0x0020;
-        pub const USELOOPBACK = 0x0040;
-        pub const LINGER = 0x0080;
-        pub const OOBINLINE = 0x0100;
-        pub const REUSEPORT = 0x0200;
-        pub const TIMESTAMP = 0x0800;
-        pub const BINDANY = 0x1000;
-        pub const ZEROIZE = 0x2000;
-        pub const SNDBUF = 0x1001;
-        pub const RCVBUF = 0x1002;
-        pub const SNDLOWAT = 0x1003;
-        pub const RCVLOWAT = 0x1004;
-        pub const SNDTIMEO = 0x1005;
-        pub const RCVTIMEO = 0x1006;
-        pub const ERROR = 0x1007;
-        pub const TYPE = 0x1008;
-        pub const NETPROC = 0x1020;
-        pub const RTABLE = 0x1021;
-        pub const PEERCRED = 0x1022;
-        pub const SPLICE = 0x1023;
-        pub const DOMAIN = 0x1024;
-        pub const PROTOCOL = 0x1025;
+    .openbsd => enum(u16) {
+        DEBUG = 0x0001,
+        ACCEPTCONN = 0x0002,
+        REUSEADDR = 0x0004,
+        KEEPALIVE = 0x0008,
+        DONTROUTE = 0x0010,
+        BROADCAST = 0x0020,
+        USELOOPBACK = 0x0040,
+        LINGER = 0x0080,
+        OOBINLINE = 0x0100,
+        REUSEPORT = 0x0200,
+        TIMESTAMP = 0x0800,
+        BINDANY = 0x1000,
+        ZEROIZE = 0x2000,
+        SNDBUF = 0x1001,
+        RCVBUF = 0x1002,
+        SNDLOWAT = 0x1003,
+        RCVLOWAT = 0x1004,
+        SNDTIMEO = 0x1005,
+        RCVTIMEO = 0x1006,
+        ERROR = 0x1007,
+        TYPE = 0x1008,
+        NETPROC = 0x1020,
+        RTABLE = 0x1021,
+        PEERCRED = 0x1022,
+        SPLICE = 0x1023,
+        DOMAIN = 0x1024,
+        PROTOCOL = 0x1025,
+        _,
     },
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L130-L150
-    .serenity => struct {
-        pub const RCVTIMEO = 0;
-        pub const SNDTIMEO = 1;
-        pub const TYPE = 2;
-        pub const ERROR = 3;
-        pub const PEERCRED = 4;
-        pub const RCVBUF = 5;
-        pub const SNDBUF = 6;
-        pub const DEBUG = 7;
-        pub const REUSEADDR = 8;
-        pub const BINDTODEVICE = 9;
-        pub const KEEPALIVE = 10;
-        pub const TIMESTAMP = 11;
-        pub const BROADCAST = 12;
-        pub const LINGER = 13;
-        pub const ACCEPTCONN = 14;
-        pub const DONTROUTE = 15;
-        pub const OOBINLINE = 16;
-        pub const SNDLOWAT = 17;
-        pub const RCVLOWAT = 18;
+    .serenity => enum(u8) {
+        RCVTIMEO = 0,
+        SNDTIMEO = 1,
+        TYPE = 2,
+        ERROR = 3,
+        PEERCRED = 4,
+        RCVBUF = 5,
+        SNDBUF = 6,
+        DEBUG = 7,
+        REUSEADDR = 8,
+        BINDTODEVICE = 9,
+        KEEPALIVE = 10,
+        TIMESTAMP = 11,
+        BROADCAST = 12,
+        LINGER = 13,
+        ACCEPTCONN = 14,
+        DONTROUTE = 15,
+        OOBINLINE = 16,
+        SNDLOWAT = 17,
+        RCVLOWAT = 18,
+        _,
     },
     else => void,
 };
+
 pub const SOMAXCONN = switch (native_os) {
     .linux => linux.SOMAXCONN,
     .windows => ws2_32.SOMAXCONN,
@@ -6908,6 +7059,7 @@ pub const SOMAXCONN = switch (native_os) {
     .freebsd, .dragonfly, .netbsd, .openbsd, .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => 128,
     else => void,
 };
+
 pub const SCM = switch (native_os) {
     .linux, .emscripten => linux.SCM,
     // https://github.com/illumos/illumos-gate/blob/489f6310fe8952e87fc1dce8af87990fcfd90f18/usr/src/uts/common/sys/socket.h#L196
@@ -8262,127 +8414,154 @@ pub const port_event = switch (native_os) {
 };
 
 pub const AT = switch (native_os) {
-    .linux => linux.AT,
-    .windows => struct {
+    .emscripten, .linux => linux.AT,
+    .windows => packed struct(u32) {
+        _: u9 = 0,
         /// Remove directory instead of unlinking file
-        pub const REMOVEDIR = 0x200;
+        REMOVEDIR: bool = false,
+        _11: u22 = 0,
     },
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => struct {
-        pub const FDCWD = -2;
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+        _: u4 = 0,
         /// Use effective ids in access check
-        pub const EACCESS = 0x0010;
+        EACCESS: bool = false,
         /// Act on the symlink itself not the target
-        pub const SYMLINK_NOFOLLOW = 0x0020;
+        SYMLINK_NOFOLLOW: bool = false,
         /// Act on target of symlink
-        pub const SYMLINK_FOLLOW = 0x0040;
+        SYMLINK_FOLLOW: bool = false,
         /// Path refers to directory
-        pub const REMOVEDIR = 0x0080;
+        REMOVEDIR: bool = false,
+        _9: u24 = 0,
+
+        pub const FDCWD: fd_t = -2;
     },
-    .freebsd => struct {
-        /// Magic value that specify the use of the current working directory
-        /// to determine the target of relative file paths in the openat() and
-        /// similar syscalls.
-        pub const FDCWD = -100;
+    .freebsd => packed struct(u32) {
+        _: u8 = 0,
         /// Check access using effective user and group ID
-        pub const EACCESS = 0x0100;
+        EACCESS: bool = false,
         /// Do not follow symbolic links
-        pub const SYMLINK_NOFOLLOW = 0x0200;
+        SYMLINK_NOFOLLOW: bool = false,
         /// Follow symbolic link
-        pub const SYMLINK_FOLLOW = 0x0400;
+        SYMLINK_FOLLOW: bool = false,
         /// Remove directory instead of file
-        pub const REMOVEDIR = 0x0800;
+        REMOVEDIR: bool = false,
         /// Fail if not under dirfd
-        pub const BENEATH = 0x1000;
-    },
-    .netbsd => struct {
+        BENEATH: bool = false,
+        _14: u19 = 0,
+
         /// Magic value that specify the use of the current working directory
         /// to determine the target of relative file paths in the openat() and
         /// similar syscalls.
-        pub const FDCWD = -100;
+        pub const FDCWD: fd_t = -100;
+    },
+    .netbsd => packed struct(u32) {
+        _: u8 = 0,
         /// Check access using effective user and group ID
-        pub const EACCESS = 0x0100;
+        EACCESS: bool = false,
         /// Do not follow symbolic links
-        pub const SYMLINK_NOFOLLOW = 0x0200;
+        SYMLINK_NOFOLLOW: bool = false,
         /// Follow symbolic link
-        pub const SYMLINK_FOLLOW = 0x0400;
+        SYMLINK_FOLLOW: bool = false,
         /// Remove directory instead of file
-        pub const REMOVEDIR = 0x0800;
-    },
-    .dragonfly => struct {
-        pub const FDCWD = -328243;
-        pub const SYMLINK_NOFOLLOW = 1;
-        pub const REMOVEDIR = 2;
-        pub const EACCESS = 4;
-        pub const SYMLINK_FOLLOW = 8;
-    },
-    .openbsd => struct {
+        REMOVEDIR: bool = false,
+        _12: u20 = 0,
+
         /// Magic value that specify the use of the current working directory
         /// to determine the target of relative file paths in the openat() and
         /// similar syscalls.
-        pub const FDCWD = -100;
-        /// Check access using effective user and group ID
-        pub const EACCESS = 0x01;
+        pub const FDCWD: fd_t = -100;
+    },
+    .dragonfly => packed struct(u32) {
         /// Do not follow symbolic links
-        pub const SYMLINK_NOFOLLOW = 0x02;
-        /// Follow symbolic link
-        pub const SYMLINK_FOLLOW = 0x04;
+        SYMLINK_NOFOLLOW: bool = false,
         /// Remove directory instead of file
-        pub const REMOVEDIR = 0x08;
+        REMOVEDIR: bool = false,
+        /// Check access using effective user and group ID
+        EACCESS: bool = false,
+        /// Follow symbolic link
+        SYMLINK_FOLLOW: bool = false,
+        _: u28 = 0,
+
+        pub const FDCWD: fd_t = -328243;
     },
-    .haiku => struct {
-        pub const FDCWD = -1;
-        pub const SYMLINK_NOFOLLOW = 0x01;
-        pub const SYMLINK_FOLLOW = 0x02;
-        pub const REMOVEDIR = 0x04;
-        pub const EACCESS = 0x08;
+    .openbsd => packed struct(u32) {
+        /// Check access using effective user and group ID
+        EACCESS: bool = false,
+        /// Do not follow symbolic links
+        SYMLINK_NOFOLLOW: bool = false,
+        /// Follow symbolic link
+        SYMLINK_FOLLOW: bool = false,
+        /// Remove directory instead of file
+        REMOVEDIR: bool = false,
+        _: u28 = 0,
+
+        /// Magic value that specify the use of the current working directory
+        /// to determine the target of relative file paths in the openat() and
+        /// similar syscalls.
+        pub const FDCWD: fd_t = -100;
     },
-    .illumos => struct {
+    .haiku => packed struct(u32) {
+        /// Do not follow symbolic links
+        SYMLINK_NOFOLLOW: bool = false,
+        /// Follow symbolic link
+        SYMLINK_FOLLOW: bool = false,
+        /// Remove directory instead of file
+        REMOVEDIR: bool = false,
+        /// Check access using effective user and group ID
+        EACCESS: bool = false,
+        _: u28 = 0,
+
+        pub const FDCWD: fd_t = -1;
+    },
+    .illumos => packed struct(u32) {
+        /// Remove directory instead of file
+        REMOVEDIR: bool = false,
+        TRIGGER: bool = false,
+        /// Check access using effective user and group ID
+        EACCESS: bool = false,
+        _4: u9 = 0,
+        /// Do not follow symbolic links
+        SYMLINK_NOFOLLOW: bool = false,
+        /// Follow symbolic link
+        SYMLINK_FOLLOW: bool = false,
+        _15: u18 = 0,
+
         /// Magic value that specify the use of the current working directory
         /// to determine the target of relative file paths in the openat() and
         /// similar syscalls.
         pub const FDCWD: fd_t = @bitCast(@as(u32, 0xffd19553));
+    },
+    // Match `AT_*` constants in lib/libc/include/wasm-wasi-musl/__header_fcntl.h
+    .wasi => packed struct(u32) {
         /// Do not follow symbolic links
-        pub const SYMLINK_NOFOLLOW = 0x1000;
+        SYMLINK_NOFOLLOW: bool = false,
         /// Follow symbolic link
-        pub const SYMLINK_FOLLOW = 0x2000;
+        SYMLINK_FOLLOW: bool = false,
         /// Remove directory instead of file
-        pub const REMOVEDIR = 0x1;
-        pub const TRIGGER = 0x2;
-        /// Check access using effective user and group ID
-        pub const EACCESS = 0x4;
-    },
-    .emscripten => struct {
-        pub const FDCWD = -100;
-        pub const SYMLINK_NOFOLLOW = 0x100;
-        pub const REMOVEDIR = 0x200;
-        pub const SYMLINK_FOLLOW = 0x400;
-        pub const NO_AUTOMOUNT = 0x800;
-        pub const EMPTY_PATH = 0x1000;
-        pub const STATX_SYNC_TYPE = 0x6000;
-        pub const STATX_SYNC_AS_STAT = 0x0000;
-        pub const STATX_FORCE_SYNC = 0x2000;
-        pub const STATX_DONT_SYNC = 0x4000;
-        pub const RECURSIVE = 0x8000;
-    },
-    .wasi => struct {
-        // Match `AT_*` constants in lib/libc/include/wasm-wasi-musl/__header_fcntl.h
-        pub const EACCESS = 0x0;
-        pub const SYMLINK_NOFOLLOW = 0x1;
-        pub const SYMLINK_FOLLOW = 0x2;
-        pub const REMOVEDIR = 0x4;
-        /// When linking libc, we follow their convention and use -2 for current working directory.
-        /// However, without libc, Zig does a different convention: it assumes the
-        /// current working directory is the first preopen. This behavior can be
-        /// overridden with a public function called `wasi_cwd` in the root source
-        /// file.
+        REMOVEDIR: bool = false,
+        _: u29 = 0,
+
+        pub const EACCESS: AT = .{};
+
+        /// When linking libc, we follow their convention and use -2 for
+        /// current working directory. However, without libc, Zig does a
+        /// different convention: it assumes the current working directory is
+        /// the first preopen. This behavior can be overridden with a public
+        /// function called `wasi_cwd` in the root source file.
         pub const FDCWD: fd_t = if (builtin.link_libc) -2 else 3;
     },
     // https://github.com/SerenityOS/serenity/blob/2808b0376406a40e31293bb3bcb9170374e90506/Kernel/API/POSIX/fcntl.h#L49-L52
-    .serenity => struct {
-        pub const FDCWD = -100;
-        pub const SYMLINK_NOFOLLOW = 0x100;
-        pub const REMOVEDIR = 0x200;
-        pub const EACCESS = 0x400;
+    .serenity => packed struct(u32) {
+        _: u8 = 0,
+        /// Do not follow symbolic links
+        SYMLINK_NOFOLLOW: bool = false,
+        /// Remove directory instead of file
+        REMOVEDIR: bool = false,
+        /// Check access using effective user and group ID
+        EACCESS: bool = false,
+        _11: u21 = 0,
+
+        pub const FDCWD: fd_t = -100;
     },
     else => void,
 };
@@ -8427,9 +8606,9 @@ pub const O = switch (native_os) {
         _16: u8 = 0,
         NOFOLLOW: bool = false,
         EXEC: bool = false,
-        read: bool = false,
+        RDONLY: bool = false,
         SEARCH: bool = false,
-        write: bool = false,
+        WRONLY: bool = false,
         // O_CLOEXEC, O_TTY_ININT, O_NOCTTY are 0 in wasi-musl, so they're silently
         // ignored in C code.  Thus no mapping in Zig.
         _: u3 = 0,
@@ -8606,7 +8785,7 @@ pub const O = switch (native_os) {
         _28: u4 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/2808b0376406a40e31293bb3bcb9170374e90506/Kernel/API/POSIX/fcntl.h#L28-L43
-    .serenity => packed struct(c_int) {
+    .serenity => packed struct(u32) {
         ACCMODE: std.posix.ACCMODE = .NONE,
         EXEC: bool = false,
         CREAT: bool = false,
@@ -8620,11 +8799,115 @@ pub const O = switch (native_os) {
         CLOEXEC: bool = false,
         DIRECT: bool = false,
         SYNC: bool = false,
-        _: std.meta.Int(.unsigned, @bitSizeOf(c_int) - 14) = 0,
+        _: u18 = 0,
     },
     else => void,
 };
 
+pub const Pipe2 = switch (native_os) {
+    .linux => linux.Pipe2,
+    .emscripten => packed struct(u32) {
+        _1: u7 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _9: u3 = 0,
+        NONBLOCK: bool = false,
+        _13: u2 = 0,
+        DIRECT: bool = false,
+        _16: u4 = 0,
+        CLOEXEC: bool = false,
+        _21: u12 = 0,
+    },
+    .wasi => packed struct(u32) {
+        // Match `O_*` bits from lib/libc/include/wasm-wasi-musl/__header_fcntl.h
+        _1: u2 = 0,
+        NONBLOCK: bool = false,
+        _4: u11 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _16: u17 = 0,
+    },
+    .illumos => packed struct(u32) {
+        _1: u7 = 0,
+        NONBLOCK: bool = false,
+        _9: u2 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _12: u12 = 0,
+        CLOEXEC: bool = false,
+        _25: u1 = 0,
+        DIRECT: bool = false,
+        _: u6 = 0,
+    },
+    .netbsd => packed struct(u32) {
+        _1: u2 = 0,
+        NONBLOCK: bool = false,
+        _4: u8 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _13: u7 = 0,
+        DIRECT: bool = false,
+        _21: u2 = 0,
+        CLOEXEC: bool = false,
+        _24: u9 = 0,
+    },
+    .openbsd => packed struct(u32) {
+        _1: u2 = 0,
+        NONBLOCK: bool = false,
+        _4: u8 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _13: u4 = 0,
+        CLOEXEC: bool = false,
+        _18: u15 = 0,
+    },
+    .haiku => packed struct(u32) {
+        _1: u6 = 0,
+        CLOEXEC: bool = false,
+        NONBLOCK: bool = false,
+        NOTIFICATION_PIPE: bool = false,
+        _10: u11 = 0,
+        DIRECT: bool = false,
+        _22: u11 = 0,
+    },
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+        _1: u2 = 0,
+        NONBLOCK: bool = false,
+        _4: u8 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _13: u12 = 0,
+        CLOEXEC: bool = false,
+        _26: u7 = 0,
+    },
+    .dragonfly => packed struct(u32) {
+        _1: u2 = 0,
+        NONBLOCK: bool = false,
+        _4: u8 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _13: u4 = 0,
+        DIRECT: bool = false,
+        CLOEXEC: bool = false,
+        _19: u14 = 0,
+    },
+    .freebsd => packed struct(u32) {
+        _1: u2 = 0,
+        NONBLOCK: bool = false,
+        _4: u8 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _13: u4 = 0,
+        DIRECT: bool = false,
+        _18: u3 = 0,
+        CLOEXEC: bool = false,
+        _22: u11 = 0,
+    },
+    // https://github.com/SerenityOS/serenity/blob/2808b0376406a40e31293bb3bcb9170374e90506/Kernel/API/POSIX/fcntl.h#L28-L43
+    .serenity => packed struct(u32) {
+        _1: u4 = 0,
+        NOTIFICATION_PIPE: bool = false,
+        _6: u3 = 0,
+        NONBLOCK: bool = false,
+        _10: u2 = 0,
+        CLOEXEC: bool = false,
+        DIRECT: bool = false,
+        _14: u19 = 0,
+    },
+    else => void,
+};
 pub const MAP = switch (native_os) {
     .linux => linux.MAP,
     .emscripten => packed struct(u32) {
@@ -10316,7 +10599,7 @@ pub const fstatat = switch (native_os) {
     else => private.fstatat,
 };
 
-pub extern "c" fn statx(dirfd: fd_t, path: [*:0]const u8, flags: u32, mask: linux.STATX, buf: *linux.Statx) c_int;
+pub extern "c" fn statx(dirfd: fd_t, path: [*:0]const u8, flags: AT, mask: linux.Mask, buf: *linux.Statx) c_int;
 
 pub extern "c" fn getpwent() ?*passwd;
 pub extern "c" fn endpwent() void;
@@ -10661,9 +10944,9 @@ pub extern "c" fn munmap(addr: *align(page_size) const anyopaque, len: usize) c_
 pub extern "c" fn mremap(addr: ?*align(page_size) const anyopaque, old_len: usize, new_len: usize, flags: MREMAP, ...) *anyopaque;
 pub extern "c" fn mprotect(addr: *align(page_size) anyopaque, len: usize, prot: PROT) c_int;
 pub extern "c" fn link(oldpath: [*:0]const u8, newpath: [*:0]const u8) c_int;
-pub extern "c" fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: c_uint) c_int;
+pub extern "c" fn linkat(oldfd: fd_t, oldpath: [*:0]const u8, newfd: fd_t, newpath: [*:0]const u8, flags: AT) c_int;
 pub extern "c" fn unlink(path: [*:0]const u8) c_int;
-pub extern "c" fn unlinkat(dirfd: fd_t, path: [*:0]const u8, flags: c_uint) c_int;
+pub extern "c" fn unlinkat(dirfd: fd_t, path: [*:0]const u8, flags: AT) c_int;
 pub extern "c" fn getcwd(buf: [*]u8, size: usize) ?[*]u8;
 pub extern "c" fn waitpid(pid: pid_t, status: ?*c_int, options: c_int) pid_t;
 
@@ -10692,7 +10975,7 @@ pub const fork = switch (native_os) {
     else => {},
 };
 pub extern "c" fn access(path: [*:0]const u8, mode: c_uint) c_int;
-pub extern "c" fn faccessat(dirfd: fd_t, path: [*:0]const u8, mode: c_uint, flags: c_uint) c_int;
+pub extern "c" fn faccessat(dirfd: fd_t, path: [*:0]const u8, mode: c_uint, flags: AT) c_int;
 pub extern "c" fn pipe(fds: *[2]fd_t) c_int;
 pub extern "c" fn mkdir(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn mkdirat(dirfd: fd_t, path: [*:0]const u8, mode: mode_t) c_int;
@@ -10710,9 +10993,9 @@ pub extern "c" fn readlink(noalias path: [*:0]const u8, noalias buf: [*]u8, bufs
 pub extern "c" fn readlinkat(dirfd: fd_t, noalias path: [*:0]const u8, noalias buf: [*]u8, bufsize: usize) isize;
 pub extern "c" fn chmod(path: [*:0]const u8, mode: mode_t) c_int;
 pub extern "c" fn fchmod(fd: fd_t, mode: mode_t) c_int;
-pub extern "c" fn fchmodat(fd: fd_t, path: [*:0]const u8, mode: mode_t, flags: c_uint) c_int;
+pub extern "c" fn fchmodat(fd: fd_t, path: [*:0]const u8, mode: mode_t, flags: AT) c_int;
 pub extern "c" fn fchown(fd: fd_t, owner: uid_t, group: gid_t) c_int;
-pub extern "c" fn fchownat(fd: fd_t, path: [*:0]const u8, owner: uid_t, group: gid_t, flags: c_uint) c_int;
+pub extern "c" fn fchownat(fd: fd_t, path: [*:0]const u8, owner: uid_t, group: gid_t, flags: AT) c_int;
 pub extern "c" fn umask(mode: mode_t) mode_t;
 
 pub extern "c" fn rmdir(path: [*:0]const u8) c_int;
@@ -10726,14 +11009,14 @@ pub extern "c" fn fcntl(fd: fd_t, cmd: c_int, ...) c_int;
 pub extern "c" fn uname(buf: *utsname) c_int;
 
 pub extern "c" fn gethostname(name: [*]u8, len: usize) c_int;
-pub extern "c" fn shutdown(socket: fd_t, how: c_int) c_int;
+pub extern "c" fn shutdown(socket: fd_t, how: SHUT) c_int;
 pub extern "c" fn bind(socket: fd_t, address: ?*const sockaddr, address_len: socklen_t) c_int;
 pub extern "c" fn listen(sockfd: fd_t, backlog: c_uint) c_int;
 pub extern "c" fn getsockname(sockfd: fd_t, noalias addr: *sockaddr, noalias addrlen: *socklen_t) c_int;
 pub extern "c" fn getpeername(sockfd: fd_t, noalias addr: *sockaddr, noalias addrlen: *socklen_t) c_int;
 pub extern "c" fn connect(sockfd: fd_t, sock_addr: *const sockaddr, addrlen: socklen_t) c_int;
 pub extern "c" fn accept(sockfd: fd_t, noalias addr: ?*sockaddr, noalias addrlen: ?*socklen_t) c_int;
-pub extern "c" fn accept4(sockfd: fd_t, noalias addr: ?*sockaddr, noalias addrlen: ?*socklen_t, flags: c_uint) c_int;
+pub extern "c" fn accept4(sockfd: fd_t, noalias addr: ?*sockaddr, noalias addrlen: ?*socklen_t, flags: SOCK) c_int;
 pub extern "c" fn getsockopt(sockfd: fd_t, level: i32, optname: u32, noalias optval: ?*anyopaque, noalias optlen: *socklen_t) c_int;
 pub extern "c" fn setsockopt(sockfd: fd_t, level: i32, optname: u32, optval: ?*const anyopaque, optlen: socklen_t) c_int;
 pub extern "c" fn send(sockfd: fd_t, buf: *const anyopaque, len: usize, flags: u32) isize;
@@ -10745,8 +11028,8 @@ pub extern "c" fn sendto(
     dest_addr: ?*const sockaddr,
     addrlen: socklen_t,
 ) isize;
-pub extern "c" fn sendmsg(sockfd: fd_t, msg: *const msghdr_const, flags: u32) isize;
-pub extern "c" fn sendmmsg(sockfd: fd_t, msgvec: [*]mmsghdr, n: c_uint, flags: u32) c_int;
+pub extern "c" fn sendmsg(sockfd: fd_t, msg: *const msghdr_const, flags: MSG) isize;
+pub extern "c" fn sendmmsg(sockfd: fd_t, msgvec: [*]mmsghdr, n: c_uint, flags: MSG) c_int;
 
 pub extern "c" fn recv(
     sockfd: fd_t,
@@ -10794,7 +11077,7 @@ pub extern "c" fn free(?*anyopaque) void;
 pub extern "c" fn futimes(fd: fd_t, times: ?*[2]timeval) c_int;
 pub extern "c" fn utimes(path: [*:0]const u8, times: ?*[2]timeval) c_int;
 
-pub extern "c" fn utimensat(dirfd: fd_t, pathname: [*:0]const u8, times: ?*const [2]timespec, flags: u32) c_int;
+pub extern "c" fn utimensat(dirfd: fd_t, pathname: [*:0]const u8, times: ?*const [2]timespec, flags: AT) c_int;
 pub extern "c" fn futimens(fd: fd_t, times: ?*const [2]timespec) c_int;
 
 pub extern "c" fn pthread_create(
@@ -11470,7 +11753,7 @@ const private = struct {
     extern "c" fn flock(fd: fd_t, operation: c_int) c_int;
     extern "c" fn fork() c_int;
     extern "c" fn fstat(fd: fd_t, buf: *Stat) c_int;
-    extern "c" fn fstatat(dirfd: fd_t, path: [*:0]const u8, buf: *Stat, flag: u32) c_int;
+    extern "c" fn fstatat(dirfd: fd_t, path: [*:0]const u8, buf: *Stat, flag: AT) c_int;
     extern "c" fn getdirentries(fd: fd_t, buf_ptr: [*]u8, nbytes: usize, basep: *i64) isize;
     extern "c" fn getdents(fd: c_int, buf_ptr: [*]u8, nbytes: usize) switch (native_os) {
         .freebsd => isize,
@@ -11483,10 +11766,10 @@ const private = struct {
     extern "c" fn msync(addr: *align(page_size) const anyopaque, len: usize, flags: c_int) c_int;
     extern "c" fn nanosleep(rqtp: *const timespec, rmtp: ?*timespec) c_int;
     extern "c" fn clock_nanosleep(clockid: clockid_t, flags: TIMER, t: *const timespec, remain: ?*timespec) c_int;
-    extern "c" fn pipe2(fds: *[2]fd_t, flags: O) c_int;
+    extern "c" fn pipe2(fds: *[2]fd_t, flags: Pipe2) c_int;
     extern "c" fn readdir(dir: *DIR) ?*dirent;
     extern "c" fn realpath(noalias file_name: [*:0]const u8, noalias resolved_name: [*]u8) ?[*:0]u8;
-    extern "c" fn recvmsg(sockfd: fd_t, msg: *msghdr, flags: u32) isize;
+    extern "c" fn recvmsg(sockfd: fd_t, msg: *msghdr, flags: MSG) isize;
     extern "c" fn sched_yield() c_int;
     extern "c" fn sendfile(out_fd: fd_t, in_fd: fd_t, offset: ?*off_t, count: usize) isize;
     extern "c" fn sigaction(sig: SIG, noalias act: ?*const Sigaction, noalias oact: ?*Sigaction) c_int;
@@ -11496,8 +11779,8 @@ const private = struct {
     extern "c" fn sigemptyset(set: ?*sigset_t) c_int;
     extern "c" fn sigismember(set: ?*const sigset_t, signo: SIG) c_int;
     extern "c" fn sigprocmask(how: c_int, noalias set: ?*const sigset_t, noalias oset: ?*sigset_t) c_int;
-    extern "c" fn socket(domain: c_uint, sock_type: c_uint, protocol: c_uint) c_int;
-    extern "c" fn socketpair(domain: c_uint, sock_type: c_uint, protocol: c_uint, sv: *[2]fd_t) c_int;
+    extern "c" fn socket(domain: sa_family_t, sock_type: SOCK, protocol: IPPROTO) c_int;
+    extern "c" fn socketpair(domain: sa_family_t, sock_type: SOCK, protocol: IPPROTO, sv: *[2]fd_t) c_int;
     extern "c" fn sigaltstack(ss: ?*const stack_t, old_ss: ?*stack_t) c_int;
     extern "c" fn sysconf(sc: c_int) c_long;
     extern "c" fn shm_open(name: [*:0]const u8, flag: c_int, mode: mode_t) c_int;
@@ -11527,7 +11810,7 @@ const private = struct {
     /// x86_64 links to $INODE64 suffix for 64-bit support.
     /// Note these are not necessary on aarch64.
     extern "c" fn @"fstat$INODE64"(fd: fd_t, buf: *Stat) c_int;
-    extern "c" fn @"fstatat$INODE64"(dirfd: fd_t, path: [*:0]const u8, buf: *Stat, flag: u32) c_int;
+    extern "c" fn @"fstatat$INODE64"(dirfd: fd_t, path: [*:0]const u8, buf: *Stat, flag: AT) c_int;
     extern "c" fn @"readdir$INODE64"(dir: *DIR) ?*dirent;
     extern "c" fn @"stat$INODE64"(noalias path: [*:0]const u8, noalias buf: *Stat) c_int;
 

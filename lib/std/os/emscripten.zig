@@ -213,34 +213,6 @@ pub const X_OK = 1;
 pub const W_OK = 2;
 pub const R_OK = 4;
 
-pub const W = struct {
-    pub const NOHANG = 1;
-    pub const UNTRACED = 2;
-    pub const STOPPED = 2;
-    pub const EXITED = 4;
-    pub const CONTINUED = 8;
-    pub const NOWAIT = 0x1000000;
-
-    pub fn EXITSTATUS(s: u32) u8 {
-        return @as(u8, @intCast((s & 0xff00) >> 8));
-    }
-    pub fn TERMSIG(s: u32) SIG {
-        return @enumFromInt(s & 0x7f);
-    }
-    pub fn STOPSIG(s: u32) u32 {
-        return EXITSTATUS(s);
-    }
-    pub fn IFEXITED(s: u32) bool {
-        return (s & 0x7f) == 0;
-    }
-    pub fn IFSTOPPED(s: u32) bool {
-        return @as(u16, @truncate(((s & 0xffff) *% 0x10001) >> 8)) > 0x7f00;
-    }
-    pub fn IFSIGNALED(s: u32) bool {
-        return (s & 0xffff) -% 1 < 0xff;
-    }
-};
-
 pub const Flock = extern struct {
     type: i16,
     whence: i16,
@@ -296,28 +268,32 @@ pub const MSF = struct {
     pub const SYNC = 4;
 };
 
-pub const MSG = struct {
-    pub const OOB = 0x0001;
-    pub const PEEK = 0x0002;
-    pub const DONTROUTE = 0x0004;
-    pub const CTRUNC = 0x0008;
-    pub const PROXY = 0x0010;
-    pub const TRUNC = 0x0020;
-    pub const DONTWAIT = 0x0040;
-    pub const EOR = 0x0080;
-    pub const WAITALL = 0x0100;
-    pub const FIN = 0x0200;
-    pub const SYN = 0x0400;
-    pub const CONFIRM = 0x0800;
-    pub const RST = 0x1000;
-    pub const ERRQUEUE = 0x2000;
-    pub const NOSIGNAL = 0x4000;
-    pub const MORE = 0x8000;
-    pub const WAITFORONE = 0x10000;
-    pub const BATCH = 0x40000;
-    pub const ZEROCOPY = 0x4000000;
-    pub const FASTOPEN = 0x20000000;
-    pub const CMSG_CLOEXEC = 0x40000000;
+pub const MSG = packed struct(u32) {
+    OOB: bool = false,
+    PEEK: bool = false,
+    DONTROUTE: bool = false,
+    CTRUNC: bool = false,
+    PROXY: bool = false,
+    TRUNC: bool = false,
+    DONTWAIT: bool = false,
+    EOR: bool = false,
+    WAITALL: bool = false,
+    FIN: bool = false,
+    SYN: bool = false,
+    CONFIRM: bool = false,
+    RST: bool = false,
+    ERRQUEUE: bool = false,
+    NOSIGNAL: bool = false,
+    MORE: bool = false,
+    WAITFORONE: bool = false,
+    _18: u1 = 0,
+    BATCH: bool = false,
+    _20: u7 = 0,
+    ZEROCOPY: bool = false,
+    _28: u2 = 0,
+    FASTOPEN: bool = false,
+    CMSG_CLOEXEC: bool = false,
+    _: u1 = 0,
 };
 
 pub const POLL = struct {
@@ -474,11 +450,7 @@ pub const SEEK = struct {
     pub const END = 2;
 };
 
-pub const SHUT = struct {
-    pub const RD = 0;
-    pub const WR = 1;
-    pub const RDWR = 2;
-};
+pub const SHUT = linux.SHUT;
 
 pub const SIG = linux.SIG;
 
@@ -555,120 +527,77 @@ pub const sigval = extern union {
 
 pub const SIOCGIFINDEX = 0x8933;
 
-pub const SO = struct {
-    pub const DEBUG = 1;
-    pub const REUSEADDR = 2;
-    pub const TYPE = 3;
-    pub const ERROR = 4;
-    pub const DONTROUTE = 5;
-    pub const BROADCAST = 6;
-    pub const SNDBUF = 7;
-    pub const RCVBUF = 8;
-    pub const KEEPALIVE = 9;
-    pub const OOBINLINE = 10;
-    pub const NO_CHECK = 11;
-    pub const PRIORITY = 12;
-    pub const LINGER = 13;
-    pub const BSDCOMPAT = 14;
-    pub const REUSEPORT = 15;
-    pub const PASSCRED = 16;
-    pub const PEERCRED = 17;
-    pub const RCVLOWAT = 18;
-    pub const SNDLOWAT = 19;
-    pub const RCVTIMEO = 20;
-    pub const SNDTIMEO = 21;
-    pub const ACCEPTCONN = 30;
-    pub const PEERSEC = 31;
-    pub const SNDBUFFORCE = 32;
-    pub const RCVBUFFORCE = 33;
-    pub const PROTOCOL = 38;
-    pub const DOMAIN = 39;
-    pub const SECURITY_AUTHENTICATION = 22;
-    pub const SECURITY_ENCRYPTION_TRANSPORT = 23;
-    pub const SECURITY_ENCRYPTION_NETWORK = 24;
-    pub const BINDTODEVICE = 25;
-    pub const ATTACH_FILTER = 26;
-    pub const DETACH_FILTER = 27;
-    pub const GET_FILTER = ATTACH_FILTER;
-    pub const PEERNAME = 28;
-    pub const TIMESTAMP_OLD = 29;
-    pub const PASSSEC = 34;
-    pub const TIMESTAMPNS_OLD = 35;
-    pub const MARK = 36;
-    pub const TIMESTAMPING_OLD = 37;
-    pub const RXQ_OVFL = 40;
-    pub const WIFI_STATUS = 41;
-    pub const PEEK_OFF = 42;
-    pub const NOFCS = 43;
-    pub const LOCK_FILTER = 44;
-    pub const SELECT_ERR_QUEUE = 45;
-    pub const BUSY_POLL = 46;
-    pub const MAX_PACING_RATE = 47;
-    pub const BPF_EXTENSIONS = 48;
-    pub const INCOMING_CPU = 49;
-    pub const ATTACH_BPF = 50;
-    pub const DETACH_BPF = DETACH_FILTER;
-    pub const ATTACH_REUSEPORT_CBPF = 51;
-    pub const ATTACH_REUSEPORT_EBPF = 52;
-    pub const CNX_ADVICE = 53;
-    pub const MEMINFO = 55;
-    pub const INCOMING_NAPI_ID = 56;
-    pub const COOKIE = 57;
-    pub const PEERGROUPS = 59;
-    pub const ZEROCOPY = 60;
-    pub const TXTIME = 61;
-    pub const BINDTOIFINDEX = 62;
-    pub const TIMESTAMP_NEW = 63;
-    pub const TIMESTAMPNS_NEW = 64;
-    pub const TIMESTAMPING_NEW = 65;
-    pub const RCVTIMEO_NEW = 66;
-    pub const SNDTIMEO_NEW = 67;
-    pub const DETACH_REUSEPORT_BPF = 68;
-};
+pub const SO = enum(u16) {
+    DEBUG = 1,
+    REUSEADDR = 2,
+    TYPE = 3,
+    ERROR = 4,
+    DONTROUTE = 5,
+    BROADCAST = 6,
+    SNDBUF = 7,
+    RCVBUF = 8,
+    KEEPALIVE = 9,
+    OOBINLINE = 10,
+    NO_CHECK = 11,
+    PRIORITY = 12,
+    LINGER = 13,
+    BSDCOMPAT = 14,
+    REUSEPORT = 15,
+    PASSCRED = 16,
+    PEERCRED = 17,
+    RCVLOWAT = 18,
+    SNDLOWAT = 19,
+    RCVTIMEO = 20,
+    SNDTIMEO = 21,
+    ACCEPTCONN = 30,
+    PEERSEC = 31,
+    SNDBUFFORCE = 32,
+    RCVBUFFORCE = 33,
+    PROTOCOL = 38,
+    DOMAIN = 39,
+    SECURITY_AUTHENTICATION = 22,
+    SECURITY_ENCRYPTION_TRANSPORT = 23,
+    SECURITY_ENCRYPTION_NETWORK = 24,
+    BINDTODEVICE = 25,
+    ATTACH_FILTER = 26,
+    DETACH_FILTER = 27,
+    PEERNAME = 28,
+    TIMESTAMP_OLD = 29,
+    PASSSEC = 34,
+    TIMESTAMPNS_OLD = 35,
+    MARK = 36,
+    TIMESTAMPING_OLD = 37,
+    RXQ_OVFL = 40,
+    WIFI_STATUS = 41,
+    PEEK_OFF = 42,
+    NOFCS = 43,
+    LOCK_FILTER = 44,
+    SELECT_ERR_QUEUE = 45,
+    BUSY_POLL = 46,
+    MAX_PACING_RATE = 47,
+    BPF_EXTENSIONS = 48,
+    INCOMING_CPU = 49,
+    ATTACH_BPF = 50,
+    ATTACH_REUSEPORT_CBPF = 51,
+    ATTACH_REUSEPORT_EBPF = 52,
+    CNX_ADVICE = 53,
+    MEMINFO = 55,
+    INCOMING_NAPI_ID = 56,
+    COOKIE = 57,
+    PEERGROUPS = 59,
+    ZEROCOPY = 60,
+    TXTIME = 61,
+    BINDTOIFINDEX = 62,
+    TIMESTAMP_NEW = 63,
+    TIMESTAMPNS_NEW = 64,
+    TIMESTAMPING_NEW = 65,
+    RCVTIMEO_NEW = 66,
+    SNDTIMEO_NEW = 67,
+    DETACH_REUSEPORT_BPF = 68,
+    _,
 
-pub const SOCK = struct {
-    pub const STREAM = 1;
-    pub const DGRAM = 2;
-    pub const RAW = 3;
-    pub const RDM = 4;
-    pub const SEQPACKET = 5;
-    pub const DCCP = 6;
-    pub const PACKET = 10;
-    pub const CLOEXEC = 0o2000000;
-    pub const NONBLOCK = 0o4000;
-};
-
-pub const SOL = struct {
-    pub const SOCKET = 1;
-
-    pub const IP = 0;
-    pub const IPV6 = 41;
-    pub const ICMPV6 = 58;
-
-    pub const RAW = 255;
-    pub const DECNET = 261;
-    pub const X25 = 262;
-    pub const PACKET = 263;
-    pub const ATM = 264;
-    pub const AAL = 265;
-    pub const IRDA = 266;
-    pub const NETBEUI = 267;
-    pub const LLC = 268;
-    pub const DCCP = 269;
-    pub const NETLINK = 270;
-    pub const TIPC = 271;
-    pub const RXRPC = 272;
-    pub const PPPOL2TP = 273;
-    pub const BLUETOOTH = 274;
-    pub const PNPIPE = 275;
-    pub const RDS = 276;
-    pub const IUCV = 277;
-    pub const CAIF = 278;
-    pub const ALG = 279;
-    pub const NFC = 280;
-    pub const KCM = 281;
-    pub const TLS = 282;
-    pub const XDP = 283;
+    pub const GET_FILTER: SO = .ATTACH_FILTER;
+    pub const DETACH_BPF: SO = .DETACH_FILTER;
 };
 
 pub const STDIN_FILENO = 0;

@@ -420,7 +420,7 @@ pub const io_uring_sqe = extern struct {
         fd: linux.fd_t,
         path: [*:0]const u8,
         flags: u32,
-        mask: linux.STATX,
+        mask: linux.Statx.Mask,
         buf: *linux.Statx,
     ) void {
         sqe.prep_rw(.STATX, fd, @intFromPtr(path), @as(u32, @bitCast(mask)), @intFromPtr(buf));

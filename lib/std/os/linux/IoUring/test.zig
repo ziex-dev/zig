@@ -529,17 +529,17 @@ test "sendmsg/recvmsg" {
         .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
     };
 
-    const server = try socket(address_server.family, posix.SOCK.DGRAM, 0);
+    const server = try socket(address_server.family, .{ .type = .DGRAM }, .IP);
     defer _ = linux.close(server);
-    try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEPORT, &mem.toBytes(@as(c_int, 1)));
-    try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
+    try posix.setsockopt(server, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.REUSEPORT), &mem.toBytes(@as(c_int, 1)));
+    try posix.setsockopt(server, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.REUSEADDR), &mem.toBytes(@as(c_int, 1)));
     try bind(server, addrAny(&address_server), @sizeOf(linux.sockaddr.in));
 
     // set address_server to the OS-chosen IP/port.
     var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
     try getsockname(server, addrAny(&address_server), &slen);
 
-    const client = try socket(address_server.family, posix.SOCK.DGRAM, 0);
+    const client = try socket(address_server.family, .{ .type = .DGRAM }, .IP);
     defer _ = linux.close(client);
 
     const buffer_send = [_]u8{42} ** 128;
@@ -553,7 +553,7 @@ test "sendmsg/recvmsg" {
         .iovlen = 1,
         .control = null,
         .controllen = 0,
-        .flags = 0,
+        .flags = .{},
     };
     const sqe_sendmsg = try ring.sendmsg(0x11111111, client, &msg_send, 0);
     sqe_sendmsg.flags |= linux.IOSQE_IO_LINK;
@@ -575,7 +575,7 @@ test "sendmsg/recvmsg" {
         .iovlen = 1,
         .control = null,
         .controllen = 0,
-        .flags = 0,
+        .flags = .{},
     };
     const sqe_recvmsg = try ring.recvmsg(0x22222222, server, &msg_recv, 0);
     try testing.expectEqual(linux.IORING_OP.RECVMSG, sqe_recvmsg.opcode);
@@ -1033,9 +1033,12 @@ test "shutdown" {
 
     // Socket bound, expect shutdown to work
     {
-        const server = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+        const server = try socket(address.family, .{
+            .type = .STREAM,
+            .flags = .{ .CLOEXEC = true },
+        }, .IP);
         defer _ = linux.close(server);
-        try posix.setsockopt(server, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
+        try posix.setsockopt(server, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.REUSEADDR), &mem.toBytes(@as(c_int, 1)));
         try bind(server, addrAny(&address), @sizeOf(linux.sockaddr.in));
         try listen(server, 1);
 
@@ -1043,7 +1046,7 @@ test "shutdown" {
         var slen: posix.socklen_t = @sizeOf(linux.sockaddr.in);
         try getsockname(server, addrAny(&address), &slen);
 
-        const shutdown_sqe = try ring.shutdown(0x445445445, server, linux.SHUT.RD);
+        const shutdown_sqe = try ring.shutdown(0x445445445, server, @intFromEnum(linux.SHUT.RD));
         try testing.expectEqual(linux.IORING_OP.SHUTDOWN, shutdown_sqe.opcode);
         try testing.expectEqual(@as(i32, server), shutdown_sqe.fd);
 
@@ -1066,10 +1069,10 @@ test "shutdown" {
 
     // Socket not bound, expect to fail with ENOTCONN
     {
-        const server = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+        const server = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
         defer _ = linux.close(server);
 
-        const shutdown_sqe = ring.shutdown(0x445445445, server, linux.SHUT.RD) catch |err| switch (err) {
+        const shutdown_sqe = ring.shutdown(0x445445445, server, @intFromEnum(linux.SHUT.RD)) catch |err| switch (err) {
             else => |errno| std.debug.panic("unhandled errno: {}", .{errno}),
         };
         try testing.expectEqual(linux.IORING_OP.SHUTDOWN, shutdown_sqe.opcode);
@@ -1753,7 +1756,7 @@ test "accept multishot" {
     var nr: usize = 4; // number of clients to connect
     while (nr > 0) : (nr -= 1) {
         // connect client
-        const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+        const client = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
         errdefer _ = linux.close(client);
         try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
 
@@ -1864,7 +1867,7 @@ test "accept_direct" {
             try testing.expectEqual(@as(u32, 1), try ring.submit());
 
             // connect
-            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
             try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer _ = linux.close(client);
 
@@ -1898,7 +1901,7 @@ test "accept_direct" {
             _ = try ring.accept_direct(accept_userdata, listener_socket, null, null, 0);
             try testing.expectEqual(@as(u32, 1), try ring.submit());
             // connect
-            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
             try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer _ = linux.close(client);
             // completion with error
@@ -1948,7 +1951,7 @@ test "accept_multishot_direct" {
 
         for (registered_fds) |_| {
             // connect
-            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
             try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer _ = linux.close(client);
 
@@ -1963,7 +1966,7 @@ test "accept_multishot_direct" {
         // Multishot is terminated (more flag is not set).
         {
             // connect
-            const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+            const client = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
             try connect(client, addrAny(&address), @sizeOf(linux.sockaddr.in));
             defer _ = linux.close(client);
             // completion with error
@@ -1989,7 +1992,7 @@ test "socket" {
     defer ring.deinit();
 
     // prepare, submit socket operation
-    _ = try ring.socket(0, linux.AF.INET, posix.SOCK.STREAM, 0, 0);
+    _ = try ring.socket(0, @intFromEnum(linux.AF.INET), @bitCast(posix.SOCK{ .type = .STREAM }), @intFromEnum(linux.IPPROTO.IP), 0);
     try testing.expectEqual(@as(u32, 1), try ring.submit());
 
     // test completion
@@ -2015,14 +2018,14 @@ test "socket_direct/socket_direct_alloc/close_direct" {
     try ring.register_files(registered_fds[0..]);
 
     // create socket in registered file descriptor at index 0 (last param)
-    _ = try ring.socket_direct(0, linux.AF.INET, posix.SOCK.STREAM, 0, 0, 0);
+    _ = try ring.socket_direct(0, @intFromEnum(linux.AF.INET), @bitCast(linux.SOCK{ .type = .STREAM }), @intFromEnum(linux.IPPROTO.IP), 0, 0);
     try testing.expectEqual(@as(u32, 1), try ring.submit());
     var cqe_socket = try ring.copy_cqe();
     try testing.expectEqual(posix.E.SUCCESS, cqe_socket.err());
     try testing.expect(cqe_socket.res == 0);
 
     // create socket in registered file descriptor at index 1 (last param)
-    _ = try ring.socket_direct(0, linux.AF.INET, posix.SOCK.STREAM, 0, 0, 1);
+    _ = try ring.socket_direct(0, @intFromEnum(linux.AF.INET), @bitCast(posix.SOCK{ .type = .STREAM }), @intFromEnum(linux.IPPROTO.IP), 0, 1);
     try testing.expectEqual(@as(u32, 1), try ring.submit());
     cqe_socket = try ring.copy_cqe();
     try testing.expectEqual(posix.E.SUCCESS, cqe_socket.err());
@@ -2030,7 +2033,7 @@ test "socket_direct/socket_direct_alloc/close_direct" {
 
     // create socket in kernel chosen file descriptor index (_alloc version)
     // completion res has index from registered files
-    _ = try ring.socket_direct_alloc(0, linux.AF.INET, posix.SOCK.STREAM, 0, 0);
+    _ = try ring.socket_direct_alloc(0, @intFromEnum(linux.AF.INET), @bitCast(posix.SOCK{ .type = .STREAM }), 0, 0);
     try testing.expectEqual(@as(u32, 1), try ring.submit());
     cqe_socket = try ring.copy_cqe();
     try testing.expectEqual(posix.E.SUCCESS, cqe_socket.err());
@@ -2426,11 +2429,11 @@ test "bind/listen/connect" {
         .port = 0,
         .addr = @bitCast([4]u8{ 127, 0, 0, 1 }),
     };
-    const proto: u32 = if (addr.family == linux.AF.UNIX) 0 else linux.IPPROTO.TCP;
+    const proto: u32 = if (addr.family == .UNIX) 0 else @intFromEnum(linux.IPPROTO.TCP);
 
     const listen_fd = brk: {
         // Create socket
-        _ = try ring.socket(1, addr.family, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, proto, 0);
+        _ = try ring.socket(1, @intFromEnum(addr.family), @bitCast(linux.SOCK{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }), proto, 0);
         try testing.expectEqual(1, try ring.submit());
         var cqe = try ring.copy_cqe();
         try testing.expectEqual(1, cqe.user_data);
@@ -2440,8 +2443,8 @@ test "bind/listen/connect" {
 
         // Prepare: set socket option * 2, bind, listen
         var optval: u32 = 1;
-        (try ring.setsockopt(2, listen_fd, linux.SOL.SOCKET, linux.SO.REUSEADDR, mem.asBytes(&optval))).link_next();
-        (try ring.setsockopt(3, listen_fd, linux.SOL.SOCKET, linux.SO.REUSEPORT, mem.asBytes(&optval))).link_next();
+        (try ring.setsockopt(2, listen_fd, @intFromEnum(linux.SOL.SOCKET), @intFromEnum(linux.SO.REUSEADDR), mem.asBytes(&optval))).link_next();
+        (try ring.setsockopt(3, listen_fd, @intFromEnum(linux.SOL.SOCKET), @intFromEnum(linux.SO.REUSEPORT), mem.asBytes(&optval))).link_next();
         (try ring.bind(4, listen_fd, addrAny(&addr), @sizeOf(linux.sockaddr.in), 0)).link_next();
         _ = try ring.listen(5, listen_fd, 1, 0);
         // Submit 4 operations
@@ -2455,7 +2458,7 @@ test "bind/listen/connect" {
 
         // Check that socket option is set
         optval = 0;
-        _ = try ring.getsockopt(5, listen_fd, linux.SOL.SOCKET, linux.SO.REUSEADDR, mem.asBytes(&optval));
+        _ = try ring.getsockopt(5, listen_fd, @intFromEnum(linux.SOL.SOCKET), @intFromEnum(linux.SO.REUSEADDR), mem.asBytes(&optval));
         try testing.expectEqual(1, try ring.submit());
         cqe = try ring.copy_cqe();
         try testing.expectEqual(5, cqe.user_data);
@@ -2471,7 +2474,7 @@ test "bind/listen/connect" {
 
     const connect_fd = brk: {
         // Create connect socket
-        _ = try ring.socket(6, addr.family, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, proto, 0);
+        _ = try ring.socket(6, @intFromEnum(addr.family), @bitCast(linux.SOCK{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }), proto, 0);
         try testing.expectEqual(1, try ring.submit());
         const cqe = try ring.copy_cqe();
         try testing.expectEqual(6, cqe.user_data);
@@ -2505,7 +2508,7 @@ test "bind/listen/connect" {
 
     // Shutdown and close all sockets
     for ([_]posix.socket_t{ connect_fd, accept_fd, listen_fd }) |fd| {
-        (try ring.shutdown(9, fd, posix.SHUT.RDWR)).link_next();
+        (try ring.shutdown(9, fd, @intFromEnum(linux.SHUT.RDWR))).link_next();
         _ = try ring.close(10, fd);
         try testing.expectEqual(2, try ring.submit());
         for (0..2) |i| {
@@ -2566,8 +2569,8 @@ fn testSendRecv(ring: *IoUring, send_fd: posix.socket_t, recv_fd: posix.socket_t
     var buffer_recv: [buffer_send.len * 2]u8 = undefined;
 
     // 2 sends
-    _ = try ring.send(1, send_fd, buffer_send, linux.MSG.WAITALL);
-    _ = try ring.send(2, send_fd, buffer_send, linux.MSG.WAITALL);
+    _ = try ring.send(1, send_fd, buffer_send, @bitCast(linux.MSG{ .WAITALL = true }));
+    _ = try ring.send(2, send_fd, buffer_send, @bitCast(linux.MSG{ .WAITALL = true }));
     try testing.expectEqual(2, try ring.submit());
     for (0..2) |i| {
         const cqe = try ring.copy_cqe();
@@ -2619,7 +2622,7 @@ pub fn createSocketTestHarness(ring: *IoUring) !SocketTestHarness {
     _ = try ring.accept(0xaaaaaaaa, listener_socket, &accept_addr, &accept_addr_len, 0);
 
     // Create a TCP client socket
-    const client = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    const client = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
     errdefer _ = linux.close(client);
     _ = try ring.connect(0xcccccccc, client, addrAny(&address), @sizeOf(linux.sockaddr.in));
 
@@ -2659,10 +2662,10 @@ pub fn createSocketTestHarness(ring: *IoUring) !SocketTestHarness {
 
 fn createListenerSocket(address: *linux.sockaddr.in) !posix.socket_t {
     const kernel_backlog = 1;
-    const listener_socket = try socket(address.family, posix.SOCK.STREAM | posix.SOCK.CLOEXEC, 0);
+    const listener_socket = try socket(address.family, .{ .type = .STREAM, .flags = .{ .CLOEXEC = true } }, .IP);
     errdefer _ = linux.close(listener_socket);
 
-    try posix.setsockopt(listener_socket, posix.SOL.SOCKET, posix.SO.REUSEADDR, &mem.toBytes(@as(c_int, 1)));
+    try posix.setsockopt(listener_socket, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.REUSEADDR), &mem.toBytes(@as(c_int, 1)));
     try bind(listener_socket, addrAny(address), @sizeOf(linux.sockaddr.in));
     try listen(listener_socket, kernel_backlog);
 
@@ -2682,14 +2685,26 @@ inline fn skipKernelLessThan(required: std.SemanticVersion) !void {
         else => |errno| return posix.unexpectedErrno(errno),
     }
 
-    const release = mem.sliceTo(&uts.release, 0);
-    // Strips potential extra, as kernel version might not be semver compliant, example "6.8.9-300.fc40.x86_64"
-    const extra_index = std.mem.indexOfAny(u8, release, "-+");
-    const stripped = release[0..(extra_index orelse release.len)];
+    const release = mem.sliceTo(uts.release[0..], 0x0);
     // Make sure the input don't rely on the extra we just stripped
     try testing.expect(required.pre == null and required.build == null);
+    const stripped = blk: {
+        // Strips potential extra, as kernel version might not be semver
+        // compliant, example "6.8.9-300.fc40.x86_64"
+        const extra_index = mem.findAny(u8, release, "-+");
+        const stripped = release[0..(extra_index orelse release.len)];
 
-    var current = try std.SemanticVersion.parse(stripped);
+        // wsl kernel isn't semver compliant
+        // .ie 6.6.87.2-microsoft-standard-WSL2 strip the extra .2 after 87
+        const wsl = "WSL2";
+        if (mem.eql(u8, release[release.len - wsl.len ..][0..wsl.len], wsl)) {
+            const wsl_stripped, _ = mem.cutScalarLast(u8, stripped, '.') orelse unreachable;
+            break :blk wsl_stripped;
+        }
+        break :blk stripped;
+    };
+
+    var current: std.SemanticVersion = try .parse(stripped);
     current.pre = null; // don't check pre field
     if (required.order(current) == .gt) return error.SkipZigTest;
 }
@@ -2698,7 +2713,7 @@ fn addrAny(addr: *linux.sockaddr.in) *linux.sockaddr {
     return @ptrCast(addr);
 }
 
-fn socket(domain: u32, socket_type: u32, protocol: u32) !posix.socket_t {
+fn socket(domain: linux.sa_family_t, socket_type: linux.SOCK, protocol: linux.IPPROTO) !posix.socket_t {
     const rc = posix.system.socket(domain, socket_type, protocol);
     switch (posix.errno(rc)) {
         .SUCCESS => return @intCast(rc),

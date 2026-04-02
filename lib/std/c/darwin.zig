@@ -1573,43 +1573,46 @@ pub const TCP = struct {
     pub const CONNECTION_INFO = 0x106;
 };
 
-pub const MSG = struct {
+pub const MSG = packed struct(u32) {
     /// process out-of-band data
-    pub const OOB = 0x1;
+    OOB: bool = false,
     /// peek at incoming message
-    pub const PEEK = 0x2;
+    PEEK: bool = false,
     /// send without using routing tables
-    pub const DONTROUTE = 0x4;
+    DONTROUTE: bool = false,
     /// data completes record
-    pub const EOR = 0x8;
+    EOR: bool = false,
     /// data discarded before delivery
-    pub const TRUNC = 0x10;
+    TRUNC: bool = false,
     /// control data lost before delivery
-    pub const CTRUNC = 0x20;
+    CTRUNC: bool = false,
     /// wait for full request or error
-    pub const WAITALL = 0x40;
+    WAITALL: bool = false,
     /// this message should be nonblocking
-    pub const DONTWAIT = 0x80;
+    DONTWAIT: bool = false,
     /// data completes connection
-    pub const EOF = 0x100;
+    EOF: bool = false,
     /// wait up to full request, may return partial
-    pub const WAITSTREAM = 0x200;
+    WAITSTREAM: bool = false,
     /// Start of 'hold' seq; dump so_temp, deprecated
-    pub const FLUSH = 0x400;
+    FLUSH: bool = false,
     /// Hold frag in so_temp, deprecated
-    pub const HOLD = 0x800;
+    HOLD: bool = false,
     /// Send the packet in so_temp, deprecated
-    pub const SEND = 0x1000;
+    SEND: bool = false,
     /// Data ready to be read
-    pub const HAVEMORE = 0x2000;
+    HAVEMORE: bool = false,
     /// Data remains in current pkt
-    pub const RCVMORE = 0x4000;
+    RCVMORE: bool = false,
+    _16: u1 = 0,
     /// Fail receive if socket address cannot be allocated
-    pub const NEEDSA = 0x10000;
+    NEEDSA: bool = false,
+    _18: u2 = 0,
     /// do not generate SIGPIPE on EOF
-    pub const NOSIGNAL = 0x80000;
+    NOSIGNAL: bool = false,
+    _21: u11 = 0,
     /// Inherit upcall in sock_accept
-    pub const USEUPCALL = 0x80000000;
+    USEUPCALL: bool = false,
 };
 
 // https://github.com/apple/darwin-xnu/blob/2ff845c2e033bd0ff64b5b6aa6063a1f8f65aa32/bsd/netinet/in.h#L454

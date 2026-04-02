@@ -285,6 +285,7 @@ pub fn open(path: [*:0]const u8, flags: u32) usize {
     return syscall_bits.syscall2(.OPEN, @intFromPtr(path), @bitCast(@as(isize, flags)));
 }
 
+// FIXME: flags
 pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, _: mode_t) usize {
     // we skip perms because only create supports perms
     if (dirfd == AT.FDCWD) { // openat(AT_FDCWD, ...) == open(...)
@@ -294,7 +295,7 @@ pub fn openat(dirfd: i32, path: [*:0]const u8, flags: u32, _: mode_t) usize {
     var total_path_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
     const rc = fd2path(dirfd, &dir_path_buf, std.fs.max_path_bytes);
     if (rc != 0) return rc;
-    var fba = std.heap.FixedBufferAllocator.init(&total_path_buf);
+    var fba: std.heap.FixedBufferAllocator = .init(&total_path_buf);
     var alloc = fba.allocator();
     const dir_path = std.mem.span(@as([*:0]u8, @ptrCast(&dir_path_buf)));
     const total_path = std.fs.path.join(alloc, &.{ dir_path, std.mem.span(path) }) catch unreachable; // the allocation shouldn't fail because it should not exceed max_path_bytes

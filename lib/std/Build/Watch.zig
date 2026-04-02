@@ -125,7 +125,7 @@ const Os = switch (builtin.os.tag) {
             }) catch return error.NameTooLong;
             const stack_ptr: *std.os.linux.file_handle = @ptrCast(&file_handle_buffer);
             stack_ptr.handle_bytes = file_handle_buffer.len - @sizeOf(std.os.linux.file_handle);
-            try posix.name_to_handle_at(path.root_dir.handle.handle, adjusted_path, stack_ptr, mount_id, std.os.linux.AT.HANDLE_FID);
+            try posix.name_to_handle_at(path.root_dir.handle.handle, adjusted_path, stack_ptr, mount_id, .HANDLE_FID);
             const stack_lfh: FileHandle = .{ .handle = stack_ptr };
             return stack_lfh.clone(gpa);
         }

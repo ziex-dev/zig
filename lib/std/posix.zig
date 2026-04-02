@@ -106,6 +106,7 @@ pub const MSG = system.MSG;
 pub const NAME_MAX = system.NAME_MAX;
 pub const NSIG = system.NSIG;
 pub const O = system.O;
+pub const Pipe2 = system.Pipe2;
 pub const PATH_MAX = system.PATH_MAX;
 pub const POLL = system.POLL;
 pub const POSIX_FADV = system.POSIX_FADV;
@@ -1631,7 +1632,7 @@ pub fn name_to_handle_at(
     pathname: []const u8,
     handle: *std.os.linux.file_handle,
     mount_id: *i32,
-    flags: u32,
+    flags: AT,
 ) NameToFileHandleAtError!void {
     const pathname_c = try toPosixPath(pathname);
     return name_to_handle_atZ(dirfd, &pathname_c, handle, mount_id, flags);
@@ -1642,7 +1643,7 @@ pub fn name_to_handle_atZ(
     pathname_z: [*:0]const u8,
     handle: *std.os.linux.file_handle,
     mount_id: *i32,
-    flags: u32,
+    flags: AT,
 ) NameToFileHandleAtError!void {
     switch (errno(system.name_to_handle_at(dirfd, pathname_z, handle, mount_id, flags))) {
         .SUCCESS => {},

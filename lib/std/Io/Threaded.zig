@@ -984,7 +984,7 @@ const Thread = struct {
                     break :ts &ts_buffer;
                 } else null;
                 const syscall: Syscall = if (uncancelable) .{ .thread = null } else try .start();
-                const rc = linux.futex_4arg(ptr, .{ .cmd = .WAIT, .private = true }, expect, ts);
+                const rc = linux.futex_4arg(@ptrCast(ptr), .{ .cmd = .WAIT, .private = true }, expect, ts);
                 syscall.finish();
                 switch (linux.errno(rc)) {
                     .SUCCESS => {}, // notified by `wake()`
@@ -1126,7 +1126,7 @@ const Thread = struct {
             .linux => {
                 const linux = std.os.linux;
                 switch (linux.errno(linux.futex_3arg(
-                    ptr,
+                    @ptrCast(ptr),
                     .{ .cmd = .WAKE, .private = true },
                     @min(max_waiters, std.math.maxInt(i32)),
                 ))) {
@@ -3616,8 +3616,10 @@ fn dirStatFileLinux(
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    const flags: u32 = linux.AT.NO_AUTOMOUNT |
-        @as(u32, if (!options.follow_symlinks) linux.AT.SYMLINK_NOFOLLOW else 0);
+    const flags: linux.AT = .{
+        .NO_AUTOMOUNT = true,
+        .SYMLINK_NOFOLLOW = if (!options.follow_symlinks) true else false,
+    };
 
     const syscall: Syscall = try .start();
     while (true) {
@@ -3772,7 +3774,7 @@ fn filePathKind(t: *Threaded, dir: Dir, sub_path: []const u8) !File.Kind {
             switch (linux.errno(linux.statx(
                 dir.handle,
                 sub_path_posix,
-                linux.AT.NO_AUTOMOUNT | linux.AT.SYMLINK_NOFOLLOW,
+                .{ .NO_AUTOMOUNT = true, .SYMLINK_NOFOLLOW = true },
                 .{ .TYPE = true },
                 &statx,
             ))) {
@@ -3804,7 +3806,13 @@ fn fileLength(userdata: ?*anyopaque, file: File) File.LengthError!u64 {
         const syscall: Syscall = try .start();
         while (true) {
             var statx = std.mem.zeroes(linux.Statx);
-            switch (linux.errno(linux.statx(file.handle, "", linux.AT.EMPTY_PATH, .{ .SIZE = true }, &statx))) {
+            switch (linux.errno(linux.statx(
+                file.handle,
+                "",
+                .{ .EMPTY_PATH = true },
+                .{ .SIZE = true },
+                &statx,
+            ))) {
                 .SUCCESS => {
                     syscall.finish();
                     if (!statx.mask.SIZE) return error.Unexpected;
@@ -3882,12 +3890,18 @@ fn fileStatLinux(userdata: ?*anyopaque, file: File) File.StatError!File.Stat {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
     const linux = std.os.linux;
-    const sys = if (statx_use_c) std.c else std.os.linux;
+    const sys = if (statx_use_c) std.c else linux;
 
     const syscall: Syscall = try .start();
     while (true) {
         var statx = std.mem.zeroes(linux.Statx);
-        switch (sys.errno(sys.statx(file.handle, "", linux.AT.EMPTY_PATH, linux_statx_request, &statx))) {
+        switch (sys.errno(sys.statx(
+            file.handle,
+            "",
+            .{ .EMPTY_PATH = true },
+            linux_statx_request,
+            &statx,
+        ))) {
             .SUCCESS => {
                 syscall.finish();
                 return statFromLinux(&statx);
@@ -4059,7 +4073,9 @@ fn dirAccessPosix(
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    const flags: u32 = @as(u32, if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0);
+    const flags: posix.AT = .{
+        .SYMLINK_NOFOLLOW = if (!options.follow_symlinks) true else false,
+    };
 
     const mode: u32 =
         @as(u32, if (options.read) posix.R_OK else 0) |
@@ -6906,10 +6922,10 @@ fn fileHardLink(
     var new_path_buffer: [posix.PATH_MAX]u8 = undefined;
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (options.follow_symlinks)
-        posix.AT.SYMLINK_FOLLOW | posix.AT.EMPTY_PATH
+    const flags: posix.AT = if (options.follow_symlinks)
+        .{ .SYMLINK_FOLLOW = true, .EMPTY_PATH = true }
     else
-        posix.AT.EMPTY_PATH;
+        .{ .EMPTY_PATH = true };
 
     return linkat(file.handle, "", new_dir.handle, new_sub_path_posix, flags) catch |err| switch (err) {
         error.FileNotFound => {
@@ -6917,7 +6933,13 @@ fn fileHardLink(
             var proc_buf: ["/proc/self/fd/-2147483648\x00".len]u8 = undefined;
             const proc_path = std.fmt.bufPrintSentinel(&proc_buf, "/proc/self/fd/{d}", .{file.handle}, 0) catch
                 unreachable;
-            return linkat(posix.AT.FDCWD, proc_path, new_dir.handle, new_sub_path_posix, posix.AT.SYMLINK_FOLLOW);
+            return linkat(
+                posix.AT.FDCWD,
+                proc_path,
+                new_dir.handle,
+                new_sub_path_posix,
+                .{ .SYMLINK_FOLLOW = true },
+            );
         },
         else => |e| return e,
     };
@@ -6928,11 +6950,17 @@ fn linkat(
     old_path: [*:0]const u8,
     new_dir: posix.fd_t,
     new_path: [*:0]const u8,
-    flags: u32,
+    flags: posix.AT,
 ) File.HardLinkError!void {
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.linkat(old_dir, old_path, new_dir, new_path, flags))) {
+        switch (posix.errno(posix.system.linkat(
+            old_dir,
+            old_path,
+            new_dir,
+            new_path,
+            flags,
+        ))) {
             .SUCCESS => return syscall.finish(),
             .INTR => {
                 try syscall.checkCancel();
@@ -7024,7 +7052,11 @@ fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir
 
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.unlinkat(dir.handle, sub_path_posix, 0))) {
+        switch (posix.errno(posix.system.unlinkat(
+            dir.handle,
+            sub_path_posix,
+            .{},
+        ))) {
             .SUCCESS => {
                 syscall.finish();
                 return;
@@ -7297,7 +7329,11 @@ fn dirDeleteDirPosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir.
 
     const syscall: Syscall = try .start();
     while (true) {
-        switch (posix.errno(posix.system.unlinkat(dir.handle, sub_path_posix, posix.AT.REMOVEDIR))) {
+        switch (posix.errno(posix.system.unlinkat(
+            dir.handle,
+            sub_path_posix,
+            .{ .REMOVEDIR = true },
+        ))) {
             .SUCCESS => {
                 syscall.finish();
                 return;
@@ -8198,7 +8234,9 @@ fn dirSetFilePermissions(
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
     const mode = permissions.toMode();
-    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+    const flags: posix.AT = .{
+        .SYMLINK_NOFOLLOW = if (!options.follow_symlinks) true else false,
+    };
 
     return posixFchmodat(t, dir.handle, sub_path_posix, mode, flags);
 }
@@ -8208,11 +8246,11 @@ fn posixFchmodat(
     dir_fd: posix.fd_t,
     path: [*:0]const u8,
     mode: posix.mode_t,
-    flags: u32,
+    flags: posix.AT,
 ) Dir.SetFilePermissionsError!void {
     // No special handling for linux is needed if we can use the libc fallback
     // or `flags` is empty. Glibc only added the fallback in 2.32.
-    if (have_fchmodat_flags or flags == 0) {
+    if (have_fchmodat_flags or flags == posix.AT{}) {
         const syscall: Syscall = try .start();
         while (true) {
             const rc = if (have_fchmodat_flags or builtin.link_libc)
@@ -8345,7 +8383,13 @@ fn fchmodatFallback(
         const syscall: Syscall = try .start();
         while (true) {
             var statx = std.mem.zeroes(std.os.linux.Statx);
-            switch (sys.errno(sys.statx(path_fd, "", posix.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
+            switch (sys.errno(sys.statx(
+                path_fd,
+                "",
+                .{ .EMPTY_PATH = true },
+                .{ .TYPE = true },
+                &statx,
+            ))) {
                 .SUCCESS => {
                     syscall.finish();
                     if (!statx.mask.TYPE) return error.Unexpected;
@@ -8999,13 +9043,20 @@ fn dirSetTimestamps(
         break :p &times_buffer;
     };
 
-    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+    const flags: posix.AT = .{
+        .SYMLINK_NOFOLLOW = if (!options.follow_symlinks) true else false,
+    };
 
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
     const syscall: Syscall = try .start();
-    while (true) switch (posix.errno(posix.system.utimensat(dir.handle, sub_path_posix, times, flags))) {
+    while (true) switch (posix.errno(posix.system.utimensat(
+        dir.handle,
+        sub_path_posix,
+        times,
+        flags,
+    ))) {
         .SUCCESS => return syscall.finish(),
         .INTR => {
             try syscall.checkCancel();
@@ -9560,7 +9611,9 @@ fn dirHardLink(
     const old_sub_path_posix = try pathToPosix(old_sub_path, &old_path_buffer);
     const new_sub_path_posix = try pathToPosix(new_sub_path, &new_path_buffer);
 
-    const flags: u32 = if (options.follow_symlinks) posix.AT.SYMLINK_FOLLOW else 0;
+    const flags: posix.AT = .{
+        .SYMLINK_FOLLOW = if (options.follow_symlinks) true else false,
+    };
     return linkat(old_dir.handle, old_sub_path_posix, new_dir.handle, new_sub_path_posix, flags);
 }
 
@@ -11681,9 +11734,9 @@ fn netListenIpPosix(
     errdefer closeFd(socket_fd);
 
     if (options.reuse_address) {
-        try setSocketOptionPosix(socket_fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, 1);
-        if (@hasDecl(posix.SO, "REUSEPORT"))
-            try setSocketOptionPosix(socket_fd, posix.SOL.SOCKET, posix.SO.REUSEPORT, 1);
+        try setSocketOptionPosix(socket_fd, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.REUSEADDR), 1);
+        if (@hasField(posix.SO, "REUSEPORT"))
+            try setSocketOptionPosix(socket_fd, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.REUSEPORT), 1);
     }
 
     var storage: PosixAddress = undefined;
@@ -12015,8 +12068,8 @@ fn posixGetSockName(
     }
 }
 
-fn setSocketOptionPosix(fd: posix.fd_t, level: i32, opt_name: u32, option: u32) !void {
-    const o: []const u8 = @ptrCast(&option);
+fn setSocketOptionPosix(fd: posix.fd_t, level: i32, opt_name: u32, opt_val: u32) !void {
+    const o: []const u8 = @ptrCast(&opt_val);
     const syscall: Syscall = try .start();
     while (true) {
         switch (posix.errno(posix.system.setsockopt(fd, level, opt_name, o.ptr, @intCast(o.len)))) {
@@ -12200,7 +12253,7 @@ fn netBindIpPosix(
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
     try posixBind(socket_fd, &storage.any, addr_len);
-    if (options.allow_broadcast) try setSocketOptionPosix(socket_fd, std.posix.SOL.SOCKET, std.posix.SO.BROADCAST, 1);
+    if (options.allow_broadcast) try setSocketOptionPosix(socket_fd, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.BROADCAST), 1);
     try posixGetSockName(socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = addressFromPosix(&storage) };
 }
@@ -12237,7 +12290,10 @@ fn openSocketPosix(
     Canceled,
 }!posix.socket_t {
     const mode, const protocol = try posixSocketModeProtocol(family, options.mode, options.protocol);
-    const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
+    const flags: posix.SOCK = .{
+        .type = mode,
+        .flags = if (socket_flags_unsupported) .{} else .{ .CLOEXEC = true },
+    };
     const syscall: Syscall = try .start();
     const socket_fd = while (true) {
         const rc = posix.system.socket(family, flags, protocol);
@@ -12268,7 +12324,7 @@ fn openSocketPosix(
 
     if (options.ip6_only) {
         if (posix.IPV6 == void) return error.OptionUnsupported;
-        try setSocketOptionPosix(socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 0);
+        try setSocketOptionPosix(socket_fd, @intFromEnum(posix.IPPROTO.IPV6), posix.IPV6.V6ONLY, 0);
     }
 
     return socket_fd;
@@ -12297,11 +12353,14 @@ fn netSocketCreatePair(
     if (native_os == .haiku) @panic("TODO");
 
     const family: posix.sa_family_t = switch (options.family) {
-        .ip4 => posix.AF.INET,
-        .ip6 => posix.AF.INET6,
+        .ip4 => .INET,
+        .ip6 => .INET6,
     };
     const mode, const protocol = try posixSocketModeProtocol(family, options.mode, options.protocol);
-    const flags: u32 = mode | if (socket_flags_unsupported) 0 else posix.SOCK.CLOEXEC;
+    const flags: posix.SOCK = .{
+        .type = mode,
+        .flags = if (socket_flags_unsupported) .{} else .{ .CLOEXEC = true },
+    };
 
     var sockets: [2]posix.socket_t = undefined;
     const syscall: Syscall = try .start();
@@ -12443,7 +12502,12 @@ fn netAcceptPosix(userdata: ?*anyopaque, listen_fd: net.Socket.Handle, options: 
     const syscall: Syscall = try .start();
     const fd = while (true) {
         const rc = if (have_accept4)
-            posix.system.accept4(listen_fd, &storage.any, &addr_len, posix.SOCK.CLOEXEC)
+            posix.system.accept4(
+                listen_fd,
+                &storage.any,
+                &addr_len,
+                .{ .flags = .{ .CLOEXEC = true } },
+            )
         else
             posix.system.accept(listen_fd, &storage.any, &addr_len);
         switch (posix.errno(rc)) {
@@ -12668,13 +12732,15 @@ fn netSendPosix(
     if (!have_networking) return .{ error.NetworkDown, 0 };
     const t: *Threaded = @ptrCast(@alignCast(userdata));
 
-    const posix_flags: u32 =
-        @as(u32, if (@hasDecl(posix.MSG, "CONFIRM") and flags.confirm) posix.MSG.CONFIRM else 0) |
-        @as(u32, if (@hasDecl(posix.MSG, "DONTROUTE") and flags.dont_route) posix.MSG.DONTROUTE else 0) |
-        @as(u32, if (@hasDecl(posix.MSG, "EOR") and flags.eor) posix.MSG.EOR else 0) |
-        @as(u32, if (@hasDecl(posix.MSG, "OOB") and flags.oob) posix.MSG.OOB else 0) |
-        @as(u32, if (@hasDecl(posix.MSG, "FASTOPEN") and flags.fastopen) posix.MSG.FASTOPEN else 0) |
-        posix.MSG.NOSIGNAL;
+    const posix_flags: posix.MSG = blk: {
+        var msg: posix.MSG = .{ .NOSIGNAL = true };
+        if (@hasField(posix.MSG, "CONFIRM") and flags.confirm) msg.CONFIRM = true;
+        if (@hasField(posix.MSG, "DONTROUTE") and flags.dont_route) msg.DONTROUTE = true;
+        if (@hasField(posix.MSG, "EOR") and flags.eor) msg.EOR = true;
+        if (@hasField(posix.MSG, "OOB") and flags.oob) msg.OOB = true;
+        if (@hasField(posix.MSG, "FASTOPEN") and flags.fastopen) msg.FASTOPEN = true;
+        break :blk msg;
+    };
 
     var i: usize = 0;
     while (messages.len - i != 0) {
@@ -12746,7 +12812,7 @@ fn netSendOnePosix(
     t: *Threaded,
     socket_handle: net.Socket.Handle,
     message: *net.OutgoingMessage,
-    flags: u32,
+    flags: posix.MSG,
 ) net.Socket.SendError!void {
     _ = t;
     var addr: PosixAddress = undefined;
@@ -12801,7 +12867,7 @@ fn netSendOnePosix(
 fn netSendManyPosix(
     socket_handle: net.Socket.Handle,
     messages: []net.OutgoingMessage,
-    flags: u32,
+    flags: posix.MSG,
 ) net.Socket.SendError!usize {
     var msg_buffer: [64]posix.system.mmsghdr = undefined;
     var addr_buffer: [msg_buffer.len]PosixAddress = undefined;
@@ -12822,7 +12888,7 @@ fn netSendManyPosix(
                 .iovlen = 1,
                 .control = @constCast(message.control.ptr),
                 .controllen = message.control.len,
-                .flags = 0,
+                .flags = .{},
             },
             .len = undefined, // Populated by calling sendmmsg below.
         };
@@ -12884,12 +12950,14 @@ fn netReceivePosix(
     //   buffer to handle all the messages. The better API cannot be lowered to
     //   the split vectors though because reducing the buffer size might make
     //   some messages unreceivable.
-    const posix_flags: u32 =
-        @as(u32, if (flags.oob) posix.MSG.OOB else 0) |
-        @as(u32, if (flags.peek) posix.MSG.PEEK else 0) |
-        @as(u32, if (flags.trunc) posix.MSG.TRUNC else 0) |
-        posix.MSG.NOSIGNAL |
-        @as(u32, if (nonblocking) posix.MSG.DONTWAIT else 0);
+    const posix_flags: posix.MSG = blk: {
+        var msg: posix.MSG = .{ .NOSIGNAL = true };
+        if (flags.oob) msg.OOB = true;
+        if (flags.peek) msg.PEEK = true;
+        if (flags.trunc) msg.TRUNC = true;
+        if (nonblocking) msg.DONTWAIT = true;
+        break :blk msg;
+    };
 
     var storage: PosixAddress = undefined;
     var iov: posix.iovec = .{ .base = data_buffer.ptr, .len = data_buffer.len };
@@ -12900,7 +12968,7 @@ fn netReceivePosix(
         .iovlen = 1,
         .control = message.control.ptr,
         .controllen = @intCast(message.control.len),
-        .flags = undefined,
+        .flags = .{},
     };
 
     const syscall = try Syscall.start();
@@ -12915,11 +12983,11 @@ fn netReceivePosix(
                     .data = data,
                     .control = if (msg.control) |ptr| @as([*]u8, @ptrCast(ptr))[0..msg.controllen] else message.control,
                     .flags = .{
-                        .eor = (msg.flags & posix.MSG.EOR) != 0,
-                        .trunc = (msg.flags & posix.MSG.TRUNC) != 0,
-                        .ctrunc = (msg.flags & posix.MSG.CTRUNC) != 0,
-                        .oob = (msg.flags & posix.MSG.OOB) != 0,
-                        .errqueue = if (@hasDecl(posix.MSG, "ERRQUEUE")) (msg.flags & posix.MSG.ERRQUEUE) != 0 else false,
+                        .eor = msg.flags.EOR,
+                        .trunc = msg.flags.TRUNC,
+                        .ctrunc = msg.flags.CTRUNC,
+                        .oob = msg.flags.OOB,
+                        .errqueue = if (@hasField(posix.MSG, "ERRQUEUE")) msg.flags.ERRQUEUE else false,
                     },
                 };
                 return;
@@ -13033,7 +13101,7 @@ fn netWritePosix(
         .iovlen = 0,
         .control = null,
         .controllen = 0,
-        .flags = 0,
+        .flags = .{},
     };
     addBuf(&iovecs, &msg.iovlen, header);
     for (data[0 .. data.len - 1]) |bytes| addBuf(&iovecs, &msg.iovlen, bytes);
@@ -13064,7 +13132,7 @@ fn netWritePosix(
             },
         },
     };
-    const flags = posix.MSG.NOSIGNAL;
+    const flags: posix.MSG = .{ .NOSIGNAL = true };
 
     const syscall: Syscall = try .start();
     while (true) {
@@ -13222,10 +13290,10 @@ fn netShutdownPosix(userdata: ?*anyopaque, handle: net.Socket.Handle, how: net.S
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     _ = t;
 
-    const posix_how: i32 = switch (how) {
-        .recv => posix.SHUT.RD,
-        .send => posix.SHUT.WR,
-        .both => posix.SHUT.RDWR,
+    const posix_how: posix.SHUT = switch (how) {
+        .recv => .RD,
+        .send => .WR,
+        .both => .RDWR,
     };
 
     const syscall: Syscall = try .start();
@@ -13966,15 +14034,15 @@ const UnixAddress = extern union {
 
 pub fn posixAddressFamily(a: *const IpAddress) posix.sa_family_t {
     return switch (a.*) {
-        .ip4 => posix.AF.INET,
-        .ip6 => posix.AF.INET6,
+        .ip4 => .INET,
+        .ip6 => .INET6,
     };
 }
 
 pub fn addressFromPosix(posix_address: *const PosixAddress) IpAddress {
     return switch (posix_address.any.family) {
-        posix.AF.INET => .{ .ip4 = address4FromPosix(&posix_address.in) },
-        posix.AF.INET6 => .{ .ip6 = address6FromPosix(&posix_address.in6) },
+        .INET => .{ .ip4 = address4FromPosix(&posix_address.in) },
+        .INET6 => .{ .ip6 = address6FromPosix(&posix_address.in6) },
         else => .{ .ip4 = .loopback(0) },
     };
 }
@@ -13993,7 +14061,7 @@ pub fn addressToPosix(a: *const IpAddress, storage: *PosixAddress) posix.socklen
 }
 
 fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.socklen_t {
-    storage.un.family = posix.AF.UNIX;
+    storage.un.family = .UNIX;
     var path_len = switch (native_os) {
         .windows => @min(a.path.len, storage.un.path.len),
         else => a.path.len,
@@ -14052,27 +14120,27 @@ pub fn errnoBug(err: posix.E) Io.UnexpectedError {
     return error.Unexpected;
 }
 
-pub fn posixSocketModeProtocol(family: posix.sa_family_t, mode: net.Socket.Mode, protocol: ?net.Protocol) !struct { u32, u32 } {
+pub fn posixSocketModeProtocol(family: posix.sa_family_t, mode: net.Socket.Mode, protocol: ?net.Protocol) !struct { posix.SOCK.TYPE, posix.IPPROTO } {
     return .{
         switch (mode) {
-            .stream => posix.SOCK.STREAM,
-            .dgram => posix.SOCK.DGRAM,
-            .seqpacket => posix.SOCK.SEQPACKET,
-            .raw => posix.SOCK.RAW,
-            .rdm => posix.SOCK.RDM,
+            .stream => .STREAM,
+            .dgram => .DGRAM,
+            .seqpacket => .SEQPACKET,
+            .raw => .RAW,
+            .rdm => .RDM,
         },
-        if (protocol) |p| @intFromEnum(p) else if (is_windows) switch (family) {
-            posix.AF.UNIX => switch (mode) {
-                .stream => 0,
+        if (protocol) |p| @enumFromInt(@intFromEnum(p)) else if (is_windows) switch (family) {
+            .UNIX => switch (mode) {
+                .stream => .IP,
                 else => return error.ProtocolUnsupportedByAddressFamily,
             },
-            posix.AF.INET, posix.AF.INET6 => @intFromEnum(@as(net.Protocol, switch (mode) {
-                .stream => .tcp,
-                .dgram => .udp,
+            .INET, .INET6 => switch (mode) {
+                .stream => .TCP,
+                .dgram => .UDP,
                 else => return error.ProtocolUnsupportedByAddressFamily,
-            })),
+            },
             else => return error.ProtocolUnsupportedByAddressFamily,
-        } else 0,
+        } else .IP,
     };
 }
 
@@ -14114,7 +14182,7 @@ fn clockToWasi(clock: Io.Clock) std.os.wasi.clockid_t {
     };
 }
 
-pub const linux_statx_request: std.os.linux.STATX = .{
+pub const linux_statx_request: std.os.linux.Statx.Mask = .{
     .TYPE = true,
     .MODE = true,
     .ATIME = true,
@@ -14126,7 +14194,7 @@ pub const linux_statx_request: std.os.linux.STATX = .{
     .BLOCKS = true,
 };
 
-pub const linux_statx_check: std.os.linux.STATX = .{
+pub const linux_statx_check: std.os.linux.Statx.Mask = .{
     .TYPE = true,
     .MODE = true,
     .ATIME = false,
@@ -14875,7 +14943,7 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     // need to do something in the new child to make sure we preserve the reference
     // we want. We could use `fcntl` to remove CLOEXEC from the FD, but as it
     // turns out, we `dup2` everything anyway, so there's no need!
-    const pipe_flags: posix.O = .{ .CLOEXEC = true };
+    const pipe_flags: posix.Pipe2 = .{ .CLOEXEC = true };
 
     const stdin_pipe = if (options.stdin == .pipe) try pipe2(pipe_flags) else undefined;
     errdefer if (options.stdin == .pipe) {
@@ -14906,7 +14974,7 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     } else .{ -1, -1 };
     errdefer destroyPipe(prog_pipe);
 
-    var arena_allocator = std.heap.ArenaAllocator.init(t.allocator);
+    var arena_allocator: std.heap.ArenaAllocator = .init(t.allocator);
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
@@ -15303,12 +15371,14 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
 }
 
 pub fn statusToTerm(status: u32) process.Child.Term {
-    return if (posix.W.IFEXITED(status))
-        .{ .exited = posix.W.EXITSTATUS(status) }
-    else if (posix.W.IFSIGNALED(status))
-        .{ .signal = posix.W.TERMSIG(status) }
-    else if (posix.W.IFSTOPPED(status))
-        .{ .stopped = posix.W.STOPSIG(status) }
+    const term: posix.W = @bitCast(status);
+
+    return if (term.IFEXITED())
+        .{ .exited = term.EXITSTATUS() }
+    else if (term.IFSIGNALED())
+        .{ .signal = @enumFromInt(term.TERMSIG()) }
+    else if (term.IFSTOPPED())
+        .{ .stopped = term.STOPSIG() }
     else
         .{ .unknown = status };
 }
@@ -17868,7 +17938,7 @@ pub const PipeError = error{
     ProcessFdQuotaExceeded,
 } || Io.UnexpectedError;
 
-pub fn pipe2(flags: posix.O) PipeError![2]posix.fd_t {
+pub fn pipe2(flags: posix.Pipe2) PipeError![2]posix.fd_t {
     var fds: [2]posix.fd_t = undefined;
 
     if (@TypeOf(posix.system.pipe2) != void) {
