@@ -52,8 +52,16 @@ pub fn feed(p: *ChunkParser, bytes: []const u8) usize {
         .head_size => {
             const digit = switch (c) {
                 '0'...'9' => |b| b - '0',
-                'A'...'Z' => |b| b - 'A' + 10,
-                'a'...'z' => |b| b - 'a' + 10,
+                'A'...'F' => |b| b - 'A' + 10,
+                'a'...'f' => |b| b - 'a' + 10,
+                'g'...'z' => {
+                    p.state = .invalid;
+                    return i;
+                },
+                'G'...'Z' => {
+                    p.state = .invalid;
+                    return i;
+                },
                 '\r' => {
                     p.state = .head_r;
                     continue;
@@ -127,5 +135,13 @@ test feed {
     const fourth = p.feed(data[first + second + third ..]);
     try testing.expectEqual(@as(u32, 16), fourth);
     try testing.expectEqual(@as(u64, 0xffffffffffffffff), p.chunk_len);
+    try testing.expectEqual(.invalid, p.state);
+
+    const data_invalid = "FG\r\nAAAAAAAA\r\n";
+
+    p = init;
+    const fifth = p.feed(data_invalid);
+    try testing.expectEqual(@as(u32, 1), fifth);
+    try testing.expectEqual(@as(u64, 15), p.chunk_len);
     try testing.expectEqual(.invalid, p.state);
 }
