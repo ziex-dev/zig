@@ -578,6 +578,7 @@ pub const Response = struct {
                     var next: ?[]const u8 = first;
                     if (std.meta.stringToEnum(http.TransferEncoding, trimmed_first)) |transfer| {
                         if (res.transfer_encoding != .none) return error.HttpHeadersInvalid; // we already have a transfer encoding
+                        if (res.content_length != null) return error.HttpHeadersInvalid;
                         res.transfer_encoding = transfer;
 
                         next = iter.next();
@@ -599,6 +600,7 @@ pub const Response = struct {
                     const content_length = std.fmt.parseInt(u64, header_value, 10) catch return error.InvalidContentLength;
 
                     if (res.content_length != null and res.content_length != content_length) return error.HttpHeadersInvalid;
+                    if (res.transfer_encoding != .none) return error.HttpHeadersInvalid;
 
                     res.content_length = content_length;
                 } else if (std.ascii.eqlIgnoreCase(header_name, "content-encoding")) {
@@ -617,28 +619,56 @@ pub const Response = struct {
         }
 
         test parse {
-            const response_bytes = "HTTP/1.1 200 OK\r\n" ++
-                "LOcation:url\r\n" ++
-                "content-tYpe: text/plain\r\n" ++
-                "content-disposition:attachment; filename=example.txt \r\n" ++
-                "content-Length:10\r\n" ++
-                "TRansfer-encoding:\tdeflate, chunked \r\n" ++
-                "connectioN:\t keep-alive \r\n\r\n";
+            {
+                const response_bytes = "HTTP/1.1 200 OK\r\n" ++
+                    "LOcation:url\r\n" ++
+                    "content-tYpe: text/plain\r\n" ++
+                    "content-disposition:attachment; filename=example.txt \r\n" ++
+                    "TRansfer-encoding:\tdeflate, chunked \r\n" ++
+                    "connectioN:\t keep-alive \r\n\r\n";
 
-            const head = try Head.parse(response_bytes);
+                const head = try Head.parse(response_bytes);
 
-            try testing.expectEqual(.@"HTTP/1.1", head.version);
-            try testing.expectEqualStrings("OK", head.reason);
-            try testing.expectEqual(.ok, head.status);
+                try testing.expectEqual(.@"HTTP/1.1", head.version);
+                try testing.expectEqualStrings("OK", head.reason);
+                try testing.expectEqual(.ok, head.status);
 
-            try testing.expectEqualStrings("url", head.location.?);
-            try testing.expectEqualStrings("text/plain", head.content_type.?);
-            try testing.expectEqualStrings("attachment; filename=example.txt", head.content_disposition.?);
+                try testing.expectEqualStrings("url", head.location.?);
+                try testing.expectEqualStrings("text/plain", head.content_type.?);
+                try testing.expectEqualStrings("attachment; filename=example.txt", head.content_disposition.?);
 
-            try testing.expectEqual(true, head.keep_alive);
-            try testing.expectEqual(10, head.content_length.?);
-            try testing.expectEqual(.chunked, head.transfer_encoding);
-            try testing.expectEqual(.deflate, head.content_encoding);
+                try testing.expectEqual(true, head.keep_alive);
+                try testing.expectEqual(.chunked, head.transfer_encoding);
+                try testing.expectEqual(.deflate, head.content_encoding);
+            }
+            // reject requests that have both Content-Length and Transfer-Encoding chunked
+
+            // Content-Length first, then Transfer-Enconding: chunked
+            {
+                const response_bytes = "HTTP/1.1 200 OK\r\n" ++
+                    "LOcation:url\r\n" ++
+                    "content-tYpe: text/plain\r\n" ++
+                    "content-disposition:attachment; filename=example.txt \r\n" ++
+                    "content-Length:10\r\n" ++
+                    "TRansfer-encoding:\tdeflate, chunked \r\n" ++
+                    "connectioN:\t keep-alive \r\n\r\n";
+
+                const head = Head.parse(response_bytes);
+                try testing.expectError(error.HttpHeadersInvalid, head);
+            }
+            // Transfer-Enconding: chunked first, then Content-Length
+            {
+                const response_bytes = "HTTP/1.1 200 OK\r\n" ++
+                    "LOcation:url\r\n" ++
+                    "content-tYpe: text/plain\r\n" ++
+                    "content-disposition:attachment; filename=example.txt \r\n" ++
+                    "TRansfer-encoding:\tdeflate, chunked \r\n" ++
+                    "content-Length:10\r\n" ++
+                    "connectioN:\t keep-alive \r\n\r\n";
+
+                const head = Head.parse(response_bytes);
+                try testing.expectError(error.HttpHeadersInvalid, head);
+            }
         }
 
         pub fn iterateHeaders(h: Head) http.HeaderIterator {
@@ -650,7 +680,6 @@ pub const Response = struct {
                 "LOcation:url\r\n" ++
                 "content-tYpe: text/plain\r\n" ++
                 "content-disposition:attachment; filename=example.txt \r\n" ++
-                "content-Length:10\r\n" ++
                 "TRansfer-encoding:\tdeflate, chunked \r\n" ++
                 "connectioN:\t keep-alive \r\n\r\n";
 
@@ -672,12 +701,6 @@ pub const Response = struct {
                 const header = it.next().?;
                 try testing.expectEqualStrings("content-disposition", header.name);
                 try testing.expectEqualStrings("attachment; filename=example.txt", header.value);
-                try testing.expect(!it.is_trailer);
-            }
-            {
-                const header = it.next().?;
-                try testing.expectEqualStrings("content-Length", header.name);
-                try testing.expectEqualStrings("10", header.value);
                 try testing.expect(!it.is_trailer);
             }
             {
