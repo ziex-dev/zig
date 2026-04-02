@@ -14001,7 +14001,7 @@ fn addressUnixToPosix(a: *const net.UnixAddress, storage: *UnixAddress) posix.so
     // With the AFD API, `sockaddr.un` is purely informational, so
     // use a suffix which is usually the most relevant part of a path.
     @memcpy(storage.un.path[0..path_len], a.path[a.path.len - path_len ..]);
-    if (storage.un.path.len - path_len > 0) {
+    if (storage.un.path[0] != 0 and storage.un.path.len - path_len > 0) {
         @branchHint(.likely);
         storage.un.path[path_len] = 0;
         path_len += 1;
