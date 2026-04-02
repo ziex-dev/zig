@@ -191,6 +191,26 @@ pub fn percentDecodeBackwards(output: []u8, input: []const u8) []u8 {
     return output[output_index..];
 }
 
+fn percentDecodeLength(input: []const u8) usize {
+    var input_index = input.len;
+    var length: usize = 0;
+    while (input_index > 0) {
+        if (input_index >= 3) {
+            const maybe_percent_encoded = input[input_index - 3 ..][0..3];
+            if (maybe_percent_encoded[0] == '%') {
+                if (std.fmt.parseInt(u8, maybe_percent_encoded[1..], 16)) |_| {
+                    input_index -= maybe_percent_encoded.len;
+                    length += 1;
+                    continue;
+                } else |_| {}
+            }
+        }
+        length += 1;
+        input_index -= 1;
+    }
+    return length;
+}
+
 /// Percent decodes all %XX where XX is a valid hex number.
 /// Mutates and returns a subslice of `buffer`.
 pub fn percentDecodeInPlace(buffer: []u8) []u8 {
@@ -403,7 +423,7 @@ pub fn resolveInPlace(base: Uri, new_len: usize, aux_buf: *[]u8) ResolveInPlaceE
         .scheme = new_parsed.scheme,
         .user = new_parsed.user,
         .password = new_parsed.password,
-        .host = try validateHostComponent(new_parsed.host),
+        .host = try validateHostComponent(new_parsed.scheme, new_parsed.host),
         .port = new_parsed.port,
         .path = remove_dot_segments(new_path),
         .query = new_parsed.query,
@@ -414,7 +434,7 @@ pub fn resolveInPlace(base: Uri, new_len: usize, aux_buf: *[]u8) ResolveInPlaceE
         .scheme = base.scheme,
         .user = new_parsed.user,
         .password = new_parsed.password,
-        .host = try validateHostComponent(host),
+        .host = try validateHostComponent(base.scheme, host),
         .port = new_parsed.port,
         .path = remove_dot_segments(new_path),
         .query = new_parsed.query,
@@ -436,7 +456,7 @@ pub fn resolveInPlace(base: Uri, new_len: usize, aux_buf: *[]u8) ResolveInPlaceE
         .scheme = base.scheme,
         .user = base.user,
         .password = base.password,
-        .host = try validateHostComponent(base.host),
+        .host = try validateHostComponent(base.scheme, base.host),
         .port = base.port,
         .path = path,
         .query = query,
@@ -444,14 +464,29 @@ pub fn resolveInPlace(base: Uri, new_len: usize, aux_buf: *[]u8) ResolveInPlaceE
     };
 }
 
-fn validateHostComponent(optional_component: ?Component) error{InvalidHostName}!?Component {
+fn validateHostComponent(scheme: []const u8, optional_component: ?Component) error{InvalidHostName}!?Component {
     const component = optional_component orelse return null;
-    switch (component) {
-        .raw => |raw| HostName.validate(raw) catch return error.InvalidHostName,
-        .percent_encoded => |encoded| {
-            // TODO validate decoded name instead
-            HostName.validate(encoded) catch return error.InvalidHostName;
-        },
+    if (std.mem.endsWith(u8, scheme, "+unix")) {
+        // Unix socket path or abstract socket name
+        switch (component) {
+            // TODO validate paths if not abstract socket
+            .raw => |raw| {
+                if (raw.len == 0 or raw.len > std.Io.net.UnixAddress.max_len) return error.InvalidHostName;
+            },
+            .percent_encoded => |encoded| {
+                const decoded_len = percentDecodeLength(encoded);
+                if (decoded_len == 0 or decoded_len > std.Io.net.UnixAddress.max_len) return error.InvalidHostName;
+            },
+        }
+    } else {
+        // Actual hostname
+        switch (component) {
+            .raw => |raw| HostName.validate(raw) catch return error.InvalidHostName,
+            .percent_encoded => |encoded| {
+                // TODO validate decoded name instead
+                HostName.validate(encoded) catch return error.InvalidHostName;
+            },
+        }
     }
     return component;
 }
@@ -828,6 +863,7 @@ test "URI percent decoding" {
         var output: [expected.len]u8 = undefined;
         try std.testing.expectEqualStrings(percentDecodeBackwards(&output, &input), expected);
 
+        try std.testing.expectEqual(expected.len, percentDecodeLength(&input));
         try std.testing.expectEqualStrings(expected, percentDecodeInPlace(&input));
     }
 
@@ -843,6 +879,7 @@ test "URI percent decoding" {
         var output: [expected.len]u8 = undefined;
         try std.testing.expectEqualStrings(percentDecodeBackwards(&output, &input), expected);
 
+        try std.testing.expectEqual(expected.len, percentDecodeLength(&input));
         try std.testing.expectEqualStrings(expected, percentDecodeInPlace(&input));
     }
 }

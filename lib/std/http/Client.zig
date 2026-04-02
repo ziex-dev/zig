@@ -220,6 +220,7 @@ pub const Protocol = enum {
         const protocol_map = std.StaticStringMap(Protocol).initComptime(.{
             .{ "http", .plain },
             .{ "ws", .plain },
+            .{ "http+unix", .plain },
             .{ "https", .tls },
             .{ "wss", .tls },
         });
@@ -1261,7 +1262,11 @@ pub const Request = struct {
             return error.RedirectRequiresResend;
         }
 
-        const new_connection = try r.client.connect(new_host, uriPort(new_uri, protocol), protocol);
+        const new_connection = if (mem.endsWith(u8, new_uri.scheme, "+unix"))
+            try r.client.connectUnix(new_host.bytes)
+        else
+            try r.client.connect(new_host, uriPort(new_uri, protocol), protocol);
+
         r.uri = new_uri;
         r.connection = new_connection;
         r.reader = .{
@@ -1476,7 +1481,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     }
 }
 
-pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError;
+pub const ConnectUnixError = Allocator.Error || std.Io.net.UnixAddress.InitError || std.Io.net.UnixAddress.ConnectError;
 
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
@@ -1485,32 +1490,23 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     const io = client.io;
 
     if (client.connection_pool.findConnection(io, .{
-        .host = path,
+        .host = HostName{ .bytes = path },
         .port = 0,
         .protocol = .plain,
     })) |node|
         return node;
 
-    const conn = try client.allocator.create(ConnectionPool.Node);
-    errdefer client.allocator.destroy(conn);
-    conn.* = .{ .data = undefined };
+    const host = try std.Io.net.UnixAddress.init(path);
 
-    const stream = try Io.net.connectUnixSocket(path);
+    const stream = try host.connect(io);
     errdefer stream.close(io);
 
-    conn.data = .{
-        .stream = stream,
-        .tls_client = undefined,
-        .protocol = .plain,
+    var connection = try Connection.Plain.create(client, HostName{ .bytes = path }, 0, stream);
+    errdefer connection.destroy();
 
-        .host = try client.allocator.dupe(u8, path),
-        .port = 0,
-    };
-    errdefer client.allocator.free(conn.data.host);
+    client.connection_pool.addUsed(io, &connection.connection);
 
-    client.connection_pool.addUsed(conn);
-
-    return &conn.data;
+    return &connection.connection;
 }
 
 /// Connect to `proxied_host:proxied_port` using the specified proxy with HTTP
@@ -1620,7 +1616,7 @@ pub fn connect(
     return connection;
 }
 
-pub const RequestError = ConnectTcpError || error{
+pub const RequestError = ConnectTcpError || ConnectUnixError || error{
     UnsupportedUriScheme,
     UriMissingHost,
     CertificateBundleLoadFailure,
@@ -1721,7 +1717,11 @@ pub fn request(
     const connection = options.connection orelse c: {
         var host_name_buffer: [HostName.max_len]u8 = undefined;
         const host_name = try uri.getHost(&host_name_buffer);
-        break :c try client.connect(host_name, uriPort(uri, protocol), protocol);
+        if (mem.endsWith(u8, uri.scheme, "+unix")) {
+            break :c try client.connectUnix(host_name.bytes);
+        } else {
+            break :c try client.connect(host_name, uriPort(uri, protocol), protocol);
+        }
     };
 
     return .{

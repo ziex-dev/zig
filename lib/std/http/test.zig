@@ -167,95 +167,131 @@ test "HTTP server handles a chunked transfer coding request" {
     try expectEqualStrings(expected_response, response);
 }
 
-test "echo content server" {
+const EchoServer = struct {
+    fn run(test_server: *TestServer) anyerror!void {
+        const net_server = &test_server.net_server;
+        var recv_buffer: [1024]u8 = undefined;
+        var send_buffer: [100]u8 = undefined;
+
+        accept: while (!test_server.shutting_down) {
+            var stream = try net_server.accept(test_server.io);
+            defer stream.close(test_server.io);
+
+            var connection_br = stream.reader(test_server.io, &recv_buffer);
+            var connection_bw = stream.writer(test_server.io, &send_buffer);
+            var http_server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+            while (http_server.reader.state == .ready) {
+                var request = http_server.receiveHead() catch |err| switch (err) {
+                    error.HttpConnectionClosing => continue :accept,
+                    else => |e| return e,
+                };
+                if (mem.eql(u8, request.head.target, "/end")) {
+                    return request.respond("", .{ .keep_alive = false });
+                }
+                if (request.head.expect) |expect_header_value| {
+                    if (mem.eql(u8, expect_header_value, "garbage")) {
+                        try expectError(error.HttpExpectationFailed, request.readerExpectContinue(&.{}));
+                        request.head.expect = null;
+                        try request.respond("", .{
+                            .keep_alive = false,
+                            .status = .expectation_failed,
+                        });
+                        continue;
+                    }
+                }
+                handleRequest(&request) catch |err| {
+                    // This message helps the person troubleshooting determine whether
+                    // output comes from the server thread or the client thread.
+                    std.debug.print("handleRequest failed with '{s}'\n", .{@errorName(err)});
+                    return err;
+                };
+            }
+        }
+    }
+
+    fn handleRequest(request: *http.Server.Request) !void {
+        // std.debug.print("server received {s} {s} {s}\n", .{
+        //     @tagName(request.head.method),
+        //     @tagName(request.head.version),
+        //     request.head.target,
+        // });
+
+        try expect(mem.startsWith(u8, request.head.target, "/echo-content"));
+        try expectEqualStrings("text/plain", request.head.content_type.?);
+
+        // head strings expire here
+        const body = try (try request.readerExpectContinue(&.{})).allocRemaining(std.testing.allocator, .unlimited);
+        defer std.testing.allocator.free(body);
+
+        try expectEqualStrings("Hello, World!\n", body);
+
+        var response = try request.respondStreaming(&.{}, .{
+            .content_length = switch (request.head.transfer_encoding) {
+                .chunked => null,
+                .none => len: {
+                    try expectEqual(14, request.head.content_length.?);
+                    break :len 14;
+                },
+            },
+        });
+        try response.flush(); // Test an early flush to send the HTTP headers before the body.
+        const w = &response.writer;
+        try w.writeAll("Hello, ");
+        try w.writeAll("World!\n");
+        try response.end();
+        //std.debug.print("  server finished responding\n", .{});
+    }
+};
+
+test "echo content server with TCP sockets" {
     if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
-    const test_server = try createTestServer(io, struct {
-        fn run(test_server: *TestServer) anyerror!void {
-            const net_server = &test_server.net_server;
-            var recv_buffer: [1024]u8 = undefined;
-            var send_buffer: [100]u8 = undefined;
-
-            accept: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
-                defer stream.close(io);
-
-                var connection_br = stream.reader(io, &recv_buffer);
-                var connection_bw = stream.writer(io, &send_buffer);
-                var http_server = http.Server.init(&connection_br.interface, &connection_bw.interface);
-
-                while (http_server.reader.state == .ready) {
-                    var request = http_server.receiveHead() catch |err| switch (err) {
-                        error.HttpConnectionClosing => continue :accept,
-                        else => |e| return e,
-                    };
-                    if (mem.eql(u8, request.head.target, "/end")) {
-                        return request.respond("", .{ .keep_alive = false });
-                    }
-                    if (request.head.expect) |expect_header_value| {
-                        if (mem.eql(u8, expect_header_value, "garbage")) {
-                            try expectError(error.HttpExpectationFailed, request.readerExpectContinue(&.{}));
-                            request.head.expect = null;
-                            try request.respond("", .{
-                                .keep_alive = false,
-                                .status = .expectation_failed,
-                            });
-                            continue;
-                        }
-                    }
-                    handleRequest(&request) catch |err| {
-                        // This message helps the person troubleshooting determine whether
-                        // output comes from the server thread or the client thread.
-                        std.debug.print("handleRequest failed with '{s}'\n", .{@errorName(err)});
-                        return err;
-                    };
-                }
-            }
-        }
-
-        fn handleRequest(request: *http.Server.Request) !void {
-            //std.debug.print("server received {s} {s} {s}\n", .{
-            //    @tagName(request.head.method),
-            //    @tagName(request.head.version),
-            //    request.head.target,
-            //});
-
-            try expect(mem.startsWith(u8, request.head.target, "/echo-content"));
-            try expectEqualStrings("text/plain", request.head.content_type.?);
-
-            // head strings expire here
-            const body = try (try request.readerExpectContinue(&.{})).allocRemaining(std.testing.allocator, .unlimited);
-            defer std.testing.allocator.free(body);
-
-            try expectEqualStrings("Hello, World!\n", body);
-
-            var response = try request.respondStreaming(&.{}, .{
-                .content_length = switch (request.head.transfer_encoding) {
-                    .chunked => null,
-                    .none => len: {
-                        try expectEqual(14, request.head.content_length.?);
-                        break :len 14;
-                    },
-                },
-            });
-            try response.flush(); // Test an early flush to send the HTTP headers before the body.
-            const w = &response.writer;
-            try w.writeAll("Hello, ");
-            try w.writeAll("World!\n");
-            try response.end();
-            //std.debug.print("  server finished responding\n", .{});
-        }
-    });
+    const test_server = try createTestServer(io, EchoServer);
     defer test_server.destroy();
 
     {
         var client: http.Client = .{ .allocator = std.testing.allocator, .io = io };
         defer client.deinit();
 
-        try echoTests(&client, test_server.port());
+        var location_base_buffer: [32]u8 = undefined;
+        const location_base = try std.fmt.bufPrint(&location_base_buffer, "http://127.0.0.1:{d}", .{test_server.port()});
+        try echoTests(&client, location_base);
     }
+}
+
+test "echo content server with Unix sockets" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
+    if (!std.Io.net.has_unix_sockets) return error.SkipZigTest;
+
+    const io = std.testing.io;
+    var tmp_dir = std.testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const test_server = try createTestServerOnUnixSocket(
+        io,
+        EchoServer,
+        tmp_dir.dir,
+    );
+    defer test_server.destroy();
+
+    {
+        var client: http.Client = .{ .allocator = std.testing.allocator, .io = io };
+        defer client.deinit();
+
+        var location_base_buffer: [128]u8 = undefined;
+        const location_base = try std.fmt.bufPrint(
+            &location_base_buffer,
+            "http+unix://{f}",
+            .{std.fmt.alt(@as(std.Uri.Component, .{ .raw = test_server.listen_address.unix.buf }), .formatEscaped)},
+        );
+        try echoTests(&client, location_base);
+    }
+
+    return error.sadasd;
 }
 
 test "Server.Request.respondStreaming non-chunked, unknown content-length" {
