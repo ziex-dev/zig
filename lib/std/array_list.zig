@@ -701,6 +701,21 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             return cloned;
         }
 
+        /// Returns the element at the specified index, or null if the index is out of bounds.
+        /// Supports negative indices (counted from the end of the list)
+        pub fn at(self: Self, index: isize) ?T {
+            const len = self.items.len;
+
+            if (index < 0) {
+                const abs: usize = @intCast(-index);
+                if (abs > len) return null;
+                return self.items[len - abs];
+            }
+
+            if (index >= len) return null;
+            return self.items[@intCast(index)];
+        }
+
         /// Insert `item` at index `i`. Moves `list[i .. list.len]` to higher indices to make room.
         /// If `i` is equal to the length of the list this operation is equivalent to append.
         /// This operation is O(N).
@@ -2505,4 +2520,18 @@ test "insertSlice*" {
 
     list.insertSliceAssumeCapacity(6, "ij");
     try testing.expectEqualStrings("abefghijcd", list.items);
+}
+
+test "at" {
+    var list: ArrayList(u32) = .empty;
+    defer list.deinit(testing.allocator);
+
+    try list.appendSlice(testing.allocator, &.{ 10, 20, 30, 40 });
+
+    try testing.expectEqual(10, list.at(0).?);
+    try testing.expectEqual(20, list.at(1).?);
+    try testing.expectEqual(40, list.at(-1).?);
+    try testing.expectEqual(20, list.at(-3).?);
+    try testing.expectEqual(null, list.at(4));
+    try testing.expectEqual(null, list.at(-5));
 }
