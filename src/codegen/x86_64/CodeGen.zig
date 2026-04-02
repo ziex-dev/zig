@@ -170801,6 +170801,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     else => |e| return e,
                 };
                 try ops[0].toSlicePtr(cg);
+                try ops[1].toSlicePtr(cg);
                 cg.select(&.{}, &.{}, &ops, switch (air_tag) {
                     else => unreachable,
                     inline .memcpy, .memmove => |symbol| comptime &.{.{
@@ -177226,9 +177227,19 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                 'x' => abi.RegisterClass.sse,
                 else => unreachable,
             };
-            if (input_mcv.isRegister() and
-                rc.isSet(RegisterManager.indexOfRegIntoTracked(input_mcv.getReg().?).?))
-                break :arg input_mcv;
+            if (input_mcv.isRegister()) {
+                const reg = input_mcv.getReg().?;
+                if (rc.isSet(RegisterManager.indexOfRegIntoTracked(reg).?)) {
+                    const alias = registerAlias(reg, @intCast(ty.abiSize(zcu)));
+                    break :arg switch (input_mcv) {
+                        else => unreachable,
+                        .register => .{ .register = alias },
+                        .register_offset => |reg_off| .{
+                            .register_offset = .{ .reg = alias, .off = reg_off.off },
+                        },
+                    };
+                }
+            }
             const reg = try self.register_manager.allocReg(null, rc);
             try self.genSetReg(reg, ty, input_mcv, .{});
             break :arg .{ .register = registerAlias(reg, @intCast(ty.abiSize(zcu))) };
