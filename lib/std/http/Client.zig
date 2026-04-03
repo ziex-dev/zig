@@ -910,12 +910,14 @@ pub const Request = struct {
 
     /// Sends and flushes a complete request as only HTTP head, no body.
     pub fn sendBodiless(r: *Request) Writer.Error!void {
+        errdefer r.connection.?.closing = true;
         try sendBodilessUnflushed(r);
         try r.connection.?.flush();
     }
 
     /// Sends but does not flush a complete request as only HTTP head, no body.
     pub fn sendBodilessUnflushed(r: *Request) Writer.Error!void {
+        errdefer r.connection.?.closing = true;
         assert(r.transfer_encoding == .none);
         assert(!r.method.requestHasBody());
         try sendHead(r);
@@ -926,6 +928,7 @@ pub const Request = struct {
     /// See also:
     /// * `sendBodyUnflushed`
     pub fn sendBody(r: *Request, buffer: []u8) Writer.Error!http.BodyWriter {
+        errdefer r.connection.?.closing = true;
         const result = try sendBodyUnflushed(r, buffer);
         try r.connection.?.flush();
         return result;
@@ -933,6 +936,7 @@ pub const Request = struct {
 
     /// Transfers the HTTP head and body over the connection and flushes.
     pub fn sendBodyComplete(r: *Request, body: []u8) Writer.Error!void {
+        errdefer r.connection.?.closing = true;
         r.transfer_encoding = .{ .content_length = body.len };
         var bw = try sendBodyUnflushed(r, body);
         bw.writer.end = body.len;
@@ -946,6 +950,7 @@ pub const Request = struct {
     /// See also:
     /// * `sendBody`
     pub fn sendBodyUnflushed(r: *Request, buffer: []u8) Writer.Error!http.BodyWriter {
+        errdefer r.connection.?.closing = true;
         assert(r.method.requestHasBody());
         try sendHead(r);
         const http_protocol_output = r.connection.?.writer();
@@ -1131,6 +1136,7 @@ pub const Request = struct {
     /// If this fails with `error.ReadFailed` then the `Connection.getReadError`
     /// method of `r.connection` can be used to get more detailed information.
     pub fn receiveHead(r: *Request, redirect_buffer: []u8) ReceiveHeadError!Response {
+        errdefer r.connection.?.closing = true;
         var aux_buf = redirect_buffer;
         while (true) {
             const head_buffer = try r.reader.receiveHead();
@@ -1817,6 +1823,7 @@ pub fn fetch(client: *Client, options: FetchOptions) FetchError!FetchResult {
     if (options.payload) |payload| {
         req.transfer_encoding = .{ .content_length = payload.len };
         var body = try req.sendBodyUnflushed(&.{});
+        errdefer req.connection.?.closing = true;
         try body.writer.writeAll(payload);
         try body.end();
         try req.connection.?.flush();
