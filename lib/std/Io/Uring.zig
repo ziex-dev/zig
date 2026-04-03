@@ -3546,7 +3546,7 @@ fn dirHardLink(
         old_sub_path_posix,
         new_dir.handle,
         new_sub_path_posix,
-        if (options.follow_symlinks) 0 else linux.AT.SYMLINK_NOFOLLOW,
+        if (options.follow_symlinks) linux.AT.SYMLINK_FOLLOW else 0,
     );
 }
 
@@ -3978,7 +3978,7 @@ fn fileHardLink(
         "",
         new_dir.handle,
         new_sub_path_posix,
-        linux.AT.EMPTY_PATH | @as(u32, if (options.follow_symlinks) 0 else linux.AT.SYMLINK_NOFOLLOW),
+        linux.AT.EMPTY_PATH | @as(u32, if (options.follow_symlinks) linux.AT.SYMLINK_FOLLOW else 0),
     );
 }
 
