@@ -268,26 +268,25 @@ test "echo content server with Unix sockets" {
     if (!std.Io.net.has_unix_sockets) return error.SkipZigTest;
 
     const io = std.testing.io;
-    var tmp_dir = std.testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
-
+    const gpa = std.testing.allocator;
     const test_server = try createTestServerOnUnixSocket(
+        gpa,
         io,
         EchoServer,
-        tmp_dir.dir,
     );
     defer test_server.destroy();
 
     {
-        var client: http.Client = .{ .allocator = std.testing.allocator, .io = io };
+        var client: http.Client = .{ .allocator = gpa, .io = io };
         defer client.deinit();
 
-        var location_base_buffer: [128]u8 = undefined;
-        const location_base = try std.fmt.bufPrint(
-            &location_base_buffer,
+        const location_base = try std.fmt.allocPrint(
+            gpa,
             "http+unix://{f}",
             .{std.fmt.alt(@as(std.Uri.Component, .{ .raw = test_server.listen_address.unix.buf }), .formatEscaped)},
         );
+        defer gpa.free(location_base);
+
         try echoTests(&client, location_base);
     }
 }
@@ -634,26 +633,25 @@ test "general client/server API coverage with Unix sockets" {
     }
 
     const io = std.testing.io;
-    var tmp_dir = std.testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
-
+    const gpa = std.testing.allocator;
     const test_server = try createTestServerOnUnixSocket(
+        gpa,
         io,
         CoverageServer,
-        tmp_dir.dir,
     );
     defer test_server.destroy();
 
     {
-        var client: http.Client = .{ .allocator = std.testing.allocator, .io = io };
+        var client: http.Client = .{ .allocator = gpa, .io = io };
         defer client.deinit();
 
-        var location_base_buffer: [128]u8 = undefined;
-        const location_base = try std.fmt.bufPrint(
-            &location_base_buffer,
+        const location_base = try std.fmt.allocPrint(
+            gpa,
             "http+unix://{f}",
             .{std.fmt.alt(@as(std.Uri.Component, .{ .raw = test_server.listen_address.unix.buf }), .formatEscaped)},
         );
+        defer gpa.free(location_base);
+
         try coverageTests(&client, location_base);
     }
 }
@@ -1216,8 +1214,12 @@ const TestServer = struct {
         var stream = switch (self.listen_address) {
             .ip => |addr| addr.connect(self.io, .{ .mode = .stream }) catch @panic("shutdown failure"),
             .unix => |unix| s: {
+                defer gpa.free(unix.buf);
                 const stream = unix.address.connect(self.io) catch @panic("shutdown failure");
-                gpa.free(unix.buf);
+                std.Io.Dir.cwd().deleteFile(self.io, unix.buf) catch |err| switch (err) {
+                    error.FileNotFound => {},
+                    else => @panic("failed to delete unix socket file"),
+                };
                 break :s stream;
             },
         };
@@ -1265,19 +1267,23 @@ fn createTestServer(io: Io, S: type) !*TestServer {
     return test_server;
 }
 
-fn createTestServerOnUnixSocket(io: Io, S: type, socket_dir: Io.Dir) !*TestServer {
+fn createTestServerOnUnixSocket(gpa: std.mem.Allocator, io: Io, S: type) !*TestServer {
     if (builtin.single_threaded) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm and native_endian == .big) {
         // https://github.com/ziglang/zig/issues/13782
         return error.SkipZigTest;
     }
-    const gpa = std.testing.allocator;
 
-    var realpath_buf: [128]u8 = undefined;
-    const realpath_len = try socket_dir.realPath(io, &realpath_buf);
+    const random_bytes_count = 12;
+    var random_bytes: [random_bytes_count]u8 = undefined;
+    io.random(&random_bytes);
 
-    const socket_path = try std.fs.path.join(gpa, &[_][]const u8{ realpath_buf[0..realpath_len], "test.sock" });
+    const suffix = ".sock";
+    const sock_path_len = comptime std.base64.url_safe.Encoder.calcSize(random_bytes_count) + suffix.len;
+    const socket_path = try gpa.alloc(u8, sock_path_len);
     errdefer gpa.free(socket_path);
+    _ = std.base64.url_safe.Encoder.encode(socket_path, &random_bytes);
+    @memcpy(socket_path[socket_path.len - suffix.len ..], suffix);
 
     const address = try Io.net.UnixAddress.init(socket_path);
 
