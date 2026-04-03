@@ -3559,6 +3559,68 @@ const AccOp = enum {
     sub,
 };
 
+/// Based on https://gmplib.org/devel/thres/MUL_TOOM22_THRESHOLD
+const KARATSUBA_THRESHOLD = blk: {
+    const x86 = std.Target.x86.cpu;
+    const arm = std.Target.arm.cpu;
+    const aarch64 = std.Target.aarch64.cpu;
+    const powerpc = std.Target.powerpc.cpu;
+
+    break :blk switch (builtin.cpu.arch) {
+        .x86_64 => switch (builtin.cpu.model) {
+            &x86.znver1, &x86.znver2, &x86.znver3, &x86.znver4, &x86.znver5 => 16,
+            &x86.bdver4 => 16,
+            &x86.silvermont => 19,
+            &x86.bdver1 => 20,
+            &x86.goldmont, &x86.goldmont_plus => 23,
+            &x86.nehalem, &x86.westmere => 18,
+            &x86.sandybridge, &x86.ivybridge => 20,
+            &x86.haswell, &x86.skylake, &x86.cannonlake, &x86.tigerlake => 20,
+            &x86.core2 => 24,
+            &x86.broadwell => 26,
+            else => 20,
+        },
+
+        .x86 => switch (builtin.cpu.model) {
+            &x86.goldmont, &x86.goldmont_plus => 18,
+            &x86.core2 => 24,
+            &x86.broadwell, &x86.haswell, &x86.skylake => 28,
+            &x86.k8, &x86.k8_sse3, &x86.amdfam10 => 26,
+            &x86.nehalem, &x86.westmere => 24,
+            &x86.silvermont => 26,
+            &x86.znver1, &x86.znver2, &x86.znver3, &x86.znver4, &x86.znver5 => 28,
+            &x86.bdver1, &x86.bdver4 => 32,
+            &x86.sandybridge, &x86.ivybridge => 32,
+            else => 26,
+        },
+
+        .aarch64 => switch (builtin.cpu.model) {
+            &aarch64.cortex_a72, &aarch64.cortex_a73, &aarch64.cortex_a76, &aarch64.cortex_a77, &aarch64.cortex_a78, &aarch64.cortex_a710, &aarch64.cortex_a715, &aarch64.cortex_x2, &aarch64.cortex_x3 => 10,
+            &aarch64.cortex_a53, &aarch64.cortex_a55, &aarch64.cortex_a57, &aarch64.cortex_a65, &aarch64.cortex_a76ae => 14,
+            &aarch64.apple_m1, &aarch64.apple_m2, &aarch64.apple_m3, &aarch64.apple_m4 => 26,
+            &aarch64.xgene1 => 18,
+            else => 16,
+        },
+
+        .arm, .armeb, .thumb, .thumbeb => switch (builtin.cpu.model) {
+            &arm.cortex_a72, &arm.cortex_a73, &arm.cortex_a15 => 28,
+            &arm.cortex_a53, &arm.cortex_a55 => 45,
+            &arm.cortex_a8, &arm.cortex_a9 => 39,
+            &arm.cortex_a5 => 48,
+            else => 35,
+        },
+
+        .powerpc64, .powerpc64le => switch (builtin.cpu.model) {
+            &powerpc.pwr8 => 18,
+            &powerpc.pwr9, &powerpc.pwr10 => 34,
+            else => 30,
+        },
+
+        .sparc64 => 30,
+        else => 24,
+    };
+};
+
 /// Knuth 4.3.1, Algorithm M.
 ///
 /// r = r (op) a * b
@@ -3580,7 +3642,7 @@ fn llmulacc(comptime op: AccOp, opt_allocator: ?Allocator, r: []Limb, a: []const
     }
 
     k_mul: {
-        if (y.len > 48) {
+        if (y.len >= KARATSUBA_THRESHOLD) {
             if (opt_allocator) |allocator| {
                 llmulaccKaratsuba(op, allocator, r, x, y) catch |err| switch (err) {
                     error.OutOfMemory => break :k_mul, // handled below
