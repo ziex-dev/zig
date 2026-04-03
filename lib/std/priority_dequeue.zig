@@ -42,6 +42,7 @@ pub fn PriorityDequeue(comptime T: type, comptime Context: type, comptime compar
         /// Free memory used by the dequeue.
         pub fn deinit(self: *Self, allocator: Allocator) void {
             allocator.free(self.items);
+            self.* = undefined;
         }
 
         /// Insert a new element, maintaining priority.
