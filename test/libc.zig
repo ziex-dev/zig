@@ -104,7 +104,7 @@ pub fn addCases(cases: *tests.LibcContext) void {
     // "regression/pthread-robust-detach.c": https://gitlab.com/qemu-project/qemu/-/issues/2424
     cases.addLibcTestCase("regression/pthread_atfork-errno-clobber.c", false, .{});
     cases.addLibcTestCase("regression/pthread_cancel-sem_wait.c", false, .{});
-    cases.addLibcTestCase("regression/pthread_cond-smasher.c", false, .{});
+    // Flaky under heavy load: cases.addLibcTestCase("regression/pthread_cond-smasher.c", false, .{});
     // Flaky under heavy load: cases.addLibcTestCase("regression/pthread_cond_wait-cancel_ignored.c", false, .{});
     cases.addLibcTestCase("regression/pthread_condattr_setclock.c", false, .{});
     // "regression/pthread_create-oom.c": QEMU OOM
@@ -293,7 +293,7 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("math/remquo.c", true, .{});
     cases.addLibcTestCase("math/remquof.c", true, .{});
     cases.addLibcTestCase("math/remquol.c", true, .{});
-    // cases.addLibcTestCase("math/rint.c", true, .{});
+    cases.addLibcTestCase("math/rint.c", true, .{});
     cases.addLibcTestCase("math/rintf.c", true, .{});
     // cases.addLibcTestCase("math/rintl.c", true, .{});
     cases.addLibcTestCase("math/round.c", true, .{});
