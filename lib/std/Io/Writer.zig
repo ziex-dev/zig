@@ -587,6 +587,8 @@ pub fn writeAll(w: *Writer, bytes: []const u8) Error!void {
 /// - `s`:
 ///   - for pointer-to-many and C pointers of u8, print as a C-string using zero-termination
 ///   - for slices of u8, print the entire slice as a string without zero-termination
+///   - for slices of slices of u8, print the individual elements as strings, separated by commas
+///     and surrounded by braces
 /// - `t`:
 ///   - for enums and tagged unions: prints the tag name
 ///   - for error sets: prints the error name
@@ -1152,8 +1154,26 @@ pub fn printValue(
             's' => switch (@typeInfo(T)) {
                 .pointer => |info| switch (info.size) {
                     .one, .slice => {
-                        const slice: []const u8 = value;
-                        return w.alignBufferOptions(slice, options);
+                        const child_info = @typeInfo(info.child);
+                        if (child_info == .pointer or
+                            (child_info == .array and child_info.array.child != u8))
+                        {
+                            if (max_depth == 0) {
+                                return w.writeAll("{ ... }");
+                            }
+
+                            try w.writeAll("{ ");
+                            for (value, 0..) |child, i| {
+                                if (i != 0) {
+                                    try w.writeAll(", ");
+                                }
+                                try w.printValue(fmt, options, child, max_depth - 1);
+                            }
+                            return w.writeAll(" }");
+                        } else {
+                            const slice: []const u8 = value;
+                            return w.alignBufferOptions(slice, options);
+                        }
                     },
                     .many, .c => {
                         const slice: [:0]const u8 = std.mem.span(value);
@@ -1161,8 +1181,7 @@ pub fn printValue(
                     },
                 },
                 .array => {
-                    const slice: []const u8 = &value;
-                    return w.alignBufferOptions(slice, options);
+                    return w.printValue(fmt, options, &value, max_depth);
                 },
                 else => invalidFmtError(fmt, value),
             },
@@ -2883,4 +2902,17 @@ test "writableSlice with fixed writer" {
     var w: std.Io.Writer = .fixed(&buf);
     try w.writeByte(1);
     try std.testing.expectError(error.WriteFailed, w.writableSlice(2));
+}
+
+test "write slice of strings" {
+    const array: [2][]const u8 = .{ "Hello", "World" };
+    var buf: [512]u8 = undefined;
+    var w: Writer = .fixed(&buf);
+
+    try w.print("{s}{s}{s}", .{
+        array, // as array
+        &array, // as pointer to array
+        @as([]const []const u8, &array), // as slice
+    });
+    try std.testing.expectEqualSlices(u8, "{ Hello, World }" ** 3, w.buffered());
 }
