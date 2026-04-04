@@ -1256,3 +1256,8 @@ test "redirect to different connection" {
         try expectEqualStrings("good job, you pass", body);
     }
 }
+
+test "connectUnix compiles" {
+    _ = &http.Client.connectUnix;
+    _ = http.Client.ConnectUnixError;
+}
