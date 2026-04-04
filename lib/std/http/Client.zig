@@ -1136,10 +1136,12 @@ pub const Request = struct {
     /// If this fails with `error.ReadFailed` then the `Connection.getReadError`
     /// method of `r.connection` can be used to get more detailed information.
     pub fn receiveHead(r: *Request, redirect_buffer: []u8) ReceiveHeadError!Response {
-        errdefer r.connection.?.closing = true;
         var aux_buf = redirect_buffer;
         while (true) {
-            const head_buffer = try r.reader.receiveHead();
+            const head_buffer = r.reader.receiveHead() catch |err| {
+                r.connection.?.closing = true;
+                return err;
+            };
             const response: Response = .{
                 .request = r,
                 .head = Response.Head.parse(head_buffer) catch return error.HttpHeadersInvalid,
