@@ -1476,7 +1476,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     }
 }
 
-pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError;
+pub const ConnectUnixError = Allocator.Error || Io.net.UnixAddress.InitError || Io.net.UnixAddress.ConnectError || error{NameTooLong};
 
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
@@ -1485,32 +1485,19 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     const io = client.io;
 
     if (client.connection_pool.findConnection(io, .{
-        .host = path,
+        .host = .{ .bytes = path },
         .port = 0,
         .protocol = .plain,
-    })) |node|
-        return node;
+    })) |conn|
+        return conn;
 
-    const conn = try client.allocator.create(ConnectionPool.Node);
-    errdefer client.allocator.destroy(conn);
-    conn.* = .{ .data = undefined };
-
-    const stream = try Io.net.connectUnixSocket(path);
+    const uds = try Io.net.UnixAddress.init(path);
+    var stream = try uds.connect(io);
     errdefer stream.close(io);
 
-    conn.data = .{
-        .stream = stream,
-        .tls_client = undefined,
-        .protocol = .plain,
-
-        .host = try client.allocator.dupe(u8, path),
-        .port = 0,
-    };
-    errdefer client.allocator.free(conn.data.host);
-
-    client.connection_pool.addUsed(conn);
-
-    return &conn.data;
+    const pc = try Connection.Plain.create(client, .{.bytes = path}, 0, stream);
+    client.connection_pool.addUsed(io, &pc.connection);
+    return &pc.connection;
 }
 
 /// Connect to `proxied_host:proxied_port` using the specified proxy with HTTP
