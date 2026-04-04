@@ -67,6 +67,7 @@ comptime {
         symbol(&exp10, "exp10");
         symbol(&exp10f, "exp10f");
         symbol(&fdim, "fdim");
+        symbol(&fdimf, "fdimf");
         symbol(&finite, "finite");
         symbol(&finitef, "finitef");
         symbol(&frexp, "frexp");
@@ -162,6 +163,19 @@ fn exp10f(x: f32) callconv(.c) f32 {
 }
 
 fn fdim(x: f64, y: f64) callconv(.c) f64 {
+    if (math.isNan(x)) {
+        return x;
+    }
+    if (math.isNan(y)) {
+        return y;
+    }
+    if (x > y) {
+        return x - y;
+    }
+    return 0;
+}
+
+fn fdimf(x: f32, y: f32) callconv(.c) f32 {
     if (math.isNan(x)) {
         return x;
     }
