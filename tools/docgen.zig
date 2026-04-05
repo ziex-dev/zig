@@ -25,7 +25,7 @@ const usage =
     \\
     \\Options:
     \\   --code-dir dir         Path to directory containing code example outputs
-    \\   --help                 Print this help and exit
+    \\   -h, --help             Print this help and exit
     \\
 ;
 const command: std.cli.Command = .{

@@ -65,6 +65,9 @@ const usage =
     \\<SPIRV-Headers repository path> should point to a clone of
     \\https://github.com/KhronosGroup/SPIRV-Headers/
     \\
+    \\Options:
+    \\  -h, --help       Print this help and exit.
+    \\
 ;
 const command: std.cli.Command = .{
     .name = "gen_spirv_spec",

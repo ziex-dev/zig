@@ -2043,6 +2043,9 @@ const usage =
     \\
     \\On a less beefy system, or when debugging, compile with -fsingle-threaded.
     \\
+    \\Options:
+    \\  -h, --help    Print this help and exit.
+    \\
 ;
 
 const command: std.cli.Command = .{
