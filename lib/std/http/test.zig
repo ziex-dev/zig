@@ -1120,16 +1120,24 @@ const TestServer = struct {
     shutting_down: bool,
     server_thread: std.Thread,
     net_server: net.Server,
+    unix_path: ?[]const u8 = null,
 
     fn destroy(self: *@This()) void {
         const io = self.io;
         self.shutting_down = true;
-        var stream = self.net_server.socket.address.connect(io, .{ .mode = .stream }) catch
-            @panic("shutdown failure");
-        stream.close(io);
+        if (self.unix_path) |path| {
+            const ua = net.UnixAddress.init(path) catch @panic("shutdown failure");
+            var stream = ua.connect(io) catch @panic("shutdown failure");
+            stream.close(io);
+        } else {
+            var stream = self.net_server.socket.address.connect(io, .{ .mode = .stream }) catch
+                @panic("shutdown failure");
+            stream.close(io);
+        }
 
         self.server_thread.join();
         self.net_server.deinit(io);
+        if (self.unix_path) |path| Io.Dir.deleteFileAbsolute(io, path) catch {};
         std.testing.allocator.destroy(self);
     }
 
@@ -1161,6 +1169,37 @@ fn createTestServer(io: Io, S: type) !*TestServer {
         .net_server = net_server,
         .shutting_down = false,
         .server_thread = undefined, // set below
+    };
+
+    test_server.server_thread = try .spawn(.{}, S.run, .{test_server});
+    errdefer comptime unreachable;
+
+    return test_server;
+}
+
+fn createUnixTestServer(io: Io, socket_path: []const u8, S: type) !*TestServer {
+    if (builtin.single_threaded) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm and native_endian == .big) {
+        return error.SkipZigTest;
+    }
+
+    Io.Dir.deleteFileAbsolute(io, socket_path) catch {};
+    const ua = try net.UnixAddress.init(socket_path);
+
+    const gpa = std.testing.allocator;
+
+    const test_server = try gpa.create(TestServer);
+    errdefer gpa.destroy(test_server);
+
+    var net_server = try ua.listen(io, .{});
+    errdefer net_server.deinit(io);
+
+    test_server.* = .{
+        .io = io,
+        .net_server = net_server,
+        .shutting_down = false,
+        .server_thread = undefined,
+        .unix_path = socket_path,
     };
 
     test_server.server_thread = try .spawn(.{}, S.run, .{test_server});
@@ -1257,7 +1296,50 @@ test "redirect to different connection" {
     }
 }
 
-test "connectUnix compiles" {
-    _ = &http.Client.connectUnix;
-    _ = http.Client.ConnectUnixError;
+test "connectUnix" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const io = std.testing.io;
+    const socket_path = "/tmp/zig-unix-sock-test.sock";
+    const test_server = try createUnixTestServer(io, socket_path, struct {
+        fn run(test_server: *TestServer) anyerror!void {
+            const net_server = &test_server.net_server;
+            var recv_buffer: [1024]u8 = undefined;
+            var send_buffer: [1024]u8 = undefined;
+
+            var stream = try net_server.accept(io);
+            defer stream.close(io);
+
+            var connection_br = stream.reader(io, &recv_buffer);
+            var connection_bw = stream.writer(io, &send_buffer);
+            var http_server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+            var request = try http_server.receiveHead();
+            try request.respond("good job, you pass", .{});
+        }
+    });
+    defer test_server.destroy();
+
+    const gpa = std.testing.allocator;
+
+    var client: http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+
+    const conn = try client.connectUnix(socket_path);
+
+    var redirect_buffer: [1024]u8 = undefined;
+    var req = try client.request(.GET, .{
+        .scheme = "http",
+        .host = null,
+        .path = .{ .percent_encoded = "/" },
+    }, .{ .connection = conn });
+    defer req.deinit();
+
+    try req.sendBodiless();
+    var response = try req.receiveHead(&redirect_buffer);
+    var reader = response.reader(&.{});
+    const body = try reader.allocRemaining(gpa, .unlimited);
+    defer gpa.free(body);
+
+    try expectEqualStrings("good job, you pass", body);
 }
