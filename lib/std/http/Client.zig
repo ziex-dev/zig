@@ -1495,7 +1495,7 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     var stream = try ua.connect(io);
     errdefer stream.close(io);
 
-    const pc = try Connection.Plain.create(client, .{.bytes = path}, 0, stream);
+    const pc = try Connection.Plain.create(client, .{ .bytes = path }, 0, stream);
     client.connection_pool.addUsed(io, &pc.connection);
     return &pc.connection;
 }
