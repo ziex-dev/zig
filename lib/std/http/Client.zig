@@ -1666,6 +1666,8 @@ fn uriPort(uri: Uri, protocol: Protocol) u16 {
 
 /// Open a connection to the host specified by `uri` and prepare to send a HTTP request.
 ///
+/// Supported URI schemes are "http", "https", "ws", "wss" and "http+unix".
+///
 /// The caller is responsible for calling `deinit()` on the `Request`.
 /// This function is threadsafe.
 ///
