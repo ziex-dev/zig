@@ -1491,8 +1491,8 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     })) |conn|
         return conn;
 
-    const uds = try Io.net.UnixAddress.init(path);
-    var stream = try uds.connect(io);
+    const ua = try Io.net.UnixAddress.init(path);
+    var stream = try ua.connect(io);
     errdefer stream.close(io);
 
     const pc = try Connection.Plain.create(client, .{.bytes = path}, 0, stream);
