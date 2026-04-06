@@ -1476,7 +1476,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     }
 }
 
-pub const ConnectUnixError = Allocator.Error || Io.net.UnixAddress.InitError || Io.net.UnixAddress.ConnectError || error{NameTooLong};
+pub const ConnectUnixError = Allocator.Error || Io.net.UnixAddress.InitError || Io.net.UnixAddress.ConnectError;
 
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
