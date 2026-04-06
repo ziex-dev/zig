@@ -639,7 +639,7 @@ fn resizeNode(mf: *MappedFile, gpa: std.mem.Allocator, ni: Node.Index, requested
         while (true) switch (linux.errno(switch (std.math.order(range_file_offset, file_size)) {
             .lt => linux.fallocate(
                 mf.memory_map.file.handle,
-                linux.FALLOC.FL_INSERT_RANGE,
+                .{ .FL_INSERT_RANGE = true },
                 @intCast(range_file_offset),
                 @intCast(range_size),
             ),
@@ -851,7 +851,7 @@ fn moveRange(mf: *MappedFile, old_file_offset: u64, new_file_offset: u64, size: 
         size >= mf.flags.block_size.toByteUnits() * 2 - 1) while (true)
         switch (linux.errno(linux.fallocate(
             mf.memory_map.file.handle,
-            linux.FALLOC.FL_PUNCH_HOLE | linux.FALLOC.FL_KEEP_SIZE,
+            .{ .FL_PUNCH_HOLE = true, .FL_KEEP_SIZE = true },
             @intCast(old_file_offset),
             @intCast(size),
         ))) {

@@ -1628,7 +1628,7 @@ pub fn access(path: [*:0]const u8, mode: u32) usize {
     if (@hasField(SYS, "access")) {
         return syscall2(.access, @intFromPtr(path), mode);
     } else {
-        return faccessat(AT.FDCWD, path, mode, 0);
+        return faccessat(AT.FDCWD, path, mode, .{});
     }
 }
 
@@ -1927,7 +1927,7 @@ pub fn chown(path: [*:0]const u8, owner: uid_t, group: gid_t) usize {
     } else if (@hasField(SYS, "chown")) {
         return syscall3(.chown, @intFromPtr(path), owner, group);
     } else {
-        return fchownat(AT.FDCWD, path, owner, group, 0);
+        return fchownat(AT.FDCWD, path, owner, group, .{});
     }
 }
 
@@ -3469,8 +3469,13 @@ pub fn mincore(address: [*]u8, len: usize, vec: [*]u8) usize {
     return syscall3(.mincore, @intFromPtr(address), len, @intFromPtr(vec));
 }
 
-pub fn madvise(address: [*]u8, len: usize, advice: u32) usize {
-    return syscall3(.madvise, @intFromPtr(address), len, advice);
+pub fn madvise(address: [*]u8, len: usize, advice: MADV) usize {
+    return syscall3(
+        .madvise,
+        @intFromPtr(address),
+        len,
+        @intFromEnum(advice),
+    );
 }
 
 pub fn pidfd_open(pid: pid_t, flags: u32) usize {

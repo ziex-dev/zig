@@ -3736,7 +3736,7 @@ pub const W = switch (native_os) {
         }
 
         pub fn IFSTOPPED(x: W) bool {
-            return x.status() == STOPPED and x.stopSig() != 0x13;
+            return x.status() == STOPPED and x.STOPSIG() != 0x13;
         }
 
         pub fn IFSIGNALED(x: W) bool {
@@ -5375,7 +5375,6 @@ pub const AF = if (builtin.abi.isAndroid()) enum(u8) {
         UNSPEC = 0,
         UNIX = 1,
         INET = 2,
-        SYS_CONTROL = 2,
         IMPLINK = 3,
         PUP = 4,
         CHAOS = 5,
@@ -5409,6 +5408,7 @@ pub const AF = if (builtin.abi.isAndroid()) enum(u8) {
         MAX = 40,
         _,
 
+        pub const SYS_CONTROL: AF = .INET;
         pub const LOCAL: AF = .UNIX;
         pub const OSI: AF = .ISO;
         pub const E164: AF = .ISDN;
@@ -5930,7 +5930,7 @@ pub const SOCK = switch (native_os) {
     .windows => ws2_32.SOCK,
     .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
         type: TYPE = .DEFAULT,
-        _: u25 = 0, // doesn't support socket flags
+        flags: Flags = .{}, // doesn't support socket flags
 
         pub const TYPE = enum(u7) {
             DEFAULT = 0,
@@ -5940,6 +5940,10 @@ pub const SOCK = switch (native_os) {
             RDM = 4,
             SEQPACKET = 5,
             _,
+        };
+
+        const Flags = packed struct(u25) {
+            _: u25 = 0,
         };
 
         pub const MAXADDRLEN = 255;
@@ -10599,7 +10603,7 @@ pub const fstatat = switch (native_os) {
     else => private.fstatat,
 };
 
-pub extern "c" fn statx(dirfd: fd_t, path: [*:0]const u8, flags: AT, mask: linux.Mask, buf: *linux.Statx) c_int;
+pub extern "c" fn statx(dirfd: fd_t, path: [*:0]const u8, flags: AT, mask: linux.Statx.Mask, buf: *linux.Statx) c_int;
 
 pub extern "c" fn getpwent() ?*passwd;
 pub extern "c" fn endpwent() void;

@@ -3664,12 +3664,12 @@ fn dirStatFilePosix(
     var path_buffer: [posix.PATH_MAX]u8 = undefined;
     const sub_path_posix = try pathToPosix(sub_path, &path_buffer);
 
-    const flags: u32 = if (!options.follow_symlinks) posix.AT.SYMLINK_NOFOLLOW else 0;
+    const flags: posix.AT = .{ .SYMLINK_NOFOLLOW = if (!options.follow_symlinks) true else false };
 
     return posixStatFile(dir.handle, sub_path_posix, flags);
 }
 
-fn posixStatFile(dir_fd: posix.fd_t, sub_path: [:0]const u8, flags: u32) Dir.StatFileError!File.Stat {
+fn posixStatFile(dir_fd: posix.fd_t, sub_path: [:0]const u8, flags: posix.AT) Dir.StatFileError!File.Stat {
     const syscall: Syscall = try .start();
     while (true) {
         var stat = std.mem.zeroes(posix.Stat);
@@ -5791,7 +5791,7 @@ fn dirReadIllumos(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
         if (std.mem.eql(u8, name, ".") or std.mem.eql(u8, name, "..")) continue;
 
         // illumos dirent doesn't expose type, so we have to call stat to get it.
-        const stat = try posixStatFile(dr.dir.handle, name, posix.AT.SYMLINK_NOFOLLOW);
+        const stat = try posixStatFile(dr.dir.handle, name, .{ .SYMLINK_NOFOLLOW = true });
 
         buffer[buffer_index] = .{
             .name = name,
@@ -7075,7 +7075,7 @@ fn dirDeleteFilePosix(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8) Dir
                     var st = std.mem.zeroes(posix.Stat);
                     while (true) {
                         try syscall.checkCancel();
-                        switch (posix.errno(fstatat_sym(dir.handle, sub_path_posix, &st, posix.AT.SYMLINK_NOFOLLOW))) {
+                        switch (posix.errno(fstatat_sym(dir.handle, sub_path_posix, &st, .{ .SYMLINK_NOFOLLOW = true }))) {
                             .SUCCESS => {
                                 syscall.finish();
                                 break;
@@ -11775,7 +11775,7 @@ fn netListenIpWindows(
     const family = posixAddressFamily(address);
     const socket_handle = try openSocketAfd(family, .{ .mode = options.mode, .protocol = options.protocol });
     errdefer windows.CloseHandle(socket_handle);
-    if (options.reuse_address) try setSocketOptionAfd(socket_handle, ws2_32.SOL.SOCKET, ws2_32.SO.REUSEADDR, true);
+    if (options.reuse_address) try setSocketOptionAfd(socket_handle, @intFromEnum(ws2_32.SOL.SOCKET), @intFromEnum(ws2_32.SO.REUSEADDR), true);
     const bound_address = try bindSocketIpAfd(socket_handle, address, .Passive);
     switch ((try deviceIoControl(&.{
         .file = .{ .handle = socket_handle, .flags = .{ .nonblocking = true } },
@@ -12149,7 +12149,7 @@ fn netConnectIpWindows(
     const family = posixAddressFamily(address);
     const socket_handle = try openSocketAfd(family, .{ .mode = options.mode, .protocol = options.protocol });
     errdefer windows.CloseHandle(socket_handle);
-    try setSocketOptionAfd(socket_handle, ws2_32.SOL.SOCKET, ws2_32.SO.REUSE_UNICASTPORT, true);
+    try setSocketOptionAfd(socket_handle, @intFromEnum(ws2_32.SOL.SOCKET), @intFromEnum(ws2_32.SO.REUSE_UNICASTPORT), true);
     const bound_address = bindSocketIpAfd(socket_handle, &switch (address.*) {
         .ip4 => .{ .ip4 = .unspecified(0) },
         .ip6 => .{ .ip6 = .unspecified(0) },
@@ -12270,7 +12270,7 @@ fn netBindIpWindows(
     const socket_handle = try openSocketAfd(family, options);
     errdefer windows.CloseHandle(socket_handle);
     const bound_address = try bindSocketIpAfd(socket_handle, address, .Active);
-    if (options.allow_broadcast) try setSocketOptionAfd(socket_handle, ws2_32.SOL.SOCKET, ws2_32.SO.BROADCAST, true);
+    if (options.allow_broadcast) try setSocketOptionAfd(socket_handle, @intFromEnum(ws2_32.SOL.SOCKET), @intFromEnum(ws2_32.SO.BROADCAST), true);
     return .{ .handle = socket_handle, .address = bound_address };
 }
 
@@ -12433,9 +12433,9 @@ fn openSocketAfd(family: ws2_32.ADDRESS_FAMILY, options: IpAddress.BindOptions) 
                 .RAW = options.mode == .raw,
             },
             .GroupID = 0,
-            .AddressFamily = family,
-            .SocketType = @bitCast(mode),
-            .Protocol = @bitCast(protocol),
+            .AddressFamily = @intFromEnum(family),
+            .SocketType = @intFromEnum(mode),
+            .Protocol = @intFromEnum(protocol),
             .TransportDeviceNameLength = 0,
             .TransportDeviceName = undefined,
         } },
@@ -12825,7 +12825,7 @@ fn netSendOnePosix(
         // OS returns EINVAL if this pointer is invalid even if controllen is zero.
         .control = if (message.control.len == 0) null else @constCast(message.control.ptr),
         .controllen = @intCast(message.control.len),
-        .flags = 0,
+        .flags = .{},
     };
     var syscall: if (is_windows) AlertableSyscall else Syscall = try .start();
     while (true) {
@@ -13781,10 +13781,13 @@ fn netLookupFallible(
         const port_c = std.fmt.bufPrintZ(&port_buffer, "{d}", .{options.port}) catch unreachable;
 
         const hints: posix.addrinfo = .{
-            .flags = .{ .CANONNAME = options.canonical_name_buffer != null, .NUMERICSERV = true },
-            .family = posix.AF.UNSPEC,
-            .socktype = posix.SOCK.STREAM,
-            .protocol = posix.IPPROTO.TCP,
+            .flags = .{
+                .CANONNAME = options.canonical_name_buffer != null,
+                .NUMERICSERV = true,
+            },
+            .family = @intFromEnum(posix.AF.UNSPEC),
+            .socktype = @intFromEnum(posix.SOCK.TYPE.STREAM),
+            .protocol = @intFromEnum(posix.IPPROTO.TCP),
             .canonname = null,
             .addr = null,
             .addrlen = 0,
@@ -17238,7 +17241,13 @@ fn getRandomFd(t: *Threaded) Io.RandomSecureError!posix.fd_t {
             const syscall: Syscall = try .start();
             while (true) {
                 var statx = std.mem.zeroes(std.os.linux.Statx);
-                switch (sys.errno(sys.statx(fd, "", std.os.linux.AT.EMPTY_PATH, .{ .TYPE = true }, &statx))) {
+                switch (sys.errno(sys.statx(
+                    fd,
+                    "",
+                    .{ .EMPTY_PATH = true },
+                    .{ .TYPE = true },
+                    &statx,
+                ))) {
                     .SUCCESS => {
                         syscall.finish();
                         if (!statx.mask.TYPE) return error.EntropyUnavailable;

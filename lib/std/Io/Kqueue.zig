@@ -1017,6 +1017,7 @@ fn netAccept(userdata: ?*anyopaque, server: net.Socket.Handle, options: net.Serv
     _ = options;
     @panic("TODO");
 }
+
 fn netBindIp(
     userdata: ?*anyopaque,
     address: *const net.IpAddress,
@@ -1029,10 +1030,11 @@ fn netBindIp(
     var storage: Io.Threaded.PosixAddress = undefined;
     var addr_len = Io.Threaded.addressToPosix(address, &storage);
     try posixBind(k, socket_fd, &storage.any, addr_len);
-    if (options.allow_broadcast) try setSocketOption(k, socket_fd, posix.SOL.SOCKET, posix.SO.BROADCAST, 1);
+    if (options.allow_broadcast) try setSocketOption(k, socket_fd, @intFromEnum(posix.SOL.SOCKET), @intFromEnum(posix.SO.BROADCAST), 1);
     try posixGetSockName(k, socket_fd, &storage.any, &addr_len);
     return .{ .handle = socket_fd, .address = Io.Threaded.addressFromPosix(&storage) };
 }
+
 fn netConnectIp(userdata: ?*anyopaque, address: *const net.IpAddress, options: net.IpAddress.ConnectOptions) net.IpAddress.ConnectError!net.Socket {
     if (options.timeout != .none) @panic("TODO");
     const k: *Kqueue = @ptrCast(@alignCast(userdata));
@@ -1403,7 +1405,7 @@ fn openSocketPosix(
 
     if (options.ip6_only) {
         if (posix.IPV6 == void) return error.OptionUnsupported;
-        try setSocketOption(k, socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 0);
+        try setSocketOption(k, socket_fd, @intFromEnum(posix.IPPROTO.IPV6), posix.IPV6.V6ONLY, 0);
     }
 
     return socket_fd;

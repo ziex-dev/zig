@@ -44,7 +44,6 @@ pub const AF = enum(u16) {
     IMPLINK = 3,
     PUP = 4,
     CHAOS = 5,
-    NS = 6,
     IPX = 6,
     ISO = 7,
     ECMA = 8,
@@ -68,18 +67,20 @@ pub const AF = enum(u16) {
     IRDA = 26,
     NETDES = 28,
     MAX = 29,
-    TCNPROCESS = 29,
     TCNMESSAGE = 30,
     ICLFXBM = 31,
     BTH = 32,
     LINK = 33,
     HYPERV = 34,
     _,
+
+    pub const NS: AF = .IPS;
+    pub const TCNPROCESS: AF = .MAX;
 };
 
 pub const SOCK = packed struct(u32) {
     type: TYPE = .DEFAULT,
-    _: u25 = 0,
+    flags: Flags = .{},
 
     pub const TYPE = enum(u7) {
         DEFAULT = 0,
@@ -89,6 +90,10 @@ pub const SOCK = packed struct(u32) {
         RDM = 4,
         SEQPACKET = 5,
         _,
+    };
+
+    const Flags = packed struct(u25) {
+        _: u25 = 0,
     };
 };
 
@@ -139,13 +144,15 @@ pub const SO = enum(u16) {
     DISCDATALEN = 28678,
     DISCOPTLEN = 28679,
     OPENTYPE = 28680,
-    SYNCHRONOUS_ALERT = 16,
-    SYNCHRONOUS_NONALERT = 32,
     MAXDG = 28681,
     MAXPATHDG = 28682,
     UPDATE_ACCEPT_CONTEXT = 28683,
     CONNECT_TIME = 28684,
     UPDATE_CONNECT_CONTEXT = 28688,
+    _,
+
+    pub const SYNCHRONOUS_ALERT: AF = .DONTROUTE;
+    pub const SYNCHRONOUS_NONALERT: AF = .BROADCAST;
 
     pub const UNIX_PATH = 0x98000000;
 };
