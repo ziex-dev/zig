@@ -1342,6 +1342,8 @@ test "connectUnix" {
     defer gpa.free(body);
 
     try expectEqualStrings("good job, you pass", body);
+}
+
 test "boot failed connections from the pool" {
     if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
