@@ -3723,8 +3723,8 @@ pub const W = switch (native_os) {
             return @intCast(x.toInt() >> 8);
         }
 
-        pub fn TERMSIG(x: W) u32 {
-            return x.status();
+        pub fn TERMSIG(x: W) SIG {
+            return @enumFromInt(x.status());
         }
 
         pub fn STOPSIG(x: W) u32 {
@@ -3766,22 +3766,22 @@ pub const W = switch (native_os) {
         TRAPPED: bool = false,
         _7: u26 = 0,
 
-        pub const UNTRACED: W = .{ .stopped = true };
+        pub const UNTRACED: W = .{ .STOPPED = true };
 
         pub fn EXITSTATUS(s: W) u8 {
             return @intCast((s.toInt() & 0xff00) >> 8);
         }
 
-        pub fn TERMSIG(s: W) u32 {
-            return s.toInt() & 0x7f;
+        pub fn TERMSIG(s: W) SIG {
+            return @enumFromInt(s.toInt() & 0x7f);
         }
 
-        pub fn STOPsIG(s: W) u32 {
-            return s.exitStatus();
+        pub fn STOPSIG(s: W) u32 {
+            return s.EXITSTATUS();
         }
 
         pub fn IFEXITED(s: W) bool {
-            return s.termSig() == 0;
+            return @intFromEnum(s.TERMSIG()) == 0;
         }
 
         pub fn IFSTOPPED(s: W) bool {
@@ -3812,22 +3812,22 @@ pub const W = switch (native_os) {
         NOWAIT: bool = false,
         _8: u24 = 0,
 
-        pub const UNTRACED: W = .{ .stopped = true };
+        pub const UNTRACED: W = .{ .STOPPED = true };
 
         pub fn EXITSTATUS(x: W) u8 {
             return @intCast((x.toInt() >> 8) & 0xff);
         }
 
-        pub fn TERMSIG(x: W) u32 {
-            return x.toInt() & 0x7f;
+        pub fn TERMSIG(x: W) SIG {
+            return @enumFromInt(x.toInt() & 0x7f);
         }
 
         pub fn STOPSIG(x: W) u32 {
-            return x.exitStatus();
+            return x.EXITSTATUS();
         }
 
         pub fn IFEXITED(x: W) bool {
-            return x.termSig() == 0;
+            return @intFromEnum(x.TERMSIG()) == 0;
         }
 
         pub fn IFCONTINUED(x: W) bool {
@@ -3865,26 +3865,26 @@ pub const W = switch (native_os) {
         NOWAIT: bool = false,
         _18: u15 = 0,
 
-        pub const UNTRACED: W = .{ .stopped = true };
+        pub const UNTRACED: W = .{ .STOPPED = true };
 
         pub fn EXITSTATUS(x: W) u8 {
             return @intCast((x.toInt() >> 8) & 0xff);
         }
-        pub fn TERMSIG(x: W) u32 {
-            return x.toInt() & 0x7f;
+        pub fn TERMSIG(x: W) SIG {
+            return @enumFromInt(x.toInt() & 0x7f);
         }
         pub fn STOPSIG(x: W) u32 {
-            return x.exitStatus();
+            return x.EXITSTATUS();
         }
         pub fn IFEXITED(x: W) bool {
-            return x.termSig() == 0;
+            return @intFromEnum(x.TERMSIG()) == 0;
         }
         pub fn IFCONTINUED(x: W) bool {
             return (x.toInt() & 0x7f) == 0xffff;
         }
         pub fn IFSTOPPED(x: W) bool {
             const s = x.toInt();
-            return (s & 0x7f != 0x7f) and !x.ifContinued();
+            return (s & 0x7f != 0x7f) and !x.IFCONTINUED();
         }
         pub fn IFSIGNALED(x: W) bool {
             return !x.IFSTOPPED() and !x.IFCONTINUED() and !x.IFEXITED();
@@ -3909,19 +3909,19 @@ pub const W = switch (native_os) {
         TRAPPED: bool = false,
         _7: u26 = 0,
 
-        pub const UNTRACED: W = .{ .stopped = true };
+        pub const UNTRACED: W = .{ .STOPPED = true };
 
         pub fn EXITSTATUS(x: W) u8 {
             return @intCast((x.toInt() & 0xff00) >> 8);
         }
-        pub fn TERMSIG(x: W) u32 {
-            return x.toInt() & 0x7f;
+        pub fn TERMSIG(x: W) SIG {
+            return @enumFromInt(x.toInt() & 0x7f);
         }
         pub fn STOPSIG(x: W) u32 {
-            return x.exitStatus();
+            return x.EXITSTATUS();
         }
         pub fn IFEXITED(x: W) bool {
-            return x.termSig() == 0;
+            return @intFromEnum(x.TERMSIG()) == 0;
         }
         pub fn IFSTOPPED(x: W) bool {
             return @as(u16, @truncate((((x.toInt() & 0xffff) *% 0x10001) >> 8))) > 0x7f00;
@@ -3952,8 +3952,8 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(x: W) u8 {
             return @intCast(x.toInt() & 0xff);
         }
-        pub fn TERMSIG(x: W) u32 {
-            return (x.toInt() >> 8) & 0xff;
+        pub fn TERMSIG(x: W) SIG {
+            return @enumFromInt((x.toInt() >> 8) & 0xff);
         }
         pub fn STOPSIG(x: W) u32 {
             return (x.toInt() >> 16) & 0xff;
@@ -3965,7 +3965,7 @@ pub const W = switch (native_os) {
             return ((x.toInt() >> 16) & 0xff) != 0;
         }
         pub fn IFSIGNALED(x: W) bool {
-            return ((x.toInt() >> 8) & 0xff) != 0;
+            return @intFromEnum(x.TERMSIG()) != 0;
         }
 
         fn toInt(s: W) u32 {
@@ -3985,14 +3985,14 @@ pub const W = switch (native_os) {
         pub fn EXITSTATUS(x: W) u8 {
             return @intCast((x.toInt() >> 8) & 0xff);
         }
-        pub fn TERMSIG(x: W) u32 {
-            return x.toInt() & 0x7f;
+        pub fn TERMSIG(x: W) SIG {
+            return @enumFromInt(x.toInt() & 0x7f);
         }
         pub fn STOPSIG(x: W) u32 {
-            return x.exitStatus();
+            return x.EXITSTATUS();
         }
         pub fn IFEXITED(x: W) bool {
-            return x.termSig() == 0;
+            return @intFromEnum(x.TERMSIG()) == 0;
         }
         pub fn IFCONTINUED(x: W) bool {
             return (x.toInt() & 0o177777) == 0o177777;
@@ -4024,19 +4024,19 @@ pub const W = switch (native_os) {
         NOWAIT: bool = false,
         _26: u7 = 0,
 
-        pub const UNTRACED: u32 = @bitCast(W{ .stopped = true });
+        pub const UNTRACED: W = .{ .STOPPED = true };
 
         pub fn EXITSTATUS(x: W) u8 {
             return @intCast((x.toInt() & 0xff00) >> 8);
         }
         pub fn STOPSIG(x: W) u32 {
-            return x.exitStatus();
+            return x.EXITSTATUS();
         }
-        pub fn TERMSIG(x: W) u32 {
-            return x.toInt() & 0x7f;
+        pub fn TERMSIG(x: W) SIG {
+            return @enumFromInt(x.toInt() & 0x7f);
         }
         pub fn IFEXITED(x: W) bool {
-            return x.termSig() == 0;
+            return @intFromEnum(x.TERMSIG()) == 0;
         }
         pub fn IFSTOPPED(x: W) bool {
             return (x.toInt() & 0xff) == 0x7f;
@@ -5454,13 +5454,13 @@ pub const AF = if (builtin.abi.isAndroid()) enum(u8) {
         IEEE80211 = 37,
         INET_SDP = 40,
         INET6_SDP = 42,
-        MAX = 42,
         _,
 
         pub const LOCAL: AF = .UNIX;
         pub const FILE: AF = .LOCAL;
         pub const OSI: AF = .ISO;
         pub const E164: AF = .ISDN;
+        pub const MAX: AF = .INET6_SDP;
     },
     .netbsd => enum(u8) {
         UNSPEC = 0,
@@ -6154,8 +6154,6 @@ pub const IPPROTO = switch (native_os) {
         IPV6 = 41,
         /// raw IP packet
         RAW = 255,
-        /// IP6 hop-by-hop options
-        HOPOPTS = 0,
         /// group mgmt protocol
         IGMP = 2,
         /// gateway^2 (deprecated)
@@ -6376,6 +6374,8 @@ pub const IPPROTO = switch (native_os) {
 
         /// for compatibility
         pub const IPIP: IPPROTO = .IPV4;
+        /// IP6 hop-by-hop options
+        pub const HOPOPTS: IPPROTO = .IP;
     },
     .illumos => enum(u16) {
         /// dummy for IP
@@ -6448,8 +6448,6 @@ pub const IPPROTO = switch (native_os) {
         GGP = 3,
         /// IP header
         IPV4 = 4,
-        /// IP inside IP
-        IPIP = 4,
         /// tcp
         TCP = 6,
         /// exterior gateway protocol
@@ -6480,8 +6478,6 @@ pub const IPPROTO = switch (native_os) {
         AH = 51,
         /// IP Mobility RFC 2004
         MOBILE = 55,
-        /// IPv6 ICMP
-        IPV6_ICMP = 58,
         /// ICMP6
         ICMPV6 = 58,
         /// IP6 no next header
@@ -6498,8 +6494,6 @@ pub const IPPROTO = switch (native_os) {
         PIM = 103,
         /// IP Payload Comp. Protocol
         IPCOMP = 108,
-        /// VRRP RFC 2338
-        VRRP = 112,
         /// Common Address Resolution Protocol
         CARP = 112,
         /// L2TPv3
@@ -6514,6 +6508,12 @@ pub const IPPROTO = switch (native_os) {
 
         /// IP6 hop-by-hop options
         pub const HOPOPTS: IPPROTO = .IP;
+        /// IP inside IP
+        pub const IPIP: IPPROTO = .IPV4;
+        /// IPv6 ICMP
+        pub const IPV6_ICMP: IPPROTO = .ICMPV6;
+        /// VRRP RFC 2338
+        pub const VRRP: IPPROTO = .CARP;
     },
     .dragonfly => enum(u16) {
         IP = 0,
@@ -6522,7 +6522,6 @@ pub const IPPROTO = switch (native_os) {
         UDP = 17,
         IPV6 = 41,
         RAW = 255,
-        HOPOPTS = 0,
         IGMP = 2,
         GGP = 3,
         IPV4 = 4,
@@ -6630,6 +6629,7 @@ pub const IPPROTO = switch (native_os) {
         _,
 
         pub const IPIP: IPPROTO = .IPV4;
+        pub const HOPOPTS: IPPROTO = .IPV4;
     },
     .haiku => enum(u16) {
         IP = 0,
@@ -6691,8 +6691,6 @@ pub const IPPROTO = switch (native_os) {
         AH = 51,
         /// IP Mobility RFC 2004
         MOBILE = 55,
-        /// IPv6 ICMP
-        IPV6_ICMP = 58,
         /// ICMP6
         ICMPV6 = 58,
         /// IP6 no next header
@@ -6709,8 +6707,6 @@ pub const IPPROTO = switch (native_os) {
         PIM = 103,
         /// IP Payload Comp. Protocol
         IPCOMP = 108,
-        /// VRRP RFC 2338
-        VRRP = 112,
         /// Common Address Resolution Protocol
         CARP = 112,
         /// PFSYNC
@@ -6723,6 +6719,10 @@ pub const IPPROTO = switch (native_os) {
         pub const HOPOPTS: IPPROTO = .IP;
         /// IP header
         pub const IPIP: IPPROTO = .IPV4;
+        /// IPv6 ICMP
+        pub const IPV6_ICMP: IPPROTO = .ICMPV6;
+        /// VRRP RFC 2338
+        pub const VRRP: IPPROTO = .CARP;
     },
     // https://github.com/SerenityOS/serenity/blob/ac44ec5ebc707f9dd0c3d4759a1e17e91db5d74f/Kernel/API/POSIX/sys/socket.h#L44-L54
     .serenity => enum(u8) {
@@ -6834,7 +6834,7 @@ pub const SO = switch (native_os) {
         LINGER_SEC = 0x1080,
         _,
     },
-    .freebsd => enum(u16) {
+    .freebsd => enum(u32) {
         DEBUG = 0x00000001,
         ACCEPTCONN = 0x00000002,
         REUSEADDR = 0x00000004,
@@ -11837,7 +11837,7 @@ const private = struct {
     extern "c" fn __sigemptyset14(set: ?*sigset_t) c_int;
     extern "c" fn __sigfillset14(set: ?*sigset_t) c_int;
     extern "c" fn __sigprocmask14(how: c_int, noalias set: ?*const sigset_t, noalias oset: ?*sigset_t) c_int;
-    extern "c" fn __socket30(domain: c_uint, sock_type: c_uint, protocol: c_uint) c_int;
+    extern "c" fn __socket30(domain: sa_family_t, sock_type: SOCK, protocol: IPPROTO) c_int;
     extern "c" fn __stat50(path: [*:0]const u8, buf: *Stat) c_int;
     extern "c" fn __getdents30(fd: c_int, buf_ptr: [*]u8, nbytes: usize) c_int;
     extern "c" fn __sigaltstack14(ss: ?*const stack_t, old_ss: ?*stack_t) c_int;

@@ -4812,8 +4812,8 @@ fn dirOpenFilePosix(
 
     var flags: posix.O = switch (native_os) {
         .wasi => .{
-            .read = options.mode != .write_only,
-            .write = options.mode != .read_only,
+            .RDONLY = options.mode != .write_only,
+            .WRONLY = options.mode != .read_only,
             .NOFOLLOW = !options.follow_symlinks,
         },
         else => .{
@@ -5266,7 +5266,7 @@ fn dirOpenDirPosix(
 
     var flags: posix.O = switch (native_os) {
         .wasi => .{
-            .read = true,
+            .RDONLY = true,
             .NOFOLLOW = !options.follow_symlinks,
             .DIRECTORY = true,
         },
@@ -15335,7 +15335,7 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
         const linux = std.os.linux; // Bypass libc which has the wrong signature.
         var info: linux.siginfo_t = undefined;
         const syscall: Syscall = try .start();
-        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, ru_ptr))) {
+        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, .{ .EXITED = true }, ru_ptr))) {
             .SUCCESS => {
                 syscall.finish();
                 if (ru_ptr) |p| child.resource_usage_statistics.rusage = p.*;
@@ -15379,7 +15379,7 @@ pub fn statusToTerm(status: u32) process.Child.Term {
     return if (term.IFEXITED())
         .{ .exited = term.EXITSTATUS() }
     else if (term.IFSIGNALED())
-        .{ .signal = @enumFromInt(term.TERMSIG()) }
+        .{ .signal = term.TERMSIG() }
     else if (term.IFSTOPPED())
         .{ .stopped = term.STOPSIG() }
     else
@@ -15413,7 +15413,7 @@ fn childKillPosix(child: *process.Child) !void {
     if (have_waitid) {
         const linux = std.os.linux; // Bypass libc which has the wrong signature.
         var info: linux.siginfo_t = undefined;
-        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, linux.W.EXITED, null))) {
+        while (true) switch (linux.errno(linux.waitid(.PID, pid, &info, .{ .EXITED = true }, null))) {
             .SUCCESS => return,
             .INTR => continue,
             .CHILD => |err| return errnoBug(err), // Double-free.

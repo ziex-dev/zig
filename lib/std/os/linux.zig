@@ -2152,13 +2152,13 @@ pub fn wait4(pid: pid_t, status: *u32, flags: u32, usage: ?*rusage) usize {
     );
 }
 
-pub fn waitid(id_type: P, id: fd_t, infop: *siginfo_t, flags: u32, usage: ?*rusage) usize {
+pub fn waitid(id_type: P, id: fd_t, infop: *siginfo_t, flags: W, usage: ?*rusage) usize {
     return syscall5(
         .waitid,
         @intFromEnum(id_type),
         @bitCast(@as(isize, id)),
         @intFromPtr(infop),
-        flags,
+        @as(u32, @bitCast(flags)),
         @intFromPtr(usage),
     );
 }
@@ -3536,7 +3536,7 @@ pub fn fadvise(fd: fd_t, offset: i64, len: i64, advice: POSIX_FADV) usize {
         return syscall6(
             .fadvise64_64,
             @bitCast(@as(isize, fd)),
-            @as(u32, @bitCast(advice)),
+            @intFromEnum(advice),
             offset_halves[0],
             offset_halves[1],
             length_halves[0],
@@ -3556,7 +3556,7 @@ pub fn fadvise(fd: fd_t, offset: i64, len: i64, advice: POSIX_FADV) usize {
             offset_halves[1],
             length_halves[0],
             length_halves[1],
-            @as(u32, @bitCast(advice)),
+            @intFromEnum(advice),
         );
     } else if (comptime usize_bits < 64) {
         // Other 32-bit architectures do not require register alignment.
@@ -3574,7 +3574,7 @@ pub fn fadvise(fd: fd_t, offset: i64, len: i64, advice: POSIX_FADV) usize {
             offset_halves[1],
             length_halves[0],
             length_halves[1],
-            @as(u32, @bitCast(advice)),
+            @intFromEnum(advice),
         );
     } else {
         // On 64-bit architectures, fadvise64_64 and fadvise64 are the same. Generally, older ports
@@ -4617,22 +4617,22 @@ pub const W = packed struct(u32) {
     NOWAIT: bool = false,
     _26: u7 = 0,
 
-    pub const UNTRACED: W = .{ .stopped = true };
+    pub const UNTRACED: W = .{ .STOPPED = true };
 
     pub fn EXITSTATUS(s: W) u8 {
         return @intCast((s.toInt() & 0xff00) >> 8);
     }
 
-    pub fn TERMSIG(s: W) u32 {
-        return s.toInt() & 0x7f;
+    pub fn TERMSIG(s: W) SIG {
+        return @enumFromInt(s.toInt() & 0x7f);
     }
 
     pub fn STOPSIG(s: W) u32 {
-        return EXITSTATUS(s);
+        return s.EXITSTATUS();
     }
 
     pub fn IFEXITED(s: W) bool {
-        return TERMSIG(s) == 0;
+        return @intFromEnum(s.TERMSIG()) == 0;
     }
 
     pub fn IFSTOPPED(s: W) bool {
