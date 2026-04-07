@@ -504,7 +504,7 @@ fn loadComptimePtrInner(
         const src_bit_size = bitcast_src_val.typeOf(zcu).bitSize(zcu);
         if (src_bit_size > host_bits) {
             const truncate_ty = try pt.intType(.unsigned, @intCast(host_bits));
-            bitcast_src_val  = try pt.getCoerced(bitcast_src_val, truncate_ty);
+            bitcast_src_val = try pt.getCoerced(bitcast_src_val, truncate_ty);
         }
     }
 
