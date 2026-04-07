@@ -1430,7 +1430,6 @@ const src_files = [_][]const u8{
     "musl/src/stdio/open_wmemstream.c",
     "musl/src/stdio/__overflow.c",
     "musl/src/stdio/pclose.c",
-    "musl/src/stdio/perror.c",
     "musl/src/stdio/popen.c",
     "musl/src/stdio/printf.c",
     "musl/src/stdio/putc.c",

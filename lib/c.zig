@@ -70,6 +70,7 @@ comptime {
     }
     _ = @import("c/math.zig");
     _ = @import("c/search.zig");
+    _ = @import("c/stdio.zig");
     _ = @import("c/stdlib.zig");
     _ = @import("c/string.zig");
     _ = @import("c/strings.zig");

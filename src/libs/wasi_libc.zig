@@ -864,7 +864,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/stdio/getwchar.c",
     "musl/src/stdio/ofl_add.c",
     "musl/src/stdio/__overflow.c",
-    "musl/src/stdio/perror.c",
     "musl/src/stdio/putchar_unlocked.c",
     "musl/src/stdio/putc_unlocked.c",
     "musl/src/stdio/puts.c",
