@@ -73,7 +73,7 @@ pub const Tag = struct {
         const tag1: FirstTag = @bitCast(try reader.takeByte());
         var number: u14 = tag1.number;
 
-        if (tag1.number == 15) {
+        if (tag1.number == 31) {
             const tag2: NextTag = @bitCast(try reader.takeByte());
             number = tag2.number;
             if (tag2.continues) {
@@ -238,6 +238,12 @@ test Element {
         .tag = Tag.universal(.sequence, true),
         .slice = Element.Slice{ .start = 3, .end = long_form.len },
     }, Element.decode(&long_form, 0));
+
+    const multi_byte_tag = [_]u8{ 0x1F, 0x20, 0x08, 0x30, 0x36, 0x3A, 0x32, 0x37, 0x3A, 0x31, 0x35 };
+    try std.testing.expectEqual(Element{
+        .tag = Tag.universal(.time_of_day, false),
+        .slice = Element.Slice{ .start = 3, .end = multi_byte_tag.len },
+    }, Element.decode(&multi_byte_tag, 0));
 }
 
 /// For decoding.
