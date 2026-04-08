@@ -207,6 +207,8 @@ pub const IpAddress = union(enum) {
         NetworkDown,
         /// Insufficient memory or other resource internal to the operating system.
         SystemResources,
+        /// Can occur when bound port is privileged.
+        PermissionDenied,
         /// Per-process limit on the number of open file descriptors has been reached.
         ProcessFdQuotaExceeded,
         /// System-wide limit on the total number of open files has been reached.
@@ -263,6 +265,8 @@ pub const IpAddress = union(enum) {
         AddressFamilyUnsupported,
         /// Insufficient memory or other resource internal to the operating system.
         SystemResources,
+        /// Can occur when bound port is privileged.
+        PermissionDenied,
         /// The local network interface used to reach the destination is offline.
         NetworkDown,
         ProtocolUnsupportedBySystem,
@@ -301,32 +305,36 @@ pub const IpAddress = union(enum) {
     }
 
     pub const ConnectError = error{
+        /// A nonexistent interface was requested or the requested address was not local.
         AddressUnavailable,
+        /// The address is not valid for the address family of socket.
         AddressFamilyUnsupported,
         /// Insufficient memory or other resource internal to the operating system.
         SystemResources,
+        /// Can occur when bound port is privileged.
+        PermissionDenied,
+        /// The local network interface used to reach the destination is offline.
+        NetworkDown,
+        ProtocolUnsupportedBySystem,
+        ProtocolUnsupportedByAddressFamily,
+        /// Per-process limit on the number of open file descriptors has been reached.
+        ProcessFdQuotaExceeded,
+        /// System-wide limit on the total number of open files has been reached.
+        SystemFdQuotaExceeded,
+        SocketModeUnsupported,
+        /// One of the `BindOptions` is not supported by the Io
+        /// implementation.
+        OptionUnsupported,
         ConnectionPending,
         ConnectionRefused,
         ConnectionResetByPeer,
         HostUnreachable,
         NetworkUnreachable,
-        Timeout,
-        /// One of the `ConnectOptions` is not supported by the Io
-        /// implementation.
-        OptionUnsupported,
-        /// Per-process limit on the number of open file descriptors has been reached.
-        ProcessFdQuotaExceeded,
-        /// System-wide limit on the total number of open files has been reached.
-        SystemFdQuotaExceeded,
-        ProtocolUnsupportedBySystem,
-        ProtocolUnsupportedByAddressFamily,
-        SocketModeUnsupported,
         /// The user tried to connect to a broadcast address without having the socket broadcast flag enabled or
         /// the connection request failed because of a local firewall rule.
         AccessDenied,
         /// Non-blocking was requested and the operation cannot return immediately.
         WouldBlock,
-        NetworkDown,
     } || Io.Timeout.Error || Io.UnexpectedError || Io.Cancelable;
 
     pub const ConnectOptions = struct {

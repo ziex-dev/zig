@@ -11903,6 +11903,7 @@ fn posixBind(
                     .ADDRNOTAVAIL => return error.AddressUnavailable,
                     .FAULT => |err| return errnoBug(err), // invalid `addr` pointer
                     .NOMEM => return error.SystemResources,
+                    .ACCES => return error.PermissionDenied,
                     else => |err| return posix.unexpectedErrno(err),
                 }
             },
@@ -12417,6 +12418,7 @@ fn bindSocketIpAfd(socket_handle: net.Socket.Handle, address: *const IpAddress, 
         .CANCELLED => unreachable,
         .INSUFFICIENT_RESOURCES => return error.SystemResources,
         .SHARING_VIOLATION => return error.AddressInUse,
+        .ACCESS_DENIED => return error.PermissionDenied,
         else => |status| return windows.unexpectedStatus(status),
     }
     return addressFromPosix(&storage.Address);
