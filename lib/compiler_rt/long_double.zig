@@ -6,17 +6,17 @@ pub const U80 = std.meta.Int(.unsigned, 80);
 
 /// Returns the sign + exponent bits of a `long double`
 pub fn signExponent(x: anytype) u16 {
-    const T = @TypeOf(x);
-    switch (T) {
-        f80 => {
+    const bit_width = @typeInfo(@TypeOf(x)).float.bits;
+    switch (bit_width) {
+        80 => {
             const bits: U80 = @bitCast(x);
             return @intCast(bits >> 64);
         },
-        f128 => {
+        128 => {
             const bits: u128 = @bitCast(x);
             return @intCast(bits >> 112);
         },
-        else => @compileError("`signExponent` supports only `f80` and `f128`, got: " ++ @typeName(T)),
+        else => @compileError(std.fmt.comptimePrint("`signExponent` supports floats of only `80` and `128` bit width, got bit width: {d}", .{bit_width})),
     }
 }
 
