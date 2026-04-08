@@ -36,6 +36,7 @@ comptime {
         symbol(&frexpl, "frexpl");
         symbol(&hypotf, "hypotf");
         symbol(&hypotl, "hypotl");
+        symbol(&lrintl, "lrintl");
         symbol(&modfl, "modfl");
         symbol(&rintl, "rintl");
     }
@@ -256,11 +257,15 @@ fn isnanl(x: c_longdouble) callconv(.c) c_int {
 }
 
 fn lrint(x: f64) callconv(.c) c_long {
-    return @intFromFloat(rint(x));
+    return @trunc(rint(x));
 }
 
 fn lrintf(x: f32) callconv(.c) c_long {
-    return @intFromFloat(rintf(x));
+    return @trunc(rintf(x));
+}
+
+fn lrintl(x: c_longdouble) callconv(.c) c_long {
+    return @trunc(rintl(x));
 }
 
 fn modfGeneric(comptime T: type, x: T, iptr: *T) T {
