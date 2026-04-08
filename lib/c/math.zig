@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 
 const std = @import("std");
 const math = std.math;
+const ld = @import("../compiler_rt/long_double.zig");
 
 const symbol = @import("../c.zig").symbol;
 
@@ -36,6 +37,7 @@ comptime {
         symbol(&hypotf, "hypotf");
         symbol(&hypotl, "hypotl");
         symbol(&modfl, "modfl");
+        symbol(&rintl, "rintl");
     }
 
     if ((builtin.target.isMinGW() and @sizeOf(f64) != @sizeOf(c_longdouble)) or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
@@ -361,6 +363,28 @@ fn rintf(x: f32) callconv(.c) f32 {
     if (y == 0) {
         return if (s == 1) -0.0 else 0;
     }
+    return y;
+}
+
+fn rintl(x: c_longdouble) callconv(.c) c_longdouble {
+    if (@typeInfo(c_longdouble).float.bits == 64)
+        return rint(x);
+
+    const toint: c_longdouble = 1 << math.floatFractionalBits(c_longdouble);
+    const se = ld.signExponent(x);
+
+    if (se & 0x7fff >= 0x3fff + math.floatFractionalBits(c_longdouble))
+        return x;
+
+    var y: c_longdouble = undefined;
+    if ((se >> 15) == 1) {
+        y = x - toint + toint;
+    } else {
+        y = x + toint - toint;
+    }
+
+    if (y == 0)
+        return 0 * x;
     return y;
 }
 
