@@ -1580,22 +1580,18 @@ pub fn connectProxied(
         if (protocol == .tls) {
             // The proxy connection is plain, but the proxied connection is tls.
             // We need to upgrade the connection to a tls connection.
-            if (connection.protocol == .tls) {
-                // tls-in-tls is not supported.
-                connection.closing = true;
-                client.connection_pool.release(connection, io);
-                return error.TunnelNotSupported;
-            }
+
+            // tls-in-tls is not supported.
+            if (connection.protocol == .tls) return error.TunnelNotSupported;
 
             const stream = connection.getStream();
             const tc = Connection.Tls.create(client, proxied_host, proxied_port, stream) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                error.Unexpected => |e| return e,
-                error.Canceled => |e| return e,
+                error.OutOfMemory, error.Unexpected, error.Canceled => |e| return e,
                 else => return error.TlsInitializationFailed,
             };
+            errdefer tc.destroy();
 
-            client.connection_pool.mutex.lockUncancelable(io);
+            try client.connection_pool.mutex.lock(io);
             client.connection_pool.used.remove(&connection.pool_node);
             client.connection_pool.mutex.unlock(io);
 
