@@ -66,7 +66,7 @@ pub fn free(ctx: *anyopaque, memory: []u8, alignment: mem.Alignment, ret_addr: u
 }
 
 test StackFirstAllocator {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var buffer: [10]u8 = undefined;
     var sfa = StackFirstAllocator.init(&buffer, arena.allocator());
@@ -97,16 +97,27 @@ test StackFirstAllocator {
     try expect(sfa.primary.ownsPtr(dest3.ptr));
 
     sfa.primary.reset();
-    sfa.secondary.allocator().reset(); // or al.delloc(dest2), if sfa.secondary is not reset()able
-}
+    //arena.reset(); // unnecessary, but allowed (note `defer arena.deinit()` above)
 
-test free {
-    //TODO
-}
-test resize {
-    //TODO
-}
-
-test remap {
-    //TODO
+    // stock tests:
+    {
+        var buf: [16]u8 = undefined;
+        var a = StackFirstAllocator.init(&buf, std.testing.allocator);
+        try std.heap.testAllocator(a.allocator());
+    }
+    {
+        var buf: [16]u8 = undefined;
+        var a = StackFirstAllocator.init(&buf, std.testing.allocator);
+        try std.heap.testAllocatorAligned(a.allocator());
+    }
+    {
+        var buf: [16]u8 = undefined;
+        var a = StackFirstAllocator.init(&buf, std.testing.allocator);
+        try std.heap.testAllocatorLargeAlignment(a.allocator());
+    }
+    {
+        var buf: [16]u8 = undefined;
+        var a = StackFirstAllocator.init(&buf, std.testing.allocator);
+        try std.heap.testAllocatorAlignedShrink(a.allocator());
+    }
 }
