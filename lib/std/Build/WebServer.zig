@@ -170,7 +170,7 @@ fn serve(ws: *WebServer) Io.Cancelable!void {
     var group: Io.Group = .init;
     defer group.cancel(io);
     while (true) {
-        var stream = ws.tcp_server.?.accept(io) catch |err| switch (err) {
+        var stream = ws.tcp_server.?.accept(io, .{}) catch |err| switch (err) {
             error.Canceled => |e| return e,
             else => |e| {
                 log.err("failed to accept connection: {t}", .{e});

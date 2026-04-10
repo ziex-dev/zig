@@ -3750,7 +3750,7 @@ fn buildOutputType(
             });
             defer server.deinit(io);
 
-            var stream = try server.accept(io);
+            var stream = try server.accept(io, .{});
             defer stream.close(io);
 
             var input = stream.reader(io, &stdin_buffer);

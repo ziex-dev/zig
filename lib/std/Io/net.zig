@@ -246,10 +246,6 @@ pub const IpAddress = union(enum) {
     pub fn listen(address: *const IpAddress, io: Io, options: ListenOptions) ListenError!Server {
         return .{
             .socket = try io.vtable.netListenIp(io.userdata, address, options),
-            .options = if (Server.AcceptOptions != void) .{
-                .mode = options.mode,
-                .protocol = options.protocol,
-            },
         };
     }
 
@@ -884,7 +880,6 @@ pub const UnixAddress = struct {
                 .handle = try io.vtable.netListenUnix(io.userdata, ua, options),
                 .address = .{ .ip4 = .loopback(0) },
             },
-            .options = if (Server.AcceptOptions != void) .{ .mode = .stream, .protocol = null },
         };
     }
 
@@ -1401,7 +1396,6 @@ pub const Stream = struct {
 
 pub const Server = struct {
     socket: Socket,
-    options: AcceptOptions,
 
     pub fn deinit(s: *Server, io: Io) void {
         s.socket.close(io);
@@ -1433,14 +1427,11 @@ pub const Server = struct {
         ProtocolFailure,
     } || Io.UnexpectedError || Io.Cancelable;
 
-    pub const AcceptOptions = switch (native_os) {
-        .windows => struct { mode: Socket.Mode, protocol: ?Protocol },
-        else => void,
-    };
+    pub const AcceptOptions = struct { mode: Socket.Mode = .stream, protocol: ?Protocol = null };
 
     /// Blocks until a client connects to the server.
-    pub fn accept(s: *Server, io: Io) AcceptError!Stream {
-        return .{ .socket = try io.vtable.netAccept(io.userdata, s.socket.handle, s.options) };
+    pub fn accept(s: *Server, io: Io, options: AcceptOptions) AcceptError!Stream {
+        return .{ .socket = try io.vtable.netAccept(io.userdata, s.socket.handle, options) };
     }
 };
 

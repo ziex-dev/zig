@@ -53,7 +53,7 @@ fn runServer(ids: *IncrementalDebugServer) void {
     defer server.deinit(io);
 
     while (true) {
-        var stream = server.accept(io) catch |err| switch (err) {
+        var stream = server.accept(io, .{}) catch |err| switch (err) {
             error.Canceled => return,
             error.ConnectionAborted => {
                 log.warn("client disconnected during accept", .{});

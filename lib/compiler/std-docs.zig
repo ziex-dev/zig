@@ -83,7 +83,7 @@ pub fn main(init: std.process.Init) !void {
     defer group.cancel(io);
 
     while (true) {
-        const stream = try http_server.accept(io);
+        const stream = try http_server.accept(io, .{});
         group.async(io, accept, .{ &context, stream });
     }
 }

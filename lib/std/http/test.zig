@@ -23,7 +23,7 @@ test "trailers" {
             var send_buffer: [1024]u8 = undefined;
             var remaining: usize = 1;
             while (remaining != 0) : (remaining -= 1) {
-                var stream = try net_server.accept(io);
+                var stream = try net_server.accept(io, .{});
                 defer stream.close(io);
 
                 var connection_br = stream.reader(io, &recv_buffer);
@@ -108,7 +108,7 @@ test "HTTP server handles a chunked transfer coding request" {
             const net_server = &test_server.net_server;
             var recv_buffer: [8192]u8 = undefined;
             var send_buffer: [500]u8 = undefined;
-            var stream = try net_server.accept(io);
+            var stream = try net_server.accept(io, .{});
             defer stream.close(io);
 
             var connection_br = stream.reader(io, &recv_buffer);
@@ -179,7 +179,7 @@ test "echo content server" {
             var send_buffer: [100]u8 = undefined;
 
             accept: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
+                var stream = try net_server.accept(io, .{});
                 defer stream.close(io);
 
                 var connection_br = stream.reader(io, &recv_buffer);
@@ -278,7 +278,7 @@ test "Server.Request.respondStreaming non-chunked, unknown content-length" {
             var send_buffer: [500]u8 = undefined;
             var remaining: usize = 1;
             while (remaining != 0) : (remaining -= 1) {
-                var stream = try net_server.accept(io);
+                var stream = try net_server.accept(io, .{});
                 defer stream.close(io);
 
                 var connection_br = stream.reader(io, &recv_buffer);
@@ -350,7 +350,7 @@ test "receiving arbitrary http headers from the client" {
             var send_buffer: [777]u8 = undefined;
             var remaining: usize = 1;
             while (remaining != 0) : (remaining -= 1) {
-                var stream = try net_server.accept(io);
+                var stream = try net_server.accept(io, .{});
                 defer stream.close(io);
 
                 var connection_br = stream.reader(io, &recv_buffer);
@@ -421,7 +421,7 @@ test "general client/server API coverage" {
             var send_buffer: [100]u8 = undefined;
 
             outer: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
+                var stream = try net_server.accept(io, .{});
                 defer stream.close(io);
 
                 var connection_br = stream.reader(io, &recv_buffer);
@@ -911,7 +911,7 @@ test "Server streams both reading and writing" {
             var recv_buffer: [1024]u8 = undefined;
             var send_buffer: [777]u8 = undefined;
 
-            var stream = try net_server.accept(io);
+            var stream = try net_server.accept(io, .{});
             defer stream.close(io);
 
             var connection_br = stream.reader(io, &recv_buffer);
@@ -1180,7 +1180,7 @@ test "redirect to different connection" {
             var recv_buffer: [888]u8 = undefined;
             var send_buffer: [777]u8 = undefined;
 
-            var stream = try net_server.accept(io);
+            var stream = try net_server.accept(io, .{});
             defer stream.close(io);
 
             var connection_br = stream.reader(io, &recv_buffer);
@@ -1204,7 +1204,7 @@ test "redirect to different connection" {
             var recv_buffer: [999]u8 = undefined;
             var send_buffer: [100]u8 = undefined;
 
-            var stream = try net_server.accept(io);
+            var stream = try net_server.accept(io, .{});
             defer stream.close(io);
 
             var loc_buf: [50]u8 = undefined;
@@ -1271,7 +1271,7 @@ test "boot failed connections from the pool" {
             var send_buffer: [500]u8 = undefined;
 
             accept: while (!test_server.shutting_down) {
-                var stream = try net_server.accept(io);
+                var stream = try net_server.accept(io, .{});
                 defer stream.close(io);
 
                 for (0..2) |i| {
