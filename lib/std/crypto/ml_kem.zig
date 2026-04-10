@@ -82,6 +82,11 @@
 //! [KyberV302](https://pq-crystals.org/kyber/data/kyber-specification-round3-20210804.pdf)
 //! [I-D](https://github.com/bwesterb/draft-schwabe-cfrg-kyber)
 //! [SecEst](https://github.com/pq-crystals/security-estimates)
+//!
+//! It's encouraged to use ML-KEM in hybrid constructions together with well-established
+//! classical algorithms (such as X25519, see `std.crypto.kem.hybrid`) rather than using
+//! it as a standalone replacement. This approach combines quantum resistance with the
+//! confidence we currently have in classical cryptography.
 
 // TODO
 //
