@@ -12509,7 +12509,10 @@ fn netAcceptWindows(userdata: ?*anyopaque, listen_handle: net.Socket.Handle, opt
     }
     errdefer t.deferAcceptAfd(listen_handle, storage.Info);
     const accept_handle = openSocketAfd(
-        storage.RemoteAddress.posix.any.family,
+        switch (options.family) {
+            .ip4 => posix.AF.INET,
+            .ip6 => posix.AF.INET6,
+        },
         .{ .mode = options.mode, .protocol = options.protocol },
     ) catch |err| switch (err) {
         error.AddressFamilyUnsupported => return error.Unexpected,

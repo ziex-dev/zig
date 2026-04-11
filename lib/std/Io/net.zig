@@ -1427,7 +1427,7 @@ pub const Server = struct {
         ProtocolFailure,
     } || Io.UnexpectedError || Io.Cancelable;
 
-    pub const AcceptOptions = struct { mode: Socket.Mode = .stream, protocol: ?Protocol = null };
+    pub const AcceptOptions = struct { family: IpAddress.Family = .ip4, mode: Socket.Mode = .stream, protocol: ?Protocol = null };
 
     /// Blocks until a client connects to the server.
     pub fn accept(s: *Server, io: Io, options: AcceptOptions) AcceptError!Stream {
