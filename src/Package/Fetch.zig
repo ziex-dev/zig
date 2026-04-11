@@ -534,7 +534,22 @@ pub fn run(f: *Fetch) RunError!void {
             );
             // Packages fetched by URL may not use relative paths to escape outside the
             // fetched package directory from within the package cache.
-            if (pkg_root.root_dir.eql(local_cache_root.root_dir)) {
+            if (f.parent_manifest_ast != null and pkg_root.root_dir.eql(f.parent_package_root.root_dir)) {
+                const parent_sub_path = f.parent_package_root.sub_path;
+                const within_parent = blk: {
+                    if (!std.mem.startsWith(u8, pkg_root.sub_path, parent_sub_path)) break :blk false;
+                    if (pkg_root.sub_path.len == parent_sub_path.len) break :blk true;
+                    if (parent_sub_path.len == 0) break :blk !(std.mem.eql(u8, pkg_root.sub_path, "..") or
+                        std.mem.startsWith(u8, pkg_root.sub_path, "../"));
+                    break :blk std.fs.path.isSep(pkg_root.sub_path[parent_sub_path.len]);
+                };
+                if (!within_parent) {
+                    return f.fail(
+                        f.location_tok,
+                        try eb.printString("dependency path outside project: '{f}'", .{pkg_root}),
+                    );
+                }
+            } else if (pkg_root.root_dir.eql(local_cache_root.root_dir)) {
                 // `parent_package_root.sub_path` contains a path like this:
                 // "p/$hash", or
                 // "p/$hash/foo", with possibly more directories after "foo".
