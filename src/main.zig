@@ -1889,6 +1889,7 @@ fn buildOutputType(
                 object,
                 assembly,
                 preprocessor,
+                version,
             };
             var c_out_mode: ?COutMode = null;
             var out_path: ?[]const u8 = null;
@@ -1917,6 +1918,10 @@ fn buildOutputType(
                     .c, .r => c_out_mode = .object, // -c or -r
                     .asm_only => c_out_mode = .assembly, // -S
                     .preprocess_only => c_out_mode = .preprocessor, // -E
+                    .version => {
+                        c_out_mode = .version; // --version
+                        disable_c_depfile = true;
+                    },
                     .emit_llvm => emit_llvm = true,
                     .x => {
                         const lang = mem.sliceTo(it.only_arg, 0);
@@ -2939,9 +2944,11 @@ fn buildOutputType(
             }
 
             // precompiled header syntax: "zig cc -x c-header test.h -o test.pch"
-            const emit_pch = ((file_ext == .h or file_ext == .hpp or file_ext == .hm or file_ext == .hmm) and c_out_mode == null);
-            if (emit_pch)
-                c_out_mode = .preprocessor;
+            const emit_pch = if (file_ext) |fe| switch (fe) {
+                .h, .hpp, .hm, .hmm => c_out_mode == null,
+                else => false,
+            } else false;
+            if (emit_pch) c_out_mode = .preprocessor;
 
             switch (c_out_mode orelse .link) {
                 .link => {
@@ -3007,6 +3014,20 @@ fn buildOutputType(
                             emit_bin = .no;
                             clang_preprocessor_mode = .stdout;
                         }
+                    }
+                },
+                .version => {
+                    // We can't allow control flow to reach the simpler logic
+                    // below because the -target argument has to be lowered to
+                    // clang syntax in Compilation.
+                    create_module.opts.output_mode = .Obj;
+                    clang_preprocessor_mode = .version;
+                    if (create_module.c_source_files.items.len == 0) {
+                        try create_module.c_source_files.append(arena, .{
+                            .owner = undefined,
+                            .src_path = "a.c", // dummy name
+                            .ext = .c,
+                        });
                     }
                 },
             }
@@ -3505,10 +3526,6 @@ fn buildOutputType(
     const incremental = create_module.resolved_options.incremental;
     if (debug_incremental and !incremental) {
         fatal("--debug-incremental requires -fincremental", .{});
-    }
-
-    if (incremental and create_module.resolved_options.use_llvm) {
-        warn("-fincremental is currently unsupported by the LLVM backend; crashes or miscompilations are likely", .{});
     }
 
     const cache_mode: Compilation.CacheMode = b: {
@@ -4563,7 +4580,11 @@ fn runOrTest(
                     const cmd = try std.mem.join(arena, " ", argv.items);
                     fatal("the following command terminated with signal {t}:\n{s}", .{ sig, cmd });
                 },
-                else => {
+                .stopped => |sig| {
+                    const cmd = try std.mem.join(arena, " ", argv.items);
+                    fatal("the following command stopped with signal {t}:\n{s}", .{ sig, cmd });
+                },
+                .unknown => {
                     process.exit(1);
                 },
             }
@@ -4705,7 +4726,6 @@ fn cmdTranslateC(
     defer man.deinit();
 
     man.hash.add(@as(u16, 0xb945)); // Random number to distinguish translate-c from compiling C objects
-    man.hash.add(comp.config.c_frontend);
     Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err|
         fatal("unable to process '{s}': {t}", .{ c_source_file.src_path, err });
 
@@ -5614,7 +5634,11 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
                 const cmd = try std.mem.join(arena, " ", child_argv.items);
                 fatal("the following build command terminated with signal {t}:\n{s}", .{ sig, cmd });
             },
-            else => {
+            .stopped => |sig| {
+                const cmd = try std.mem.join(arena, " ", child_argv.items);
+                fatal("the following build command stopped with signal {t}:\n{s}", .{ sig, cmd });
+            },
+            .unknown => {
                 const cmd = try std.mem.join(arena, " ", child_argv.items);
                 fatal("the following build command crashed:\n{s}", .{cmd});
             },
@@ -5916,7 +5940,11 @@ fn jitCmdInner(
             const cmd = try std.mem.join(arena, " ", child_argv.items);
             fatal("the following build command terminated with signal {t}:\n{s}", .{ sig, cmd });
         },
-        else => {
+        .stopped => |sig| {
+            const cmd = try std.mem.join(arena, " ", child_argv.items);
+            fatal("the following build command stopped with signal {t}:\n{s}", .{ sig, cmd });
+        },
+        .unknown => {
             const cmd = try std.mem.join(arena, " ", child_argv.items);
             fatal("the following build command crashed:\n{s}", .{cmd});
         },

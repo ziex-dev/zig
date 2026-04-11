@@ -23,6 +23,7 @@ pub const primitives = @import("zig/primitives.zig");
 pub const isPrimitive = primitives.isPrimitive;
 pub const Ast = @import("zig/Ast.zig");
 pub const AstGen = @import("zig/AstGen.zig");
+pub const AstSmith = @import("zig/AstSmith.zig");
 pub const Zir = @import("zig/Zir.zig");
 pub const Zoir = @import("zig/Zoir.zig");
 pub const ZonGen = @import("zig/ZonGen.zig");
@@ -1121,6 +1122,7 @@ pub const ClangCliParam = struct {
         rtlib,
         static,
         dynamic,
+        version,
     };
 
     pub fn matchEql(self: @This(), arg: []const u8) u2 {
@@ -1165,6 +1167,7 @@ pub const ClangCliParam = struct {
 test {
     _ = Ast;
     _ = AstRlAnnotate;
+    _ = AstSmith;
     _ = BuiltinFn;
     _ = Client;
     _ = ErrorBundle;

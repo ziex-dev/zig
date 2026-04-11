@@ -36,6 +36,25 @@ const TestTarget = struct {
     // invocation. This could be because of a slow backend, requiring a newer LLVM version, being
     // too niche, etc.
     extra_target: bool = false,
+
+    pub fn supportsModule(
+        self: *const TestTarget,
+        target: *const std.Build.ResolvedTarget,
+        name: []const u8,
+    ) bool {
+        if (mem.eql(u8, name, "zigc")) {
+            if (target.result.isMuslLibC()) return self.linkage == .static or (self.linkage == null and !target.query.isNative());
+            if (target.result.isMinGW()) return true;
+            if (target.result.isWasiLibC()) return true;
+            return false;
+        }
+        if (mem.eql(u8, name, "std")) {
+            if (target.result.cpu.arch.isSpirV()) return false;
+            return true;
+        }
+
+        return true;
+    }
 };
 
 const test_targets = blk: {
@@ -1463,7 +1482,6 @@ const test_targets = blk: {
         //    }) catch unreachable,
         //    .use_llvm = false,
         //    .use_lld = false,
-        //    .skip_modules = &.{ "c-import", "zigc", "std" },
         //},
 
         // WASI Targets
@@ -2355,8 +2373,12 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
             },
         };
         const resolved_target = b.resolveTargetQuery(test_target.target);
-        const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
-        addOneModuleTest(b, step, test_target, &resolved_target, triple_txt, options);
+
+        if (test_target.supportsModule(&resolved_target, options.name)) {
+            const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
+            addOneModuleTest(b, step, test_target, &resolved_target, triple_txt, options);
+        }
+
         return step;
     }
 
@@ -2368,23 +2390,15 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
         }
 
         const resolved_target = b.resolveTargetQuery(test_target.target);
-        const target = &resolved_target.result;
 
-        if (test_target.link_libc == false and target.requiresLibC()) continue;
-        // If the target requires libc, there's no point building the cases that
-        // don't explicitly link libc as they'll just end up actually linking
-        // libc anyway, thus creating duplicate work and making -Dskip-libc not
-        // work as expected.
-        if (test_target.link_libc == null and target.requiresLibC()) continue;
-        // These targets don't strictly require libc, but we don't yet have a
-        // syscall layer for them, so the compiler links libc by default. They
-        // therefore get the same treatment here.
-        if (test_target.link_libc == null and (target.os.tag == .freebsd or target.os.tag == .netbsd)) continue;
+        if (!test_target.supportsModule(&resolved_target, options.name)) continue;
 
         if (!options.test_extra_targets and test_target.extra_target) continue;
 
         if (options.skip_non_native and !test_target.target.isNative())
             continue;
+
+        const target = &resolved_target.result;
 
         if (options.skip_spirv and target.cpu.arch.isSpirV()) continue;
         if (options.skip_wasm and target.cpu.arch.isWasm()) continue;
@@ -2398,6 +2412,19 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         const would_use_llvm = wouldUseLlvm(test_target.use_llvm, test_target.target, test_target.optimize_mode);
         if (options.skip_llvm and would_use_llvm) continue;
+
+        if (would_use_llvm and (mem.eql(u8, options.name, "compiler-rt") or mem.eql(u8, options.name, "zigc"))) {
+            switch (test_target.optimize_mode) {
+                .Debug, .ReleaseSafe => {
+                    // LLVM 21 is affected by multiple bugs in safe builds of compiler-rt:
+                    // * https://codeberg.org/ziglang/zig/issues/31701
+                    // * https://codeberg.org/ziglang/zig/issues/31702
+                    // ...so for now, skip these tests.
+                    continue;
+                },
+                .ReleaseSmall, .ReleaseFast => {},
+            }
+        }
 
         const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
 
@@ -2473,7 +2500,7 @@ fn addOneModuleTest(
         .zig_lib_dir = b.path("lib"),
     });
     these_tests.linkage = test_target.linkage;
-    if (options.no_builtin) these_tests.root_module.no_builtin = false;
+    if (options.no_builtin) these_tests.root_module.no_builtin = true;
     if (options.build_options) |build_options| {
         these_tests.root_module.addOptions("build_options", build_options);
     }
@@ -2620,12 +2647,19 @@ pub fn wouldUseLlvm(use_llvm: ?bool, query: std.Target.Query, optimize_mode: Opt
     }
     const cpu_arch = query.cpu_arch orelse builtin.cpu.arch;
     const os_tag = query.os_tag orelse builtin.os.tag;
+    const ofmt: std.Target.ObjectFormat = query.ofmt orelse .default(os_tag, cpu_arch);
     switch (cpu_arch) {
-        .x86_64 => if (os_tag.isBSD() or os_tag == .illumos or std.Target.ptrBitWidth_arch_abi(cpu_arch, query.abi orelse .none) != 64) return true,
+        .x86_64 => {
+            if (std.Target.ptrBitWidth_arch_abi(cpu_arch, query.abi orelse .none) != 64) return true;
+            if (os_tag.isBSD() or os_tag == .illumos) return true;
+            return switch (ofmt) {
+                .elf, .macho => return false,
+                else => return true,
+            };
+        },
         .spirv32, .spirv64 => return false,
         else => return true,
     }
-    return false;
 }
 
 const CAbiTestOptions = struct {

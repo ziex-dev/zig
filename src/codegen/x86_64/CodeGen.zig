@@ -2298,7 +2298,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
         wip_mir_log.debug("{f}", .{cg.fmtAir(inst)});
         verbose_tracking_log.debug("{f}", .{cg.fmtTracking()});
 
-        cg.reused_operands = .initEmpty();
+        cg.reused_operands = .empty;
         try cg.inst_tracking.ensureUnusedCapacity(cg.gpa, 1);
         switch (air_tags[@intFromEnum(inst)]) {
             .select => try cg.airSelect(inst),
@@ -170801,6 +170801,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                     else => |e| return e,
                 };
                 try ops[0].toSlicePtr(cg);
+                try ops[1].toSlicePtr(cg);
                 cg.select(&.{}, &.{}, &ops, switch (air_tag) {
                     else => unreachable,
                     inline .memcpy, .memmove => |symbol| comptime &.{.{
@@ -172921,7 +172922,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 try ops[0].finish(inst, &.{field_parent_ptr.field_ptr}, &ops, cg);
             },
             .wasm_memory_size, .wasm_memory_grow => unreachable,
-            .cmp_lt_errors_len => |air_tag| {
+            .cmp_lte_errors_len => |air_tag| {
                 const un_op = air_datas[@intFromEnum(inst)].un_op;
                 var ops = try cg.tempsFromOperands(inst, .{un_op});
                 var res: [1]Temp = undefined;
@@ -176185,8 +176186,8 @@ fn genCall(self: *CodeGen, info: union(enum) {
     // Due to incremental compilation, how function calls are generated depends
     // on linking.
     switch (info) {
-        .air => |callee| if (try self.air.value(callee, pt)) |func_value| {
-            const func_key = ip.indexToKey(func_value.ip_index);
+        .air => |callee| if (callee.toInterned()) |func_ip_index| {
+            const func_key = ip.indexToKey(func_ip_index);
             switch (switch (func_key) {
                 else => func_key,
                 .ptr => |ptr| if (ptr.byte_offset == 0) switch (ptr.base_addr) {
@@ -177226,9 +177227,19 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
                 'x' => abi.RegisterClass.sse,
                 else => unreachable,
             };
-            if (input_mcv.isRegister() and
-                rc.isSet(RegisterManager.indexOfRegIntoTracked(input_mcv.getReg().?).?))
-                break :arg input_mcv;
+            if (input_mcv.isRegister()) {
+                const reg = input_mcv.getReg().?;
+                if (rc.isSet(RegisterManager.indexOfRegIntoTracked(reg).?)) {
+                    const alias = registerAlias(reg, @intCast(ty.abiSize(zcu)));
+                    break :arg switch (input_mcv) {
+                        else => unreachable,
+                        .register => .{ .register = alias },
+                        .register_offset => |reg_off| .{
+                            .register_offset = .{ .reg = alias, .off = reg_off.off },
+                        },
+                    };
+                }
+            }
             const reg = try self.register_manager.allocReg(null, rc);
             try self.genSetReg(reg, ty, input_mcv, .{});
             break :arg .{ .register = registerAlias(reg, @intCast(ty.abiSize(zcu))) };
@@ -177406,7 +177417,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
             used: bool,
             fn init(size: ?Memory.Size) @This() {
                 return .{
-                    .op_has_size = if (size) |_| .initFull() else .initEmpty(),
+                    .op_has_size = if (size) |_| .full else .empty,
                     .size = size orelse .none,
                     .used = false,
                 };
@@ -178340,9 +178351,9 @@ fn genCopy(self: *CodeGen, ty: Type, dst_mcv: MCValue, src_mcv: MCValue, opts: C
                     else => unreachable,
                 },
                 dst_tag => |src_regs| {
-                    var remaining: std.StaticBitSet(dst_regs.len) = .initFull();
+                    var remaining: std.StaticBitSet(dst_regs.len) = .full;
                     var hazard_regs = src_regs;
-                    while (!remaining.eql(.initEmpty())) {
+                    while (!remaining.eql(.empty)) {
                         var remaining_it = remaining.iterator(.{});
                         next: while (remaining_it.next()) |index| {
                             const dst_reg = dst_regs[index];

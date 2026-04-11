@@ -274,8 +274,8 @@ const MultiSym = struct {
 
 const Parse = struct {
     arena: mem.Allocator,
-    sym_table: *std.StringArrayHashMap(MultiSym),
-    sections: *std.StringArrayHashMap(void),
+    sym_table: *std.array_hash_map.String(MultiSym),
+    sections: *std.array_hash_map.String(void),
     elf_bytes: []align(@alignOf(elf.Elf64_Ehdr)) u8,
     header: elf.Header,
     arch: Arch,
@@ -295,13 +295,11 @@ pub fn main(init: std.process.Init) !void {
 
     var build_all_dir = try Io.Dir.cwd().openDir(io, args.positional.build_all_path.value, .{});
 
-    var sym_table = std.StringArrayHashMap(MultiSym).init(arena);
-    var sections = std.StringArrayHashMap(void).init(arena);
+    var sym_table: std.array_hash_map.String(MultiSym) = .empty;
+    var sections: std.array_hash_map.String(void) = .empty;
 
     for (arches) |arch| {
-        const libc_so_path = try std.fmt.allocPrint(arena, "{s}/lib/libc.so", .{
-            @tagName(arch),
-        });
+        const libc_so_path = try std.fmt.allocPrint(arena, "{t}/lib/libc.so", .{arch});
 
         // Read the ELF header.
         const elf_bytes = build_all_dir.readFileAllocOptions(
@@ -312,8 +310,8 @@ pub fn main(init: std.process.Init) !void {
             .of(elf.Elf64_Ehdr),
             null,
         ) catch |err| {
-            std.debug.panic("unable to read '{s}/{s}': {s}", .{
-                args.positional.build_all_path.value, libc_so_path, @errorName(err),
+            std.debug.panic("unable to read '{s}/{s}': {t}", .{
+                args.positional.build_all_path.value, libc_so_path, err,
             });
         };
         var stream: std.Io.Reader = .fixed(elf_bytes);
@@ -365,8 +363,8 @@ pub fn main(init: std.process.Init) !void {
 
     // Sort the symbols for deterministic output and cleaner vcs diffs.
     const SymTableSort = struct {
-        sections: *const std.StringArrayHashMap(void),
-        sym_table: *const std.StringArrayHashMap(MultiSym),
+        sections: *const std.array_hash_map.String(void),
+        sym_table: *const std.array_hash_map.String(MultiSym),
 
         /// Sort first by section name, then by symbol name
         pub fn lessThan(ctx: @This(), index_a: usize, index_b: usize) bool {
@@ -586,7 +584,7 @@ fn parseElf(parse: Parse, comptime is_64: bool, comptime endian: std.builtin.End
         if (mem.eql(u8, sh_name, ".dynsym")) {
             dynsym_index = @as(u16, @intCast(i));
         }
-        const gop = try parse.sections.getOrPut(sh_name);
+        const gop = try parse.sections.getOrPut(arena, sh_name);
         section_index_map[i] = @as(u16, @intCast(gop.index));
     }
     if (dynsym_index == 0) @panic("did not find the .dynsym section");
@@ -659,7 +657,7 @@ fn parseElf(parse: Parse, comptime is_64: bool, comptime endian: std.builtin.End
             },
         }
 
-        const gop = try parse.sym_table.getOrPut(name);
+        const gop = try parse.sym_table.getOrPut(arena, name);
         if (gop.found_existing) {
             if (gop.value_ptr.section != section_index_map[this_section]) {
                 const sh_name = mem.sliceTo(shstrtab[s(shdrs[this_section].sh_name)..], 0);
