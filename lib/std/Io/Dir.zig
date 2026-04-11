@@ -454,6 +454,7 @@ pub const OpenError = error{
     SystemFdQuotaExceeded,
     NoDevice,
     SystemResources,
+    ReadOnlyFileSystem,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
@@ -913,7 +914,7 @@ pub fn realPath(dir: Dir, io: Io, out_buffer: []u8) RealPathError!usize {
     return io.vtable.dirRealPath(io.userdata, dir, out_buffer);
 }
 
-pub const RealPathFileError = RealPathError || PathNameError;
+pub const RealPathFileError = RealPathError || PathNameError || error{ReadOnlyFileSystem};
 
 /// Obtains the canonicalized absolute path name of `sub_path` relative to this
 /// `Dir`. If `sub_path` is absolute, ignores this `Dir` handle and obtains the
