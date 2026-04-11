@@ -2796,7 +2796,7 @@ const CoffDumper = struct {
             \\header
             \\machine {s}
             \\number_of_sections {d}
-            \\size_of_optional_header {d}
+            \\size_of_optional_header {x}
             \\flags
             \\
         , .{
