@@ -45,6 +45,7 @@ comptime {
     if ((builtin.target.isMinGW() and @sizeOf(f64) != @sizeOf(c_longdouble)) or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         symbol(&atanl, "atanl");
         symbol(&copysignl, "copysignl");
+        symbol(&fdiml, "fdiml");
         symbol(&nanl, "nanl");
     }
 
@@ -52,7 +53,6 @@ comptime {
         symbol(&acosf, "acosf");
         symbol(&atanf, "atanf");
         symbol(&coshf, "coshf");
-        symbol(&fdiml, "fdiml");
         symbol(&modff, "modff");
         symbol(&tanhf, "tanhf");
     }
@@ -163,43 +163,28 @@ fn exp10f(x: f32) callconv(.c) f32 {
     return math.pow(f32, 10.0, x);
 }
 
-fn fdim(x: f64, y: f64) callconv(.c) f64 {
-    if (math.isNan(x)) {
+fn fdimGeneric(comptime T: type, x: T, y: T) T {
+    if (math.isNan(x))
         return x;
-    }
-    if (math.isNan(y)) {
+
+    if (math.isNan(y))
         return y;
-    }
-    if (x > y) {
+
+    if (x > y)
         return x - y;
-    }
     return 0;
+}
+
+fn fdim(x: f64, y: f64) callconv(.c) f64 {
+    return fdimGeneric(f64, x, y);
 }
 
 fn fdimf(x: f32, y: f32) callconv(.c) f32 {
-    if (math.isNan(x)) {
-        return x;
-    }
-    if (math.isNan(y)) {
-        return y;
-    }
-    if (x > y) {
-        return x - y;
-    }
-    return 0;
+    return fdimGeneric(f32, x, y);
 }
 
 fn fdiml(x: c_longdouble, y: c_longdouble) callconv(.c) c_longdouble {
-    if (math.isNan(x)) {
-        return x;
-    }
-    if (math.isNan(y)) {
-        return y;
-    }
-    if (x > y) {
-        return x - y;
-    }
-    return 0;
+    return fdimGeneric(c_longdouble, x, y);
 }
 
 fn finite(x: f64) callconv(.c) c_int {
