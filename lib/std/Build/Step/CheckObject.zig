@@ -1,5 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
+const coff = std.coff;
 const elf = std.elf;
 const fs = std.fs;
 const macho = std.macho;
@@ -412,7 +413,7 @@ pub fn checkInSymtab(check_object: *CheckObject) void {
         .macho => MachODumper.symtab_label,
         .elf => ElfDumper.symtab_label,
         .wasm => WasmDumper.symtab_label,
-        .coff => @panic("TODO symtab for coff"),
+        .coff => CoffDumper.symtab_label,
         else => @panic("TODO other file formats"),
     };
     check_object.checkStart(.symtab);
@@ -588,7 +589,7 @@ fn make(step: *Step, make_options: Step.MakeOptions) !void {
         const output = switch (check_object.obj_format) {
             .macho => try MachODumper.parseAndDump(step, chk, contents),
             .elf => try ElfDumper.parseAndDump(step, chk, contents),
-            .coff => return step.fail("TODO coff parser", .{}),
+            .coff => try CoffDumper.parseAndDump(step, chk, contents),
             .wasm => try WasmDumper.parseAndDump(step, chk, contents),
             else => unreachable,
         };
@@ -2759,6 +2760,152 @@ const WasmDumper = struct {
             reader.seek += name_length;
 
             try writer.print("{c} {s}\n", .{ prefix_byte, feature_name });
+        }
+    }
+};
+
+const CoffDumper = struct {
+    const symtab_label = "symbol table";
+
+    fn parseAndDump(step: *Step, check: Check, bytes: []const u8) ![]const u8 {
+        const gpa = step.owner.allocator;
+        const coff_file = coff.Coff.init(bytes, false) catch |err|
+            return step.fail("invalid COFF/PE file: {}", .{err});
+
+        var output: std.Io.Writer.Allocating = .init(gpa);
+        defer output.deinit();
+
+        const writer = &output.writer;
+        switch (check.kind) {
+            .headers => {
+                try dumpCoffHeader(coff_file, writer);
+                if (coff_file.is_image) {
+                    try dumpOptionalHeader(coff_file, writer);
+                }
+                try dumpSectionTable(coff_file, writer);
+            },
+            else => return step.fail("TODO: check for COFF/PE: {s}", .{@tagName(check.kind)}),
+        }
+
+        return output.toOwnedSlice();
+    }
+
+    fn dumpCoffHeader(coff_file: std.coff.Coff, writer: *std.Io.Writer) !void {
+        const hdr = coff_file.getHeader();
+        try writer.print(
+            \\header
+            \\machine {s}
+            \\number_of_sections {d}
+            \\size_of_optional_header {d}
+            \\flags
+            \\
+        , .{
+            @tagName(hdr.machine),
+            hdr.number_of_sections,
+            hdr.size_of_optional_header,
+        });
+
+        inline for (@typeInfo(std.coff.Header.Flags).@"struct".fields) |field| {
+            if (@field(hdr.flags, field.name)) {
+                try writer.print(" {s}", .{field.name});
+            }
+        }
+
+        try writer.writeByte('\n');
+    }
+
+    fn dumpOptionalHeader(coff_file: std.coff.Coff, writer: *std.Io.Writer) !void {
+        const standard = coff_file.getOptionalHeader();
+        try writer.print(
+            \\optional header
+            \\magic {s}
+            \\entry {x}
+            \\
+        , .{
+            @tagName(standard.magic),
+            standard.address_of_entry_point,
+        });
+
+        switch (standard.magic) {
+            .PE32 => {
+                const opt = coff_file.getOptionalHeader32();
+                try dumpOptionalFields(opt, writer);
+            },
+            .@"PE32+" => {
+                const opt = coff_file.getOptionalHeader64();
+                try dumpOptionalFields(opt, writer);
+            },
+            _ => try writer.writeAll("unknown magic\n"),
+        }
+    }
+
+    fn dumpOptionalFields(opt: anytype, writer: *std.Io.Writer) !void {
+        try writer.print(
+            \\image_base {x}
+            \\section_alignment {x}
+            \\file_alignment {x}
+            \\subsystem {s}
+            \\size_of_image {x}
+            \\size_of_headers {x}
+            \\
+        , .{
+            opt.image_base,
+            opt.section_alignment,
+            opt.file_alignment,
+            @tagName(opt.subsystem),
+            opt.size_of_image,
+            opt.size_of_headers,
+        });
+        try writer.writeAll("dll_flags");
+        inline for (@typeInfo(std.coff.DllFlags).@"struct".fields) |field| {
+            if (field.type == bool) {
+                if (@field(opt.dll_flags, field.name)) {
+                    try writer.writeByte(' ');
+                    try writer.writeAll(field.name);
+                }
+            }
+        }
+        try writer.writeByte('\n');
+    }
+
+    fn dumpSectionTable(coff_file: std.coff.Coff, writer: *std.Io.Writer) !void {
+        const sections = coff_file.getSectionHeaders();
+        if (sections.len == 0)
+            return;
+
+        try writer.writeAll("section table\n");
+        for (sections, 0..) |section, i| {
+            try writer.print(
+                \\section {d}
+                \\name {s}
+                \\virtual_size {x}
+                \\virtual_address {x}
+                \\size_of_raw_data {x}
+                \\flags
+                \\
+            , .{
+                i,
+                mem.sliceTo(&section.name, 0),
+                section.virtual_size,
+                section.virtual_address,
+                section.size_of_raw_data,
+            });
+
+            inline for (@typeInfo(std.coff.SectionHeader.Flags).@"struct".fields) |field| {
+                if (field.type == bool) {
+                    if (@field(section.flags, field.name)) {
+                        try writer.writeByte(' ');
+                        try writer.writeAll(field.name);
+                    }
+                }
+            }
+
+            if (section.flags.ALIGN != .NONE) {
+                try writer.writeByte(' ');
+                try writer.writeAll(@tagName(section.flags.ALIGN));
+            }
+
+            try writer.writeByte('\n');
         }
     }
 };
