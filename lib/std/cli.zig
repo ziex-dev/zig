@@ -186,6 +186,10 @@ pub const NamedInfo = struct {
     /// If `value: bool`, the short flag will only set the value to `true`.
     /// For all other types, the short flag must be immediately followed by another arg containing this arg's value.
     short: ?u8 = null,
+    /// The type of value to display in help text.
+    ///
+    /// If this is empty, a sensible default selected from the type of the argument is used.
+    typename: ?[:0]const u8 = null,
 };
 
 /// Declare `pub const info: std.cli.PositionalInfo` in the value type of each positional argument to provide additional information about the argument.
@@ -193,6 +197,10 @@ pub const PositionalInfo = struct {
     /// Use this to add a helpful description of this argument for use in the generated long help text.
     /// Ignored if `Args.info.help` is not null.
     description: ?[]const u8 = null,
+    /// The type of value to display in help text.
+    ///
+    /// If this is empty, a sensible default selected from the type of the argument is used.
+    typename: ?[]const u8 = null,
 };
 
 /// Parse an `Args` type from the given `std.process.Args`. See this module's
@@ -703,24 +711,28 @@ const ArgField = struct {
 
     fn namedFlagUsage(comptime field: ArgField) []const u8 {
         const is_optional = field.type == .optional;
+        const typename: ?[:0]const u8 = switch (field.info) {
+            .absent => null,
+            inline .named, .positional => |i| i.typename,
+        };
         return comptime switch (field.type.flatten()) {
             .bool => if (is_optional) unreachable else "--[no-]" ++ field.name,
             .@"enum" => |Enum| if (is_optional)
-                ("--[no-]" ++ field.name ++ "=[(" ++ enumValuesString(Enum) ++ ")]")
+                ("--[no-]" ++ field.name ++ "=[" ++ (typename orelse "(" ++ enumValuesString(Enum) ++ ")") ++ "]")
             else
-                ("--" ++ field.name ++ "=(" ++ enumValuesString(Enum) ++ ")"),
+                ("--" ++ field.name ++ "=" ++ (typename orelse "(" ++ enumValuesString(Enum) ++ ")")),
             .float => if (is_optional)
-                ("--[no-]" ++ field.name ++ "=[float]")
+                ("--[no-]" ++ field.name ++ "=[" ++ (typename orelse "float") ++ "]")
             else
-                ("--" ++ field.name ++ "=float"),
+                ("--" ++ field.name ++ "=" ++ (typename orelse "float")),
             .int => if (is_optional)
-                ("--[no-]" ++ field.name ++ "=[int]")
+                ("--[no-]" ++ field.name ++ "=[" ++ (typename orelse "int") ++ "]")
             else
-                ("--" ++ field.name ++ "=int"),
+                ("--" ++ field.name ++ "=" ++ (typename orelse "int")),
             .string, .cstring => if (is_optional)
-                ("--[no-]" ++ field.name ++ "=[string]")
+                ("--[no-]" ++ field.name ++ "=[" ++ (typename orelse "string") ++ "]")
             else
-                "--" ++ field.name ++ "=string",
+                "--" ++ field.name ++ "=" ++ (typename orelse "string"),
             else => unreachable,
         };
     }
@@ -972,8 +984,12 @@ pub fn getHelpFmt(comptime Args: type) []const u8 {
         var arguments_table: [positional_fields.len]struct { []const u8, []const u8 } = undefined;
         for (positional_fields, 0..) |field, i| {
             const lhs: []const u8 = field.name ++ (if (field.type == .list) "..." else "");
+            const typename = switch (field.info) {
+                .absent => {},
+                inline .named, .positional => |arg_info| arg_info.typename,
+            };
             var rhs: []const u8 = comptimePrint("[{s}{s}]", .{
-                switch (field.type.flatten()) {
+                typename orelse switch (field.type.flatten()) {
                     .bool, .list, .optional => unreachable,
                     .@"enum" => |Enum| enumValuesString(Enum),
                     .float => "float",
@@ -1497,6 +1513,10 @@ test "help" {
             str: struct { value: []const u8 },
             int: struct { value: i32 },
             flag: struct { value: bool },
+            path: struct {
+                value: []const u8,
+                const info: NamedInfo = .{ .typename = "path" };
+            },
         },
     }, allocator, &[_][]const u8{ "myprog", "--help" }, options));
     // Because the help output is primarily for humans, don't get too strict in the unit test.
@@ -1507,6 +1527,7 @@ test "help" {
     try testing.expect(mem.indexOf(u8, aw.written(), "--int") != null);
     try testing.expect(mem.indexOf(u8, aw.written(), "--[no-]flag") != null);
     try testing.expect(mem.indexOf(u8, aw.written(), "--help") != null);
+    try testing.expect(mem.indexOf(u8, aw.written(), "--path=path") != null);
 
     aw.clearRetainingCapacity();
     try testing.expectError(error.Help, parseSlice(struct {

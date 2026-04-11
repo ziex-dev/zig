@@ -634,8 +634,20 @@ const Args = struct {
         .description = "Prints to stdout Zig code which you can use to replace the file src/clang_options_data.zig.",
     };
     positional: struct {
-        @"/path/to/llvm-tblgen": struct { value: [:0]const u8 },
-        @"/path/to/git/llvm/llvm-project": struct { value: [:0]const u8 },
+        @"llvm-tblgen": struct {
+            value: [:0]const u8,
+            pub const info: std.cli.PositionalInfo = .{
+                .description = "path to llvm-tblgen",
+                .typename = "path",
+            };
+        },
+        @"llvm-project": struct {
+            value: [:0]const u8,
+            pub const info: std.cli.PositionalInfo = .{
+                .description = "path to llvm-project",
+                .typename = "path",
+            };
+        },
     },
 };
 
@@ -648,8 +660,8 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writerStreaming(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    const llvm_tblgen_exe = args.positional.@"/path/to/llvm-tblgen".value;
-    const llvm_src_root = args.positional.@"/path/to/git/llvm/llvm-project".value;
+    const llvm_tblgen_exe = args.positional.@"llvm-tblgen".value;
+    const llvm_src_root = args.positional.@"llvm-project".value;
 
     var llvm_to_zig_cpu_features = std.StringHashMap([]const u8).init(arena);
 

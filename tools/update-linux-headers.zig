@@ -147,6 +147,7 @@ const Args = struct {
             value: []const []const u8 = &.{},
             pub const info: std.cli.NamedInfo = .{
                 .description = "subdirectories of search paths look like, e.g. x86_64-linux-gnu",
+                .typename = "path",
             };
         },
         out: struct {
