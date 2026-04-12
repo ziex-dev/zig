@@ -507,3 +507,34 @@ test ResolvConf {
     try rc.parse(std.testing.io, &reader);
     try std.testing.expectEqual(3, rc.nameservers().len);
 }
+
+pub const LocalHostNameError = error{
+    Unexpected,
+    BufferTooSmall,
+    /// Windows-only
+    ///
+    /// Happens when there is no ComputerName set
+    LocalHostNameNotFound,
+    /// Windows-only
+    ///
+    /// Happens when the Windows Registry has the ComputerName saved in the wrong format.
+    ///
+    /// Should never actually happen except if the machine is misconfigured.
+    ReceivedUnexpectedData,
+    /// WASI-only
+    ///
+    /// WASI doesn't support this concept right now
+    OperationUnsupported,
+    InvalidHostName,
+} || Io.Cancelable;
+
+/// Queries the system local hostname of the machine
+///
+/// Windows names this concept ComputerName.
+/// macOS names it local hostname.
+/// Other Unix system don't give it a special name.
+///
+/// The machine can have multiple hostname if it's in multiple networks, but there's only one local hostname which is usually the one you can see in your shell prompt, if that's configured, or the one you get from the "hostname" command.
+pub fn getLocalHostName(io: Io, buffer: []u8) LocalHostNameError![]u8 {
+    return try io.vtable.netLocalHostName(io.userdata, buffer);
+}

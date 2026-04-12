@@ -252,8 +252,7 @@ pub const VTable = struct {
     netInterfaceNameResolve: *const fn (?*anyopaque, *const net.Interface.Name) net.Interface.Name.ResolveError!net.Interface,
     netInterfaceName: *const fn (?*anyopaque, net.Interface) net.Interface.NameError!net.Interface.Name,
     netLookup: *const fn (?*anyopaque, net.HostName, *Queue(net.HostName.LookupResult), net.HostName.LookupOptions) net.HostName.LookupError!void,
-
-    computerName: *const fn (?*anyopaque, []u8) ComputerNameError![]u8,
+    netLocalHostName: *const fn (?*anyopaque, []u8) net.HostName.LocalHostNameError![]u8,
 };
 
 pub const Operation = union(enum) {
@@ -2501,36 +2500,6 @@ test {
     _ = @import("Io/test.zig");
 }
 
-pub const ComputerNameError = error{
-    Unexpected,
-    BufferTooSmall,
-    /// Windows-only
-    ///
-    /// Happens when there is no ComputerName
-    ComputerNameNotFound,
-    /// Windows-only
-    ///
-    /// Happens when the Windows Registry has the ComputerName saved in the wrong format.
-    ///
-    /// Should never actually happen except if the machine is misconfigured.
-    ReceivedUnexpectedData,
-    /// WASI-only
-    ///
-    /// WASI doesn't support this concept right now
-    OperationUnsupported,
-} || Cancelable;
-
-/// Fetches the current ComputerName of the current machine.
-///
-/// This does not mean that it's the HostName since a machine can have multiple hostnames,
-/// one per interface, but only one ComputerName.
-///
-/// But it does not relate to how macOS defines a ComputerName since macOS allows for that
-/// full Unicode, and then sanitizes it for the local hostname.
-pub fn getComputerName(io: Io, buffer: []u8) ComputerNameError![]u8 {
-    return io.vtable.computerName(io.userdata, buffer);
-}
-
 /// An implementation of `Io` which simulates a system supporting no `Io` operations.
 ///
 /// This system has the following properties:
@@ -2666,6 +2635,7 @@ pub const failing: std.Io = .{
         .netInterfaceNameResolve = failingNetInterfaceNameResolve,
         .netInterfaceName = unreachableNetInterfaceName,
         .netLookup = failingNetLookup,
+        .netLocalHostName = failingNetLocalHostName,
     },
 };
 
@@ -3465,6 +3435,12 @@ pub fn failingNetLookup(userdata: ?*anyopaque, host_name: net.HostName, resolved
     _ = resolved;
     _ = options;
     return error.NetworkDown;
+}
+
+pub fn failingNetLocalHostName(userdata: ?*anyopaque, buffer: []u8) net.HostName.LocalHostNameError![]u8 {
+    _ = userdata;
+    _ = buffer;
+    return error.InvalidHostName;
 }
 
 test failing {
