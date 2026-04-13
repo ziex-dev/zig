@@ -235,31 +235,6 @@ test "Allocator alloc and remap with zero-bit type" {
     try testing.expectEqual(200, values.len);
 }
 
-/// Copy all of source into dest at position 0.
-/// dest.len must be >= source.len.
-/// If the slices overlap, dest.ptr must be <= src.ptr.
-/// This function is deprecated; use @memmove instead.
-pub fn copyForwards(comptime T: type, dest: []T, source: []const T) void {
-    for (dest[0..source.len], source) |*d, s| d.* = s;
-}
-
-/// Copy all of source into dest at position 0.
-/// dest.len must be >= source.len.
-/// If the slices overlap, dest.ptr must be >= src.ptr.
-/// This function is deprecated; use @memmove instead.
-pub fn copyBackwards(comptime T: type, dest: []T, source: []const T) void {
-    // TODO instead of manually doing this check for the whole array
-    // and turning off runtime safety, the compiler should detect loops like
-    // this and automatically omit safety checks for loops
-    @setRuntimeSafety(false);
-    assert(dest.len >= source.len);
-    var i = source.len;
-    while (i > 0) {
-        i -= 1;
-        dest[i] = source[i];
-    }
-}
-
 /// Generally, Zig users are encouraged to explicitly initialize all fields of a struct explicitly rather than using this function.
 /// However, it is recognized that there are sometimes use cases for initializing all fields to a "zero" value. For example, when
 /// interfacing with a C API where this practice is more common and relied upon. If you are performing code review and see this
@@ -825,9 +800,6 @@ fn eqlBytes(a: []const u8, b: []const u8) bool {
     return !Scan.isNotEqual(last_a_chunk, last_b_chunk);
 }
 
-/// Deprecated in favor of `findDiff`.
-pub const indexOfDiff = findDiff;
-
 /// Compares two slices and returns the index of the first inequality.
 /// Returns null if the slices are equal.
 pub fn findDiff(comptime T: type, a: []const T, b: []const T) ?usize {
@@ -1119,8 +1091,6 @@ test len {
     try testing.expect(len(c_ptr) == 2);
 }
 
-/// Deprecated in favor of `findSentinel`.
-pub const indexOfSentinel = findSentinel;
 
 /// Returns the index of the sentinel value in a sentinel-terminated pointer.
 /// Linear search through memory until the sentinel is found.
@@ -1212,16 +1182,10 @@ test trim {
     try testing.expectEqualSlices(u8, "foo", trim(u8, "foo", " \n"));
 }
 
-/// Deprecated in favor of `findScalar`.
-pub const indexOfScalar = findScalar;
-
 /// Linear search for the index of a scalar value inside a slice.
 pub fn findScalar(comptime T: type, slice: []const T, value: T) ?usize {
     return findScalarPos(T, slice, 0, value);
 }
-
-/// Deprecated in favor of `findScalarLast`.
-pub const lastIndexOfScalar = findScalarLast;
 
 /// Linear search for the last index of a scalar value inside a slice.
 pub fn findScalarLast(comptime T: type, slice: []const T, value: T) ?usize {
@@ -1233,8 +1197,6 @@ pub fn findScalarLast(comptime T: type, slice: []const T, value: T) ?usize {
     return null;
 }
 
-/// Deprecated in favor of `findScalarPos`.
-pub const indexOfScalarPos = findScalarPos;
 
 /// Linear search for the index of a scalar value inside a slice, starting from a given position.
 /// Returns null if the value is not found.
@@ -1314,17 +1276,11 @@ test findScalarPos {
     }
 }
 
-/// Deprecated in favor of `findAny`.
-pub const indexOfAny = findAny;
-
 /// Linear search for the index of any value in the provided list inside a slice.
 /// Returns null if no values are found.
 pub fn findAny(comptime T: type, slice: []const T, values: []const T) ?usize {
     return findAnyPos(T, slice, 0, values);
 }
-
-/// Deprecated in favor of `findLastAny`.
-pub const lastIndexOfAny = findLastAny;
 
 /// Linear search for the last index of any value in the provided list inside a slice.
 /// Returns null if no values are found.
@@ -1339,9 +1295,6 @@ pub fn findLastAny(comptime T: type, slice: []const T, values: []const T) ?usize
     return null;
 }
 
-/// Deprecated in favor of `findAnyPos`.
-pub const indexOfAnyPos = findAnyPos;
-
 /// Linear search for the index of any value in the provided list inside a slice, starting from a given position.
 /// Returns null if no values are found.
 pub fn findAnyPos(comptime T: type, slice: []const T, start_index: usize, values: []const T) ?usize {
@@ -1353,9 +1306,6 @@ pub fn findAnyPos(comptime T: type, slice: []const T, start_index: usize, values
     }
     return null;
 }
-
-/// Deprecated in favor of `findNone`.
-pub const indexOfNone = findNone;
 
 /// Find the first item in `slice` which is not contained in `values`.
 ///
@@ -1374,9 +1324,6 @@ test findNone {
 
     try testing.expect(findNonePos(u8, "abc123", 3, "321") == null);
 }
-
-/// Deprecated in favor of `findLastNone`.
-pub const lastIndexOfNone = findLastNone;
 
 /// Find the last item in `slice` which is not contained in `values`.
 ///
@@ -1410,18 +1357,12 @@ pub fn findNonePos(comptime T: type, slice: []const T, start_index: usize, value
     return null;
 }
 
-/// Deprecated in favor of `find`.
-pub const indexOf = find;
-
 /// Search for needle in haystack and return the index of the first occurrence.
 /// Uses Boyer-Moore-Horspool algorithm on large inputs; linear search on small inputs.
 /// Returns null if needle is not found.
 pub fn find(comptime T: type, haystack: []const T, needle: []const T) ?usize {
     return findPos(T, haystack, 0, needle);
 }
-
-/// Deprecated in favor of `findLastLinear`.
-pub const lastIndexOfLinear = findLastLinear;
 
 /// Find the index in a slice of a sub-slice, searching from the end backwards.
 /// To start looking at a different index, slice the haystack first.
@@ -1496,9 +1437,6 @@ fn boyerMooreHorspoolPreprocess(pattern: []const u8, table: *[256]usize) void {
     }
 }
 
-/// Deprecated in favor of `find`.
-pub const lastIndexOf = findLast;
-
 /// Find the index in a slice of a sub-slice, searching from the end backwards.
 /// To start looking at a different index, slice the haystack first.
 /// Uses the Reverse Boyer-Moore-Horspool algorithm on large inputs;
@@ -1508,7 +1446,7 @@ pub fn findLast(comptime T: type, haystack: []const T, needle: []const T) ?usize
     if (needle.len == 0) return haystack.len;
 
     if (!std.meta.hasUniqueRepresentation(T) or haystack.len < 52 or needle.len <= 4)
-        return lastIndexOfLinear(T, haystack, needle);
+        return findLastLinear(T, haystack, needle);
 
     const haystack_bytes = sliceAsBytes(haystack);
     const needle_bytes = sliceAsBytes(needle);
@@ -1528,9 +1466,6 @@ pub fn findLast(comptime T: type, haystack: []const T, needle: []const T) ?usize
 
     return null;
 }
-
-/// Deprecated in favor of `findPos`.
-pub const indexOfPos = findPos;
 
 /// Uses Boyer-Moore-Horspool algorithm on large inputs; `findPosLinear` on small inputs.
 pub fn findPos(comptime T: type, haystack: []const T, start_index: usize, needle: []const T) ?usize {
@@ -1563,26 +1498,26 @@ pub fn findPos(comptime T: type, haystack: []const T, start_index: usize, needle
 
 test find {
     try testing.expect(find(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten eleven", "three four").? == 8);
     try testing.expect(find(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten eleven", "two two") == null);
 
     try testing.expect(find(u8, "one two three four five six seven eight nine ten", "").? == 0);
-    try testing.expect(lastIndexOf(u8, "one two three four five six seven eight nine ten", "").? == 48);
+    try testing.expect(findLast(u8, "one two three four five six seven eight nine ten", "").? == 48);
 
     try testing.expect(find(u8, "one two three four", "four").? == 14);
-    try testing.expect(lastIndexOf(u8, "one two three two four", "two").? == 14);
+    try testing.expect(findLast(u8, "one two three two four", "two").? == 14);
     try testing.expect(find(u8, "one two three four", "gour") == null);
-    try testing.expect(lastIndexOf(u8, "one two three four", "gour") == null);
+    try testing.expect(findLast(u8, "one two three four", "gour") == null);
     try testing.expect(find(u8, "foo", "foo").? == 0);
-    try testing.expect(lastIndexOf(u8, "foo", "foo").? == 0);
+    try testing.expect(findLast(u8, "foo", "foo").? == 0);
     try testing.expect(find(u8, "foo", "fool") == null);
-    try testing.expect(lastIndexOf(u8, "foo", "lfoo") == null);
-    try testing.expect(lastIndexOf(u8, "foo", "fool") == null);
+    try testing.expect(findLast(u8, "foo", "lfoo") == null);
+    try testing.expect(findLast(u8, "foo", "fool") == null);
 
     try testing.expect(find(u8, "foo foo", "foo").? == 0);
-    try testing.expect(lastIndexOf(u8, "foo foo", "foo").? == 4);
-    try testing.expect(lastIndexOfAny(u8, "boo, cat", "abo").? == 6);
+    try testing.expect(findLast(u8, "foo foo", "foo").? == 4);
+    try testing.expect(findLastAny(u8, "boo, cat", "abo").? == 6);
     try testing.expect(findScalarLast(u8, "boo", 'o').? == 2);
 }
 
@@ -1604,13 +1539,13 @@ test "find multibyte" {
         // make haystack and needle long enough to trigger Boyer-Moore-Horspool algorithm
         const haystack = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee, 0x00ff } ++ [1]u16{0} ** 100;
         const needle = [_]u16{ 0xbbaa, 0xccbb, 0xddcc, 0xeedd, 0xffee };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needle), 0);
+        try testing.expectEqual(findLast(u16, &haystack, &needle), 0);
 
         // check for misaligned false positives (little and big endian)
         const needleLE = [_]u16{ 0xbbbb, 0xcccc, 0xdddd, 0xeeee, 0xffff };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needleLE), null);
+        try testing.expectEqual(findLast(u16, &haystack, &needleLE), null);
         const needleBE = [_]u16{ 0xaacc, 0xbbdd, 0xccee, 0xddff, 0xee00 };
-        try testing.expectEqual(lastIndexOf(u16, &haystack, &needleBE), null);
+        try testing.expectEqual(findLast(u16, &haystack, &needleBE), null);
     }
 }
 
@@ -1690,7 +1625,7 @@ test countScalar {
 //
 /// See also: `containsAtLeastScalar`
 pub fn containsAtLeast(comptime T: type, haystack: []const T, expected_count: usize, needle: []const T) bool {
-    if (needle.len == 1) return containsAtLeastScalar(T, haystack, expected_count, needle[0]);
+    if (needle.len == 1) return containsAtLeastScalar2(T, haystack, needle[0], expected_count);
     assert(needle.len > 0);
     if (expected_count == 0) return true;
 
@@ -1721,10 +1656,6 @@ test containsAtLeast {
     try testing.expect(!containsAtLeast(u8, "   radar      radar   ", 3, "radar"));
 }
 
-/// Deprecated in favor of `containsAtLeastScalar2`.
-pub fn containsAtLeastScalar(comptime T: type, list: []const T, minimum: usize, element: T) bool {
-    return containsAtLeastScalar2(T, list, element, minimum);
-}
 
 /// Returns true if `element` appears at least `minimum` number of times in `list`.
 //
@@ -1972,18 +1903,6 @@ fn readPackedIntBig(comptime T: type, bytes: []const u8, bit_offset: usize) T {
     } else return @as(T, @bitCast(val));
 }
 
-/// Deprecated: use readPackedInt(T, bytes, bit_offset, value, .native)
-pub const readPackedIntNative = switch (native_endian) {
-    .little => readPackedIntLittle,
-    .big => readPackedIntBig,
-};
-
-/// Deprecated: use readPackedInt(T, bytes, bit_offset, value, .foreign)
-pub const readPackedIntForeign = switch (native_endian) {
-    .little => readPackedIntBig,
-    .big => readPackedIntLittle,
-};
-
 /// Loads an integer from packed memory.
 /// Asserts that buffer contains at least bit_offset + @bitSizeOf(T) bits.
 pub fn readPackedInt(comptime T: type, bytes: []const u8, bit_offset: usize, endian: Endian) T {
@@ -2126,18 +2045,6 @@ fn writePackedIntBig(comptime T: type, bytes: []u8, bit_offset: usize, value: T)
 
     writeInt(StoreInt, write_bytes[(byte_count - store_size)..][0..store_size], write_value, .big);
 }
-
-/// Deprecated: use writePackedInt(T, bytes, bit_offset, value, .native)
-pub const writePackedIntNative = switch (native_endian) {
-    .little => writePackedIntLittle,
-    .big => writePackedIntBig,
-};
-
-/// Deprecated: use writePackedInt(T, bytes, bit_offset, value, .foreign)
-pub const writePackedIntForeign = switch (native_endian) {
-    .little => writePackedIntBig,
-    .big => writePackedIntLittle,
-};
 
 /// Stores an integer to packed memory.
 /// Asserts that buffer contains at least bit_offset + @bitSizeOf(T) bits.
@@ -3453,8 +3360,8 @@ pub fn SplitBackwardsIterator(comptime T: type, comptime delimiter_type: Delimit
         pub fn next(self: *Self) ?[]const T {
             const end = self.index orelse return null;
             const start = if (switch (delimiter_type) {
-                .sequence => lastIndexOf(T, self.buffer[0..end], self.delimiter),
-                .any => lastIndexOfAny(T, self.buffer[0..end], self.delimiter),
+                .sequence => findLast(T, self.buffer[0..end], self.delimiter),
+                .any => findLastAny(T, self.buffer[0..end], self.delimiter),
                 .scalar => findScalarLast(T, self.buffer[0..end], self.delimiter),
             }) |delim_start| blk: {
                 self.index = delim_start;
@@ -3769,9 +3676,6 @@ test minMax {
     }
 }
 
-/// Deprecated in favor of `findMin`.
-pub const indexOfMin = findMin;
-
 /// Returns the index of the smallest number in a slice. O(n).
 /// `slice` must not be empty.
 pub fn findMin(comptime T: type, slice: []const T) usize {
@@ -3815,9 +3719,6 @@ test findMax {
     try testing.expectEqual(findMax(u8, "gabcdef"), 0);
     try testing.expectEqual(findMax(u8, "a"), 0);
 }
-
-/// Deprecated in favor of `findMinMax`.
-pub const indexOfMinMax = findMinMax;
 
 /// Finds the indices of the smallest and largest number in a slice. O(n).
 /// Returns the indices of the smallest and largest numbers in that order.

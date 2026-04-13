@@ -7465,11 +7465,11 @@ fn checkBetweenTokens(src: []const u8, fmt_on: *bool) error{
     @disableInstrumentation();
     var pos: usize = 0;
     while (true) {
-        const nl_pos = std.mem.indexOfScalarPos(u8, src, pos, '\n');
+        const nl_pos = std.mem.findScalarPos(u8, src, pos, '\n');
         var check_trailing = fmt_on.*;
 
         const line = src[pos .. nl_pos orelse src.len];
-        if (std.mem.indexOfScalar(u8, line, '/')) |comment_start| {
+        if (std.mem.findScalar(u8, line, '/')) |comment_start| {
             const comment_content = line[comment_start..][2..];
             const trimmed_comment = std.mem.trim(u8, comment_content, &std.ascii.whitespace);
             if (std.mem.eql(u8, trimmed_comment, "zig fmt: off")) {
@@ -7526,7 +7526,7 @@ fn reparseTokens(
         if (tok.tag == .multiline_string_literal_line and fmt_on) blk: {
             if (tokens.len == 1)
                 break :blk; // first token
-            if (std.mem.indexOfScalar(u8, between, '\n') == null)
+            if (std.mem.findScalar(u8, between, '\n') == null)
                 return error.SameLineMultilineStringLiteral;
         }
         if (tok.tag == expected_tags[i]) {
