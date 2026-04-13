@@ -1280,5 +1280,5 @@ fn ProtocolInterfaces(HandleType: type, Interfaces: type) type {
         tuple_types[idx + 1] = *const anyopaque;
     }
 
-    return std.meta.Tuple(tuple_types[0..]);
+    return @Tuple(tuple_types[0..]);
 }

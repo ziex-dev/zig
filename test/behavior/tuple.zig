@@ -256,7 +256,7 @@ test "tuple in tuple passed to generic function" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
-        fn pair(x: f32, y: f32) std.meta.Tuple(&.{ f32, f32 }) {
+        fn pair(x: f32, y: f32) @Tuple(&.{ f32, f32 }) {
             return .{ x, y };
         }
 
@@ -274,7 +274,7 @@ test "coerce tuple to tuple" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const T = std.meta.Tuple(&.{u8});
+    const T = @Tuple(&.{u8});
     const S = struct {
         fn foo(x: T) !void {
             try expect(x[0] == 123);
@@ -288,7 +288,7 @@ test "tuple type with void field" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const T = std.meta.Tuple(&[_]type{void});
+    const T = @Tuple(&[_]type{void});
     const x = T{{}};
     try expect(@TypeOf(x[0]) == void);
 }
@@ -313,7 +313,7 @@ test "tuple type with void field and a runtime field" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const T = std.meta.Tuple(&[_]type{ usize, void });
+    const T = @Tuple(&[_]type{ usize, void });
     var t: T = .{ 5, {} };
     _ = &t;
     try expect(t[0] == 5);

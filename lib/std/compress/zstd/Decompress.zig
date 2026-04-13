@@ -535,7 +535,7 @@ pub const Frame = struct {
                     table: Table,
                     accuracy_log: u8,
 
-                    const State = std.meta.Int(.unsigned, max_accuracy_log);
+                    const State = @Int(.unsigned, max_accuracy_log);
                 };
             }
 
@@ -1785,7 +1785,7 @@ const ReverseBitReader = struct {
     }
 
     fn initBits(comptime T: type, out: anytype, num: u16) Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         return .{
             @bitCast(@as(UT, @intCast(out))),
             num,
@@ -1805,7 +1805,7 @@ const ReverseBitReader = struct {
     }
 
     fn readBitsTuple(self: *ReverseBitReader, comptime T: type, num: u16) !Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         const U = if (@bitSizeOf(T) < 8) u8 else UT;
 
         if (num <= self.count) return initBits(T, self.removeBits(@intCast(num)), num);
@@ -1873,7 +1873,7 @@ const BitReader = struct {
     count: u4 = 0,
 
     fn initBits(comptime T: type, out: anytype, num: u16) Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         return .{
             @bitCast(@as(UT, @intCast(out))),
             num,
@@ -1893,7 +1893,7 @@ const BitReader = struct {
     }
 
     fn readBitsTuple(self: *@This(), comptime T: type, num: u16) !Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         const U = if (@bitSizeOf(T) < 8) u8 else UT;
 
         if (num <= self.count) return initBits(T, self.removeBits(@intCast(num)), num);

@@ -778,7 +778,7 @@ pub fn Log2Int(comptime T: type) type {
     if (T == comptime_int) return comptime_int;
     const bits: u16 = @typeInfo(T).int.bits;
     const log2_bits = 16 - @clz(bits - 1);
-    return std.meta.Int(.unsigned, log2_bits);
+    return @Int(.unsigned, log2_bits);
 }
 
 /// Returns an unsigned int type that can hold the number of bits in T.
@@ -787,7 +787,7 @@ pub fn Log2IntCeil(comptime T: type) type {
     if (T == comptime_int) return comptime_int;
     const bits: u16 = @typeInfo(T).int.bits;
     const log2_bits = 16 - @clz(bits);
-    return std.meta.Int(.unsigned, log2_bits);
+    return @Int(.unsigned, log2_bits);
 }
 
 /// Returns the smallest integer type that can hold both from and to.
@@ -1047,10 +1047,10 @@ fn testRem() !void {
 
 /// Returns the negation of the integer parameter.
 /// Result is a signed integer.
-pub fn negateCast(x: anytype) !std.meta.Int(.signed, @bitSizeOf(@TypeOf(x))) {
+pub fn negateCast(x: anytype) !@Int(.signed, @bitSizeOf(@TypeOf(x))) {
     if (@typeInfo(@TypeOf(x)).int.signedness == .signed) return negate(x);
 
-    const int = std.meta.Int(.signed, @bitSizeOf(@TypeOf(x)));
+    const int = @Int(.signed, @bitSizeOf(@TypeOf(x)));
     if (x > -minInt(int)) return error.Overflow;
 
     if (x == -minInt(int)) return minInt(int);
@@ -1140,7 +1140,7 @@ test isPowerOfTwo {
 pub fn ByteAlignedInt(comptime T: type) type {
     const info = @typeInfo(T).int;
     const bits = (info.bits + 7) / 8 * 8;
-    const extended_type = std.meta.Int(info.signedness, bits);
+    const extended_type = @Int(info.signedness, bits);
     return extended_type;
 }
 
@@ -1178,7 +1178,7 @@ pub inline fn floor(value: anytype) @TypeOf(value) {
 /// Returns the nearest power of two less than or equal to value, or
 /// zero if value is less than or equal to zero.
 pub fn floorPowerOfTwo(comptime T: type, value: T) T {
-    const uT = std.meta.Int(.unsigned, @typeInfo(T).int.bits);
+    const uT = @Int(.unsigned, @typeInfo(T).int.bits);
     if (value <= 0) return 0;
     return @as(T, 1) << log2_int(uT, @as(uT, @intCast(value)));
 }
@@ -1213,11 +1213,11 @@ pub inline fn ceil(value: anytype) @TypeOf(value) {
 /// Returns the next power of two (if the value is not already a power of two).
 /// Only unsigned integers can be used. Zero is not an allowed input.
 /// Result is a type with 1 more bit than the input type.
-pub fn ceilPowerOfTwoPromote(comptime T: type, value: T) std.meta.Int(@typeInfo(T).int.signedness, @typeInfo(T).int.bits + 1) {
+pub fn ceilPowerOfTwoPromote(comptime T: type, value: T) @Int(@typeInfo(T).int.signedness, @typeInfo(T).int.bits + 1) {
     comptime assert(@typeInfo(T) == .int);
     comptime assert(@typeInfo(T).int.signedness == .unsigned);
     assert(value != 0);
-    const PromotedType = std.meta.Int(@typeInfo(T).int.signedness, @typeInfo(T).int.bits + 1);
+    const PromotedType = @Int(@typeInfo(T).int.signedness, @typeInfo(T).int.bits + 1);
     const ShiftType = std.math.Log2Int(PromotedType);
     return @as(PromotedType, 1) << @as(ShiftType, @intCast(@typeInfo(T).int.bits - @clz(value - 1)));
 }
@@ -1229,7 +1229,7 @@ pub fn ceilPowerOfTwo(comptime T: type, value: T) (error{Overflow}!T) {
     comptime assert(@typeInfo(T) == .int);
     const info = @typeInfo(T).int;
     comptime assert(info.signedness == .unsigned);
-    const PromotedType = std.meta.Int(info.signedness, info.bits + 1);
+    const PromotedType = @Int(info.signedness, info.bits + 1);
     const overflowBit = @as(PromotedType, 1) << info.bits;
     const x = ceilPowerOfTwoPromote(T, value);
     if (overflowBit & x != 0) {
@@ -1502,11 +1502,11 @@ test "max value type" {
 
 /// Multiply a and b. Return type is wide enough to guarantee no
 /// overflow.
-pub fn mulWide(comptime T: type, a: T, b: T) std.meta.Int(
+pub fn mulWide(comptime T: type, a: T, b: T) @Int(
     @typeInfo(T).int.signedness,
     @typeInfo(T).int.bits * 2,
 ) {
-    const ResultInt = std.meta.Int(
+    const ResultInt = @Int(
         @typeInfo(T).int.signedness,
         @typeInfo(T).int.bits * 2,
     );

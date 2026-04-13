@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-pub const U80 = std.meta.Int(.unsigned, 80);
+pub const U80 = @Int(.unsigned, 80);
 
 /// Returns the sign + exponent bits of a `long double`
 pub fn signExponent(x: anytype) u16 {

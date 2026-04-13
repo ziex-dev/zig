@@ -25,7 +25,7 @@ const carry_bits = 1;
 const t_bits: usize = @bitSizeOf(Limb) - carry_bits;
 
 // A TLimb is a Limb that is truncated to t_bits.
-const TLimb = meta.Int(.unsigned, t_bits);
+const TLimb = @Int(.unsigned, t_bits);
 
 const native_endian = builtin.target.cpu.arch.endian();
 
@@ -906,7 +906,7 @@ const ct_protected = struct {
     // Multiplies two limbs and returns the result as a wide limb.
     fn mulWide(x: Limb, y: Limb) WideLimb {
         const half_bits = @typeInfo(Limb).int.bits / 2;
-        const Half = meta.Int(.unsigned, half_bits);
+        const Half = @Int(.unsigned, half_bits);
         const x0 = @as(Half, @truncate(x));
         const x1 = @as(Half, @truncate(x >> half_bits));
         const y0 = @as(Half, @truncate(y));
