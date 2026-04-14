@@ -188,6 +188,7 @@ last_update_was_cache_hit: bool = false,
 c_source_files: []const CSourceFile,
 rc_source_files: []const RcSourceFile,
 global_cc_argv: []const []const u8,
+translate_c_argv: []const []const u8,
 cache_parent: *Cache,
 /// Populated when a sub-Compilation is created during the `update` of its parent.
 /// In this case the child must additionally add file system inputs to this object.
@@ -1731,6 +1732,7 @@ pub const CreateOptions = struct {
     pdb_out_path: ?[]const u8 = null,
     error_limit: ?Zcu.ErrorInt = null,
     global_cc_argv: []const []const u8 = &.{},
+    translate_c_argv: []const []const u8 = &.{},
 
     /// Tracks all files that can cause the Compilation to be invalidated and need a rebuild.
     file_system_inputs: ?*std.ArrayList(u8) = null,
@@ -2285,6 +2287,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
             .force_undefined_symbols = options.force_undefined_symbols,
             .link_eh_frame_hdr = link_eh_frame_hdr,
             .global_cc_argv = options.global_cc_argv,
+            .translate_c_argv = options.translate_c_argv,
             .file_system_inputs = options.file_system_inputs,
             .parent_whole_cache = options.parent_whole_cache,
             .link_diags = .init(gpa, io),
@@ -5218,6 +5221,7 @@ pub fn translateC(
 
         try argv.appendSlice(comp.global_cc_argv);
         try argv.appendSlice(owner_mod.cc_argv);
+        try argv.appendSlice(comp.translate_c_argv);
         try argv.appendSlice(&.{ source_path, "-o", translated_path });
         if (comp.verbose_cimport) try dumpArgv(io, argv.items);
     }
@@ -5299,6 +5303,7 @@ pub fn cImport(
     defer man.deinit();
 
     man.hash.add(@as(u16, 0x7dd9)); // Random number to distinguish c-import from compiling C objects
+    man.hash.addListOfBytes(comp.translate_c_argv);
     man.hash.addBytes(c_src);
 
     const result: CImportResult = if (try man.hit()) .{

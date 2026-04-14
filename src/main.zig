@@ -618,7 +618,7 @@ const usage_build_generic =
     \\      md5                        16-byte cryptographic hash (ELF)
     \\      uuid                       16-byte random UUID (ELF, WASM)
     \\      0x[hexstring]              Constant ID, maximum 32 bytes (ELF, WASM)
-    \\      none                     (default) No build ID
+    \\      none                       (default) No build ID
     \\  --eh-frame-hdr                 Enable C++ exception handling by passing --eh-frame-hdr to linker
     \\  --no-eh-frame-hdr              Disable C++ exception handling by passing --no-eh-frame-hdr to linker
     \\  --emit-relocs                  Enable output of relocation sections for post build tools
@@ -690,6 +690,18 @@ const usage_build_generic =
     \\  -weak_framework [name]         (Darwin) link against framework and mark it and all referenced symbols as weak
     \\  -F[dir]                        (Darwin) add search path for frameworks
     \\  --export=[value]               (WebAssembly) Force a symbol to be exported
+    \\
+    \\TranslateC Options:
+    \\  -fpub-static                   Translate static functions as pub
+    \\  -fno-pub-static                Do not translate static functions as pub
+    \\  -ffunc-bodies                  Translate function bodies
+    \\  -fno-func-bodies               Do not translate function bodies
+    \\  -fkeep-macro-literals          Preserve macro names for literals
+    \\  -fno-keep-macro-literals       Do not preserve macro names for literals
+    \\  -fdefault-init                 Default initialize struct fields
+    \\  -fno-default-init              Do not default initialize struct fields
+    \\  -fstrict-flex-arrays=<n>       Control trailing array flexible array treatment (default: 2)
+    \\                                 0: any trailing array, 1: size [0]/[1]/[], 2: size [0]/[], 3: [] only.
     \\
     \\Test Options:
     \\  --test-filter [text]           Skip tests that do not match any filter
@@ -977,6 +989,8 @@ fn buildOutputType(
     var cssan: ClangSearchSanitizer = .{};
     var cc_argv: std.ArrayList([]const u8) = .empty;
     var deps: std.ArrayList(CliModule.Dep) = .empty;
+
+    var translate_c_argv: std.ArrayList([]const u8) = .empty;
 
     // Contains every module specified via -M. The dependencies are added
     // after argument parsing is completed. We use a StringArrayHashMap to make
@@ -1805,6 +1819,20 @@ fn buildOutputType(
                         create_module.opts.wasi_exec_model = parseWasiExecModel(rest);
                     } else if (mem.eql(u8, arg, "-municode")) {
                         mingw_unicode_entry_point = true;
+                    } else if (mem.eql(u8, arg, "-fpub-static") or
+                        mem.eql(u8, arg, "-fno-pub-static") or
+                        mem.eql(u8, arg, "-ffunc-bodies") or
+                        mem.eql(u8, arg, "-fno-func-bodies") or
+                        mem.eql(u8, arg, "-fkeep-macro-literals") or
+                        mem.eql(u8, arg, "-fno-keep-macro-literals") or
+                        mem.eql(u8, arg, "-fdefault-init") or
+                        mem.eql(u8, arg, "-fno-default-init"))
+                    {
+                        try translate_c_argv.append(arena, arg);
+                    } else if (mem.cutPrefix(u8, arg, "-fstrict-flex-arrays=")) |level| {
+                        if (level.len != 1 or level[0] < '0' or level[0] > '3')
+                            fatal("-fstrict-flex-arrays= requires a value of '0', '1', '2', or '3'", .{});
+                        try translate_c_argv.append(arena, arg);
                     } else {
                         fatal("unrecognized parameter: '{s}'", .{arg});
                     }
@@ -3678,6 +3706,7 @@ fn buildOutputType(
         // than to any particular module. This feature can greatly reduce CLI
         // noise when --search-prefix and -M are combined.
         .global_cc_argv = try cc_argv.toOwnedSlice(arena),
+        .translate_c_argv = translate_c_argv.items,
         .file_system_inputs = &file_system_inputs,
         .debug_compiler_runtime_libs = debug_compiler_runtime_libs,
         .environ_map = environ_map,
@@ -4732,6 +4761,7 @@ fn cmdTranslateC(
     defer man.deinit();
 
     man.hash.add(@as(u16, 0xb945)); // Random number to distinguish translate-c from compiling C objects
+    man.hash.addListOfBytes(comp.translate_c_argv);
     Compilation.cache_helpers.hashCSource(&man, c_source_file) catch |err|
         fatal("unable to process '{s}': {t}", .{ c_source_file.src_path, err });
 

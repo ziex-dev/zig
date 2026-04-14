@@ -18,12 +18,24 @@ target: std.Build.ResolvedTarget,
 optimize: std.builtin.OptimizeMode,
 output_file: std.Build.GeneratedFile,
 link_libc: bool,
+translate_options: ?TranslateOptions,
+
+pub const TranslateOptions = struct {
+    pub_static: bool = true,
+    func_bodies: bool = true,
+    keep_macro_literals: bool = true,
+    default_init: bool = true,
+    strict_flex_arrays: StrictFlexArraysLevel = .@"2",
+
+    pub const StrictFlexArraysLevel = enum { @"0", @"1", @"2", @"3" };
+};
 
 pub const Options = struct {
     root_source_file: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     link_libc: bool = true,
+    translate_options: ?TranslateOptions = null,
 };
 
 pub fn create(owner: *std.Build, options: Options) *TranslateC {
@@ -44,6 +56,7 @@ pub fn create(owner: *std.Build, options: Options) *TranslateC {
         .optimize = options.optimize,
         .output_file = .{ .step = &translate_c.step },
         .link_libc = options.link_libc,
+        .translate_options = options.translate_options,
         .system_libs = .empty,
     };
     source.addStepDependencies(&translate_c.step);
@@ -269,6 +282,14 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                 }
             },
         }
+    }
+
+    if (translate_c.translate_options) |to| {
+        try argv_list.append(if (to.pub_static) "-fpub-static" else "-fno-pub-static");
+        try argv_list.append(if (to.func_bodies) "-ffunc-bodies" else "-fno-func-bodies");
+        try argv_list.append(if (to.keep_macro_literals) "-fkeep-macro-literals" else "-fno-keep-macro-literals");
+        try argv_list.append(if (to.default_init) "-fdefault-init" else "-fno-default-init");
+        try argv_list.append(b.fmt("-fstrict-flex-arrays={d}", .{@intFromEnum(to.strict_flex_arrays)}));
     }
 
     const c_source_path = translate_c.source.getPath2(b, step);
