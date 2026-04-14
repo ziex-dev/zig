@@ -1607,12 +1607,6 @@ fn buildOutputType(
                         create_module.opts.debug_format = .{ .dwarf = .@"32" };
                     } else if (mem.eql(u8, arg, "-gdwarf64")) {
                         create_module.opts.debug_format = .{ .dwarf = .@"64" };
-                    } else if (mem.eql(u8, arg, "-fformatted-panics")) {
-                        // Remove this after 0.15.0 is tagged.
-                        warn("-fformatted-panics is deprecated and does nothing", .{});
-                    } else if (mem.eql(u8, arg, "-fno-formatted-panics")) {
-                        // Remove this after 0.15.0 is tagged.
-                        warn("-fno-formatted-panics is deprecated and does nothing", .{});
                     } else if (mem.eql(u8, arg, "-fsingle-threaded")) {
                         mod_opts.single_threaded = true;
                     } else if (mem.eql(u8, arg, "-fno-single-threaded")) {
@@ -6614,7 +6608,7 @@ fn cmdDumpLlvmInts(
     if (!build_options.have_llvm)
         fatal("compiler does not use LLVM; cannot dump LLVM integer sizes", .{});
 
-    const triple = try arena.dupeSentinel(u8, args[0], 0);
+    const triple = try arena.dupeSentinel(u8, args[0]);
 
     const llvm = @import("codegen/llvm/bindings.zig");
 

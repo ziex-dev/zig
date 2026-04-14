@@ -132,7 +132,7 @@ pub const CompileUnit = struct {
         files: []FileEntry,
         version: u16,
 
-        pub const LineTable = std.AutoArrayHashMapUnmanaged(u64, LineEntry);
+        pub const LineTable = std.array_hash_map.Auto(u64, LineEntry);
 
         pub const LineEntry = struct {
             line: u32,
