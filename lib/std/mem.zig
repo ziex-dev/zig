@@ -1091,7 +1091,6 @@ test len {
     try testing.expect(len(c_ptr) == 2);
 }
 
-
 /// Returns the index of the sentinel value in a sentinel-terminated pointer.
 /// Linear search through memory until the sentinel is found.
 pub fn findSentinel(comptime T: type, comptime sentinel: T, p: [*:sentinel]const T) usize {
@@ -1196,7 +1195,6 @@ pub fn findScalarLast(comptime T: type, slice: []const T, value: T) ?usize {
     }
     return null;
 }
-
 
 /// Linear search for the index of a scalar value inside a slice, starting from a given position.
 /// Returns null if the value is not found.
@@ -1655,7 +1653,6 @@ test containsAtLeast {
     try testing.expect(containsAtLeast(u8, "   radar      radar   ", 2, "radar"));
     try testing.expect(!containsAtLeast(u8, "   radar      radar   ", 3, "radar"));
 }
-
 
 /// Returns true if `element` appears at least `minimum` number of times in `list`.
 //

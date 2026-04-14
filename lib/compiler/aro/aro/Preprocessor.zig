@@ -23,7 +23,7 @@ const Tree = @import("Tree.zig");
 const Token = Tree.Token;
 const TokenWithExpansionLocs = Tree.TokenWithExpansionLocs;
 
-const DefineMap = std.StringArrayHashMapUnmanaged(Macro);
+const DefineMap = std.array_hash_map.String(Macro);
 const RawTokenList = std.ArrayList(RawToken);
 const max_include_depth = 200;
 
@@ -2812,7 +2812,7 @@ fn unescapeUcn(pp: *Preprocessor, tok: TokenWithExpansionLocs) !TokenWithExpansi
             @branchHint(.cold);
             const identifier = pp.expandedSlice(tok);
             const gpa = pp.comp.gpa;
-            if (mem.indexOfScalar(u8, identifier, '\\') != null) {
+            if (mem.findScalar(u8, identifier, '\\') != null) {
                 @branchHint(.cold);
                 const start = pp.comp.generated_buf.items.len;
                 try pp.comp.generated_buf.ensureUnusedCapacity(gpa, identifier.len + 1);
@@ -3869,7 +3869,7 @@ pub fn prettyPrintTokens(pp: *Preprocessor, w: *std.Io.Writer, macro_dump_mode: 
             },
             .keyword_pragma => {
                 const pragma_name = pp.expandedSlice(pp.tokens.get(i + 1));
-                const end_idx = mem.indexOfScalarPos(Token.Id, tok_ids, i, .nl) orelse i + 1;
+                const end_idx = mem.findScalarPos(Token.Id, tok_ids, i, .nl) orelse i + 1;
                 const pragma_len = @as(u32, @intCast(end_idx)) - i;
 
                 if (pp.comp.getPragma(pragma_name)) |prag| {
@@ -3896,7 +3896,7 @@ pub fn prettyPrintTokens(pp: *Preprocessor, w: *std.Io.Writer, macro_dump_mode: 
             },
             .whitespace => {
                 var slice = pp.expandedSlice(cur);
-                while (mem.indexOfScalar(u8, slice, '\n')) |some| {
+                while (mem.findScalar(u8, slice, '\n')) |some| {
                     if (pp.linemarkers != .none) try w.writeByte('\n');
                     slice = slice[some + 1 ..];
                 }

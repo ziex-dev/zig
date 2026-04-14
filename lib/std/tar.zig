@@ -120,9 +120,6 @@ pub const Diagnostics = struct {
     }
 };
 
-/// Deprecated, renamed to `ExtractOptions`.
-pub const PipeOptions = ExtractOptions;
-
 pub const ExtractOptions = struct {
     /// Number of directory levels to skip when extracting files.
     strip_components: u32 = 0,
@@ -581,9 +578,6 @@ pub const PaxIterator = struct {
         if (try reader.takeByte() != '\n') return error.PaxInvalidAttributeEnd;
     }
 };
-
-/// Deprecated, renamed to `extract`.
-pub const pipeToFileSystem = extract;
 
 /// Ingests tar file from `reader`, populating file contents within `dir`. If
 /// any file would be extracted outside of `dir`, an error is return instead.

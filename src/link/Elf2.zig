@@ -29,14 +29,14 @@ si: Symbol.Known,
 symtab: std.ArrayList(Symbol),
 shstrtab: StringTable,
 strtab: StringTable,
-dynsym: std.AutoArrayHashMapUnmanaged(Symbol.Index, void),
+dynsym: std.array_hash_map.Auto(Symbol.Index, void),
 dynstr: StringTable,
 got: struct {
     len: u32,
     tlsld: GotIndex,
-    plt: std.AutoArrayHashMapUnmanaged(Symbol.Index, void),
+    plt: std.array_hash_map.Auto(Symbol.Index, void),
 },
-needed: std.AutoArrayHashMapUnmanaged(u32, void),
+needed: std.array_hash_map.Auto(u32, void),
 inputs: std.ArrayList(struct {
     path: std.Build.Cache.Path,
     member: ?[]const u8,
@@ -48,14 +48,14 @@ input_sections: std.ArrayList(struct {
     si: Symbol.Index,
 }),
 input_section_pending_index: u32,
-globals: std.AutoArrayHashMapUnmanaged(u32, Symbol.Index),
-navs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, Symbol.Index),
-uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, Symbol.Index),
+globals: std.array_hash_map.Auto(u32, Symbol.Index),
+navs: std.array_hash_map.Auto(InternPool.Nav.Index, Symbol.Index),
+uavs: std.array_hash_map.Auto(InternPool.Index, Symbol.Index),
 lazy: std.EnumArray(link.File.LazySymbol.Kind, struct {
-    map: std.AutoArrayHashMapUnmanaged(InternPool.Index, Symbol.Index),
+    map: std.array_hash_map.Auto(InternPool.Index, Symbol.Index),
     pending_index: u32,
 }),
-pending_uavs: std.AutoArrayHashMapUnmanaged(Node.UavMapIndex, struct {
+pending_uavs: std.array_hash_map.Auto(Node.UavMapIndex, struct {
     alignment: InternPool.Alignment,
     src_loc: Zcu.LazySrcLoc,
 }),
@@ -618,7 +618,7 @@ pub const StringTable = struct {
         }
 
         pub fn hash(_: Adapter, key: []const u8) u64 {
-            assert(std.mem.indexOfScalar(u8, key, 0) == null);
+            assert(std.mem.findScalar(u8, key, 0) == null);
             return std.hash_map.hashString(key);
         }
     };
@@ -2660,7 +2660,7 @@ fn sectionName(elf: *Elf, si: Symbol.Index) [:0]const u8 {
     const name = elf.si.shstrtab.node(elf).slice(&elf.mf)[switch (elf.shdrPtr(si.shndx(elf))) {
         inline else => |shdr| elf.targetLoad(&shdr.name),
     }..];
-    return name[0..std.mem.indexOfScalar(u8, name, 0).? :0];
+    return name[0..std.mem.findScalar(u8, name, 0).? :0];
 }
 
 fn string(elf: *Elf, comptime section: enum { shstrtab, strtab, dynstr }, key: []const u8) !u32 {

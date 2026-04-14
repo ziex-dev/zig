@@ -151,7 +151,7 @@ const ElfDynLibError = error{
 
 pub const ElfDynLib = struct {
     strings: [*:0]u8,
-    syms: [*]elf.Sym,
+    syms: [*]elf.ElfN.Sym,
     hash_table: HashTable,
     versym: ?[*]elf.Versym,
     verdef: ?*elf.Verdef,
@@ -244,9 +244,9 @@ pub const ElfDynLib = struct {
         );
         defer posix.munmap(file_bytes);
 
-        const eh = @as(*elf.Ehdr, @ptrCast(file_bytes.ptr));
-        if (!mem.eql(u8, eh.e_ident[0..4], elf.MAGIC)) return error.NotElfFile;
-        if (eh.e_type != elf.ET.DYN) return error.NotDynamicLibrary;
+        const eh = @as(*elf.ElfN.Ehdr, @ptrCast(file_bytes.ptr));
+        if (!mem.eql(u8, eh.ident[0..4], elf.MAGIC)) return error.NotElfFile;
+        if (eh.type != elf.ET.DYN) return error.NotDynamicLibrary;
 
         const elf_addr = @intFromPtr(file_bytes.ptr);
 
@@ -256,15 +256,15 @@ pub const ElfDynLib = struct {
         var virt_addr_end: usize = 0;
         {
             var i: usize = 0;
-            var ph_addr: usize = elf_addr + eh.e_phoff;
-            while (i < eh.e_phnum) : ({
+            var ph_addr: usize = elf_addr + eh.phoff;
+            while (i < eh.phnum) : ({
                 i += 1;
-                ph_addr += eh.e_phentsize;
+                ph_addr += eh.phentsize;
             }) {
-                const ph = @as(*elf.Phdr, @ptrFromInt(ph_addr));
-                switch (ph.p_type) {
-                    elf.PT_LOAD => virt_addr_end = @max(virt_addr_end, ph.p_vaddr + ph.p_memsz),
-                    elf.PT_DYNAMIC => maybe_dynv = @as([*]usize, @ptrFromInt(elf_addr + ph.p_offset)),
+                const ph = @as(*elf.ElfN.Phdr, @ptrFromInt(ph_addr));
+                switch (ph.type) {
+                    elf.PT.LOAD => virt_addr_end = @max(virt_addr_end, ph.vaddr + ph.memsz),
+                    elf.PT.DYNAMIC => maybe_dynv = @as([*]usize, @ptrFromInt(elf_addr + ph.offset)),
                     else => {},
                 }
             }
@@ -287,22 +287,22 @@ pub const ElfDynLib = struct {
         // Now iterate again and actually load all the program sections.
         {
             var i: usize = 0;
-            var ph_addr: usize = elf_addr + eh.e_phoff;
-            while (i < eh.e_phnum) : ({
+            var ph_addr: usize = elf_addr + eh.phoff;
+            while (i < eh.phnum) : ({
                 i += 1;
-                ph_addr += eh.e_phentsize;
+                ph_addr += eh.phentsize;
             }) {
-                const ph = @as(*elf.Phdr, @ptrFromInt(ph_addr));
-                switch (ph.p_type) {
-                    elf.PT_LOAD => {
+                const ph = @as(*elf.ElfN.Phdr, @ptrFromInt(ph_addr));
+                switch (ph.type) {
+                    .LOAD => {
                         // The VirtAddr may not be page-aligned; in such case there will be
                         // extra nonsense mapped before/after the VirtAddr,MemSiz
-                        const aligned_addr = (base + ph.p_vaddr) & ~(@as(usize, page_size) - 1);
-                        const extra_bytes = (base + ph.p_vaddr) - aligned_addr;
-                        const extended_memsz = mem.alignForward(usize, ph.p_memsz + extra_bytes, page_size);
+                        const aligned_addr = (base + ph.vaddr) & ~(@as(usize, page_size) - 1);
+                        const extra_bytes = (base + ph.vaddr) - aligned_addr;
+                        const extended_memsz = mem.alignForward(usize, ph.memsz + extra_bytes, page_size);
                         const ptr = @as([*]align(std.heap.page_size_min) u8, @ptrFromInt(aligned_addr));
-                        const prot = elfToProt(ph.p_flags);
-                        if ((ph.p_flags & elf.PF_W) == 0) {
+                        const prot = elfToProt(ph.flags);
+                        if (!ph.flags.W) {
                             // If it does not need write access, it can be mapped from the fd.
                             _ = try posix.mmap(
                                 ptr,
@@ -310,7 +310,7 @@ pub const ElfDynLib = struct {
                                 prot,
                                 .{ .TYPE = .PRIVATE, .FIXED = true },
                                 file.handle,
-                                ph.p_offset - extra_bytes,
+                                ph.offset - extra_bytes,
                             );
                         } else {
                             const sect_mem = try posix.mmap(
@@ -321,7 +321,7 @@ pub const ElfDynLib = struct {
                                 -1,
                                 0,
                             );
-                            @memcpy(sect_mem[0..ph.p_filesz], file_bytes[0..ph.p_filesz]);
+                            @memcpy(sect_mem[0..ph.filesz], file_bytes[0..ph.filesz]);
                         }
                     },
                     else => {},
@@ -330,7 +330,7 @@ pub const ElfDynLib = struct {
         }
 
         var maybe_strings: ?[*:0]u8 = null;
-        var maybe_syms: ?[*]elf.Sym = null;
+        var maybe_syms: ?[*]elf.ElfN.Sym = null;
         var maybe_hashtab: ?[*]posix.Elf_Symndx = null;
         var maybe_gnu_hash: ?*elf.gnu_hash.Header = null;
         var maybe_versym: ?[*]elf.Versym = null;
@@ -530,11 +530,11 @@ pub const ElfDynLib = struct {
         return null;
     }
 
-    fn elfToProt(elf_prot: u64) posix.PROT {
+    fn elfToProt(elf_prot: elf.PF) posix.PROT {
         return .{
-            .READ = (elf_prot & elf.PF_R) != 0,
-            .WRITE = (elf_prot & elf.PF_W) != 0,
-            .EXEC = (elf_prot & elf.PF_X) != 0,
+            .READ = elf_prot.R,
+            .WRITE = elf_prot.W,
+            .EXEC = elf_prot.X,
         };
     }
 };

@@ -30,7 +30,7 @@ paths_arena: std.heap.ArenaAllocator.State,
 watch_roots: [][:0]const u8,
 /// All of the paths being watched. Value is the set of steps which depend on the file/directory.
 /// Keys and values are in `paths_arena`, but this map is allocated into the GPA.
-watch_paths: std.StringArrayHashMapUnmanaged([]const *std.Build.Step),
+watch_paths: std.array_hash_map.String([]const *std.Build.Step),
 
 /// The semaphore we use to block the thread calling `wait` until the callback determines a relevant
 /// event has occurred. This is retained across `wait` calls for simplicity and efficiency.
@@ -123,7 +123,7 @@ pub fn setPaths(fse: *FsEvents, gpa: Allocator, steps: []const *std.Build.Step) 
     defer fse.paths_arena = paths_arena_instance.state;
     const paths_arena = paths_arena_instance.allocator();
 
-    var need_dirs: std.StringArrayHashMapUnmanaged(void) = .empty;
+    var need_dirs: std.array_hash_map.String(void) = .empty;
     defer need_dirs.deinit(gpa);
 
     fse.watch_paths.clearRetainingCapacity();

@@ -30,18 +30,18 @@ strings: std.HashMapUnmanaged(
 ),
 string_bytes: std.ArrayList(u8),
 image_section_table: std.ArrayList(Symbol.Index),
-pseudo_section_table: std.AutoArrayHashMapUnmanaged(String, Symbol.Index),
-object_section_table: std.AutoArrayHashMapUnmanaged(String, Symbol.Index),
+pseudo_section_table: std.array_hash_map.Auto(String, Symbol.Index),
+object_section_table: std.array_hash_map.Auto(String, Symbol.Index),
 symbol_table: std.ArrayList(Symbol),
-globals: std.AutoArrayHashMapUnmanaged(GlobalName, Symbol.Index),
+globals: std.array_hash_map.Auto(GlobalName, Symbol.Index),
 global_pending_index: u32,
-navs: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, Symbol.Index),
-uavs: std.AutoArrayHashMapUnmanaged(InternPool.Index, Symbol.Index),
+navs: std.array_hash_map.Auto(InternPool.Nav.Index, Symbol.Index),
+uavs: std.array_hash_map.Auto(InternPool.Index, Symbol.Index),
 lazy: std.EnumArray(link.File.LazySymbol.Kind, struct {
-    map: std.AutoArrayHashMapUnmanaged(InternPool.Index, Symbol.Index),
+    map: std.array_hash_map.Auto(InternPool.Index, Symbol.Index),
     pending_index: u32,
 }),
-pending_uavs: std.AutoArrayHashMapUnmanaged(Node.UavMapIndex, struct {
+pending_uavs: std.array_hash_map.Auto(Node.UavMapIndex, struct {
     alignment: InternPool.Alignment,
     src_loc: Zcu.LazySrcLoc,
 }),
@@ -256,7 +256,7 @@ pub const Node = union(enum) {
 
 pub const ImportTable = struct {
     ni: MappedFile.Node.Index,
-    entries: std.AutoArrayHashMapUnmanaged(void, Entry),
+    entries: std.array_hash_map.Auto(void, Entry),
 
     pub const Entry = struct {
         import_lookup_table_ni: MappedFile.Node.Index,
@@ -278,7 +278,7 @@ pub const ImportTable = struct {
         }
 
         pub fn hash(_: Adapter, key: []const u8) u32 {
-            assert(std.mem.indexOfScalar(u8, key, 0) == null);
+            assert(std.mem.findScalar(u8, key, 0) == null);
             return std.array_hash_map.hashString(key);
         }
     };
@@ -322,7 +322,7 @@ pub const String = enum(u32) {
 
     pub fn toSlice(s: String, coff: *Coff) [:0]const u8 {
         const slice = coff.string_bytes.items[@intFromEnum(s)..];
-        return slice[0..std.mem.indexOfScalar(u8, slice, 0).? :0];
+        return slice[0..std.mem.findScalar(u8, slice, 0).? :0];
     }
 
     pub fn toOptional(s: String) String.Optional {
@@ -1441,7 +1441,7 @@ fn objectSectionMapIndex(
         try coff.ensureUnusedStringCapacity(name.toSlice(coff).len);
         const name_slice = name.toSlice(coff);
         const parent = (try coff.pseudoSectionMapIndex(coff.getOrPutStringAssumeCapacity(
-            name_slice[0 .. std.mem.indexOfScalar(u8, name_slice, '$') orelse name_slice.len],
+            name_slice[0 .. std.mem.findScalar(u8, name_slice, '$') orelse name_slice.len],
         ), alignment, attributes)).symbol(coff);
         try coff.nodes.ensureUnusedCapacity(gpa, 1);
         try coff.symbol_table.ensureUnusedCapacity(gpa, 1);
@@ -2183,7 +2183,7 @@ fn flushMoved(coff: *Coff, ni: MappedFile.Node.Index) !void {
             var import_hint_name_index: u32 = 0;
             for (0..import_entry.len) |import_symbol_index| {
                 import_hint_name_index = @intCast(import_hint_name_align.forward(
-                    std.mem.indexOfScalarPos(
+                    std.mem.findScalarPos(
                         u8,
                         import_hint_name_slice,
                         import_hint_name_index,

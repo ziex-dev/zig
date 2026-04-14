@@ -441,7 +441,7 @@ pub const ResourceDataEntry = extern struct {
 const ResourceTree = struct {
     type_to_name_map: std.ArrayHashMapUnmanaged(NameOrOrdinal, NameToLanguageMap, NameOrOrdinalHashContext, true),
     rsrc_string_table: std.ArrayHashMapUnmanaged(NameOrOrdinal, void, NameOrOrdinalHashContext, true),
-    deduplicated_data: std.StringArrayHashMapUnmanaged(u32),
+    deduplicated_data: std.array_hash_map.String(u32),
     data_offsets: std.ArrayList(u32),
     rsrc02_len: u32,
     coff_options: CoffOptions,
@@ -451,7 +451,7 @@ const ResourceTree = struct {
         resource: *const Resource,
         original_index: usize,
     };
-    const LanguageToResourceMap = std.AutoArrayHashMapUnmanaged(Language, RelocatableResource);
+    const LanguageToResourceMap = std.array_hash_map.Auto(Language, RelocatableResource);
     const NameToLanguageMap = std.ArrayHashMapUnmanaged(NameOrOrdinal, LanguageToResourceMap, NameOrOrdinalHashContext, true);
 
     const NameOrOrdinalHashContext = struct {
@@ -1055,7 +1055,7 @@ pub const supported_targets = struct {
         };
         comptime {
             for (@typeInfo(Arch).@"enum".fields) |enum_field| {
-                _ = std.mem.indexOfScalar(Arch, ordered_for_display, @enumFromInt(enum_field.value)) orelse {
+                _ = std.mem.findScalar(Arch, ordered_for_display, @enumFromInt(enum_field.value)) orelse {
                     @compileError(std.fmt.comptimePrint("'{s}' missing from ordered_for_display", .{enum_field.name}));
                 };
             }

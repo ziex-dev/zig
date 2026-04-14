@@ -52,7 +52,7 @@ within_fn: bool = false,
 fn_ret_ty: Zir.Inst.Ref = .none,
 /// Maps string table indexes to the first `@import` ZIR instruction
 /// that uses this string as the operand.
-imports: std.AutoArrayHashMapUnmanaged(Zir.NullTerminatedString, Ast.TokenIndex) = .empty,
+imports: std.array_hash_map.Auto(Zir.NullTerminatedString, Ast.TokenIndex) = .empty,
 /// Used for temporary storage when building payloads.
 scratch: std.ArrayList(u32) = .empty,
 /// Whenever a `ref` instruction is needed, it is created and saved in this
@@ -11309,7 +11309,7 @@ const Scope = struct {
         declaring_gz: ?*GenZir,
 
         /// Set of captures used by this namespace.
-        captures: std.AutoArrayHashMapUnmanaged(Zir.Inst.Capture, Zir.NullTerminatedString) = .empty,
+        captures: std.array_hash_map.Auto(Zir.Inst.Capture, Zir.NullTerminatedString) = .empty,
 
         fn deinit(self: *Namespace, gpa: Allocator) void {
             self.decls.deinit(gpa);
@@ -13003,9 +13003,9 @@ fn scanContainer(
     var sfba_state = std.heap.stackFallback(512, astgen.gpa);
     const sfba = sfba_state.get();
 
-    var names: std.AutoArrayHashMapUnmanaged(Zir.NullTerminatedString, NameEntry) = .empty;
-    var test_names: std.AutoArrayHashMapUnmanaged(Zir.NullTerminatedString, NameEntry) = .empty;
-    var decltest_names: std.AutoArrayHashMapUnmanaged(Zir.NullTerminatedString, NameEntry) = .empty;
+    var names: std.array_hash_map.Auto(Zir.NullTerminatedString, NameEntry) = .empty;
+    var test_names: std.array_hash_map.Auto(Zir.NullTerminatedString, NameEntry) = .empty;
+    var decltest_names: std.array_hash_map.Auto(Zir.NullTerminatedString, NameEntry) = .empty;
     defer {
         names.deinit(sfba);
         test_names.deinit(sfba);

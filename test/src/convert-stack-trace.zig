@@ -52,7 +52,7 @@ pub fn main(init: std.process.Init) !void {
             continue;
         }
 
-        const src_col_end = std.mem.indexOf(u8, in_line, ": 0x") orelse {
+        const src_col_end = std.mem.find(u8, in_line, ": 0x") orelse {
             try w.writeAll(in_line);
             continue;
         };
@@ -65,11 +65,11 @@ pub fn main(init: std.process.Init) !void {
             continue;
         };
 
-        const addr_end = std.mem.indexOfPos(u8, in_line, src_col_end, " in ") orelse {
+        const addr_end = std.mem.findPos(u8, in_line, src_col_end, " in ") orelse {
             try w.writeAll(in_line);
             continue;
         };
-        const symbol_end = std.mem.indexOfPos(u8, in_line, addr_end, " (") orelse {
+        const symbol_end = std.mem.findPos(u8, in_line, addr_end, " (") orelse {
             try w.writeAll(in_line);
             continue;
         };

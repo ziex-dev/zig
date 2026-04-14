@@ -792,20 +792,20 @@ pub const Header = struct {
 
     /// If this function fails, seek position of `r` is unchanged.
     pub fn read(r: *Io.Reader) ReadError!Header {
-        const buf = try r.peek(@sizeOf(Elf64_Ehdr));
+        const buf = try r.peek(@sizeOf(Elf64.Ehdr));
 
         if (!mem.eql(u8, buf[0..4], MAGIC)) return error.InvalidElfMagic;
         if (buf[EI.VERSION] != 1) return error.InvalidElfVersion;
 
         const endian: Endian = switch (buf[EI.DATA]) {
-            ELFDATA2LSB => .little,
-            ELFDATA2MSB => .big,
+            @intFromEnum(DATA.@"2LSB") => .little,
+            @intFromEnum(DATA.@"2MSB") => .big,
             else => return error.InvalidElfEndian,
         };
 
         return switch (buf[EI.CLASS]) {
-            ELFCLASS32 => .init(try r.takeStruct(Elf32_Ehdr, endian), endian),
-            ELFCLASS64 => .init(try r.takeStruct(Elf64_Ehdr, endian), endian),
+            @intFromEnum(CLASS.@"32") => .init(try r.takeStruct(Elf32.Ehdr, endian), endian),
+            @intFromEnum(CLASS.@"64") => .init(try r.takeStruct(Elf64.Ehdr, endian), endian),
             else => return error.InvalidElfClass,
         };
     }
@@ -815,23 +815,23 @@ pub const Header = struct {
         comptime assert(!@typeInfo(OSABI).@"enum".is_exhaustive);
         return .{
             .is_64 = switch (@TypeOf(hdr)) {
-                Elf32_Ehdr => false,
-                Elf64_Ehdr => true,
+                Elf32.Ehdr => false,
+                Elf64.Ehdr => true,
                 else => @compileError("bad type"),
             },
             .endian = endian,
-            .os_abi = @enumFromInt(hdr.e_ident[EI.OSABI]),
-            .abi_version = hdr.e_ident[EI.ABIVERSION],
-            .type = hdr.e_type,
-            .machine = hdr.e_machine,
-            .entry = hdr.e_entry,
-            .phoff = hdr.e_phoff,
-            .shoff = hdr.e_shoff,
-            .phentsize = hdr.e_phentsize,
-            .phnum = hdr.e_phnum,
-            .shentsize = hdr.e_shentsize,
-            .shnum = hdr.e_shnum,
-            .shstrndx = hdr.e_shstrndx,
+            .os_abi = @enumFromInt(hdr.ident[EI.OSABI]),
+            .abi_version = hdr.ident[EI.ABIVERSION],
+            .type = hdr.type,
+            .machine = hdr.machine,
+            .entry = hdr.entry,
+            .phoff = hdr.phoff,
+            .shoff = hdr.shoff,
+            .phentsize = hdr.phentsize,
+            .phnum = hdr.phnum,
+            .shentsize = hdr.shentsize,
+            .shnum = hdr.shnum,
+            .shstrndx = hdr.shstrndx,
         };
     }
 };
@@ -845,11 +845,11 @@ pub const ProgramHeaderIterator = struct {
     file_reader: *Io.File.Reader,
     index: usize = 0,
 
-    pub fn next(it: *ProgramHeaderIterator) !?Elf64_Phdr {
+    pub fn next(it: *ProgramHeaderIterator) !?Elf64.Phdr {
         if (it.index >= it.phnum) return null;
         defer it.index += 1;
 
-        const size: u64 = if (it.is_64) @sizeOf(Elf64_Phdr) else @sizeOf(Elf32_Phdr);
+        const size: u64 = if (it.is_64) @sizeOf(Elf64.Phdr) else @sizeOf(Elf32.Phdr);
         const offset = it.phoff + size * it.index;
         try it.file_reader.seekTo(offset);
 
@@ -866,11 +866,11 @@ pub const ProgramHeaderBufferIterator = struct {
     buf: []const u8,
     index: usize = 0,
 
-    pub fn next(it: *ProgramHeaderBufferIterator) !?Elf64_Phdr {
+    pub fn next(it: *ProgramHeaderBufferIterator) !?Elf64.Phdr {
         if (it.index >= it.phnum) return null;
         defer it.index += 1;
 
-        const size: u64 = if (it.is_64) @sizeOf(Elf64_Phdr) else @sizeOf(Elf32_Phdr);
+        const size: u64 = if (it.is_64) @sizeOf(Elf64.Phdr) else @sizeOf(Elf32.Phdr);
         const offset = it.phoff + size * it.index;
         var reader = Io.Reader.fixed(it.buf[offset..]);
 
@@ -878,22 +878,22 @@ pub const ProgramHeaderBufferIterator = struct {
     }
 };
 
-pub fn takeProgramHeader(reader: *Io.Reader, is_64: bool, endian: Endian) !Elf64_Phdr {
+pub fn takeProgramHeader(reader: *Io.Reader, is_64: bool, endian: Endian) !Elf64.Phdr {
     if (is_64) {
-        const phdr = try reader.takeStruct(Elf64_Phdr, endian);
+        const phdr = try reader.takeStruct(Elf64.Phdr, endian);
         return phdr;
     }
 
-    const phdr = try reader.takeStruct(Elf32_Phdr, endian);
+    const phdr = try reader.takeStruct(Elf32.Phdr, endian);
     return .{
-        .p_type = phdr.p_type,
-        .p_offset = phdr.p_offset,
-        .p_vaddr = phdr.p_vaddr,
-        .p_paddr = phdr.p_paddr,
-        .p_filesz = phdr.p_filesz,
-        .p_memsz = phdr.p_memsz,
-        .p_flags = phdr.p_flags,
-        .p_align = phdr.p_align,
+        .type = phdr.type,
+        .offset = phdr.offset,
+        .vaddr = phdr.vaddr,
+        .paddr = phdr.paddr,
+        .filesz = phdr.filesz,
+        .memsz = phdr.memsz,
+        .flags = phdr.flags,
+        .@"align" = phdr.@"align",
     };
 }
 
@@ -906,11 +906,11 @@ pub const SectionHeaderIterator = struct {
     file_reader: *Io.File.Reader,
     index: usize = 0,
 
-    pub fn next(it: *SectionHeaderIterator) !?Elf64_Shdr {
+    pub fn next(it: *SectionHeaderIterator) !?Elf64.Shdr {
         if (it.index >= it.shnum) return null;
         defer it.index += 1;
 
-        const size: u64 = if (it.is_64) @sizeOf(Elf64_Shdr) else @sizeOf(Elf32_Shdr);
+        const size: u64 = if (it.is_64) @sizeOf(Elf64.Shdr) else @sizeOf(Elf32.Shdr);
         const offset = it.shoff + size * it.index;
         try it.file_reader.seekTo(offset);
 
@@ -927,11 +927,11 @@ pub const SectionHeaderBufferIterator = struct {
     buf: []const u8,
     index: usize = 0,
 
-    pub fn next(it: *SectionHeaderBufferIterator) !?Elf64_Shdr {
+    pub fn next(it: *SectionHeaderBufferIterator) !?Elf64.Shdr {
         if (it.index >= it.shnum) return null;
         defer it.index += 1;
 
-        const size: u64 = if (it.is_64) @sizeOf(Elf64_Shdr) else @sizeOf(Elf32_Shdr);
+        const size: u64 = if (it.is_64) @sizeOf(Elf64.Shdr) else @sizeOf(Elf32.Shdr);
         const offset = it.shoff + size * it.index;
         if (offset > it.buf.len) return error.EndOfStream;
         var reader = Io.Reader.fixed(it.buf[@intCast(offset)..]);
@@ -940,24 +940,25 @@ pub const SectionHeaderBufferIterator = struct {
     }
 };
 
-pub fn takeSectionHeader(reader: *Io.Reader, is_64: bool, endian: Endian) !Elf64_Shdr {
+pub fn takeSectionHeader(reader: *Io.Reader, is_64: bool, endian: Endian) !Elf64.Shdr {
     if (is_64) {
-        const shdr = try reader.takeStruct(Elf64_Shdr, endian);
+        const shdr = try reader.takeStruct(Elf64.Shdr, endian);
         return shdr;
     }
 
-    const shdr = try reader.takeStruct(Elf32_Shdr, endian);
+    const shdr = try reader.takeStruct(Elf32.Shdr, endian);
+
     return .{
-        .sh_name = shdr.sh_name,
-        .sh_type = shdr.sh_type,
-        .sh_flags = shdr.sh_flags,
-        .sh_addr = shdr.sh_addr,
-        .sh_offset = shdr.sh_offset,
-        .sh_size = shdr.sh_size,
-        .sh_link = shdr.sh_link,
-        .sh_info = shdr.sh_info,
-        .sh_addralign = shdr.sh_addralign,
-        .sh_entsize = shdr.sh_entsize,
+        .name = shdr.name,
+        .type = shdr.type,
+        .flags = .{ .shf = shdr.flags.shf },
+        .addr = shdr.addr,
+        .offset = shdr.offset,
+        .size = shdr.size,
+        .link = shdr.link,
+        .info = shdr.info,
+        .addralign = shdr.addralign,
+        .entsize = shdr.entsize,
     };
 }
 
@@ -1375,7 +1376,7 @@ pub const Elf64_Syminfo = extern struct {
     si_flags: Half,
 };
 pub const Elf32_Rel = extern struct {
-    r_offset: Elf32_Addr,
+    r_offset: Elf32.Addr,
     r_info: Word,
 
     pub inline fn r_sym(self: @This()) u24 {
@@ -1386,8 +1387,8 @@ pub const Elf32_Rel = extern struct {
     }
 };
 pub const Elf64_Rel = extern struct {
-    r_offset: Elf64_Addr,
-    r_info: Elf64_Xword,
+    r_offset: Elf64.Addr,
+    r_info: Elf64.Xword,
 
     pub inline fn r_sym(self: @This()) u32 {
         return @truncate(self.r_info >> 32);
@@ -1397,7 +1398,7 @@ pub const Elf64_Rel = extern struct {
     }
 };
 pub const Elf32_Rela = extern struct {
-    r_offset: Elf32_Addr,
+    r_offset: Elf32.Addr,
     r_info: Word,
     r_addend: Sword,
 
@@ -1409,9 +1410,9 @@ pub const Elf32_Rela = extern struct {
     }
 };
 pub const Elf64_Rela = extern struct {
-    r_offset: Elf64_Addr,
-    r_info: Elf64_Xword,
-    r_addend: Elf64_Sxword,
+    r_offset: Elf64.Addr,
+    r_info: Elf64.Xword,
+    r_addend: Elf64.Sxword,
 
     pub inline fn r_sym(self: @This()) u32 {
         return @truncate(self.r_info >> 32);
@@ -1421,14 +1422,14 @@ pub const Elf64_Rela = extern struct {
     }
 };
 pub const Elf32_Relr = Word;
-pub const Elf64_Relr = Elf64_Xword;
+pub const Elf64_Relr = Xword;
 pub const Elf32_Dyn = extern struct {
     d_tag: Sword,
-    d_val: Elf32_Addr,
+    d_val: Elf32.Addr,
 };
 pub const Elf64_Dyn = extern struct {
-    d_tag: Elf64_Sxword,
-    d_val: Elf64_Addr,
+    d_tag: Sxword,
+    d_val: Elf64.Addr,
 };
 pub const Verdef = extern struct {
     version: Half,
@@ -1487,16 +1488,16 @@ pub const Elf64_Nhdr = extern struct {
     n_type: Word,
 };
 pub const Elf32_Move = extern struct {
-    m_value: Elf32_Xword,
+    m_value: Xword,
     m_info: Word,
     m_poffset: Word,
     m_repeat: Half,
     m_stride: Half,
 };
 pub const Elf64_Move = extern struct {
-    m_value: Elf64_Xword,
-    m_info: Elf64_Xword,
-    m_poffset: Elf64_Xword,
+    m_value: Xword,
+    m_info: Xword,
+    m_poffset: Xword,
     m_repeat: Half,
     m_stride: Half,
 };
@@ -1518,7 +1519,7 @@ pub const Elf32_RegInfo = extern struct {
 pub const Elf_Options = extern struct {
     kind: u8,
     size: u8,
-    section: Elf32_Section,
+    section: Section,
     info: Word,
 };
 pub const Elf_Options_Hw = extern struct {
@@ -1539,7 +1540,7 @@ pub const Elf64_Lib = extern struct {
     l_version: Word,
     l_flags: Word,
 };
-pub const Elf32_Conflict = Elf32_Addr;
+pub const Elf32_Conflict = Elf32.Addr;
 pub const Elf_MIPS_ABIFlags_v0 = extern struct {
     version: Half,
     isa_level: u8,
@@ -1557,18 +1558,6 @@ pub const Elf_MIPS_ABIFlags_v0 = extern struct {
 pub const Auxv = switch (@sizeOf(usize)) {
     4 => Elf32_auxv_t,
     8 => Elf64_auxv_t,
-    else => @compileError("expected pointer size of 32 or 64"),
-};
-/// Deprecated, use `std.elf.ElfN.Ehdr`
-pub const Ehdr = switch (@sizeOf(usize)) {
-    4 => Elf32_Ehdr,
-    8 => Elf64_Ehdr,
-    else => @compileError("expected pointer size of 32 or 64"),
-};
-/// Deprecated, use `std.elf.ElfN.Phdr`
-pub const Phdr = switch (@sizeOf(usize)) {
-    4 => Elf32_Phdr,
-    8 => Elf64_Phdr,
     else => @compileError("expected pointer size of 32 or 64"),
 };
 pub const Dyn = switch (@sizeOf(usize)) {
@@ -1592,33 +1581,11 @@ pub const Relr = switch (@sizeOf(usize)) {
     else => @compileError("expected pointer size of 32 or 64"),
 };
 pub const Shdr = switch (@sizeOf(usize)) {
-    4 => Elf32_Shdr,
-    8 => Elf64_Shdr,
+    4 => Elf32.Shdr,
+    8 => Elf64.Shdr,
     else => @compileError("expected pointer size of 32 or 64"),
 };
-/// Deprecated, use `std.elf.ElfN.Chdr`
-pub const Chdr = switch (@sizeOf(usize)) {
-    4 => Elf32_Chdr,
-    8 => Elf64_Chdr,
-    else => @compileError("expected pointer size of 32 or 64"),
-};
-/// Deprecated, use `std.elf.ElfN.Sym`
-pub const Sym = switch (@sizeOf(usize)) {
-    4 => Elf32_Sym,
-    8 => Elf64_Sym,
-    else => @compileError("expected pointer size of 32 or 64"),
-};
-/// Deprecated, use `std.elf.ElfN.Addr`
-pub const Addr = ElfN.Addr;
 
-/// Deprecated, use `@intFromEnum(std.elf.CLASS.NONE)`
-pub const ELFCLASSNONE = @intFromEnum(CLASS.NONE);
-/// Deprecated, use `@intFromEnum(std.elf.CLASS.@"32")`
-pub const ELFCLASS32 = @intFromEnum(CLASS.@"32");
-/// Deprecated, use `@intFromEnum(std.elf.CLASS.@"64")`
-pub const ELFCLASS64 = @intFromEnum(CLASS.@"64");
-/// Deprecated, use `@intFromEnum(std.elf.CLASS.NUM)`
-pub const ELFCLASSNUM = CLASS.NUM;
 pub const CLASS = enum(u8) {
     NONE = 0,
     @"32" = 1,
@@ -1636,14 +1603,6 @@ pub const CLASS = enum(u8) {
     }
 };
 
-/// Deprecated, use `@intFromEnum(std.elf.DATA.NONE)`
-pub const ELFDATANONE = @intFromEnum(DATA.NONE);
-/// Deprecated, use `@intFromEnum(std.elf.DATA.@"2LSB")`
-pub const ELFDATA2LSB = @intFromEnum(DATA.@"2LSB");
-/// Deprecated, use `@intFromEnum(std.elf.DATA.@"2MSB")`
-pub const ELFDATA2MSB = @intFromEnum(DATA.@"2MSB");
-/// Deprecated, use `@intFromEnum(std.elf.DATA.NUM)`
-pub const ELFDATANUM = DATA.NUM;
 pub const DATA = enum(u8) {
     NONE = 0,
     @"2LSB" = 1,

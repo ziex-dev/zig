@@ -148,7 +148,7 @@ pub fn main(init: process.Init.Minimal) !void {
             const option_contents = arg[2..];
             if (option_contents.len == 0)
                 fatalWithHint("expected option name after '-D'", .{});
-            if (mem.indexOfScalar(u8, option_contents, '=')) |name_end| {
+            if (mem.findScalar(u8, option_contents, '=')) |name_end| {
                 const option_name = option_contents[0..name_end];
                 const option_value = option_contents[name_end + 1 ..];
                 if (try builder.addUserInputOption(option_name, option_value))
@@ -673,7 +673,7 @@ const Run = struct {
     /// Allocated into `gpa`.
     memory_blocked_steps: std.ArrayList(*Step),
     /// Allocated into `gpa`.
-    step_stack: std.AutoArrayHashMapUnmanaged(*Step, void),
+    step_stack: std.array_hash_map.Auto(*Step, void),
 
     error_style: ErrorStyle,
     multiline_errors: MultilineErrors,
@@ -1180,7 +1180,7 @@ fn printTreeStep(
     run: *const Run,
     stderr: Io.Terminal,
     parent_node: *PrintNode,
-    step_stack: *std.AutoArrayHashMapUnmanaged(*Step, void),
+    step_stack: *std.array_hash_map.Auto(*Step, void),
 ) !void {
     const writer = stderr.writer;
     const first = step_stack.swapRemove(s);
@@ -1262,7 +1262,7 @@ fn constructGraphAndCheckForDependencyLoop(
     gpa: Allocator,
     b: *std.Build,
     s: *Step,
-    step_stack: *std.AutoArrayHashMapUnmanaged(*Step, void),
+    step_stack: *std.array_hash_map.Auto(*Step, void),
     rand: std.Random,
 ) !void {
     switch (s.state) {
@@ -1497,7 +1497,7 @@ pub fn printErrorMessages(
         try stderr.setColor(.red);
         try writer.writeAll("error:");
         try stderr.setColor(.reset);
-        if (std.mem.indexOfScalar(u8, msg, '\n') == null) {
+        if (std.mem.findScalar(u8, msg, '\n') == null) {
             try writer.print(" {s}\n", .{msg});
         } else switch (multiline_errors) {
             .indent => {
@@ -1766,7 +1766,7 @@ fn validateSystemLibraryOptions(b: *std.Build) void {
 fn createModuleDependencies(b: *std.Build) Allocator.Error!void {
     const arena = b.graph.arena;
 
-    var all_steps: std.AutoArrayHashMapUnmanaged(*Step, void) = .empty;
+    var all_steps: std.array_hash_map.Auto(*Step, void) = .empty;
     var next_step_idx: usize = 0;
 
     try all_steps.ensureUnusedCapacity(arena, b.top_level_steps.count());

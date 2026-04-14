@@ -1222,14 +1222,6 @@ pub const TestFn = struct {
 /// root source file.
 pub const panic: type = p: {
     if (@hasDecl(root, "panic")) {
-        if (@TypeOf(root.panic) != type) {
-            // Deprecated; make `panic` a namespace instead.
-            break :p std.debug.FullPanic(struct {
-                fn panic(msg: []const u8, ra: ?usize) noreturn {
-                    root.panic(msg, @errorReturnTrace(), ra);
-                }
-            }.panic);
-        }
         break :p root.panic;
     }
     break :p switch (builtin.zig_backend) {

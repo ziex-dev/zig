@@ -140,7 +140,7 @@ io: Io,
 cwd: std.Io.Dir,
 diagnostics: *Diagnostics,
 
-sources: std.StringArrayHashMapUnmanaged(Source) = .empty,
+sources: std.array_hash_map.String(Source) = .empty,
 source_aliases: std.ArrayList(Source) = .empty,
 /// Allocated into `gpa`, but keys are externally managed.
 search_path: std.ArrayList(Include) = .empty,
@@ -159,7 +159,7 @@ builtins: Builtins = .{},
 string_interner: StringInterner = .{},
 interner: Interner = .{},
 type_store: TypeStore = .{},
-pragma_handlers: std.StringArrayHashMapUnmanaged(*Pragma) = .empty,
+pragma_handlers: std.array_hash_map.String(*Pragma) = .empty,
 /// If this is not null, the directory containing the specified Source will be searched for includes
 /// Used by MS extensions which allow searching for includes relative to the directory of the main source file.
 ms_cwd_source_id: ?Source.Id = null,
@@ -1675,7 +1675,7 @@ pub fn addSourceFromPath(comp: *Compilation, path: []const u8) !Source {
 fn addSourceFromPathExtra(comp: *Compilation, path: []const u8, kind: Source.Kind) !Source {
     if (comp.sources.get(path)) |some| return some;
 
-    if (mem.indexOfScalar(u8, path, 0) != null) {
+    if (mem.findScalar(u8, path, 0) != null) {
         return error.FileNotFound;
     }
 
@@ -1955,7 +1955,7 @@ const FindInclude = struct {
         }
         // For an include like 'Foo/Bar.h', search in '<framework_dir>/Foo.framework/Headers/Bar.h'.
         const framework_name: []const u8, const header_sub_path: []const u8 = f: {
-            const i = std.mem.indexOfScalar(u8, find.include_path, '/') orelse return null;
+            const i = std.mem.findScalar(u8, find.include_path, '/') orelse return null;
             break :f .{ find.include_path[0..i], find.include_path[i + 1 ..] };
         };
         return find.check("{s}{c}{s}.framework{c}Headers{c}{s}", .{
@@ -2008,7 +2008,7 @@ pub const IncludeType = enum {
 };
 
 fn getPathContents(comp: *Compilation, path: []const u8, limit: Io.Limit) ![]u8 {
-    if (mem.indexOfScalar(u8, path, 0) != null) {
+    if (mem.findScalar(u8, path, 0) != null) {
         return error.FileNotFound;
     }
 
@@ -2356,15 +2356,15 @@ test "addSourceFromBuffer - exhaustive check for carriage return elimination" {
     while (true) {
         const source = try comp.addSourceFromBuffer(&buf, &buf);
         source_count += 1;
-        try std.testing.expect(std.mem.indexOfScalar(u8, source.buf, '\r') == null);
+        try std.testing.expect(std.mem.findScalar(u8, source.buf, '\r') == null);
 
         if (std.mem.allEqual(u8, &buf, alphabet[alen - 1])) break;
 
-        var idx = std.mem.indexOfScalar(u8, &alphabet, buf[buf.len - 1]).?;
+        var idx = std.mem.findScalar(u8, &alphabet, buf[buf.len - 1]).?;
         buf[buf.len - 1] = alphabet[(idx + 1) % alen];
         var j = buf.len - 1;
         while (j > 0) : (j -= 1) {
-            idx = std.mem.indexOfScalar(u8, &alphabet, buf[j - 1]).?;
+            idx = std.mem.findScalar(u8, &alphabet, buf[j - 1]).?;
             if (buf[j] == alphabet[0]) buf[j - 1] = alphabet[(idx + 1) % alen] else break;
         }
     }

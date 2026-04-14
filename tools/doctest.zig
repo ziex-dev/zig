@@ -389,7 +389,7 @@ fn printOutput(
                     fatal("example compile crashed", .{});
                 },
             }
-            if (mem.indexOf(u8, result.stderr, error_match) == null) {
+            if (mem.find(u8, result.stderr, error_match) == null) {
                 print("{s}\nExpected to find '{s}' in stderr\n", .{ result.stderr, error_match });
                 fatal("example did not have expected compile error", .{});
             }
@@ -444,7 +444,7 @@ fn printOutput(
                     fatal("example compile crashed", .{});
                 },
             }
-            if (mem.indexOf(u8, result.stderr, error_match) == null) {
+            if (mem.find(u8, result.stderr, error_match) == null) {
                 print("{s}\nExpected to find '{s}' in stderr\n", .{ result.stderr, error_match });
                 fatal("example did not have expected runtime safety error message", .{});
             }
@@ -519,7 +519,7 @@ fn printOutput(
                         fatal("example compile crashed", .{});
                     },
                 }
-                if (mem.indexOf(u8, result.stderr, error_match) == null) {
+                if (mem.find(u8, result.stderr, error_match) == null) {
                     print("{s}\nExpected to find '{s}' in stderr\n", .{ result.stderr, error_match });
                     fatal("example did not have expected compile error message", .{});
                 }
@@ -626,10 +626,10 @@ fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
         next_tok_is_fn = false;
 
         const token = tokenizer.next();
-        if (mem.indexOf(u8, src[index..token.loc.start], "//")) |comment_start_off| {
+        if (mem.find(u8, src[index..token.loc.start], "//")) |comment_start_off| {
             // render one comment
             const comment_start = index + comment_start_off;
-            const comment_end_off = mem.indexOf(u8, src[comment_start..token.loc.start], "\n");
+            const comment_end_off = mem.find(u8, src[comment_start..token.loc.start], "\n");
             const comment_end = if (comment_end_off) |o| comment_start + o else token.loc.start;
 
             try writeEscapedLines(out, src[index..comment_start]);
@@ -1113,7 +1113,7 @@ fn termColor(allocator: Allocator, input: []const u8) ![]u8 {
 
 // Returns true if number is in slice.
 fn in(slice: []const u8, number: u8) bool {
-    return mem.indexOfScalar(u8, slice, number) != null;
+    return mem.findScalar(u8, slice, number) != null;
 }
 
 fn run(

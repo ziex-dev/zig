@@ -810,7 +810,7 @@ const UpdatedFile = struct {
     inst_map: std.AutoHashMapUnmanaged(Zir.Inst.Index, Zir.Inst.Index),
 };
 
-fn cleanupUpdatedFiles(gpa: Allocator, updated_files: *std.AutoArrayHashMapUnmanaged(Zcu.File.Index, UpdatedFile)) void {
+fn cleanupUpdatedFiles(gpa: Allocator, updated_files: *std.array_hash_map.Auto(Zcu.File.Index, UpdatedFile)) void {
     for (updated_files.values()) |*elem| elem.inst_map.deinit(gpa);
     updated_files.deinit(gpa);
 }
@@ -825,7 +825,7 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
 
     // We need to visit every updated File for every TrackedInst in InternPool.
     // This only includes Zig files; ZON files are omitted.
-    var updated_files: std.AutoArrayHashMapUnmanaged(Zcu.File.Index, UpdatedFile) = .empty;
+    var updated_files: std.array_hash_map.Auto(Zcu.File.Index, UpdatedFile) = .empty;
     defer cleanupUpdatedFiles(gpa, &updated_files);
 
     for (zcu.import_table.keys()) |file_index| {
@@ -927,7 +927,7 @@ fn updateZirRefs(pt: Zcu.PerThread) (Io.Cancelable || Allocator.Error)!void {
             if (!has_namespace) continue;
 
             // Value is whether the declaration is `pub`.
-            var old_names: std.AutoArrayHashMapUnmanaged(InternPool.NullTerminatedString, bool) = .empty;
+            var old_names: std.array_hash_map.Auto(InternPool.NullTerminatedString, bool) = .empty;
             defer old_names.deinit(zcu.gpa);
             for (old_zir.typeDecls(old_inst)) |decl_inst| {
                 const old_decl = old_zir.getDeclaration(decl_inst);
@@ -3221,7 +3221,7 @@ const ScanDeclIter = struct {
                 if (is_named and comp.test_filters.len > 0) {
                     const fqn_slice = fqn.toSlice(ip);
                     for (comp.test_filters) |test_filter| {
-                        if (std.mem.indexOf(u8, fqn_slice, test_filter) != null) break;
+                        if (std.mem.find(u8, fqn_slice, test_filter) != null) break;
                     } else break :a false;
                 }
                 try zcu.test_functions.put(gpa, nav, {});
@@ -3585,8 +3585,8 @@ pub fn processExports(pt: Zcu.PerThread) !void {
     }
 
     // First, construct a mapping of every exported value and Nav to the indices of all its different exports.
-    var nav_exports: std.AutoArrayHashMapUnmanaged(InternPool.Nav.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
-    var uav_exports: std.AutoArrayHashMapUnmanaged(InternPool.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
+    var nav_exports: std.array_hash_map.Auto(InternPool.Nav.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
+    var uav_exports: std.array_hash_map.Auto(InternPool.Index, std.ArrayList(Zcu.Export.Index)) = .empty;
     defer {
         for (nav_exports.values()) |*exports| {
             exports.deinit(gpa);
@@ -3682,7 +3682,7 @@ pub fn processExports(pt: Zcu.PerThread) !void {
     }
 }
 
-const SymbolExports = std.AutoArrayHashMapUnmanaged(InternPool.NullTerminatedString, Zcu.Export.Index);
+const SymbolExports = std.array_hash_map.Auto(InternPool.NullTerminatedString, Zcu.Export.Index);
 
 fn processExportsInner(
     pt: Zcu.PerThread,

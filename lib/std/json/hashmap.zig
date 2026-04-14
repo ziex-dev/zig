@@ -6,7 +6,7 @@ const innerParse = @import("static.zig").innerParse;
 const innerParseFromValue = @import("static.zig").innerParseFromValue;
 const Value = @import("dynamic.zig").Value;
 
-/// A thin wrapper around `std.StringArrayHashMapUnmanaged` that implements
+/// A thin wrapper around `std.array_hash_map.String` that implements
 /// `jsonParse`, `jsonParseFromValue`, and `jsonStringify`.
 /// This is useful when your JSON schema has an object with arbitrary data keys
 /// instead of comptime-known struct field names.

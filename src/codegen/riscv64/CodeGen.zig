@@ -115,7 +115,7 @@ const_tracking: ConstTrackingMap = .{},
 inst_tracking: InstTrackingMap = .{},
 
 frame_allocs: std.MultiArrayList(FrameAlloc) = .{},
-free_frame_indices: std.AutoArrayHashMapUnmanaged(FrameIndex, void) = .empty,
+free_frame_indices: std.array_hash_map.Auto(FrameIndex, void) = .empty,
 frame_locs: std.MultiArrayList(Mir.FrameLoc) = .{},
 
 loops: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
@@ -341,7 +341,7 @@ const MCValue = union(enum) {
 };
 
 const Branch = struct {
-    inst_table: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, MCValue) = .empty,
+    inst_table: std.array_hash_map.Auto(Air.Inst.Index, MCValue) = .empty,
 
     fn deinit(func: *Branch, gpa: Allocator) void {
         func.inst_table.deinit(gpa);
@@ -349,8 +349,8 @@ const Branch = struct {
     }
 };
 
-const InstTrackingMap = std.AutoArrayHashMapUnmanaged(Air.Inst.Index, InstTracking);
-const ConstTrackingMap = std.AutoArrayHashMapUnmanaged(InternPool.Index, InstTracking);
+const InstTrackingMap = std.array_hash_map.Auto(Air.Inst.Index, InstTracking);
+const ConstTrackingMap = std.array_hash_map.Auto(InternPool.Index, InstTracking);
 
 const InstTracking = struct {
     long: MCValue,
@@ -6246,8 +6246,8 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
         next_op: for (&ops) |*op| {
             const op_str = while (!last_op) {
                 const full_str = op_it.next() orelse break :next_op;
-                const code_str = if (mem.indexOfScalar(u8, full_str, '#') orelse
-                    mem.indexOf(u8, full_str, "//")) |comment|
+                const code_str = if (mem.findScalar(u8, full_str, '#') orelse
+                    mem.find(u8, full_str, "//")) |comment|
                 code: {
                     last_op = true;
                     break :code full_str[0..comment];
@@ -6261,7 +6261,7 @@ fn airAsm(func: *Func, inst: Air.Inst.Index) !void {
             } else if (std.fmt.parseInt(i12, op_str, 10)) |int| {
                 op.* = .{ .imm = Immediate.s(int) };
             } else |_| if (mem.startsWith(u8, op_str, "%[")) {
-                const mod_index = mem.indexOf(u8, op_str, "]@");
+                const mod_index = mem.find(u8, op_str, "]@");
                 const modifier = if (mod_index) |index|
                     op_str[index + "]@".len ..]
                 else

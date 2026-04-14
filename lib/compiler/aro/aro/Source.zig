@@ -101,7 +101,7 @@ pub fn lineCol(source: Source, loc: Location) ExpandedLocation {
     // find the end of the line which is either a newline, EOF or a splice
     var nl = source.buf.len;
     var end_with_splice = false;
-    if (std.mem.indexOfScalar(u8, source.buf[start..], '\n')) |some| nl = some + start;
+    if (std.mem.findScalar(u8, source.buf[start..], '\n')) |some| nl = some + start;
     if (source.splice_locs.len > splice_index and nl > source.splice_locs[splice_index] and source.splice_locs[splice_index] > start) {
         end_with_splice = true;
         nl = source.splice_locs[splice_index];

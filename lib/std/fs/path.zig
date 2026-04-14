@@ -362,109 +362,6 @@ fn testIsAbsolutePosix(path: []const u8, expected_result: bool) !void {
     try testing.expectEqual(expected_result, isAbsolutePosix(path));
 }
 
-/// Deprecated; see `WindowsPath2`
-pub const WindowsPath = struct {
-    is_abs: bool,
-    kind: Kind,
-    disk_designator: []const u8,
-
-    pub const Kind = enum {
-        None,
-        Drive,
-        NetworkShare,
-    };
-};
-
-/// Deprecated; see `parsePathWindows`
-pub fn windowsParsePath(path: []const u8) WindowsPath {
-    if (path.len >= 2 and path[1] == ':') {
-        return WindowsPath{
-            .is_abs = isAbsoluteWindows(path),
-            .kind = WindowsPath.Kind.Drive,
-            .disk_designator = path[0..2],
-        };
-    }
-    if (path.len >= 1 and (path[0] == '/' or path[0] == '\\') and
-        (path.len == 1 or (path[1] != '/' and path[1] != '\\')))
-    {
-        return WindowsPath{
-            .is_abs = true,
-            .kind = WindowsPath.Kind.None,
-            .disk_designator = path[0..0],
-        };
-    }
-    const relative_path = WindowsPath{
-        .kind = WindowsPath.Kind.None,
-        .disk_designator = &[_]u8{},
-        .is_abs = false,
-    };
-
-    if (path.len >= 2 and PathType.windows.isSep(u8, path[0]) and PathType.windows.isSep(u8, path[1])) {
-        const root_end = root_end: {
-            var server_end = mem.findAnyPos(u8, path, 2, "/\\") orelse break :root_end path.len;
-            while (server_end < path.len and PathType.windows.isSep(u8, path[server_end])) server_end += 1;
-            break :root_end mem.findAnyPos(u8, path, server_end, "/\\") orelse path.len;
-        };
-        return WindowsPath{
-            .is_abs = true,
-            .kind = WindowsPath.Kind.NetworkShare,
-            .disk_designator = path[0..root_end],
-        };
-    }
-    return relative_path;
-}
-
-test windowsParsePath {
-    {
-        const parsed = windowsParsePath("//a/b");
-        try testing.expect(parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.NetworkShare);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, "//a/b"));
-    }
-    {
-        const parsed = windowsParsePath("\\\\a\\b");
-        try testing.expect(parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.NetworkShare);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, "\\\\a\\b"));
-    }
-    {
-        const parsed = windowsParsePath("\\\\a/b");
-        try testing.expect(parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.NetworkShare);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, "\\\\a/b"));
-    }
-    {
-        const parsed = windowsParsePath("\\/a\\");
-        try testing.expect(parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.NetworkShare);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, "\\/a\\"));
-    }
-    {
-        const parsed = windowsParsePath("\\\\a\\\\b");
-        try testing.expect(parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.NetworkShare);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, "\\\\a\\\\b"));
-    }
-    {
-        const parsed = windowsParsePath("\\\\a\\\\b\\c");
-        try testing.expect(parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.NetworkShare);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, "\\\\a\\\\b"));
-    }
-    {
-        const parsed = windowsParsePath("/usr/local");
-        try testing.expect(parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.None);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, ""));
-    }
-    {
-        const parsed = windowsParsePath("c:../");
-        try testing.expect(!parsed.is_abs);
-        try testing.expect(parsed.kind == WindowsPath.Kind.Drive);
-        try testing.expect(mem.eql(u8, parsed.disk_designator, "c:"));
-    }
-}
-
 /// On Windows, this calls `parsePathWindows` and on POSIX it calls `parsePathPosix`.
 ///
 /// Returns a platform-specific struct with two fields: `root` and `kind`.
@@ -685,20 +582,6 @@ fn testWindowsParsePathHarmony(wtf8: []const u8) !void {
 
     try std.testing.expectEqual(wtf8_parsed.kind, wtf16_parsed.kind);
     try std.testing.expectEqualStrings(wtf8_parsed.root, wtf16_root_as_wtf8);
-}
-
-/// Deprecated; use `parsePath`
-pub fn diskDesignator(path: []const u8) []const u8 {
-    if (native_os == .windows) {
-        return diskDesignatorWindows(path);
-    } else {
-        return "";
-    }
-}
-
-/// Deprecated; use `parsePathWindows`
-pub fn diskDesignatorWindows(path: []const u8) []const u8 {
-    return windowsParsePath(path).disk_designator;
 }
 
 fn WindowsUNC(comptime T: type) type {

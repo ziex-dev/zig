@@ -245,7 +245,7 @@ pub fn getMembers(
     };
     var renames: std.ArrayList(DeferredExport) = .empty;
     defer renames.deinit(allocator);
-    var regular_imports: std.StringArrayHashMapUnmanaged([]const u8) = .empty;
+    var regular_imports: std.array_hash_map.String([]const u8) = .empty;
     defer regular_imports.deinit(allocator);
 
     for (module_def.exports.items) |*e| {
@@ -351,7 +351,7 @@ fn getNameType(
     // the leading underscore. In MinGW on the other hand, a decorated
     // stdcall function still omits the underscore (IMPORT_NAME_NOPREFIX).
     if (std.mem.startsWith(u8, ext_name, "_") and
-        std.mem.indexOfScalar(u8, ext_name, '@') != null and
+        std.mem.findScalar(u8, ext_name, '@') != null and
         module_definition_type != .mingw)
         return .NAME;
     if (!std.mem.eql(u8, symbol, ext_name))

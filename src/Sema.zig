@@ -89,7 +89,7 @@ err: ?*Zcu.ErrorMsg = null,
 
 /// The temporary arena is used for the memory of the `InferredAlloc` values
 /// here so the values can be dropped without any cleanup.
-unresolved_inferred_allocs: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, InferredAlloc) = .empty,
+unresolved_inferred_allocs: std.array_hash_map.Auto(Air.Inst.Index, InferredAlloc) = .empty,
 
 /// Links every pointer derived from a base `alloc` back to that `alloc`. Used
 /// to detect comptime-known `const`s.
@@ -120,13 +120,13 @@ exports: std.ArrayList(Zcu.Export) = .empty,
 /// All references registered so far by this `Sema`. This is a temporary duplicate
 /// of data stored in `Zcu.all_references`. It exists to avoid adding references to
 /// a given `AnalUnit` multiple times.
-references: std.AutoArrayHashMapUnmanaged(AnalUnit, void) = .empty,
-type_references: std.AutoArrayHashMapUnmanaged(InternPool.Index, void) = .empty,
+references: std.array_hash_map.Auto(AnalUnit, void) = .empty,
+type_references: std.array_hash_map.Auto(InternPool.Index, void) = .empty,
 
 /// All dependencies registered so far by this `Sema`. This is a temporary duplicate
 /// of the main dependency data. It exists to avoid adding dependencies to a given
 /// `AnalUnit` multiple times.
-dependencies: std.AutoArrayHashMapUnmanaged(InternPool.Dependee, void) = .empty,
+dependencies: std.array_hash_map.Auto(InternPool.Dependee, void) = .empty,
 
 /// Whether memoization of this call is permitted. Operations with side effects global
 /// to the `Sema`, such as `@setEvalBranchQuota`, set this to `false`. It is observed
@@ -213,11 +213,11 @@ pub const InferredErrorSet = struct {
     /// are returned from any dependent functions.
     errors: NameMap = .{},
     /// Other inferred error sets which this inferred error set should include.
-    inferred_error_sets: std.AutoArrayHashMapUnmanaged(InternPool.Index, void) = .empty,
+    inferred_error_sets: std.array_hash_map.Auto(InternPool.Index, void) = .empty,
     /// The regular error set created by resolving this inferred error set.
     resolved: InternPool.Index = .none,
 
-    pub const NameMap = std.AutoArrayHashMapUnmanaged(InternPool.NullTerminatedString, void);
+    pub const NameMap = std.array_hash_map.Auto(InternPool.NullTerminatedString, void);
 
     pub fn addErrorSet(
         self: *InferredErrorSet,
@@ -34260,7 +34260,7 @@ pub fn resolveNavPtrModifiers(
         const linksection_body = zir_decl.linksection_body orelse break :ls .none;
         const linksection_ref = try sema.resolveInlineBody(block, linksection_body, decl_inst);
         const bytes = try sema.toConstString(block, section_src, linksection_ref, .{ .simple = .@"linksection" });
-        if (std.mem.indexOfScalar(u8, bytes, 0) != null) {
+        if (std.mem.findScalar(u8, bytes, 0) != null) {
             return sema.fail(block, section_src, "linksection cannot contain null bytes", .{});
         } else if (bytes.len == 0) {
             return sema.fail(block, section_src, "linksection cannot be empty", .{});

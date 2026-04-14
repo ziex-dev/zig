@@ -456,8 +456,6 @@ pub fn dupe(allocator: Allocator, comptime T: type, m: []const T) Error![]T {
     return new_buf;
 }
 
-
-
 /// Copies `m` to newly allocated memory, with a null-terminated element. Caller owns the memory.
 pub fn dupeSentinel(
     allocator: Allocator,

@@ -248,8 +248,8 @@ const MultiSym = struct {
             const arch: Arch = @enumFromInt(field.value);
             const arch_index = archIndex(arch);
             const binding: u4 = switch (arch.ptrSize()) {
-                4 => std.elf.STB_GLOBAL,
-                8 => std.elf.STB_WEAK,
+                4 =>  @intFromEnum(std.elf.STB.GLOBAL),
+                8 =>  @intFromEnum(std.elf.STB.WEAK),
                 else => unreachable,
             };
             if (ms.present[arch_index] and ms.binding[arch_index] != binding) {

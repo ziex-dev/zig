@@ -274,7 +274,7 @@ inline fn getDynamicSymbol() [*]const elf.Dyn {
     };
 }
 
-pub fn relocate(phdrs: []const elf.Phdr) void {
+pub fn relocate(phdrs: []const elf.ElfN.Phdr) void {
     @setRuntimeSafety(false);
     @disableInstrumentation();
 

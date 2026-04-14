@@ -4,12 +4,12 @@ air: Air,
 nav_index: InternPool.Nav.Index,
 
 // Blocks
-def_order: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, void),
-blocks: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, Block),
-loops: std.AutoArrayHashMapUnmanaged(Air.Inst.Index, Loop),
+def_order: std.array_hash_map.Auto(Air.Inst.Index, void),
+blocks: std.array_hash_map.Auto(Air.Inst.Index, Block),
+loops: std.array_hash_map.Auto(Air.Inst.Index, Loop),
 active_loops: std.ArrayList(Loop.Index),
 loop_live: struct {
-    set: std.AutoArrayHashMapUnmanaged(struct { Loop.Index, Air.Inst.Index }, void),
+    set: std.array_hash_map.Auto(struct { Loop.Index, Air.Inst.Index }, void),
     list: std.ArrayList(Air.Inst.Index),
 },
 dom_start: u32,
@@ -2846,7 +2846,7 @@ pub fn body(isel: *Select, air_body: []const Air.Inst.Index) error{ OutOfMemory,
                     const remaining_source = std.mem.span(as.source);
                     return isel.fail("unable to assemble: '{s}'", .{std.mem.trim(
                         u8,
-                        as.source[0 .. std.mem.indexOfScalar(u8, remaining_source, '\n') orelse remaining_source.len],
+                        as.source[0 .. std.mem.findScalar(u8, remaining_source, '\n') orelse remaining_source.len],
                         &std.ascii.whitespace,
                     )});
                 },
@@ -11236,7 +11236,7 @@ pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
     defer std.debug.unlockStderr();
     const stderr = &locked_stderr.file_writer.interface;
 
-    var reverse_live_values: std.AutoArrayHashMapUnmanaged(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
+    var reverse_live_values: std.array_hash_map.Auto(Value.Index, std.ArrayList(Air.Inst.Index)) = .empty;
     defer {
         for (reverse_live_values.values()) |*list| list.deinit(gpa);
         reverse_live_values.deinit(gpa);
@@ -11265,7 +11265,7 @@ pub fn dumpValues(isel: *Select, which: enum { only_referenced, all }) void {
         };
     }
 
-    var roots: std.AutoArrayHashMapUnmanaged(Value.Index, u32) = .empty;
+    var roots: std.array_hash_map.Auto(Value.Index, u32) = .empty;
     defer roots.deinit(gpa);
     {
         try roots.ensureTotalCapacity(gpa, isel.values.items.len);

@@ -6,9 +6,9 @@ const BuiltinFn = std.zig.BuiltinFn;
 
 ast: *const Ast,
 transformations: *std.array_list.Managed(Transformation),
-unreferenced_globals: std.StringArrayHashMapUnmanaged(Ast.Node.Index),
-in_scope_names: std.StringArrayHashMapUnmanaged(u32),
-replace_names: std.StringArrayHashMapUnmanaged(u32),
+unreferenced_globals: std.array_hash_map.String(Ast.Node.Index),
+in_scope_names: std.array_hash_map.String(u32),
+replace_names: std.array_hash_map.String(u32),
 gpa: std.mem.Allocator,
 arena: std.mem.Allocator,
 
@@ -44,7 +44,7 @@ pub const Transformation = union(enum) {
         imported_string: []const u8,
         /// Identifier names that must be renamed in the inlined code or else
         /// will cause ambiguous reference errors.
-        in_scope_names: std.StringArrayHashMapUnmanaged(void),
+        in_scope_names: std.array_hash_map.String(void),
     };
 };
 
@@ -728,7 +728,7 @@ fn walkBuiltinCall(
                 try w.transformations.append(.{ .inline_imported_file = .{
                     .builtin_call_node = call_node,
                     .imported_string = imported_string,
-                    .in_scope_names = try std.StringArrayHashMapUnmanaged(void).init(
+                    .in_scope_names = try std.array_hash_map.String(void).init(
                         w.arena,
                         w.in_scope_names.keys(),
                         &.{},

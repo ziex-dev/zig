@@ -276,7 +276,7 @@ pub const fuzz = struct {
                         // Reject types that don't have a fixed bitsize (esp. usize)
                         // since they are not gauraunteed to fit in a u64 across targets.
                         //
-                        // std.mem.indexOfScalar is not used to avoid backward branches
+                        // std.mem.findScalar is not used to avoid backward branches
                         // and preserve the eval branch quota.
                         if (T == usize or T == c_char or T == c_ushort or
                             T == c_uint or T == c_ulong or T == c_ulonglong)

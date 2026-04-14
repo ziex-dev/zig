@@ -916,8 +916,8 @@ pub fn setExecCmd(compile: *Compile, args: []const ?[]const u8) void {
 }
 
 const CliNamedModules = struct {
-    modules: std.AutoArrayHashMapUnmanaged(*Module, void),
-    names: std.StringArrayHashMapUnmanaged(void),
+    modules: std.array_hash_map.Auto(*Module, void),
+    names: std.array_hash_map.String(void),
 
     /// Traverse the whole dependency graph and give every module a unique
     /// name, ideally one named after what it's called somewhere in the graph.
@@ -1038,7 +1038,7 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         // module, along with any arguments that need to be passed to the
         // compiler for each module individually.
         var seen_system_libs: std.StringHashMapUnmanaged([]const []const u8) = .empty;
-        var frameworks: std.StringArrayHashMapUnmanaged(Module.LinkFrameworkOptions) = .empty;
+        var frameworks: std.array_hash_map.String(Module.LinkFrameworkOptions) = .empty;
 
         var prev_has_cflags = false;
         var prev_has_rcflags = false;
@@ -2083,7 +2083,7 @@ fn moduleNeedsCliArg(mod: *const Module) bool {
 pub fn getCompileDependencies(start: *Compile, chase_dynamic: bool) []const *Compile {
     const arena = start.step.owner.graph.arena;
 
-    var compiles: std.AutoArrayHashMapUnmanaged(*Compile, void) = .empty;
+    var compiles: std.array_hash_map.Auto(*Compile, void) = .empty;
     var next_idx: usize = 0;
 
     compiles.putNoClobber(arena, start, {}) catch @panic("OOM");

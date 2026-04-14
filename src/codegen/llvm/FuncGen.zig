@@ -2493,7 +2493,7 @@ fn airAssembly(self: *FuncGen, inst: Air.Inst.Index) TodoError!Builder.Value {
     var llvm_param_i: usize = 0;
     var total_i: usize = 0;
 
-    var name_map: std.StringArrayHashMapUnmanaged(u16) = .empty;
+    var name_map: std.array_hash_map.String(u16) = .empty;
     try name_map.ensureUnusedCapacity(arena, max_param_count);
 
     var it = unwrapped_asm.iterateOutputs();
@@ -6848,7 +6848,7 @@ const ParamTypeIterator = struct {
                 },
             }
         }
-        const first_non_integer = std.mem.indexOfNone(x86_64_abi.Class, &classes, &.{.integer});
+        const first_non_integer = std.mem.findNone(x86_64_abi.Class, &classes, &.{.integer});
         if (first_non_integer == null or classes[first_non_integer.?] == .none) {
             assert(first_non_integer orelse classes.len == types_index);
             if (types_index == 1) {
@@ -7078,7 +7078,7 @@ fn lowerSystemVFnRetTy(o: *Object, fn_info: InternPool.Key.FuncType) Allocator.E
             .win_i128 => unreachable, // windows only
         }
     }
-    const first_non_integer = std.mem.indexOfNone(x86_64_abi.Class, &classes, &.{.integer});
+    const first_non_integer = std.mem.findNone(x86_64_abi.Class, &classes, &.{.integer});
     if (first_non_integer == null or classes[first_non_integer.?] == .none) {
         assert(first_non_integer orelse classes.len == types_index);
         switch (ip.indexToKey(return_type.toIntern())) {
