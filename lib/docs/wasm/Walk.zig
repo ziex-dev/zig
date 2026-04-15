@@ -467,7 +467,7 @@ pub const Scope = struct {
         parent: *Scope,
         names: std.StringArrayHashMapUnmanaged(Ast.Node.Index) = .empty,
         doctests: std.StringArrayHashMapUnmanaged(Ast.Node.Index) = .empty,
-        decl_index: Decl.Index,
+        decl_index: ?Decl.Index,
     };
 
     fn getNamespaceDecl(start_scope: *Scope) Decl.Index {
@@ -480,7 +480,7 @@ pub const Scope = struct {
             },
             .namespace => {
                 const namespace: *Namespace = @alignCast(@fieldParentPtr("base", it));
-                return namespace.decl_index;
+                return namespace.decl_index.?;
             },
         };
     }
@@ -523,7 +523,7 @@ pub const Scope = struct {
 fn struct_decl(
     w: *Walk,
     scope: *Scope,
-    parent_decl: Decl.Index,
+    parent_decl: ?Decl.Index,
     node: Ast.Node.Index,
     container_decl: Ast.full.ContainerDecl,
 ) Oom!void {
@@ -556,7 +556,7 @@ fn struct_decl(
             if (namespace.doctests.get(fn_name)) |doctest_node| {
                 try w.file.get().doctests.put(gpa, member, doctest_node);
             }
-            const decl_index = try w.file.add_decl(member, parent_decl);
+            const decl_index = if (parent_decl) |parent| try w.file.add_decl(member, parent) else null;
             const body = if (ast.nodeTag(member) == .fn_decl) ast.nodeData(member).node_and_node[1].toOptional() else .none;
             try w.fn_decl(&namespace.base, decl_index, body, full);
         },
@@ -566,14 +566,14 @@ fn struct_decl(
         .simple_var_decl,
         .aligned_var_decl,
         => {
-            const decl_index = try w.file.add_decl(member, parent_decl);
+            const decl_index = if (parent_decl) |parent| try w.file.add_decl(member, parent) else null;
             try w.global_var_decl(&namespace.base, decl_index, ast.fullVarDecl(member).?);
         },
 
         .@"comptime",
         => try w.expr(&namespace.base, parent_decl, ast.nodeData(member).node),
 
-        .test_decl => try w.expr(&namespace.base, parent_decl, ast.nodeData(member).opt_token_and_node[1]),
+        .test_decl => try w.expr(&namespace.base, null, ast.nodeData(member).opt_token_and_node[1]),
 
         else => unreachable,
     };
@@ -582,7 +582,7 @@ fn struct_decl(
 fn comptime_decl(
     w: *Walk,
     scope: *Scope,
-    parent_decl: Decl.Index,
+    parent_decl: ?Decl.Index,
     full: Ast.full.VarDecl,
 ) Oom!void {
     try w.expr(scope, parent_decl, full.ast.type_node);
@@ -595,7 +595,7 @@ fn comptime_decl(
 fn global_var_decl(
     w: *Walk,
     scope: *Scope,
-    parent_decl: Decl.Index,
+    parent_decl: ?Decl.Index,
     full: Ast.full.VarDecl,
 ) Oom!void {
     try w.maybe_expr(scope, parent_decl, full.ast.type_node);
@@ -608,7 +608,7 @@ fn global_var_decl(
 fn container_field(
     w: *Walk,
     scope: *Scope,
-    parent_decl: Decl.Index,
+    parent_decl: ?Decl.Index,
     full: Ast.full.ContainerField,
 ) Oom!void {
     try w.maybe_expr(scope, parent_decl, full.ast.type_expr);
@@ -619,7 +619,7 @@ fn container_field(
 fn fn_decl(
     w: *Walk,
     scope: *Scope,
-    parent_decl: Decl.Index,
+    parent_decl: ?Decl.Index,
     body: Ast.Node.OptionalIndex,
     full: Ast.full.FnProto,
 ) Oom!void {
@@ -634,11 +634,11 @@ fn fn_decl(
     try maybe_expr(w, scope, parent_decl, body);
 }
 
-fn maybe_expr(w: *Walk, scope: *Scope, parent_decl: Decl.Index, node: Ast.Node.OptionalIndex) Oom!void {
+fn maybe_expr(w: *Walk, scope: *Scope, parent_decl: ?Decl.Index, node: Ast.Node.OptionalIndex) Oom!void {
     if (node.unwrap()) |n| return expr(w, scope, parent_decl, n);
 }
 
-fn expr(w: *Walk, scope: *Scope, parent_decl: Decl.Index, node: Ast.Node.Index) Oom!void {
+fn expr(w: *Walk, scope: *Scope, parent_decl: ?Decl.Index, node: Ast.Node.Index) Oom!void {
     const ast = w.file.get_ast();
     switch (ast.nodeTag(node)) {
         .root => unreachable, // Top-level declaration.
@@ -954,7 +954,7 @@ fn expr(w: *Walk, scope: *Scope, parent_decl: Decl.Index, node: Ast.Node.Index) 
     }
 }
 
-fn slice(w: *Walk, scope: *Scope, parent_decl: Decl.Index, full: Ast.full.Slice) Oom!void {
+fn slice(w: *Walk, scope: *Scope, parent_decl: ?Decl.Index, full: Ast.full.Slice) Oom!void {
     try expr(w, scope, parent_decl, full.ast.sliced);
     try expr(w, scope, parent_decl, full.ast.start);
     try maybe_expr(w, scope, parent_decl, full.ast.end);
@@ -964,7 +964,7 @@ fn slice(w: *Walk, scope: *Scope, parent_decl: Decl.Index, full: Ast.full.Slice)
 fn builtin_call(
     w: *Walk,
     scope: *Scope,
-    parent_decl: Decl.Index,
+    parent_decl: ?Decl.Index,
     node: Ast.Node.Index,
     params: []const Ast.Node.Index,
 ) Oom!void {
@@ -983,7 +983,7 @@ fn builtin_call(
 fn block(
     w: *Walk,
     parent_scope: *Scope,
-    parent_decl: Decl.Index,
+    parent_decl: ?Decl.Index,
     statements: []const Ast.Node.Index,
 ) Oom!void {
     const ast = w.file.get_ast();
@@ -1022,7 +1022,7 @@ fn block(
     }
 }
 
-fn while_expr(w: *Walk, scope: *Scope, parent_decl: Decl.Index, full: Ast.full.While) Oom!void {
+fn while_expr(w: *Walk, scope: *Scope, parent_decl: ?Decl.Index, full: Ast.full.While) Oom!void {
     try expr(w, scope, parent_decl, full.ast.cond_expr);
     try maybe_expr(w, scope, parent_decl, full.ast.cont_expr);
     try expr(w, scope, parent_decl, full.ast.then_expr);
