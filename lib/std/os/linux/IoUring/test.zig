@@ -2686,15 +2686,27 @@ inline fn skipKernelLessThan(required: std.SemanticVersion) !void {
         else => |errno| return posix.unexpectedErrno(errno),
     }
 
-    const release = mem.sliceTo(&uts.release, 0);
-    // Strips potential extra, as kernel version might not be semver compliant, example "6.8.9-300.fc40.x86_64"
-    const extra_index = std.mem.indexOfAny(u8, release, "-+");
-    const stripped = release[0..(extra_index orelse release.len)];
-    // Make sure the input don't rely on the extra we just stripped
+    const release = mem.sliceTo(&uts.release, 0x0);
+    // Make sure the input don't rely on the extra we are about to stripped
     try testing.expect(required.pre == null and required.build == null);
 
-    var current = try std.SemanticVersion.parse(stripped);
+    const stripped = blk: {
+        // Strips potential extra, as kernel version might not be semver compliant, example "6.8.9-300.fc40.x86_64"
+        const extra_index = mem.findAny(u8, release, "-+");
+        const stripped = release[0..(extra_index orelse release.len)];
+
+        // wsl kernel isn't semver compliant
+        // .ie 6.6.87.2-microsoft-standard-WSL2 strip the extra .2 after 87
+        if (mem.endsWith(u8, release[0..], "WSL2")) {
+            const wsl_stripped, _ = mem.cutScalarLast(u8, stripped, '.') orelse unreachable;
+            break :blk wsl_stripped;
+        }
+        break :blk stripped;
+    };
+
+    var current: std.SemanticVersion = try .parse(stripped);
     current.pre = null; // don't check pre field
+
     if (required.order(current) == .gt) return error.SkipZigTest;
 }
 
