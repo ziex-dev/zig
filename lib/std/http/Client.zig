@@ -122,8 +122,8 @@ pub const ConnectionPool = struct {
     /// If the connection is marked as closing, it will be closed instead.
     ///
     /// Threadsafe.
-    pub fn release(pool: *ConnectionPool, connection: *Connection, io: Io) Io.Cancelable!void {
-        try pool.mutex.lock(io);
+    pub fn release(pool: *ConnectionPool, connection: *Connection, io: Io) void {
+        pool.mutex.lockUncancelable(io);
         defer pool.mutex.unlock(io);
 
         pool.used.remove(&connection.pool_node);
@@ -898,11 +898,7 @@ pub const Request = struct {
                 },
                 else => true,
             };
-            const old_cancel_protect = io.swapCancelProtection(.blocked);
-            defer _ = io.swapCancelProtection(old_cancel_protect);
-            r.client.connection_pool.release(connection, io) catch |err| switch (err) {
-                error.Canceled => unreachable,
-            };
+            r.client.connection_pool.release(connection, io);
         }
         r.* = undefined;
     }
@@ -1238,7 +1234,7 @@ pub const Request = struct {
             std.ascii.eqlIgnoreCase(r.uri.scheme, new_uri.scheme) and
             old_host.sameParentDomain(new_host);
 
-        try r.client.connection_pool.release(old_connection, io);
+        r.client.connection_pool.release(old_connection, io);
         r.connection = null;
 
         if (!keep_privileged_headers) {
@@ -1481,7 +1477,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     }
 }
 
-pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError;
+pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError || Io.Cancelable;
 
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
@@ -1489,7 +1485,7 @@ pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{N
 pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connection {
     const io = client.io;
 
-    if (client.connection_pool.findConnection(io, .{
+    if (try client.connection_pool.findConnection(io, .{
         .host = path,
         .port = 0,
         .protocol = .plain,
@@ -1513,7 +1509,7 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     };
     errdefer client.allocator.free(conn.data.host);
 
-    client.connection_pool.addUsed(conn);
+    try client.connection_pool.addUsed(conn);
 
     return &conn.data;
 }
