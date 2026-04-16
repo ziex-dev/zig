@@ -31,7 +31,7 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("functional/pthread_tsd.c", false, .{});
     cases.addLibcTestCase("functional/qsort.c", true, .{});
     cases.addLibcTestCase("functional/random.c", true, .{});
-    cases.addLibcTestCase("functional/search_hsearch.c", false, .{}); // The test suite of wasi-libc runs this test case
+    cases.addLibcTestCase("functional/search_hsearch.c", true, .{});
     cases.addLibcTestCase("functional/search_insque.c", true, .{});
     cases.addLibcTestCase("functional/search_lsearch.c", true, .{});
     cases.addLibcTestCase("functional/search_tsearch.c", true, .{});
@@ -198,8 +198,8 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("math/fabsf.c", true, .{});
     cases.addLibcTestCase("math/fabsl.c", true, .{});
     cases.addLibcTestCase("math/fdim.c", true, .{});
-    // cases.addLibcTestCase("math/fdimf.c", true, .{});
-    // cases.addLibcTestCase("math/fdiml.c", true, .{});
+    cases.addLibcTestCase("math/fdimf.c", true, .{});
+    cases.addLibcTestCase("math/fdiml.c", true, .{});
     cases.addLibcTestCase("math/fenv.c", true, .{});
     cases.addLibcTestCase("math/floor.c", true, .{});
     cases.addLibcTestCase("math/floorf.c", true, .{});
@@ -293,7 +293,7 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("math/remquo.c", true, .{});
     cases.addLibcTestCase("math/remquof.c", true, .{});
     cases.addLibcTestCase("math/remquol.c", true, .{});
-    // cases.addLibcTestCase("math/rint.c", true, .{});
+    cases.addLibcTestCase("math/rint.c", true, .{});
     cases.addLibcTestCase("math/rintf.c", true, .{});
     // cases.addLibcTestCase("math/rintl.c", true, .{});
     cases.addLibcTestCase("math/round.c", true, .{});

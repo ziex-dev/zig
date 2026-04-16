@@ -1671,20 +1671,23 @@ pub fn init(
 /// When initialized this way:
 /// * cancel requests have no effect.
 /// * `deinit` is safe, but unnecessary to call.
-pub const init_single_threaded: Threaded = .{
-    .allocator = .failing,
-    .stack_size = std.Thread.SpawnConfig.default_stack_size,
-    .async_limit = .nothing,
-    .cpu_count_error = null,
-    .concurrent_limit = .nothing,
-    .old_sig_io = undefined,
-    .old_sig_pipe = undefined,
-    .have_signal_handler = false,
-    .argv0 = .empty,
-    .environ_initialized = true,
-    .environ = .empty,
-    .worker_threads = .init(null),
-    .disable_memory_mapping = false,
+pub const init_single_threaded: Threaded = init: {
+    const env_block: process.Environ.Block = if (is_windows) .global else .empty;
+    break :init .{
+        .allocator = .failing,
+        .stack_size = std.Thread.SpawnConfig.default_stack_size,
+        .async_limit = .nothing,
+        .cpu_count_error = null,
+        .concurrent_limit = .nothing,
+        .old_sig_io = undefined,
+        .old_sig_pipe = undefined,
+        .have_signal_handler = false,
+        .argv0 = .empty,
+        .environ_initialized = env_block.isEmpty(),
+        .environ = .{ .process_environ = .{ .block = env_block } },
+        .worker_threads = .init(null),
+        .disable_memory_mapping = false,
+    };
 };
 
 var global_single_threaded_instance: Threaded = .init_single_threaded;
@@ -6090,12 +6093,19 @@ fn dirRealPathFileWindows(userdata: ?*anyopaque, dir: Dir, sub_path: []const u8,
         }
     };
     defer windows.CloseHandle(h_file);
-    return realPathWindows(h_file, out_buffer);
+
+    // We can re-use the path buffer for the WTF-16 representation since
+    // we don't need the prefixed path anymore
+    return realPathWindowsBuf(h_file, out_buffer, &path_name_w.data);
 }
 
 fn realPathWindows(h_file: windows.HANDLE, out_buffer: []u8) File.RealPathError!usize {
     var wide_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-    const wide_slice = try GetFinalPathNameByHandle(h_file, .{}, &wide_buf);
+    return realPathWindowsBuf(h_file, out_buffer, &wide_buf);
+}
+
+fn realPathWindowsBuf(h_file: windows.HANDLE, out_buffer: []u8, wtf16_buffer: []u16) File.RealPathError!usize {
+    const wide_slice = try GetFinalPathNameByHandle(h_file, .{}, wtf16_buffer);
 
     const len = std.unicode.calcWtf8Len(wide_slice);
     if (len > out_buffer.len)
@@ -8722,13 +8732,6 @@ fn supportsAnsiEscapeCodes(file: File) Io.Cancelable!bool {
         }
     }
 
-    if (native_os == .wasi) {
-        // WASI sanitizes stdout when fd is a tty so ANSI escape codes will not
-        // be interpreted as actual cursor commands, and stderr is always
-        // sanitized.
-        return false;
-    }
-
     if (try isTty(file)) return true;
 
     return false;
@@ -10032,10 +10035,10 @@ fn fileSeekBy(userdata: ?*anyopaque, file: File, offset: i64) File.SeekError!voi
     if (posix.SEEK == void) return error.Unseekable;
 
     if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
-        var result: u64 = undefined;
+        var result: i64 = undefined;
         const syscall: Syscall = try .start();
         while (true) {
-            switch (posix.errno(posix.system.llseek(file.handle, @bitCast(offset), &result, posix.SEEK.CUR))) {
+            switch (posix.errno(posix.system.llseek(file.handle, offset, &result, posix.SEEK.CUR))) {
                 .SUCCESS => {
                     syscall.finish();
                     return;
@@ -10146,8 +10149,8 @@ fn posixSeekTo(fd: posix.fd_t, offset: u64) File.SeekError!void {
     if (native_os == .linux and !builtin.link_libc and @sizeOf(usize) == 4) {
         const syscall: Syscall = try .start();
         while (true) {
-            var result: u64 = undefined;
-            switch (posix.errno(posix.system.llseek(fd, offset, &result, posix.SEEK.SET))) {
+            var result: i64 = undefined;
+            switch (posix.errno(posix.system.llseek(fd, @bitCast(offset), &result, posix.SEEK.SET))) {
                 .SUCCESS => {
                     syscall.finish();
                     return;
@@ -13010,6 +13013,7 @@ fn netReceiveOneWindows(
         .CANCELLED => unreachable,
         .INSUFFICIENT_RESOURCES => return error.SystemResources,
         .BUFFER_OVERFLOW => return error.MessageOversize,
+        .PORT_UNREACHABLE => return error.PortUnreachable,
         else => |status| return windows.unexpectedStatus(status),
     }
 }
@@ -15246,7 +15250,7 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
     const ru_ptr = if (child.request_resource_usage_statistics) &ru else null;
 
     if (have_wait4) {
-        var status: if (builtin.link_libc) c_int else u32 = undefined;
+        var status: if (builtin.link_libc) c_int else i32 = undefined;
         const syscall: Syscall = try .start();
         while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, ru_ptr))) {
             .SUCCESS => {
@@ -15276,7 +15280,7 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
                 return switch (code) {
                     .EXITED => .{ .exited = @truncate(status) },
                     .KILLED, .DUMPED => .{ .signal = @enumFromInt(status) },
-                    .TRAPPED, .STOPPED => .{ .stopped = status },
+                    .TRAPPED, .STOPPED => .{ .stopped = @enumFromInt(status) },
                     _, .CONTINUED => .{ .unknown = status },
                 };
             },
@@ -15289,7 +15293,7 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
         };
     }
 
-    var status: if (builtin.link_libc) c_int else u32 = undefined;
+    var status: if (builtin.link_libc) c_int else i32 = undefined;
     const syscall: Syscall = try .start();
     while (true) switch (posix.errno(posix.system.waitpid(pid, &status, 0))) {
         .SUCCESS => {
@@ -15331,7 +15335,7 @@ fn childKillPosix(child: *process.Child) !void {
     };
 
     if (have_wait4) {
-        var status: if (builtin.link_libc) c_int else u32 = undefined;
+        var status: if (builtin.link_libc) c_int else i32 = undefined;
         while (true) switch (posix.errno(posix.system.wait4(pid, &status, 0, null))) {
             .SUCCESS => return,
             .INTR => continue,
@@ -15351,7 +15355,7 @@ fn childKillPosix(child: *process.Child) !void {
         };
     }
 
-    var status: if (builtin.link_libc) c_int else u32 = undefined;
+    var status: if (builtin.link_libc) c_int else i32 = undefined;
     while (true) switch (posix.errno(posix.system.waitpid(pid, &status, 0))) {
         .SUCCESS => return,
         .INTR => continue,
