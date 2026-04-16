@@ -234,6 +234,11 @@ pub fn HashMap(
             return self.unmanaged.count();
         }
 
+        /// Return whether or not the map has any items.
+        pub fn isEmpty(self: Self) bool {
+            return self.unmanaged.isEmpty();
+        }
+
         /// Create an iterator over the entries in the map.
         /// The iterator is invalidated if the map is modified.
         pub fn iterator(self: *const Self) Iterator {
@@ -778,6 +783,10 @@ pub fn HashMapUnmanaged(
 
         pub fn count(self: Self) Size {
             return self.size;
+        }
+
+        pub fn isEmpty(self: Self) bool {
+            return self.size == 0;
         }
 
         fn header(self: Self) *Header {
