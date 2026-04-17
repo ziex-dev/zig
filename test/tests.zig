@@ -18,7 +18,7 @@ pub const DebuggerContext = @import("src/Debugger.zig");
 pub const LlvmIrContext = @import("src/LlvmIr.zig");
 pub const LibcContext = @import("src/Libc.zig");
 
-const TestTarget = struct {
+const ModuleTestTarget = struct {
     linkage: ?std.builtin.LinkMode = null,
     target: std.Target.Query = .{},
     optimize_mode: std.builtin.OptimizeMode = .Debug,
@@ -36,33 +36,14 @@ const TestTarget = struct {
     // invocation. This could be because of a slow backend, requiring a newer LLVM version, being
     // too niche, etc.
     extra_target: bool = false,
-
-    pub fn supportsModule(
-        self: *const TestTarget,
-        target: *const std.Build.ResolvedTarget,
-        name: []const u8,
-    ) bool {
-        if (mem.eql(u8, name, "zigc")) {
-            if (target.result.isMuslLibC()) return self.linkage == .static or (self.linkage == null and !target.query.isNative());
-            if (target.result.isMinGW()) return true;
-            if (target.result.isWasiLibC()) return true;
-            return false;
-        }
-        if (mem.eql(u8, name, "std")) {
-            if (target.result.cpu.arch.isSpirV()) return false;
-            return true;
-        }
-
-        return true;
-    }
 };
 
-const test_targets = blk: {
+const module_test_targets = blk: {
     // getBaselineCpuFeatures calls populateDependencies which has a O(N ^ 2) algorithm
     // (where N is roughly 160, which technically makes it O(1), but it adds up to a
     // lot of branches)
     @setEvalBranchQuota(80_000);
-    break :blk [_]TestTarget{
+    break :blk [_]ModuleTestTarget{
         // Native Targets
 
         .{}, // 0 index must be all defaults
@@ -1989,37 +1970,96 @@ const c_abi_targets = blk: {
     };
 };
 
-/// For stack trace tests, we only test native, because external executors are pretty unreliable at
-/// stack tracing. However, if there's a 32-bit equivalent target which the host can trivially run,
-/// we may as well at least test that!
-fn nativeAndCompatible32bit(b: *std.Build, skip_non_native: bool) []const std.Build.ResolvedTarget {
+/// Unlike `test_targets` and `c_abi_targets`, these targets are just simple strings which we pass
+/// directly to `incr-check`. They include the target triple and the compiler backend.
+///
+/// If only one specific test is failing on a target, instead of entirely disabling the target here,
+/// you can skip the target for that specific test only by adding a line like this to the manifest:
+///   #skip_target=x86_64-linux-selfhosted
+const incremental_targets: []const []const u8 = &.{
+    // Avoid adding more CBE or LLVM targets without good reason: they're a lot slower than others
+    // to run due to the output (C source code or LLVM IR) being built non-incrementally (by Clang
+    // or LLVM). We just have a couple here to make sure that it works.
+    "x86_64-linux-cbe",
+    "x86_64-linux-llvm",
+
+    "x86_64-linux-selfhosted",
+    // https://codeberg.org/ziglang/zig/issues/31773
+    //"x86_64-windows-selfhosted",
+    // https://codeberg.org/ziglang/zig/issues/31810
+    //"wasm32-wasi-selfhosted",
+};
+
+fn compatible32bitArch(b: *std.Build) ?std.Target.Cpu.Arch {
     const host = b.graph.host.result;
-    const only_native = (&b.graph.host)[0..1];
-    if (skip_non_native) return only_native;
-    const arch32: std.Target.Cpu.Arch = switch (host.os.tag) {
+    return switch (host.os.tag) {
         .windows => switch (host.cpu.arch) {
             .x86_64 => .x86,
             .aarch64 => .thumb,
             .aarch64_be => .thumbeb,
-            else => return only_native,
+            else => null,
         },
         .freebsd => switch (host.cpu.arch) {
             .aarch64 => .arm,
             .aarch64_be => .armeb,
-            else => return only_native,
+            else => null,
         },
         .linux, .netbsd => switch (host.cpu.arch) {
             .x86_64 => .x86,
             .aarch64 => .arm,
             .aarch64_be => .armeb,
-            else => return only_native,
+            else => null,
         },
-        else => return only_native,
+        else => null,
     };
+}
+
+/// For stack trace tests, we only test native by default, because external executors are pretty
+/// unreliable at stack tracing. However, if there's a 32-bit equivalent target which the host can
+/// trivially run, we may as well at least test that!
+fn nativeAndCompatible32bit(b: *std.Build, skip_non_native: bool) []const std.Build.ResolvedTarget {
+    const host = b.graph.host.result;
+    const only_native = (&b.graph.host)[0..1];
+    if (skip_non_native) return only_native;
+    const arch32 = compatible32bitArch(b) orelse return only_native;
     return b.graph.arena.dupe(std.Build.ResolvedTarget, &.{
         b.graph.host,
         b.resolveTargetQuery(.{ .cpu_arch = arch32, .os_tag = host.os.tag }),
     }) catch @panic("OOM");
+}
+
+fn wineAndCompatible32bit(b: *std.Build, skip_non_native: bool) []const std.Build.ResolvedTarget {
+    var targets: std.ArrayList(std.Build.ResolvedTarget) = .empty;
+
+    const host = b.graph.host.result;
+
+    targets.append(b.graph.arena, b.resolveTargetQuery(.{
+        .cpu_arch = host.cpu.arch,
+        .os_tag = .windows,
+    })) catch @panic("OOM");
+    if (!skip_non_native) {
+        if (compatible32bitArch(b)) |arch| {
+            targets.append(b.graph.arena, b.resolveTargetQuery(.{
+                .cpu_arch = arch,
+                .os_tag = .windows,
+            })) catch @panic("OOM");
+        }
+    }
+
+    return targets.toOwnedSlice(b.graph.arena) catch @panic("OOM");
+}
+
+fn darlingTargets(b: *std.Build) []const std.Build.ResolvedTarget {
+    var targets: std.ArrayList(std.Build.ResolvedTarget) = .empty;
+
+    const host = b.graph.host.result;
+
+    targets.append(b.graph.arena, b.resolveTargetQuery(.{
+        .cpu_arch = host.cpu.arch,
+        .os_tag = .macos,
+    })) catch @panic("OOM");
+
+    return targets.toOwnedSlice(b.graph.arena) catch @panic("OOM");
 }
 
 pub fn addStackTraceTests(
@@ -2027,6 +2067,8 @@ pub fn addStackTraceTests(
     test_filters: []const []const u8,
     skip_non_native: bool,
 ) *Step {
+    const step = b.step("test-stack-traces", "Run the stack trace tests");
+
     const convert_exe = b.addExecutable(.{
         .name = "convert-stack-trace",
         .root_module = b.createModule(.{
@@ -2036,19 +2078,41 @@ pub fn addStackTraceTests(
         }),
     });
 
-    const cases = b.allocator.create(StackTracesContext) catch @panic("OOM");
-
-    cases.* = .{
+    const host_cases = b.allocator.create(StackTracesContext) catch @panic("OOM");
+    host_cases.* = .{
         .b = b,
-        .step = b.step("test-stack-traces", "Run the stack trace tests"),
+        .step = step,
         .test_filters = test_filters,
         .targets = nativeAndCompatible32bit(b, skip_non_native),
         .convert_exe = convert_exe,
     };
+    stack_traces.addCases(host_cases, b.graph.host.result.os.tag);
 
-    stack_traces.addCases(cases);
+    if (b.enable_wine) {
+        const wine_cases = b.allocator.create(StackTracesContext) catch @panic("OOM");
+        wine_cases.* = .{
+            .b = b,
+            .step = step,
+            .test_filters = test_filters,
+            .targets = wineAndCompatible32bit(b, skip_non_native),
+            .convert_exe = convert_exe,
+        };
+        stack_traces.addCases(wine_cases, .windows);
+    }
 
-    return cases.step;
+    if (b.enable_darling) {
+        const darling_cases = b.allocator.create(StackTracesContext) catch @panic("OOM");
+        darling_cases.* = .{
+            .b = b,
+            .step = step,
+            .test_filters = test_filters,
+            .targets = darlingTargets(b),
+            .convert_exe = convert_exe,
+        };
+        stack_traces.addCases(darling_cases, .macos);
+    }
+
+    return step;
 }
 
 pub fn addErrorTraceTests(
@@ -2057,6 +2121,8 @@ pub fn addErrorTraceTests(
     optimize_modes: []const OptimizeMode,
     skip_non_native: bool,
 ) *Step {
+    const step = b.step("test-error-traces", "Run the error trace tests");
+
     const convert_exe = b.addExecutable(.{
         .name = "convert-stack-trace",
         .root_module = b.createModule(.{
@@ -2066,19 +2132,44 @@ pub fn addErrorTraceTests(
         }),
     });
 
-    const cases = b.allocator.create(ErrorTracesContext) catch @panic("OOM");
-    cases.* = .{
+    const host_cases = b.allocator.create(ErrorTracesContext) catch @panic("OOM");
+    host_cases.* = .{
         .b = b,
-        .step = b.step("test-error-traces", "Run the error trace tests"),
+        .step = step,
         .test_filters = test_filters,
         .targets = nativeAndCompatible32bit(b, skip_non_native),
         .optimize_modes = optimize_modes,
         .convert_exe = convert_exe,
     };
+    error_traces.addCases(host_cases, b.graph.host.result.os.tag);
 
-    error_traces.addCases(cases);
+    if (b.enable_wine) {
+        const wine_cases = b.allocator.create(ErrorTracesContext) catch @panic("OOM");
+        wine_cases.* = .{
+            .b = b,
+            .step = step,
+            .test_filters = test_filters,
+            .targets = wineAndCompatible32bit(b, skip_non_native),
+            .optimize_modes = optimize_modes,
+            .convert_exe = convert_exe,
+        };
+        error_traces.addCases(wine_cases, .windows);
+    }
 
-    return cases.step;
+    if (b.enable_darling) {
+        const darling_cases = b.allocator.create(ErrorTracesContext) catch @panic("OOM");
+        darling_cases.* = .{
+            .b = b,
+            .step = step,
+            .test_filters = test_filters,
+            .targets = darlingTargets(b),
+            .optimize_modes = optimize_modes,
+            .convert_exe = convert_exe,
+        };
+        error_traces.addCases(darling_cases, .macos);
+    }
+
+    return step;
 }
 
 fn compilerHasPackageManager(b: *std.Build) bool {
@@ -2365,24 +2456,21 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
     const step = b.step(b.fmt("test-{s}", .{options.name}), options.desc);
 
     if (options.test_only) |test_only| {
-        const test_target: TestTarget = switch (test_only) {
-            .default => test_targets[0],
+        const test_target: ModuleTestTarget = switch (test_only) {
+            .default => module_test_targets[0],
             .fuzz => |optimize| .{
                 .optimize_mode = optimize,
                 .use_llvm = true,
             },
         };
         const resolved_target = b.resolveTargetQuery(test_target.target);
-
-        if (test_target.supportsModule(&resolved_target, options.name)) {
-            const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
-            addOneModuleTest(b, step, test_target, &resolved_target, triple_txt, options);
-        }
+        const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
+        addOneModuleTest(b, step, test_target, &resolved_target, triple_txt, options);
 
         return step;
     }
 
-    for_targets: for (test_targets) |test_target| {
+    for_targets: for (module_test_targets) |test_target| {
         if (test_target.skip_modules.len > 0) {
             for (test_target.skip_modules) |skip_mod| {
                 if (std.mem.eql(u8, options.name, skip_mod)) continue :for_targets;
@@ -2391,14 +2479,19 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         const resolved_target = b.resolveTargetQuery(test_target.target);
 
-        if (!test_target.supportsModule(&resolved_target, options.name)) continue;
-
         if (!options.test_extra_targets and test_target.extra_target) continue;
 
         if (options.skip_non_native and !test_target.target.isNative())
             continue;
 
         const target = &resolved_target.result;
+
+        if (std.mem.eql(u8, options.name, "libc")) {
+            // The libc API tests obviously need to link libc. So for test
+            // target entries where we wouldn't link libc by default, skip the
+            // libc API tests.
+            if (test_target.link_libc == null and !std.os.targetRequiresLibC(target)) continue;
+        }
 
         if (options.skip_spirv and target.cpu.arch.isSpirV()) continue;
         if (options.skip_wasm and target.cpu.arch.isWasm()) continue;
@@ -2413,19 +2506,6 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
         const would_use_llvm = wouldUseLlvm(test_target.use_llvm, test_target.target, test_target.optimize_mode);
         if (options.skip_llvm and would_use_llvm) continue;
 
-        if (would_use_llvm and (mem.eql(u8, options.name, "compiler-rt") or mem.eql(u8, options.name, "zigc"))) {
-            switch (test_target.optimize_mode) {
-                .Debug, .ReleaseSafe => {
-                    // LLVM 21 is affected by multiple bugs in safe builds of compiler-rt:
-                    // * https://codeberg.org/ziglang/zig/issues/31701
-                    // * https://codeberg.org/ziglang/zig/issues/31702
-                    // ...so for now, skip these tests.
-                    continue;
-                },
-                .ReleaseSmall, .ReleaseFast => {},
-            }
-        }
-
         const triple_txt = resolved_target.query.zigTriple(b.allocator) catch @panic("OOM");
 
         if (options.test_target_filters.len > 0) {
@@ -2434,7 +2514,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
             } else continue;
         }
 
-        if (options.skip_libc and test_target.link_libc == true)
+        if (options.skip_libc and (test_target.link_libc == true or std.os.targetRequiresLibC(target)))
             continue;
 
         // We can't provide MSVC libc when cross-compiling.
@@ -2447,8 +2527,6 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
         if (!would_use_llvm and target.cpu.arch == .aarch64) {
             // TODO get std tests passing for the aarch64 self-hosted backend.
             if (mem.eql(u8, options.name, "std")) continue;
-            // TODO get zigc tests passing for the aarch64 self-hosted backend.
-            if (mem.eql(u8, options.name, "zigc")) continue;
         }
 
         const want_this_mode = for (options.optimize_modes) |m| {
@@ -2464,7 +2542,7 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 fn addOneModuleTest(
     b: *std.Build,
     step: *Step,
-    test_target: TestTarget,
+    test_target: ModuleTestTarget,
     resolved_target: *const std.Build.ResolvedTarget,
     triple_txt: []const u8,
     options: ModuleTestOptions,
@@ -2500,7 +2578,14 @@ fn addOneModuleTest(
         .zig_lib_dir = b.path("lib"),
     });
     these_tests.linkage = test_target.linkage;
-    if (options.no_builtin) these_tests.root_module.no_builtin = true;
+    // https://codeberg.org/ziglang/zig/issues/31701
+    if (!(mem.eql(u8, options.name, "compiler-rt") or mem.eql(u8, options.name, "libc"))) {
+        if (options.no_builtin) these_tests.root_module.no_builtin = true;
+    }
+    // https://codeberg.org/ziglang/zig/issues/31702
+    if (mem.eql(u8, options.name, "compiler-rt") or mem.eql(u8, options.name, "libc")) {
+        these_tests.root_module.stack_protector = false;
+    }
     if (options.build_options) |build_options| {
         these_tests.root_module.addOptions("build_options", build_options);
     }
@@ -2845,21 +2930,27 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
             if (std.mem.indexOf(u8, entry.path, test_filter)) |_| break;
         } else if (test_filters.len > 0) continue;
 
-        const run = b.addRunArtifact(incr_check);
-        run.setName(b.fmt("incr-check '{s}'", .{entry.basename}));
+        for (incremental_targets) |target_str| {
+            const run = b.addRunArtifact(incr_check);
+            run.setName(b.fmt("incr-check {s} '{s}'", .{ target_str, entry.basename }));
 
-        run.addArg(b.graph.zig_exe);
-        run.addFileArg(b.path("test/incremental/").path(b, entry.path));
-        run.addArgs(&.{ "--zig-lib-dir", b.fmt("{f}", .{b.graph.zig_lib_directory}) });
+            run.addArg(b.graph.zig_exe);
+            run.addFileArg(b.path("test/incremental/").path(b, entry.path));
+            run.addArgs(&.{
+                "--zig-lib-dir", b.graph.zig_lib_directory.path orelse ".",
+                "--target",      target_str,
+            });
 
-        if (b.enable_qemu) run.addArg("-fqemu");
-        if (b.enable_wine) run.addArg("-fwine");
-        if (b.enable_wasmtime) run.addArg("-fwasmtime");
-        if (b.enable_darling) run.addArg("-fdarling");
+            run.addArg("--quiet"); // don't fill stderr telling us about skipped tests etc
 
-        run.addCheck(.{ .expect_term = .{ .exited = 0 } });
+            if (b.enable_qemu) run.addArg("-fqemu");
+            if (b.enable_wine) run.addArg("-fwine");
+            if (b.enable_wasmtime) run.addArg("-fwasmtime");
+            if (b.enable_darling) run.addArg("-fdarling");
 
-        test_step.dependOn(&run.step);
+            run.addCheck(.{ .expect_term = .{ .exited = 0 } });
+            test_step.dependOn(&run.step);
+        }
     }
 }
 
@@ -2882,7 +2973,7 @@ pub fn addLlvmIrTests(b: *std.Build, options: LlvmIrContext.Options) ?*Step {
     return step;
 }
 
-const libc_targets: []const std.Target.Query = &.{
+const libc_test_nsz_targets: []const std.Target.Query = &.{
     .{
         .cpu_arch = .arm,
         .os_tag = .linux,
@@ -3045,8 +3136,8 @@ const libc_targets: []const std.Target.Query = &.{
     },
 };
 
-pub fn addLibcTests(b: *std.Build, options: LibcContext.Options) ?*Step {
-    const step = b.step("test-libc", "Run libc-test test cases");
+pub fn addLibcTestNszTests(b: *std.Build, options: LibcContext.Options) ?*Step {
+    const step = b.step("test-libc-nsz", "Run external libc-test test cases");
     const opt_libc_test_path = b.option(std.Build.LazyPath, "libc-test-path", "path to libc-test source directory");
     if (opt_libc_test_path) |libc_test_path| {
         var context: LibcContext = .{
@@ -3058,7 +3149,7 @@ pub fn addLibcTests(b: *std.Build, options: LibcContext.Options) ?*Step {
 
         libc.addCases(&context);
 
-        for (libc_targets) |target_query| {
+        for (libc_test_nsz_targets) |target_query| {
             const target = b.resolveTargetQuery(target_query);
             context.addTarget(target);
         }

@@ -135,8 +135,6 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 try addCcArgs(comp, arena, &winpthreads_args);
                 try winpthreads_args.appendSlice(&[_][]const u8{
                     "-DIN_WINPTHREAD",
-                    // winpthreads incorrectly assumes that Clang has `-Wprio-ctor-dtor`.
-                    "-Wno-unknown-warning-option",
                 });
 
                 switch (comp.compilerRtOptMode()) {
@@ -170,6 +168,7 @@ fn addCcArgs(
     args: *std.array_list.Managed([]const u8),
 ) error{OutOfMemory}!void {
     try args.appendSlice(&[_][]const u8{
+        "-w", // Disable all warnings.
         "-std=gnu11",
         "-D__USE_MINGW_ANSI_STDIO=0",
 
@@ -279,7 +278,13 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         .output = .{ .to_list = .{ .arena = .init(gpa) } },
     };
     defer diagnostics.deinit();
-    var aro_comp = aro.Compilation.init(gpa, arena, io, &diagnostics, Io.Dir.cwd());
+    var aro_comp = try aro.Compilation.init(.{
+        .gpa = gpa,
+        .arena = arena,
+        .io = io,
+        .diagnostics = &diagnostics,
+        .environ_map = null,
+    });
     defer aro_comp.deinit();
 
     aro_comp.target = .fromZigTarget(target.*);
@@ -304,7 +309,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     const builtin_macros = try aro_comp.generateBuiltinMacros(.include_system_defines);
     const def_file_source = try aro_comp.addSourceFromPath(def_file_path);
 
-    var pp = aro.Preprocessor.init(&aro_comp, .{ .provided = 0 });
+    var pp = try aro.Preprocessor.init(&aro_comp, .{ .base_file = .unused });
     defer pp.deinit();
     pp.linemarkers = .none;
     pp.preserve_whitespace = true;
@@ -845,7 +850,6 @@ const mingw32_x86_src = [_][]const u8{
     "complex" ++ path.sep_str ++ "ctanl.c",
     "math" ++ path.sep_str ++ "cbrtl.c",
     "math" ++ path.sep_str ++ "erfl.c",
-    "math" ++ path.sep_str ++ "fdiml.c",
     "math" ++ path.sep_str ++ "fmal.c",
     "math" ++ path.sep_str ++ "llrintl.c",
     "math" ++ path.sep_str ++ "llroundl.c",

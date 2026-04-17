@@ -796,11 +796,6 @@ pub const SimpleComptimeReason = enum(u32) {
     operand_branchHint,
     operand_setRuntimeSafety,
     operand_embedFile,
-    operand_cImport,
-    operand_cDefine_macro_name,
-    operand_cDefine_macro_value,
-    operand_cInclude_file_name,
-    operand_cUndef_macro_name,
     operand_shuffle_mask,
     operand_atomicRmw_operation,
     operand_reduce_operation,
@@ -891,11 +886,6 @@ pub const SimpleComptimeReason = enum(u32) {
             .operand_branchHint          => "operand to '@branchHint' must be comptime-known",
             .operand_setRuntimeSafety    => "operand to '@setRuntimeSafety' must be comptime-known",
             .operand_embedFile           => "operand to '@embedFile' must be comptime-known",
-            .operand_cImport             => "operand to '@cImport' is evaluated at comptime",
-            .operand_cDefine_macro_name  => "'@cDefine' macro name must be comptime-known",
-            .operand_cDefine_macro_value => "'@cDefine' macro value must be comptime-known",
-            .operand_cInclude_file_name  => "'@cInclude' file name must be comptime-known",
-            .operand_cUndef_macro_name   => "'@cUndef' macro name must be comptime-known",
             .operand_shuffle_mask        => "'@shuffle' mask must be comptime-known",
             .operand_atomicRmw_operation => "'@atomicRmw' operation must be comptime-known",
             .operand_reduce_operation    => "'@reduce' operation must be comptime-known",
@@ -986,11 +976,14 @@ pub const EmitArtifact = enum {
     docs,
     pdb,
     h,
+    compiler_rt_dyn_lib,
 
     /// If using `Server` to communicate with the compiler, it will place requested artifacts in
     /// paths under the output directory, where those paths are named according to this function.
     /// Returned string is allocated with `gpa` and owned by the caller.
     pub fn cacheName(ea: EmitArtifact, gpa: Allocator, opts: BinNameOptions) Allocator.Error![]const u8 {
+        // hack for stage2_x86_64 + coff. See Coff.flush.
+        if (ea == .compiler_rt_dyn_lib) return "compiler_rt.dll";
         const suffix: []const u8 = switch (ea) {
             .bin => return binNameAlloc(gpa, opts),
             .@"asm" => ".s",
@@ -1000,6 +993,7 @@ pub const EmitArtifact = enum {
             .docs => "-docs",
             .pdb => ".pdb",
             .h => ".h",
+            .compiler_rt_dyn_lib => unreachable,
         };
         return std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.root_name, suffix });
     }
