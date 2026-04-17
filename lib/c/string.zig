@@ -24,6 +24,8 @@ comptime {
         symbol(&strpbrk, "strpbrk");
         symbol(&strstr, "strstr");
         symbol(&strtok, "strtok");
+        symbol(&strdup, "strdup");
+        symbol(&strndup, "strndup");
         // strlen is in compiler_rt
 
         symbol(&strtok_r, "strtok_r");
@@ -162,6 +164,18 @@ fn strtok(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char) ca
     };
 
     return strtok_r(maybe_str, values, &state.str);
+}
+
+fn strdup(allocator: std.mem.Allocator, s: []const u8) error{OutOfMemory}![]u8 {
+    return allocator.dupe(u8, s);
+}
+
+fn strndup(allocator: std.mem.Allocator, s: []const u8, n: usize) error{OutOfMemory}![:0]u8 {
+    const l = @min(s.len, n);
+    const d = try allocator.alloc(u8, l + 1);
+    @memcpy(d[0..l], s[0..l]);
+    d[l] = 0;
+    return d[0..l :0];
 }
 
 // strlen is in compiler_rt
