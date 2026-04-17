@@ -702,7 +702,7 @@ fn abiAndDynamicLinkerFromFile(
         }
 
         if (result.dynamic_linker.get()) |dl_path| glibc_ver: {
-            // First, ry to get the version directly from the dynamic linker
+            // First, try to get the version directly from the dynamic linker
             // binary. This is more reliable than scanning libc.so.6's .dynstr
             // section, because distributions like RHEL backport individual
             // symbols from newer glibc versions
@@ -964,7 +964,7 @@ fn glibcVerFromDynamicLinker(io: Io, dl_path: []const u8) !std.SemanticVersion {
     const needle = "stable release version ";
     while (file_reader.interface.takeSentinel(0)) |s| {
         if (mem.indexOf(u8, s, needle)) |pos| {
-            const trimmed = mem.trimRight(u8, s[pos + needle.len ..], ".");
+            const trimmed = mem.trimEnd(u8, s[pos + needle.len ..], ".");
             return Target.Query.parseVersion(trimmed) catch continue;
         }
     } else |_| {}
