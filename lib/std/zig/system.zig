@@ -702,7 +702,7 @@ fn abiAndDynamicLinkerFromFile(
         }
 
         if (result.dynamic_linker.get()) |dl_path| glibc_ver: {
-            // First, ry to get the version directly from the dynamic linker
+            // First, try to get the version directly from the dynamic linker
             // binary. This is more reliable than scanning libc.so.6's .dynstr
             // section, because distributions like RHEL backport individual
             // symbols from newer glibc versions
