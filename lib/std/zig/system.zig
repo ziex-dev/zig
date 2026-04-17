@@ -702,8 +702,17 @@ fn abiAndDynamicLinkerFromFile(
         }
 
         if (result.dynamic_linker.get()) |dl_path| glibc_ver: {
-            // There is no DT_RUNPATH so we try to find libc.so.6 inside the same
-            // directory as the dynamic linker.
+            // First, ry to get the version directly from the dynamic linker
+            // binary. This is more reliable than scanning libc.so.6's .dynstr
+            // section, because distributions like RHEL backport individual
+            // symbols from newer glibc versions
+            if (glibcVerFromDynamicLinker(io, dl_path)) |ver| {
+                result.os.version_range.linux.glibc = ver;
+                return result;
+            } else |_| {}
+
+            // Fall back to scanning libc.so.6 in the same directory as the
+            // dynamic linker.
             if (fs.path.dirname(dl_path)) |rpath| {
                 if (glibcVerFromRPath(io, rpath)) |ver| {
                     result.os.version_range.linux.glibc = ver;
@@ -940,6 +949,26 @@ fn glibcVerFromSoFile(file_reader: *Io.File.Reader) !std.SemanticVersion {
     }
 
     return max_ver;
+}
+
+/// Read the glibc version from the dynamic linker's embedded version string
+/// ("stable release version X.Y.").
+fn glibcVerFromDynamicLinker(io: Io, dl_path: []const u8) !std.SemanticVersion {
+    const cwd: Io.Dir = .cwd();
+    var file = cwd.openFile(io, dl_path, .{}) catch return error.GLibCNotFound;
+    defer file.close(io);
+
+    var buffer: [8000]u8 = undefined;
+    var file_reader: Io.File.Reader = .init(file, io, &buffer);
+
+    const needle = "stable release version ";
+    while (file_reader.interface.takeSentinel(0)) |s| {
+        if (mem.indexOf(u8, s, needle)) |pos| {
+            const trimmed = mem.trimRight(u8, s[pos + needle.len ..], ".");
+            return Target.Query.parseVersion(trimmed) catch continue;
+        }
+    } else |_| {}
+    return error.GLibCNotFound;
 }
 
 /// In the past, this function attempted to use the executable's own binary if it was dynamically
