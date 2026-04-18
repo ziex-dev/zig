@@ -1047,7 +1047,7 @@ pub const Duration = struct {
         inline for (.{
             .{ .ns = std.time.ns_per_s, .sep = "s" },
             .{ .ns = std.time.ns_per_ms, .sep = "ms" },
-            .{ .ns = std.time.ns_per_us, .sep = "us" },
+            .{ .ns = std.time.ns_per_us, .sep = "μs" },
         }) |unit| {
             const kunits = ns_remaining * 1000 / unit.ns;
             if (kunits >= 1000) {
@@ -1078,18 +1078,18 @@ pub const Duration = struct {
         try testFormat("-1ns", -(1));
         try testFormat("999ns", std.time.ns_per_us - 1);
         try testFormat("-999ns", -(std.time.ns_per_us - 1));
-        try testFormat("1us", std.time.ns_per_us);
-        try testFormat("-1us", -(std.time.ns_per_us));
-        try testFormat("1.45us", 1450);
-        try testFormat("-1.45us", -(1450));
-        try testFormat("1.5us", 3 * std.time.ns_per_us / 2);
-        try testFormat("-1.5us", -(3 * std.time.ns_per_us / 2));
-        try testFormat("14.5us", 14500);
-        try testFormat("-14.5us", -(14500));
-        try testFormat("145us", 145000);
-        try testFormat("-145us", -(145000));
-        try testFormat("999.999us", std.time.ns_per_ms - 1);
-        try testFormat("-999.999us", -(std.time.ns_per_ms - 1));
+        try testFormat("1μs", std.time.ns_per_us);
+        try testFormat("-1μs", -(std.time.ns_per_us));
+        try testFormat("1.45μs", 1450);
+        try testFormat("-1.45μs", -(1450));
+        try testFormat("1.5μs", 3 * std.time.ns_per_us / 2);
+        try testFormat("-1.5μs", -(3 * std.time.ns_per_us / 2));
+        try testFormat("14.5μs", 14500);
+        try testFormat("-14.5μs", -(14500));
+        try testFormat("145μs", 145000);
+        try testFormat("-145μs", -(145000));
+        try testFormat("999.999μs", std.time.ns_per_ms - 1);
+        try testFormat("-999.999μs", -(std.time.ns_per_ms - 1));
         try testFormat("1ms", std.time.ns_per_ms + 1);
         try testFormat("-1ms", -(std.time.ns_per_ms + 1));
         try testFormat("1.5ms", 3 * std.time.ns_per_ms / 2);
@@ -1122,8 +1122,8 @@ pub const Duration = struct {
         try testFormat("-1y1h1.001s", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + std.time.ns_per_ms));
         try testFormat("1y1h1s", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + 999 * std.time.ns_per_us);
         try testFormat("-1y1h1s", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + 999 * std.time.ns_per_us));
-        try testFormat("1y1h999.999us", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1);
-        try testFormat("-1y1h999.999us", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1));
+        try testFormat("1y1h999.999μs", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1);
+        try testFormat("-1y1h999.999μs", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1));
         try testFormat("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms);
         try testFormat("-1y1h1ms", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms));
         try testFormat("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms + 1);
