@@ -1020,14 +1020,29 @@ pub const Duration = struct {
     }
 
     /// Write number of nanoseconds according to its signed magnitude:
-    /// `[#y][#w][#d][#h][#m]#[.###][n|u|m]s`
+    /// `[#y][#w][#d][#h][#m]#[.###][n|μ|m]s`
     pub fn format(duration: Duration, w: *Writer) Writer.Error!void {
-        if (duration.nanoseconds < 0) try w.writeByte('-');
-        return formatUnsigned(w, @abs(duration.nanoseconds));
+        return formatNanoseconds(w, duration.nanoseconds, .{
+            .ascii_only = false,
+        });
     }
 
-    fn formatUnsigned(w: *Writer, ns: u96) Writer.Error!void {
-        var ns_remaining = ns;
+    /// Write number of nanoseconds according to its signed magnitude, using
+    /// visually similar ascii substitutions for unicode characters:
+    /// `[#y][#w][#d][#h][#m]#[.###][n|u|m]s`
+    pub fn asciiFormat(duration: Duration, w: *Writer) Writer.Error!void {
+        return formatNanoseconds(w, duration.nanoseconds, .{
+            .ascii_only = true,
+        });
+    }
+
+    fn formatNanoseconds(w: *Writer, ns: i96, options: struct {
+        ascii_only: bool = false,
+    }) Writer.Error!void {
+        var ns_remaining = if (ns < 0) blk: {
+            try w.writeByte('-');
+            break :blk @abs(ns);
+        } else @as(u96, @intCast(ns));
         inline for (.{
             .{ .ns = 365 * std.time.ns_per_day, .sep = 'y' },
             .{ .ns = std.time.ns_per_week, .sep = 'w' },
@@ -1047,7 +1062,7 @@ pub const Duration = struct {
         inline for (.{
             .{ .ns = std.time.ns_per_s, .sep = "s" },
             .{ .ns = std.time.ns_per_ms, .sep = "ms" },
-            .{ .ns = std.time.ns_per_us, .sep = "μs" },
+            .{ .ns = std.time.ns_per_us, .sep = if (options.ascii_only) "us" else "μs" },
         }) |unit| {
             const kunits = ns_remaining * 1000 / unit.ns;
             if (kunits >= 1000) {
@@ -1133,6 +1148,21 @@ pub const Duration = struct {
         try testFormat("292y24w3d23h47m16.854s", std.math.maxInt(i64));
         try testFormat("-292y24w3d23h47m16.854s", std.math.minInt(i64) + 1);
         try testFormat("-292y24w3d23h47m16.854s", std.math.minInt(i64));
+
+        try testFormatAscii("1us", std.time.ns_per_us);
+        try testFormatAscii("-1us", -(std.time.ns_per_us));
+        try testFormatAscii("1.45us", 1450);
+        try testFormatAscii("-1.45us", -(1450));
+        try testFormatAscii("1.5us", 3 * std.time.ns_per_us / 2);
+        try testFormatAscii("-1.5us", -(3 * std.time.ns_per_us / 2));
+        try testFormatAscii("14.5us", 14500);
+        try testFormatAscii("-14.5us", -(14500));
+        try testFormatAscii("145us", 145000);
+        try testFormatAscii("-145us", -(145000));
+        try testFormatAscii("999.999us", std.time.ns_per_ms - 1);
+        try testFormatAscii("-999.999us", -(std.time.ns_per_ms - 1));
+        try testFormatAscii("1y1h999.999us", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1);
+        try testFormatAscii("-1y1h999.999us", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1));
     }
 
     fn testFormat(expected: []const u8, input: i96) !void {
@@ -1140,6 +1170,14 @@ pub const Duration = struct {
         var buf: [34]u8 = undefined;
         var w: Writer = .fixed(&buf);
         try w.print("{f}", .{Duration{ .nanoseconds = input }});
+        try std.testing.expectEqualStrings(expected, w.buffered());
+    }
+
+    fn testFormatAscii(expected: []const u8, input: i96) !void {
+        // worst case: "-XXXXXXXXXXXXXyXXwXXdXXhXXmXX.XXXs".len = 34
+        var buf: [34]u8 = undefined;
+        var w: Writer = .fixed(&buf);
+        try w.print("{f}", .{std.fmt.alt(Duration{ .nanoseconds = input }, .asciiFormat)});
         try std.testing.expectEqualStrings(expected, w.buffered());
     }
 };
