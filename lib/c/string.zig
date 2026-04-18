@@ -170,7 +170,6 @@ fn strtok(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char) ca
 fn strdup(str: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
     const str_u8: [*:0]const u8 = @ptrCast(str);
     const len = std.mem.len(str_u8);
-    // const d = malloc_inner(len + 1) orelse {
     const d = malloc(len + 1) orelse {
         std.c._errno().* = @intFromEnum(std.c.E.NOMEM);
         return null;
@@ -182,7 +181,6 @@ fn strdup(str: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
 fn strndup(str: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
     const s_u8: [*:0]const u8 = @ptrCast(str);
     const len = strnlen(str, n);
-    // const d = malloc_inner(len + 1) orelse {
     const d = malloc(len + 1) orelse {
         std.c._errno().* = @intFromEnum(std.c.E.NOMEM);
         return null;
