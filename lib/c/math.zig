@@ -2,7 +2,7 @@ const builtin = @import("builtin");
 
 const std = @import("std");
 const math = std.math;
-const ld = @import("../compiler_rt/long_double.zig");
+const ld = math.long_double;
 
 const symbol = @import("../c.zig").symbol;
 
