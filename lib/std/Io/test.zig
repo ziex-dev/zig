@@ -1059,3 +1059,28 @@ test "Condition.waitUncancelable" {
 
     try future.await(io);
 }
+
+test "std.Io.Dir.readFileAlloc correctly reads /proc files on Linux" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+
+    // It would be nice to have std.os.linux.fstatfs here
+    // to confirm that the file system at /proc is procfs.
+    // This is very likely to be the case, so its absence isn't
+    // that tragic.
+
+    const contents = std.Io.Dir.cwd().readFileAlloc(
+        testing.io,
+        "/proc/meminfo",
+        testing.allocator,
+        .limited(1 << 20),
+    ) catch |err| switch (err) {
+        // Some Linux systems may not have /proc mounted or accessible.
+        error.FileNotFound, error.AccessDenied => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    defer testing.allocator.free(contents);
+
+    try testing.expect(contents.len > 0);
+    // Verify that the contents are roughly what is expected.
+    try testing.expect(std.mem.indexOf(u8, contents, "Hugetlb") != null);
+}

@@ -29,6 +29,8 @@ interface: Io.Reader,
 pub const Error = Io.Operation.FileReadStreaming.UnendingError || Io.Cancelable;
 
 pub const SizeError = File.StatError || error{
+    /// The size of the file cannot be accurately determined due to OS bugs.
+    Indeterminate,
     /// Occurs if, for example, the file handle is a network socket and therefore does not have a size.
     Streaming,
 };
@@ -117,6 +119,11 @@ pub fn getSize(r: *Reader) SizeError!u64 {
         if (r.size_err) |err| return err;
         if (r.file.stat(r.io)) |st| {
             if (st.kind == .file) {
+                if (@import("builtin").os.tag == .linux and st.size == 0) {
+                    // On Linux, the `stat` family of syscalls on regular files in procfs always
+                    // reports a size of `0`, which is not accurate to the actual file size.
+                    return error.Indeterminate;
+                }
                 r.size = st.size;
                 return st.size;
             } else {
