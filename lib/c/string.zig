@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const symbol = @import("../c.zig").symbol;
-extern fn malloc(size: usize) ?[*]u8;
+const c = std.c;
 
 comptime {
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
@@ -170,22 +170,18 @@ fn strtok(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char) ca
 fn strdup(str: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
     const str_u8: [*:0]const u8 = @ptrCast(str);
     const len = std.mem.len(str_u8);
-    const d = malloc(len + 1) orelse {
-        std.c._errno().* = @intFromEnum(std.c.E.NOMEM);
-        return null;
-    };
+    const d_opaque = c.malloc(len + 1) orelse return null;
+    const d: [*]u8 = @ptrCast(d_opaque);
     @memcpy(d[0 .. len + 1], str_u8[0 .. len + 1]);
     return @ptrCast(d);
 }
 
 fn strndup(str: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
-    const s_u8: [*:0]const u8 = @ptrCast(str);
+    const str_u8: [*:0]const u8 = @ptrCast(str);
     const len = strnlen(str, n);
-    const d = malloc(len + 1) orelse {
-        std.c._errno().* = @intFromEnum(std.c.E.NOMEM);
-        return null;
-    };
-    @memcpy(d[0..len], s_u8[0..len]);
+    const d_opaque = c.malloc(len + 1) orelse return null;
+    const d: [*]u8 = @ptrCast(d_opaque);
+    @memcpy(d[0..len], str_u8[0..len]);
     d[len] = 0;
     return @ptrCast(d);
 }
