@@ -15,7 +15,7 @@ fn testModf(comptime T: type) !void {
         f32 => c.modff,
         f64 => c.modf,
         c_longdouble => c.modfl,
-        else => unreachable,
+        else => @compileError("modf not implemented for " ++ @typeName(T)),
     };
 
     var int: T = undefined;
@@ -57,9 +57,14 @@ fn testModf(comptime T: type) !void {
 }
 
 test "modf" {
-    try testModf(f32);
     try testModf(f64);
+}
 
+test "modff" {
+    try testModf(f32);
+}
+
+test "modfl" {
     if (builtin.target.cpu.arch.isPowerPC()) return error.SkipZigTest; // TODO
 
     try testModf(c_longdouble);
