@@ -2591,6 +2591,7 @@ fn atomicFileInit(
             .dest_sub_path = dest_basename,
             .file_open = true,
             .file_exists = true,
+            .permissions = permissions,
             .close_dir_on_deinit = close_dir_on_deinit,
             .dir = dir,
         };

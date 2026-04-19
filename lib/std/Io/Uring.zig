@@ -2923,6 +2923,7 @@ fn dirCreateFileAtomic(
             .dest_sub_path = dest_path,
             .file_open = true,
             .file_exists = false,
+            .permissions = options.permissions,
             .close_dir_on_deinit = false,
             .dir = dir,
         };
@@ -2986,6 +2987,7 @@ fn atomicFileInit(
             .dest_sub_path = dest_basename,
             .file_open = true,
             .file_exists = true,
+            .permissions = permissions,
             .close_dir_on_deinit = close_dir_on_deinit,
             .dir = dir,
         };
