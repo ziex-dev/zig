@@ -1030,7 +1030,7 @@ pub const Duration = struct {
     /// Write number of nanoseconds according to its signed magnitude, using
     /// visually similar ascii substitutions for unicode characters:
     /// `[#y][#w][#d][#h][#m]#[.###][n|u|m]s`
-    pub fn asciiFormat(duration: Duration, w: *Writer) Writer.Error!void {
+    pub fn formatAscii(duration: Duration, w: *Writer) Writer.Error!void {
         return formatNanoseconds(w, duration.nanoseconds, .{
             .ascii_only = true,
         });
@@ -1177,7 +1177,7 @@ pub const Duration = struct {
         // worst case: "-XXXXXXXXXXXXXyXXwXXdXXhXXmXX.XXXs".len = 34
         var buf: [34]u8 = undefined;
         var w: Writer = .fixed(&buf);
-        try w.print("{f}", .{std.fmt.alt(Duration{ .nanoseconds = input }, .asciiFormat)});
+        try w.print("{f}", .{std.fmt.alt(Duration{ .nanoseconds = input }, .formatAscii)});
         try std.testing.expectEqualStrings(expected, w.buffered());
     }
 };
