@@ -168,20 +168,18 @@ fn strtok(noalias maybe_str: ?[*:0]c_char, noalias values: [*:0]const c_char) ca
 }
 
 fn strdup(str: [*:0]const c_char) callconv(.c) ?[*:0]c_char {
-    const str_u8: [*:0]const u8 = @ptrCast(str);
-    const len = std.mem.len(str_u8);
+    const len = std.mem.len(str);
     const d_opaque = c.malloc(len + 1) orelse return null;
-    const d: [*]u8 = @ptrCast(d_opaque);
-    @memcpy(d[0 .. len + 1], str_u8[0 .. len + 1]);
+    const d: [*]c_char = @ptrCast(d_opaque);
+    @memcpy(d[0 .. len + 1], str[0 .. len + 1]);
     return @ptrCast(d);
 }
 
 fn strndup(str: [*:0]const c_char, n: usize) callconv(.c) ?[*:0]c_char {
-    const str_u8: [*:0]const u8 = @ptrCast(str);
     const len = strnlen(str, n);
     const d_opaque = c.malloc(len + 1) orelse return null;
-    const d: [*]u8 = @ptrCast(d_opaque);
-    @memcpy(d[0..len], str_u8[0..len]);
+    const d: [*]c_char = @ptrCast(d_opaque);
+    @memcpy(d[0..len], str[0..len]);
     d[len] = 0;
     return @ptrCast(d);
 }

@@ -906,7 +906,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/string/strverscmp.c",
     "musl/src/string/wcscasecmp.c",
     "musl/src/string/wcscasecmp_l.c",
-    "musl/src/string/wcsdup.c",
     "musl/src/string/wcsncasecmp.c",
     "musl/src/string/wcsncasecmp_l.c",
     "musl/src/thread/default_attr.c",
