@@ -36,23 +36,23 @@ fn testModf(comptime T: type) !void {
     // When `x` is positive infinity, +0 is returned and `*iptr` is set to
     // positive infinity
     const pos_zero_frac = f(math.inf(T), iptr);
-    try expect(math.isPositiveZero(pos_zero_frac));
+    try expectEqual(0.0, pos_zero_frac);
     try expect(math.isPositiveInf(iptr.*));
 
     // When `x` is negative infinity, -0 is returned and `*iptr` is set to
     // negative infinity
     const neg_zero_frac = f(-math.inf(T), iptr);
-    try expect(math.isNegativeZero(neg_zero_frac));
+    try expectEqual(-0.0, neg_zero_frac);
     try expect(math.isNegativeInf(iptr.*));
 
     // Return -0 when `x` is a negative integer
     const nz_frac = f(@as(T, -1000.0), iptr);
-    try expect(math.isNegativeZero(nz_frac));
+    try expectEqual(-0.0, nz_frac);
     try expectEqual(@as(T, -1000.0), iptr.*);
 
     // Return +0 when `x` is a positive integer
     const pz_frac = f(@as(T, 1000.0), iptr);
-    try expect(math.isPositiveZero(pz_frac));
+    try expectEqual(0.0, pz_frac);
     try expectEqual(@as(T, 1000.0), iptr.*);
 }
 
@@ -65,7 +65,7 @@ test "modff" {
 }
 
 test "modfl" {
-    if (builtin.target.cpu.arch.isPowerPC()) return error.SkipZigTest; // TODO
+    if (builtin.target.cpu.arch.isPowerPC()) return error.SkipZigTest; // TODO: see https://codeberg.org/ziglang/zig/issues/30976
 
     try testModf(c_longdouble);
 }
@@ -115,8 +115,7 @@ fn testRintNormal(comptime T: type) !void {
     try expectEqual(-large, f(-large));
 
     // Small positive numbers round to zero
-    const pos_result = f(0.3);
-    try expect(math.isPositiveZero(pos_result));
+    try expectEqual(@as(T, 0.0), f(0.3));
 
     // Small negative numbers round to negative zero
     try expectEqual(@as(T, -0.0), f(-0.3));
@@ -143,9 +142,13 @@ test "rint.normal" {
 }
 
 test "rintl.special" {
+    if (builtin.target.cpu.arch.isPowerPC()) return error.SkipZigTest; // TODO: see https://codeberg.org/ziglang/zig/issues/30976
+
     try testRintSpecial(c_longdouble);
 }
 
 test "rintl.normal" {
+    if (builtin.target.cpu.arch.isPowerPC()) return error.SkipZigTest; // TODO: see https://codeberg.org/ziglang/zig/issues/30976
+
     try testRintNormal(c_longdouble);
 }
