@@ -1039,10 +1039,10 @@ pub const Duration = struct {
     fn formatNanoseconds(w: *Writer, ns: i96, options: struct {
         ascii_only: bool = false,
     }) Writer.Error!void {
-        var ns_remaining = if (ns < 0) blk: {
+        var ns_remaining: u96 = if (ns < 0) blk: {
             try w.writeByte('-');
             break :blk @abs(ns);
-        } else @as(u96, @intCast(ns));
+        } else @intCast(ns);
         inline for (.{
             .{ .ns = 365 * std.time.ns_per_day, .sep = 'y' },
             .{ .ns = std.time.ns_per_week, .sep = 'w' },
