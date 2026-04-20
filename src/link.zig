@@ -666,7 +666,12 @@ pub const File = struct {
                     .mode = .write_only,
                 });
             },
-            .spirv => dev.check(.spirv_linker),
+            .spirv => if (base.file == null) {
+                dev.check(.spirv_linker);
+                base.file = try base.emit.root_dir.handle.openFile(io, base.emit.sub_path, .{
+                    .mode = .write_only,
+                });
+            },
             .plan9 => unreachable,
         }
     }
