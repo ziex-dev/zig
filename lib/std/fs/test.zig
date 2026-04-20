@@ -1657,6 +1657,59 @@ test "copyFile" {
 
             try expectFileContents(io, ctx.dir, dest_file, data);
             try expectFileContents(io, ctx.dir, dest_file2, data);
+
+            // copyFile preserves source permissions
+            if (native_os != .windows) {
+                const src_file3 = try ctx.transformPath("tmp_test_copy_file.sh");
+                const dest_file3 = try ctx.transformPath("tmp_test_copy_file2.sh");
+
+                const file = try ctx.dir.createFile(io, src_file3, .{ .permissions = .fromMode(0o755) });
+                try file.writeStreamingAll(io, data);
+                file.close(io);
+                defer ctx.dir.deleteFile(io, src_file3) catch {};
+
+                const src_mode = (try ctx.dir.statFile(io, src_file3, .{})).permissions.toMode() & 0o7777;
+                try expectEqual(0o755, src_mode);
+
+                try ctx.dir.copyFile(src_file3, ctx.dir, dest_file3, io, .{});
+                defer ctx.dir.deleteFile(io, dest_file3) catch {};
+
+                const dest_mode = (try ctx.dir.statFile(io, dest_file3, .{})).permissions.toMode() & 0o7777;
+                try expectEqual(0o755, dest_mode);
+            }
+        }
+    }.impl);
+}
+
+test "updateFile preserves source permissions" {
+    if (native_os == .windows) return error.SkipZigTest;
+
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+            const data = "hello";
+            const src_file = try ctx.transformPath("tmp_test_update_src.sh");
+            const dest_file = try ctx.transformPath("tmp_test_update_dest.sh");
+
+            // create source with executable permissions
+            const file = try ctx.dir.createFile(io, src_file, .{ .permissions = .fromMode(0o755) });
+            try file.writeStreamingAll(io, data);
+            file.close(io);
+            defer ctx.dir.deleteFile(io, src_file) catch {};
+
+            const src_mode = (try ctx.dir.statFile(io, src_file, .{})).permissions.toMode() & 0o7777;
+            try expectEqual(0o755, src_mode);
+
+            // updateFile should copy permissions from source
+            const status = try ctx.dir.updateFile(io, src_file, ctx.dir, dest_file, .{});
+            defer ctx.dir.deleteFile(io, dest_file) catch {};
+            try expectEqual(.stale, status);
+            const dest_mode = (try ctx.dir.statFile(io, dest_file, .{})).permissions.toMode() & 0o7777;
+            try expectEqual(0o755, dest_mode);
+
+            // second call should return PrevStatus.fresh
+            const status2 = try ctx.dir.updateFile(io, src_file, ctx.dir, dest_file, .{});
+            try expectEqual(.fresh, status2);
         }
     }.impl);
 }
@@ -1704,6 +1757,32 @@ test "AtomicFile" {
             }
             const content = try ctx.dir.readFileAlloc(io, test_out_file, allocator, .limited(9999));
             try expectEqualStrings(test_content, content);
+
+            try ctx.dir.deleteFile(io, test_out_file);
+
+            // link() preserves requested permissions
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{
+                    .permissions = .fromMode(0o755),
+                    .replace = false,
+                });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.link(io);
+            }
+            try expectEqual(0o755, (try ctx.dir.statFile(io, test_out_file, .{})).permissions.toMode() & 0o7777);
+
+            // replace() preserves requested permissions
+            {
+                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{
+                    .permissions = .fromMode(0o755),
+                    .replace = true,
+                });
+                defer af.deinit(io);
+                try af.file.writeStreamingAll(io, test_content);
+                try af.replace(io);
+            }
+            try expectEqual(0o755, (try ctx.dir.statFile(io, test_out_file, .{})).permissions.toMode() & 0o7777);
 
             try ctx.dir.deleteFile(io, test_out_file);
         }
