@@ -47,9 +47,8 @@ test fromDot {
     }
 }
 
-pub fn toDot(self: Oid, writer: anytype) (@TypeOf(writer).Error || error{EmptyOid})!void {
+pub fn toDot(self: Oid, writer: anytype) @TypeOf(writer).Error!void {
     const encoded = self.encoded;
-    if (encoded.len == 0) return error.EmptyOid;
     const first = @divTrunc(encoded[0], 40);
     const second = encoded[0] - first * 40;
     try writer.print("{d}.{d}", .{ first, second });
@@ -86,13 +85,12 @@ test toDot {
     }
 }
 
-test "empty OID" {
-    var decoder: der.Decoder = .{ .bytes = &.{ 0x06, 0x00 } };
-    try std.testing.expectError(error.EndOfStream, decodeDer(&decoder));
+test "malformed OID" {
+    var empty: der.Decoder = .{ .bytes = &.{ 0x06, 0x00 } };
+    try std.testing.expectError(error.EndOfStream, decodeDer(&empty));
 
-    var buf: [64]u8 = undefined;
-    var writer: std.Io.Writer = .fixed(&buf);
-    try std.testing.expectError(error.EmptyOid, toDot(Oid{ .encoded = "" }, &writer));
+    var truncated: der.Decoder = .{ .bytes = &.{ 0x06, 0x02, 0x2a, 0x80 } };
+    try std.testing.expectError(error.InvalidEncoding, decodeDer(&truncated));
 }
 
 const TestCase = struct {
@@ -121,6 +119,7 @@ pub fn decodeDer(decoder: *der.Decoder) !Oid {
     const ele = try decoder.element(asn1_tag.toExpected());
     const encoded = decoder.view(ele);
     if (encoded.len == 0) return error.EndOfStream;
+    if (encoded[encoded.len - 1] & 0x80 != 0) return error.InvalidEncoding;
     return Oid{ .encoded = encoded };
 }
 
