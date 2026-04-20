@@ -382,7 +382,9 @@ pub fn init(input: *Reader, output: *Writer, options: Options) InitError!Client 
                         P.AEAD.decrypt(cleartext, ciphertext, auth_tag, record_header, nonce, pv.server_handshake_key) catch
                             return error.TlsBadRecordMac;
                         // TODO use scalar, non-slice version
-                        cleartext_fragment_end += mem.trimEnd(u8, cleartext, "\x00").len;
+                        const trimmed_len = mem.trimEnd(u8, cleartext, "\x00").len;
+                        if (trimmed_len == 0) return error.TlsDecodeError;
+                        cleartext_fragment_end += trimmed_len;
                     },
                 }
                 read_seq += 1;
@@ -1176,6 +1178,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
             .tls_1_3 => {
                 const pv = &p.tls_1_3;
                 const P = @TypeOf(p.*);
+                if (record_len < P.AEAD.tag_length) return failRead(c, error.TlsRecordOverflow);
                 const ad = input.take(tls.record_header_len) catch unreachable; // already peeked
                 const ciphertext_len = record_len - P.AEAD.tag_length;
                 const ciphertext = input.take(ciphertext_len) catch unreachable; // already peeked
@@ -1192,6 +1195,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                     return failRead(c, error.TlsBadRecordMac);
                 // TODO use scalar, non-slice version
                 const msg = mem.trimEnd(u8, cleartext, "\x00");
+                if (msg.len == 0) return failRead(c, error.TlsDecodeError);
                 break :cleartext .{ msg.len - 1, @enumFromInt(msg[msg.len - 1]) };
             },
             .tls_1_2 => {
@@ -1708,4 +1712,48 @@ test "zero-length key_update body" {
     try std.testing.expectEqual(error.TlsDecodeError, testReadError(&wire, .{ .CHACHA20_POLY1305_SHA256 = .{
         .tls_1_3 = .{ .server_key = @splat(0), .server_iv = @splat(0), .client_secret = undefined, .server_secret = undefined, .client_key = undefined, .client_iv = undefined },
     } }));
+}
+
+test "empty inner plaintext" {
+    const AEAD = crypto.aead.chacha_poly.ChaCha20Poly1305;
+    const key: [AEAD.key_length]u8 = @splat(0);
+    const iv: [AEAD.nonce_length]u8 = @splat(0);
+
+    const plaintext = [1]u8{0x00};
+    var ciphertext: [plaintext.len]u8 = undefined;
+    var tag: [AEAD.tag_length]u8 = undefined;
+    const content_len: u16 = plaintext.len + AEAD.tag_length;
+    const record_header = [_]u8{ 0x17, 0x03, 0x03 } ++ mem.toBytes(big(content_len));
+    AEAD.encrypt(&ciphertext, &tag, &plaintext, &record_header, iv, key);
+
+    try std.testing.expectEqual(error.TlsDecodeError, testReadError(
+        &record_header ++ ciphertext ++ tag,
+        .{ .CHACHA20_POLY1305_SHA256 = .{ .tls_1_3 = .{
+            .server_key = key,
+            .server_iv = iv,
+            .client_secret = undefined,
+            .server_secret = undefined,
+            .client_key = undefined,
+            .client_iv = undefined,
+        } } },
+    ));
+}
+
+test "record shorter than tag" {
+    const AEAD = crypto.aead.chacha_poly.ChaCha20Poly1305;
+    const record_len: u16 = AEAD.tag_length - 1;
+    const header = [_]u8{ 0x17, 0x03, 0x03 } ++ mem.toBytes(big(record_len));
+    const wire = header ++ @as([record_len]u8, @splat(0));
+
+    try std.testing.expectEqual(error.TlsRecordOverflow, testReadError(
+        &wire,
+        .{ .CHACHA20_POLY1305_SHA256 = .{ .tls_1_3 = .{
+            .server_key = undefined,
+            .server_iv = undefined,
+            .client_secret = undefined,
+            .server_secret = undefined,
+            .client_key = undefined,
+            .client_iv = undefined,
+        } } },
+    ));
 }
