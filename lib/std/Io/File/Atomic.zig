@@ -49,7 +49,8 @@ pub const LinkError = File.HardLinkError || Dir.RenamePreserveError || File.SetP
 pub fn link(af: *Atomic, io: Io) LinkError!void {
     if (af.file_exists) {
         if (af.file_open) {
-            try af.file.setPermissions(io, af.permissions);
+            if (File.Permissions.has_executable_bit)
+                try af.file.setPermissions(io, af.permissions);
             af.file.close(io);
             af.file_open = false;
         }
@@ -58,7 +59,8 @@ pub fn link(af: *Atomic, io: Io) LinkError!void {
         af.file_exists = false;
     } else {
         assert(af.file_open);
-        try af.file.setPermissions(io, af.permissions);
+        if (File.Permissions.has_executable_bit)
+            try af.file.setPermissions(io, af.permissions);
         try af.file.hardLink(io, af.dir, af.dest_sub_path, .{});
         af.file.close(io);
         af.file_open = false;
@@ -80,7 +82,8 @@ pub const ReplaceError = Dir.RenameError || File.SetPermissionsError;
 pub fn replace(af: *Atomic, io: Io) ReplaceError!void {
     assert(af.file_exists); // Wrong value for `CreateFileAtomicOptions.replace`.
     if (af.file_open) {
-        try af.file.setPermissions(io, af.permissions);
+        if (File.Permissions.has_executable_bit)
+            try af.file.setPermissions(io, af.permissions);
         af.file.close(io);
         af.file_open = false;
     }
