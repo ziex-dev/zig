@@ -1659,7 +1659,7 @@ test "copyFile" {
             try expectFileContents(io, ctx.dir, dest_file2, data);
 
             // copyFile preserves source permissions
-            if (native_os != .windows) {
+            if (native_os != .windows and native_os != .wasi) {
                 const src_file3 = try ctx.transformPath("tmp_test_copy_file.sh");
                 const dest_file3 = try ctx.transformPath("tmp_test_copy_file2.sh");
 
@@ -1682,7 +1682,7 @@ test "copyFile" {
 }
 
 test "updateFile preserves source permissions" {
-    if (native_os == .windows) return error.SkipZigTest;
+    if (native_os == .windows or native_os == .wasi) return error.SkipZigTest;
 
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
@@ -1760,31 +1760,32 @@ test "AtomicFile" {
 
             try ctx.dir.deleteFile(io, test_out_file);
 
-            // link() preserves requested permissions
-            {
-                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{
-                    .permissions = .fromMode(0o755),
-                    .replace = false,
-                });
-                defer af.deinit(io);
-                try af.file.writeStreamingAll(io, test_content);
-                try af.link(io);
-            }
-            try expectEqual(0o755, (try ctx.dir.statFile(io, test_out_file, .{})).permissions.toMode() & 0o7777);
+            if (native_os != .wasi) {
+                // link() preserves requested permissions
+                {
+                    var af = try ctx.dir.createFileAtomic(io, test_out_file, .{
+                        .permissions = .fromMode(0o755),
+                        .replace = false,
+                    });
+                    defer af.deinit(io);
+                    try af.file.writeStreamingAll(io, test_content);
+                    try af.link(io);
+                }
+                try expectEqual(0o755, (try ctx.dir.statFile(io, test_out_file, .{})).permissions.toMode() & 0o7777);
+                // replace() preserves requested permissions
+                {
+                    var af = try ctx.dir.createFileAtomic(io, test_out_file, .{
+                        .permissions = .fromMode(0o755),
+                        .replace = true,
+                    });
+                    defer af.deinit(io);
+                    try af.file.writeStreamingAll(io, test_content);
+                    try af.replace(io);
+                }
+                try expectEqual(0o755, (try ctx.dir.statFile(io, test_out_file, .{})).permissions.toMode() & 0o7777);
 
-            // replace() preserves requested permissions
-            {
-                var af = try ctx.dir.createFileAtomic(io, test_out_file, .{
-                    .permissions = .fromMode(0o755),
-                    .replace = true,
-                });
-                defer af.deinit(io);
-                try af.file.writeStreamingAll(io, test_content);
-                try af.replace(io);
+                try ctx.dir.deleteFile(io, test_out_file);
             }
-            try expectEqual(0o755, (try ctx.dir.statFile(io, test_out_file, .{})).permissions.toMode() & 0o7777);
-
-            try ctx.dir.deleteFile(io, test_out_file);
         }
     }.impl);
 }
