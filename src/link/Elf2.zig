@@ -3011,7 +3011,7 @@ fn updateFuncInner(
                             .ReleaseFast,
                             => target_util.defaultFunctionAlignment(target),
                             .ReleaseSmall => target_util.minFunctionAlignment(target),
-                        },
+                        }.maxStrict(Type.fromInterned(nav.resolved.?.type).abiAlignment(zcu)),
                         else => |a| a.maxStrict(target_util.minFunctionAlignment(target)),
                     }.toStdMem(),
                     .moved = true,
