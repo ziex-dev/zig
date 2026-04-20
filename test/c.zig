@@ -9,4 +9,5 @@ test {
     _ = @import("c/string.zig");
     _ = @import("c/strings.zig");
     _ = @import("c/unistd.zig");
+    _ = @import("c/wchar.zig");
 }
