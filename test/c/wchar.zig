@@ -5,7 +5,6 @@ const c = std.c;
 const testing = std.testing;
 
 test "wcsdup" {
-    if (builtin.target.os.tag == .windows) return; // no wcsdup
     const org: [*:0]const c.wchar_t = &[_:0]c.wchar_t{ 'H', 'e', 'l', 'l', 'o' };
     const cpy_opt = c.wcsdup(org);
     const cpy = cpy_opt orelse return error.OutOfMemory;
@@ -28,7 +27,6 @@ test "wcsdup" {
 }
 
 test "wcsdup empty string" {
-    if (builtin.target.os.tag == .windows) return; // no wcsdup
     const org: [*:0]const c.wchar_t = &[_:0]c.wchar_t{};
     const cpy = c.wcsdup(org) orelse return error.OutOfMemory;
     defer c.free(cpy);

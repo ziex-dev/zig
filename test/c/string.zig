@@ -12,7 +12,6 @@ test "strncmp" {
 }
 
 test "strdup" {
-    if (builtin.target.os.tag == .windows) return; // no strdup
     const org: [*:0]const u8 = "a";
     const cpy_opt = c.strdup(@ptrCast(org));
     const cpy = cpy_opt orelse return error.OutOfMemory;
