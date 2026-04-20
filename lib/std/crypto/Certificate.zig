@@ -913,6 +913,10 @@ pub const der = struct {
         pub const ParseError = error{CertificateFieldHasInvalidLength};
 
         pub fn parse(bytes: []const u8, index: u32) Element.ParseError!Element {
+            if (index > bytes.len or bytes.len - index < 2) {
+                return error.CertificateFieldHasInvalidLength;
+            }
+
             var i = index;
             const identifier: Identifier = @bitCast(bytes[i]);
             i += 1;
@@ -929,7 +933,7 @@ pub const der = struct {
             }
 
             const len_size: u7 = @truncate(size_byte);
-            if (len_size > @sizeOf(u32)) {
+            if (len_size > @sizeOf(u32) or bytes.len - i < len_size) {
                 return error.CertificateFieldHasInvalidLength;
             }
 
@@ -952,6 +956,12 @@ pub const der = struct {
 
 test {
     _ = Bundle;
+}
+
+test "der.Element.parse rejects truncated input" {
+    try std.testing.expectError(error.CertificateFieldHasInvalidLength, der.Element.parse(&.{}, 0));
+    try std.testing.expectError(error.CertificateFieldHasInvalidLength, der.Element.parse(&.{0x30}, 0));
+    try std.testing.expectError(error.CertificateFieldHasInvalidLength, der.Element.parse(&.{ 0x30, 0x84, 0xff }, 0));
 }
 
 pub const rsa = struct {
