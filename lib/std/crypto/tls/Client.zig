@@ -1261,6 +1261,7 @@ fn readIndirect(c: *Client) Reader.Error!usize {
                         // This client implementation ignores new session tickets.
                     },
                     .key_update => {
+                        if (handshake.len != 1) return failRead(c, error.TlsDecodeError);
                         switch (c.application_cipher) {
                             inline else => |*p| {
                                 const pv = &p.tls_1_3;
@@ -1668,3 +1669,43 @@ else
         .AES_256_GCM_SHA384,
         .ECDHE_RSA_WITH_AES_256_GCM_SHA384,
     });
+
+fn testReadError(input_buf: []const u8, cipher: tls.ApplicationCipher) ReadError {
+    var input_reader: Reader = .fixed(input_buf);
+    var read_buf: [tls.max_ciphertext_record_len]u8 = undefined;
+    var c: Client = .{
+        .input = &input_reader,
+        .reader = .{
+            .buffer = &read_buf,
+            .vtable = &.{ .stream = stream, .readVec = readVec },
+            .seek = 0,
+            .end = 0,
+        },
+        .output = undefined,
+        .writer = undefined,
+        .tls_version = .tls_1_3,
+        .read_seq = 0,
+        .write_seq = 0,
+        .received_close_notify = false,
+        .allow_truncation_attacks = false,
+        .application_cipher = cipher,
+        .ssl_key_log = null,
+    };
+    var w: Writer = .failing;
+    std.testing.expectError(error.ReadFailed, c.reader.stream(&w, .unlimited)) catch
+        @panic("expected ReadFailed");
+    return c.read_err.?;
+}
+
+test "zero-length key_update body" {
+    const Chacha = crypto.aead.chacha_poly.ChaCha20Poly1305;
+    const plaintext = [_]u8{ 0x18, 0x00, 0x00, 0x00, 0x16 };
+    const header = [_]u8{ 0x17, 0x03, 0x03 } ++ mem.toBytes(big(@as(u16, plaintext.len + Chacha.tag_length)));
+    var ct: [plaintext.len]u8 = undefined;
+    var tag: [Chacha.tag_length]u8 = undefined;
+    Chacha.encrypt(&ct, &tag, &plaintext, &header, @splat(0), @splat(0));
+    const wire = header ++ ct ++ tag;
+    try std.testing.expectEqual(error.TlsDecodeError, testReadError(&wire, .{ .CHACHA20_POLY1305_SHA256 = .{
+        .tls_1_3 = .{ .server_key = @splat(0), .server_iv = @splat(0), .client_secret = undefined, .server_secret = undefined, .client_key = undefined, .client_iv = undefined },
+    } }));
+}
