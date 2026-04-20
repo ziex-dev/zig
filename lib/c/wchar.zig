@@ -197,6 +197,5 @@ fn wcsdup(str: [*:0]const wchar_t) callconv(.c) ?[*:0]wchar_t {
     const size = (len + 1) * @sizeOf(wchar_t);
     const d_opaque = c.malloc(size) orelse return null;
     const d: [*]wchar_t = @ptrCast(@alignCast(d_opaque));
-    _ = wmemcpy(d, str, len + 1);
-    return @ptrCast(d);
+    return @ptrCast(wmemcpy(d, str, len + 1));
 }
