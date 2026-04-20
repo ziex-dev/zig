@@ -47,8 +47,9 @@ test fromDot {
     }
 }
 
-pub fn toDot(self: Oid, writer: anytype) @TypeOf(writer).Error!void {
+pub fn toDot(self: Oid, writer: anytype) (@TypeOf(writer).Error || error{EmptyOid})!void {
     const encoded = self.encoded;
+    if (encoded.len == 0) return error.EmptyOid;
     const first = @divTrunc(encoded[0], 40);
     const second = encoded[0] - first * 40;
     try writer.print("{d}.{d}", .{ first, second });
@@ -85,6 +86,15 @@ test toDot {
     }
 }
 
+test "empty OID" {
+    var decoder: der.Decoder = .{ .bytes = &.{ 0x06, 0x00 } };
+    try std.testing.expectError(error.EndOfStream, decodeDer(&decoder));
+
+    var buf: [64]u8 = undefined;
+    var writer: std.Io.Writer = .fixed(&buf);
+    try std.testing.expectError(error.EmptyOid, toDot(Oid{ .encoded = "" }, &writer));
+}
+
 const TestCase = struct {
     encoded: []const u8,
     dot_notation: []const u8,
@@ -109,7 +119,9 @@ pub const asn1_tag = asn1.Tag.init(.oid, false, .universal);
 
 pub fn decodeDer(decoder: *der.Decoder) !Oid {
     const ele = try decoder.element(asn1_tag.toExpected());
-    return Oid{ .encoded = decoder.view(ele) };
+    const encoded = decoder.view(ele);
+    if (encoded.len == 0) return error.EndOfStream;
+    return Oid{ .encoded = encoded };
 }
 
 pub fn encodeDer(self: Oid, encoder: *der.Encoder) !void {
