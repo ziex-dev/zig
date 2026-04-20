@@ -63,6 +63,7 @@ CheckLastExitCode
 
 # Ensure that reduce compiles
 stage3-release\bin\zig.exe build reduce -h
+CheckLastExitCode
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 Write-Output "Build and compare stage4..."
