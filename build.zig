@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) !void {
     const enable_superhtml = b.option(bool, "enable-superhtml", "Check langref output HTML validity") orelse false;
 
     const langref_file = generateLangRef(b);
-    const install_langref = b.addInstallFileWithDir(langref_file, .prefix, "doc/langref.html");
+    const install_langref = b.addInstallFileWithDir(langref_file, .{ .custom = "share/doc" }, "zig/langref.html");
     const check_langref = superHtmlCheck(b, langref_file);
     if (enable_superhtml) install_langref.step.dependOn(check_langref);
 
