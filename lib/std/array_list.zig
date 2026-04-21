@@ -2381,22 +2381,11 @@ test "Managed(u32).getLast()" {
     var list = Managed(u32).init(a);
     defer list.deinit();
 
-    try list.append(2);
-    const const_list = list;
-    try testing.expectEqual(const_list.getLast(), 2);
-}
-
-test "Managed(u32).getLastOrNull()" {
-    const a = testing.allocator;
-
-    var list = Managed(u32).init(a);
-    defer list.deinit();
-
-    try testing.expectEqual(list.getLastOrNull(), null);
+    try testing.expectEqual(list.getLast(), null);
 
     try list.append(2);
     const const_list = list;
-    try testing.expectEqual(const_list.getLastOrNull().?, 2);
+    try testing.expectEqual(const_list.getLast().?, 2);
 }
 
 test "return OutOfMemory when capacity would exceed maximum usize integer value" {
