@@ -1005,10 +1005,10 @@ pub fn generate(
 
     return .{
         .instructions = function.mir_instructions.toOwnedSlice(),
-        .extra =  function.mir_extra.toOwnedSliceAssert(gpa),
-        .string_bytes =  function.mir_string_bytes.toOwnedSliceAssert(gpa),
-        .locals =  function.mir_locals.toOwnedSliceAssert(gpa),
-        .table =  function.mir_table.toOwnedSliceAssert(gpa),
+        .extra =  function.mir_extra.toOwnedSliceAssert(),
+        .string_bytes =  function.mir_string_bytes.toOwnedSliceAssert(),
+        .locals =  function.mir_locals.toOwnedSliceAssert(),
+        .table =  function.mir_table.toOwnedSliceAssert(),
         .frame_locs = function.frame_locs.toOwnedSlice(),
     };
 }

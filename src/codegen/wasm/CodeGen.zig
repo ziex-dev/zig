@@ -780,8 +780,8 @@ fn generateInner(cg: *CodeGen, any_returns: bool) InnerError!Mir {
 
     return .{
         .instructions = cg.mir_instructions.toOwnedSlice(),
-        .extra = cg.mir_extra.toOwnedSliceAssert(cg.gpa),
-        .locals = cg.mir_locals.toOwnedSliceAssert(cg.gpa),
+        .extra = cg.mir_extra.toOwnedSliceAssert(),
+        .locals = cg.mir_locals.toOwnedSliceAssert(),
         .prologue = if (cg.initial_stack_value == .none) .none else .{
             .sp_local = cg.initial_stack_value.local.value,
             .flags = .{ .stack_alignment = cg.stack_alignment },

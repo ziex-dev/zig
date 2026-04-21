@@ -402,8 +402,8 @@ pub const Wip = struct {
         try wip.extra.shrinkToLen(gpa);
 
         return .{
-            .string_bytes = wip.string_bytes.toOwnedSliceAssert(gpa),
-            .extra = wip.extra.toOwnedSliceAssert(gpa),
+            .string_bytes = wip.string_bytes.toOwnedSliceAssert(),
+            .extra = wip.extra.toOwnedSliceAssert(),
         };
     }
 

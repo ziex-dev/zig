@@ -191,7 +191,7 @@ pub const Diags = struct {
 
                 const duped_msg = try std.fmt.allocPrint(gpa, "{s}: {s}", .{ prefix, split.rest() });
 
-                current_err = diags.lld.addOneAssumeCapacity(gpa);
+                current_err = diags.lld.addOneAssumeCapacity();
                 current_err.?.* = .{ .msg = duped_msg };
             } else if (current_err != null) {
                 const context_prefix = ">>> ";
@@ -201,7 +201,7 @@ pub const Diags = struct {
                 }
 
                 if (trimmed.len > 0) {
-                    context_lines.ensureUnusedCapacity(gpa, 1);
+                    try context_lines.ensureUnusedCapacity(gpa, 1);
                     context_lines.appendAssumeCapacity(try gpa.dupe(u8, trimmed));
                 }
             }
