@@ -52,9 +52,18 @@ pub const Wyhash = struct {
             self.buf_len = 0;
         }
 
+        var s0 = self.state[0];
+        var s1 = self.state[1];
+        var s2 = self.state[2];
         while (i + 48 < input.len) : (i += 48) {
-            self.round(input[i..][0..48]);
+            @prefetch(input.ptr + i + 48, .{ .rw = .read, .locality = 3 });
+            s2 = mix(read(8, input[i + 32 ..]) ^ secret[3], read(8, input[i + 40 ..]) ^ s2);
+            s0 = mix(read(8, input[i..]) ^ secret[1], read(8, input[i + 8 ..]) ^ s0);
+            s1 = mix(read(8, input[i + 16 ..]) ^ secret[2], read(8, input[i + 24 ..]) ^ s1);
         }
+        self.state[0] = s0;
+        self.state[1] = s1;
+        self.state[2] = s2;
 
         const remaining_bytes = input[i..];
         if (remaining_bytes.len < 16 and i >= 48) {
@@ -129,9 +138,8 @@ pub const Wyhash = struct {
     }
 
     inline fn read(comptime bytes: usize, data: []const u8) u64 {
-        std.debug.assert(bytes <= 8);
         const T = std.meta.Int(.unsigned, 8 * bytes);
-        return @as(u64, std.mem.readInt(T, data[0..bytes], .little));
+        return @as(u64, @as(*align(1) const T, @ptrCast(data.ptr)).*);
     }
 
     inline fn mum(a: *u64, b: *u64) void {
@@ -183,10 +191,17 @@ pub const Wyhash = struct {
         } else {
             var i: usize = 0;
             if (input.len >= 48) {
+                var s0 = self.state[0];
+                var s1 = self.state[1];
+                var s2 = self.state[2];
                 while (i + 48 < input.len) : (i += 48) {
-                    self.round(input[i..][0..48]);
+                    @prefetch(input.ptr + i + 48, .{ .rw = .read, .locality = 3 });
+                    const chunk = input[i..][0..48];
+                    s0 = mix(read(8, chunk[0..]) ^ secret[1], read(8, chunk[8..]) ^ s0);
+                    s1 = mix(read(8, chunk[16..]) ^ secret[2], read(8, chunk[24..]) ^ s1);
+                    s2 = mix(read(8, chunk[32..]) ^ secret[3], read(8, chunk[40..]) ^ s2);
                 }
-                self.final0();
+                self.state[0] = s0 ^ s1 ^ s2;
             }
             self.final1(input, i);
         }
