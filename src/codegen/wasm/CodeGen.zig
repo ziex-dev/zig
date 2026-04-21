@@ -775,10 +775,13 @@ fn generateInner(cg: *CodeGen, any_returns: bool) InnerError!Mir {
     try cg.addTag(.end);
     try cg.addTag(.dbg_epilogue_begin);
 
-    var mir: Mir = .{
+    try cg.mir_extra.shrinkToLen(cg.gpa);
+    try cg.mir_locals.shrinkToLen(cg.gpa);
+
+    return .{
         .instructions = cg.mir_instructions.toOwnedSlice(),
-        .extra = &.{}, // fallible so assigned after errdefer
-        .locals = &.{}, // fallible so assigned after errdefer
+        .extra = cg.mir_extra.toOwnedSliceAssert(cg.gpa),
+        .locals = cg.mir_locals.toOwnedSliceAssert(cg.gpa),
         .prologue = if (cg.initial_stack_value == .none) .none else .{
             .sp_local = cg.initial_stack_value.local.value,
             .flags = .{ .stack_alignment = cg.stack_alignment },
@@ -790,10 +793,6 @@ fn generateInner(cg: *CodeGen, any_returns: bool) InnerError!Mir {
         .func_tys = cg.mir_func_tys.move(),
         .error_name_table_ref_count = cg.error_name_table_ref_count,
     };
-    errdefer mir.deinit(cg.gpa);
-    mir.extra = try cg.mir_extra.toOwnedSlice(cg.gpa);
-    mir.locals = try cg.mir_locals.toOwnedSlice(cg.gpa);
-    return mir;
 }
 
 const CallWValues = struct {
