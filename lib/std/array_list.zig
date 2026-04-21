@@ -544,16 +544,10 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
             return self.allocatedSlice()[self.items.len..];
         }
 
-        /// Returns the last element from the list.
-        /// Asserts that the list is not empty.
-        pub fn getLast(self: Self) T {
-            return self.items[self.items.len - 1];
-        }
-
-        /// Returns the last element from the list, or `null` if list is empty.
-        pub fn getLastOrNull(self: Self) ?T {
+        /// Returns the last element from the list, or `null` if the list is empty.
+        pub fn getLast(self: Self) ?T {
             if (self.items.len == 0) return null;
-            return self.getLast();
+            return self.items[self.items.len - 1];
         }
     };
 }
@@ -1394,17 +1388,10 @@ pub fn Aligned(comptime T: type, comptime alignment: ?mem.Alignment) type {
             return self.allocatedSlice()[self.items.len..];
         }
 
-        /// Return the last element from the list.
-        /// Asserts that the list is not empty.
-        pub fn getLast(self: Self) T {
-            return self.items[self.items.len - 1];
-        }
-
-        /// Return the last element from the list, or
-        /// return `null` if list is empty.
-        pub fn getLastOrNull(self: Self) ?T {
+        /// Returns the last element from the list, or `null` if the list is empty.
+        pub fn getLast(self: Self) ?T {
             if (self.items.len == 0) return null;
-            return self.getLast();
+            return self.items[self.items.len - 1];
         }
 
         /// Called when memory growth is necessary. Returns a capacity larger than
