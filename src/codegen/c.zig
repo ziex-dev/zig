@@ -2728,9 +2728,8 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             },
             .cmp_lte_errors_len => try airCmpLteErrorsLen(f, inst),
 
-            // bool_and and bool_or are non-short-circuit operations
-            .bool_and, .bit_and => try airBinOp(f, inst, "&",  "and", .none),
-            .bool_or,  .bit_or  => try airBinOp(f, inst, "|",  "or",  .none),
+            .bit_and => try airBinOp(f, inst, "&",  "and", .none),
+            .bit_or  => try airBinOp(f, inst, "|",  "or",  .none),
             .xor                => try airBinOp(f, inst, "^",  "xor", .none),
             .shr, .shr_exact    => try airBinBuiltinCall(f, inst, "shr", .none),
             .shl,               => try airBinBuiltinCall(f, inst, "shlw", .bits),
@@ -4841,8 +4840,9 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
         {
             const asm_source = unwrapped_asm.source;
 
-            var stack = std.heap.stackFallback(256, f.dg.gpa);
-            const allocator = stack.get();
+            var bfa_buf: [256]u8 = undefined;
+            var bfa: std.heap.BufferFirstAllocator = .init(&bfa_buf, f.dg.gpa);
+            const allocator = bfa.allocator();
             const fixed_asm_source = try allocator.alloc(u8, asm_source.len);
             defer allocator.free(fixed_asm_source);
 

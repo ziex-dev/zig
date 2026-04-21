@@ -258,11 +258,11 @@ pub fn genBody(self: *FuncGen, body: []const Air.Inst.Index, coverage_point: Air
             .mul_with_overflow => try self.airOverflow(inst, .@"smul.with.overflow", .@"umul.with.overflow"),
             .shl_with_overflow => try self.airShlWithOverflow(inst),
 
-            .bit_and, .bool_and => try self.airAnd(inst),
-            .bit_or, .bool_or   => try self.airOr(inst),
-            .xor                => try self.airXor(inst),
-            .shr                => try self.airShr(inst, false),
-            .shr_exact          => try self.airShr(inst, true),
+            .bit_and   => try self.airAnd(inst),
+            .bit_or    => try self.airOr(inst),
+            .xor       => try self.airXor(inst),
+            .shr       => try self.airShr(inst, false),
+            .shr_exact => try self.airShr(inst, true),
 
             .sqrt         => try self.airUnaryOp(inst, .sqrt),
             .sin          => try self.airUnaryOp(inst, .sin),
@@ -3530,11 +3530,9 @@ fn airDivFloor(self: *FuncGen, inst: Air.Inst.Index, fast: Builder.FastMathKind)
         const inst_llvm_ty = try o.lowerType(inst_ty);
 
         const ExpectedContents = [std.math.big.int.calcTwosCompLimbCount(256)]std.math.big.Limb;
-        var stack align(@max(
-            @alignOf(std.heap.StackFallbackAllocator(0)),
-            @alignOf(ExpectedContents),
-        )) = std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
-        const allocator = stack.get();
+        var bfa_buf: ExpectedContents = undefined;
+        var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), self.gpa);
+        const allocator = bfa.allocator();
 
         const scalar_bits = scalar_ty.intInfo(zcu).bits;
         var smin_big_int: std.math.big.int.Mutable = .{
@@ -3616,11 +3614,9 @@ fn airMod(self: *FuncGen, inst: Air.Inst.Index, fast: Builder.FastMathKind) Allo
     }
     if (scalar_ty.isSignedInt(zcu)) {
         const ExpectedContents = [std.math.big.int.calcTwosCompLimbCount(256)]std.math.big.Limb;
-        var stack align(@max(
-            @alignOf(std.heap.StackFallbackAllocator(0)),
-            @alignOf(ExpectedContents),
-        )) = std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
-        const allocator = stack.get();
+        var bfa_buf: ExpectedContents = undefined;
+        var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), self.gpa);
+        const allocator = bfa.allocator();
 
         const scalar_bits = scalar_ty.intInfo(zcu).bits;
         var smin_big_int: std.math.big.int.Mutable = .{
