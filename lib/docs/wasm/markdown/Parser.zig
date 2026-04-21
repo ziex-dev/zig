@@ -313,7 +313,7 @@ pub fn endInput(p: *Parser) Allocator.Error!Document {
 
     try p.extra.shrinkToLen(p.allocator);
     try p.string_bytes.shrinkToLen(p.allocator);
-    
+
     return .{
         .nodes = p.nodes.toOwnedSlice(),
         .extra = p.extra.toOwnedSliceAssert(),

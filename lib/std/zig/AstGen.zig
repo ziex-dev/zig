@@ -244,7 +244,7 @@ pub fn generate(gpa: Allocator, tree: Ast) Allocator.Error!Zir {
     }
 
     try astgen.extra.shrinkToLen(gpa);
-    try astgen.string_bytes.shrinkToLen(gpa);    
+    try astgen.string_bytes.shrinkToLen(gpa);
 
     return .{
         .instructions = if (fatal) .empty else astgen.instructions.toOwnedSlice(),

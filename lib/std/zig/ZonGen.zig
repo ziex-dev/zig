@@ -70,7 +70,7 @@ pub fn generate(gpa: Allocator, tree: Ast, options: Options) Allocator.Error!Zoi
         try zg.string_bytes.shrinkToLen(gpa);
         try zg.compile_errors.shrinkToLen(gpa);
         try zg.error_notes.shrinkToLen(gpa);
-        
+
         return .{
             .nodes = .empty,
             .extra = &.{},
@@ -81,10 +81,10 @@ pub fn generate(gpa: Allocator, tree: Ast, options: Options) Allocator.Error!Zoi
         };
     } else {
         assert(zg.error_notes.items.len == 0);
-        
-        try zg.extra.shrinkToLen(gpa);        
-        try zg.limbs.shrinkToLen(gpa);        
-        try zg.string_bytes.shrinkToLen(gpa);        
+
+        try zg.extra.shrinkToLen(gpa);
+        try zg.limbs.shrinkToLen(gpa);
+        try zg.string_bytes.shrinkToLen(gpa);
 
         return .{
             .nodes = zg.nodes.toOwnedSlice(),
