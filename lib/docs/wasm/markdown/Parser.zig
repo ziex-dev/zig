@@ -259,7 +259,7 @@ pub fn feedLine(p: *Parser, line: []const u8) Allocator.Error!void {
     // Do not append the end of a code block (```) as textual content.
     if (code_block_end) return;
 
-    const can_accept = if (p.pending_blocks.getLastOrNull()) |last_pending_block|
+    const can_accept = if (p.pending_blocks.getLast()) |last_pending_block|
         last_pending_block.canAccept()
     else
         .blocks;
@@ -372,7 +372,7 @@ const BlockStart = struct {
 };
 
 fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
-    if (p.pending_blocks.getLastOrNull()) |last_pending_block| {
+    if (p.pending_blocks.getLast()) |last_pending_block| {
         // Close the last block if it is a list and the new block is not a list item
         // or not of the same marker type.
         const should_close_list = last_pending_block.tag == .list and
@@ -387,7 +387,7 @@ fn appendBlockStart(p: *Parser, block_start: BlockStart) !void {
         }
     }
 
-    if (p.pending_blocks.getLastOrNull()) |last_pending_block| {
+    if (p.pending_blocks.getLast()) |last_pending_block| {
         // If the last block is a list or list item, check for tightness based
         // on the last line.
         const maybe_containing_list = switch (last_pending_block.tag) {
