@@ -11194,6 +11194,10 @@ pub extern "c" fn rintf(x: f32) f32;
 pub extern "c" fn rint(x: f64) f64;
 pub extern "c" fn rintl(x: c_longdouble) c_longdouble;
 
+// Misc
+pub extern "c" fn a64l(s: [*c]const u8) c_long;
+pub extern "c" fn l64a(x0: c_long) [*c]u8;
+
 // OS-specific bits. These are protected from being used on the wrong OS by
 // comptime assertions inside each OS-specific file.
 
