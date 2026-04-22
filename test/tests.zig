@@ -1473,7 +1473,7 @@ const module_test_targets = blk: {
                 .os_tag = .wasi,
                 .abi = .none,
             },
-            .skip_modules = &.{ "compiler-rt", "std" },
+            .skip_modules = &.{"compiler-rt"},
             .use_llvm = false,
             .use_lld = false,
         },
@@ -2793,11 +2793,6 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
                 for (options.test_target_filters) |filter| {
                     if (std.mem.indexOf(u8, triple_txt, filter) != null) break;
                 } else continue;
-            }
-
-            if (target.os.tag == .windows and target.cpu.arch == .aarch64) {
-                // https://github.com/ziglang/zig/issues/14908
-                continue;
             }
 
             const test_mod = b.createModule(.{
