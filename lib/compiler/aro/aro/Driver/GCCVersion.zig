@@ -42,7 +42,7 @@ pub fn isLessThan(self: GCCVersion, rhs_major: i32, rhs_minor: i32, rhs_patch: i
     if (!mem.eql(u8, self.suffix, rhs_suffix)) {
         if (rhs_suffix.len == 0) return true;
         if (self.suffix.len == 0) return false;
-        return switch (std.mem.order(u8, self.suffix, rhs_suffix)) {
+        return switch (std.mem.order(u8)(self.suffix, rhs_suffix)) {
             .lt => true,
             .eq => unreachable,
             .gt => false,

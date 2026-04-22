@@ -811,7 +811,7 @@ test "test vector sunscreen" {
 
     var m2: [114]u8 = undefined;
     ChaCha20IETF.xor(m2[0..], result[0..], 1, key, nonce);
-    try testing.expect(mem.order(u8, m, &m2) == .eq);
+    try testing.expect(mem.order(u8)(m, &m2) == .eq);
 }
 
 // https://tools.ietf.org/html/draft-agl-tls-chacha20poly1305-04#section-7

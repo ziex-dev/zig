@@ -1872,7 +1872,7 @@ pub const Mutable = struct {
                 tmp1[1] = addMulLimbWithCarry(0, y1, q.limbs[k], &tmp1[0]);
 
                 // Big-endian compare
-                if (mem.order(Limb, &tmp1, &tmp0) != .gt)
+                if (mem.order(Limb)(&tmp1, &tmp0) != .gt)
                     break;
 
                 q.limbs[k] -= 1;

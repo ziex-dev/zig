@@ -372,7 +372,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
             const rhs_segment_name = rhs_segment.name(ctx.wasm);
             const lhs_prefix, const lhs_suffix = splitSegmentName(lhs_segment_name);
             const rhs_prefix, const rhs_suffix = splitSegmentName(rhs_segment_name);
-            switch (mem.order(u8, lhs_prefix, rhs_prefix)) {
+            switch (mem.order(u8)(lhs_prefix, rhs_prefix)) {
                 .lt => return true,
                 .gt => return false,
                 .eq => {},
@@ -389,7 +389,7 @@ pub fn finish(f: *Flush, wasm: *Wasm) !void {
                 .gt => return true,
                 .eq => {},
             }
-            switch (mem.order(u8, lhs_suffix, rhs_suffix)) {
+            switch (mem.order(u8)(lhs_suffix, rhs_suffix)) {
                 .lt => return true,
                 .gt => return false,
                 .eq => {},

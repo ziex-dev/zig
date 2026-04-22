@@ -76,7 +76,7 @@ pub fn order(lhs: Version, rhs: Version) std.math.Order {
             if (lnum.? < rnum.?) return .lt;
             if (lnum.? > rnum.?) return .gt;
         } else {
-            const ord = std.mem.order(u8, lid, rid);
+            const ord = std.mem.order(u8)(lid, rid);
             if (ord != .eq) return ord;
         }
     }

@@ -233,7 +233,7 @@ pub fn serveSourcesTar(fuzz: *Fuzz, req: *std.http.Server.Request) !void {
     const SortContext = struct {
         pub fn lessThan(this: @This(), lhs: Build.Cache.Path, rhs: Build.Cache.Path) bool {
             _ = this;
-            return switch (std.mem.order(u8, lhs.root_dir.path orelse ".", rhs.root_dir.path orelse ".")) {
+            return switch (std.mem.order(u8)(lhs.root_dir.path orelse ".", rhs.root_dir.path orelse ".")) {
                 .lt => true,
                 .gt => false,
                 .eq => std.mem.lessThan(u8, lhs.sub_path, rhs.sub_path),

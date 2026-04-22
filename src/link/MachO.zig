@@ -1551,7 +1551,7 @@ fn sortGlobalSymbolsByName(self: *MachO, symbols: []SymbolResolver.Index) void {
         fn lessThan(ctx: *MachO, lhs: SymbolResolver.Index, rhs: SymbolResolver.Index) bool {
             const lhs_name = ctx.resolver.keys.items[lhs - 1].getName(ctx);
             const rhs_name = ctx.resolver.keys.items[rhs - 1].getName(ctx);
-            return mem.order(u8, lhs_name, rhs_name) == .lt;
+            return mem.order(u8)(lhs_name, rhs_name) == .lt;
         }
     }.lessThan;
     mem.sort(SymbolResolver.Index, symbols, self, lessThan);
@@ -1777,7 +1777,7 @@ fn segmentLessThan(ctx: void, lhs: []const u8, rhs: []const u8) bool {
     const lhs_rank = getSegmentRank(lhs);
     const rhs_rank = getSegmentRank(rhs);
     if (lhs_rank == rhs_rank) {
-        return mem.order(u8, lhs, rhs) == .lt;
+        return mem.order(u8)(lhs, rhs) == .lt;
     }
     return lhs_rank < rhs_rank;
 }
@@ -1813,7 +1813,7 @@ fn sectionLessThan(ctx: void, lhs: macho.section_64, rhs: macho.section_64) bool
         const lhs_rank = getSectionRank(lhs);
         const rhs_rank = getSectionRank(rhs);
         if (lhs_rank == rhs_rank) {
-            return mem.order(u8, lhs.sectName(), rhs.sectName()) == .lt;
+            return mem.order(u8)(lhs.sectName(), rhs.sectName()) == .lt;
         }
         return lhs_rank < rhs_rank;
     }

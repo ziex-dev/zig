@@ -650,18 +650,23 @@ pub fn sortUnstableContext(a: usize, b: usize, context: anytype) void {
 }
 
 /// Compares two slices of numbers lexicographically. O(n).
-pub fn order(comptime T: type, lhs: []const T, rhs: []const T) math.Order {
-    if (lhs.ptr != rhs.ptr) {
-        const n = @min(lhs.len, rhs.len);
-        for (lhs[0..n], rhs[0..n]) |lhs_elem, rhs_elem| {
-            switch (math.order(lhs_elem, rhs_elem)) {
-                .eq => continue,
-                .lt => return .lt,
-                .gt => return .gt,
+pub fn order(comptime T: type) fn ([]const T, []const T) math.Order {
+    const S = struct {
+        fn order(lhs: []const T, rhs: []const T) math.Order {
+            if (lhs.ptr != rhs.ptr) {
+                const n = @min(lhs.len, rhs.len);
+                for (lhs[0..n], rhs[0..n]) |lhs_elem, rhs_elem| {
+                    switch (math.order(lhs_elem, rhs_elem)) {
+                        .eq => continue,
+                        .lt => return .lt,
+                        .gt => return .gt,
+                    }
+                }
             }
+            return math.order(lhs.len, rhs.len);
         }
-    }
-    return math.order(lhs.len, rhs.len);
+    };
+    return S.order;
 }
 
 /// Compares two many-item pointers with NUL-termination lexicographically.
@@ -678,15 +683,15 @@ pub fn boundedOrderZ(comptime T: type, lhs: [*:0]const T, rhs: [*:0]const T, bou
 }
 
 test order {
-    try testing.expect(order(u8, "abcd", "bee") == .lt);
-    try testing.expect(order(u8, "abc", "abc") == .eq);
-    try testing.expect(order(u8, "abc", "abc0") == .lt);
-    try testing.expect(order(u8, "", "") == .eq);
-    try testing.expect(order(u8, "", "a") == .lt);
+    try testing.expect(order(u8)("abcd", "bee") == .lt);
+    try testing.expect(order(u8)("abc", "abc") == .eq);
+    try testing.expect(order(u8)("abc", "abc0") == .lt);
+    try testing.expect(order(u8)("", "") == .eq);
+    try testing.expect(order(u8)("", "a") == .lt);
 
     const s: []const u8 = "abc";
-    try testing.expect(order(u8, s, s) == .eq);
-    try testing.expect(order(u8, s[0..2], s) == .lt);
+    try testing.expect(order(u8)(s, s) == .eq);
+    try testing.expect(order(u8)(s[0..2], s) == .lt);
 }
 
 test orderZ {
@@ -702,7 +707,7 @@ test orderZ {
 
 /// Returns true if lhs < rhs, false otherwise
 pub fn lessThan(comptime T: type, lhs: []const T, rhs: []const T) bool {
-    return order(T, lhs, rhs) == .lt;
+    return order(T)(lhs, rhs) == .lt;
 }
 
 test lessThan {

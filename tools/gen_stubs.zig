@@ -366,7 +366,7 @@ pub fn main(init: std.process.Init) !void {
             const section_a = ctx.sections.keys()[multi_sym_a.section];
             const section_b = ctx.sections.keys()[multi_sym_b.section];
 
-            switch (mem.order(u8, section_a, section_b)) {
+            switch (mem.order(u8)(section_a, section_b)) {
                 .lt => return true,
                 .gt => return false,
                 .eq => {},
@@ -375,7 +375,7 @@ pub fn main(init: std.process.Init) !void {
             const symbol_a = ctx.sym_table.keys()[index_a];
             const symbol_b = ctx.sym_table.keys()[index_b];
 
-            switch (mem.order(u8, symbol_a, symbol_b)) {
+            switch (mem.order(u8)(symbol_a, symbol_b)) {
                 .lt => return true,
                 .gt, .eq => return false,
             }

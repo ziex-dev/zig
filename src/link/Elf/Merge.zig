@@ -83,7 +83,7 @@ pub const Section = struct {
                     if (lhs_msub.size == rhs_msub.size) {
                         const lhs_string = ctx.bytes.items[lhs_msub.string_index..][0..lhs_msub.size];
                         const rhs_string = ctx.bytes.items[rhs_msub.string_index..][0..rhs_msub.size];
-                        return mem.order(u8, lhs_string, rhs_string) == .lt;
+                        return mem.order(u8)(lhs_string, rhs_string) == .lt;
                     }
                     return lhs_msub.size < rhs_msub.size;
                 }

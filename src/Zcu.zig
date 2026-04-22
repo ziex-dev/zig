@@ -1248,7 +1248,7 @@ pub const ErrorMsg = struct {
 
     pub fn order(lhs: *const ErrorMsg, rhs: *const ErrorMsg, zcu: *Zcu) std.math.Order {
         return lhs.src_loc.order(rhs.src_loc, zcu).differ() orelse
-            std.mem.order(u8, lhs.msg, rhs.msg).differ() orelse
+            std.mem.order(u8)(lhs.msg, rhs.msg).differ() orelse
             std.math.order(lhs.notes.len, rhs.notes.len).differ() orelse
             for (lhs.notes, rhs.notes) |*lhs_note, *rhs_note| {
                 if (order(lhs_note, rhs_note, zcu).differ()) |o| break o;
@@ -2786,7 +2786,7 @@ pub const LazySrcLoc = struct {
             const lhs_path = lhs_resolved.file_scope.path;
             const rhs_path = rhs_resolved.file_scope.path;
             return std.math.order(@intFromEnum(lhs_path.root), @intFromEnum(rhs_path.root)).differ() orelse
-                std.mem.order(u8, lhs_path.sub_path, rhs_path.sub_path).differ().?;
+                std.mem.order(u8)(lhs_path.sub_path, rhs_path.sub_path).differ().?;
         }
         const prev_prot = zcu.comp.io.swapCancelProtection(.blocked);
         defer _ = zcu.comp.io.swapCancelProtection(prev_prot);

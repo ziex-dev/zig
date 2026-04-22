@@ -51,7 +51,7 @@ fn wmemchr(ptr: [*]const wchar_t, value: wchar_t, len: usize) callconv(.c) ?[*]w
 }
 
 fn wmemcmp(a: [*]const wchar_t, b: [*]const wchar_t, len: usize) callconv(.c) c_int {
-    return switch (std.mem.order(wchar_t, a[0..len], b[0..len])) {
+    return switch (std.mem.order(wchar_t)(a[0..len], b[0..len])) {
         .eq => 0,
         .gt => 1,
         .lt => -1,

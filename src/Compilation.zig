@@ -4014,7 +4014,7 @@ pub fn getAllErrorsAlloc(comp: *Compilation) error{OutOfMemory}!ErrorBundle {
                 const lhs_path = ctx.zcu.fileByIndex(ctx.failed_files_keys[lhs_index]).path;
                 const rhs_path = ctx.zcu.fileByIndex(ctx.failed_files_keys[rhs_index]).path;
                 if (lhs_path.root != rhs_path.root) return @intFromEnum(lhs_path.root) < @intFromEnum(rhs_path.root);
-                return std.mem.order(u8, lhs_path.sub_path, rhs_path.sub_path).compare(.lt);
+                return std.mem.order(u8)(lhs_path.sub_path, rhs_path.sub_path).compare(.lt);
             }
         };
         zcu.failed_files.sort(@as(FileSortCtx, .{

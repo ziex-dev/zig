@@ -1448,8 +1448,7 @@ fn objectSectionMapIndex(
         const parent_ni = parent.node(coff);
         var prev_ni: MappedFile.Node.Index = .none;
         var next_it = parent_ni.children(&coff.mf);
-        while (next_it.next()) |next_ni| switch (std.mem.order(
-            u8,
+        while (next_it.next()) |next_ni| switch (std.mem.order(u8)(
             name_slice,
             coff.getNode(next_ni).object_section.name(coff).toSlice(coff),
         )) {

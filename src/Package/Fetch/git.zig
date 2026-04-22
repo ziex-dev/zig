@@ -456,7 +456,7 @@ const Odb = struct {
             const mid_index = start_index + (end_index - start_index) / 2;
             try odb.index_file.seekTo(IndexHeader.size + mid_index * oid_length);
             const mid_oid = try Oid.readBytes(odb.format, &odb.index_file.interface);
-            switch (mem.order(u8, mid_oid.slice(), oid.slice())) {
+            switch (mem.order(u8)(mid_oid.slice(), oid.slice())) {
                 .lt => start_index = mid_index + 1,
                 .gt => end_index = mid_index,
                 .eq => break mid_index,

@@ -103,8 +103,8 @@ fn iterateAndFilterByVersion(
         }
 
         fn order(lhs: @This(), rhs: @This()) std.math.Order {
-            return std.mem.order(u32, &lhs.nums, &rhs.nums).differ() orelse
-                std.mem.order(u8, lhs.build, rhs.build);
+            return std.mem.order(u32)(&lhs.nums, &rhs.nums).differ() orelse
+                std.mem.order(u8)(lhs.build, rhs.build);
         }
     };
     var versions = std.array_list.Managed(Version).init(gpa);

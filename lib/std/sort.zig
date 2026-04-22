@@ -511,6 +511,7 @@ test binarySearch {
     try std.testing.expectEqual(2, binarySearch(R, &[_]R{ R.r(-100, -50), R.r(-40, -20), R.r(-10, 20), R.r(30, 40) }, @as(i32, 10), R.order));
     try std.testing.expectEqual(1, binarySearch(R, &[_]R{ R.r(-100, -50), R.r(-40, -20), R.r(-10, 20), R.r(30, 40) }, @as(i32, -20), R.order));
     try std.testing.expectEqual(2, binarySearch([]const u8, &[_][]const u8{ "", "abc", "1234", "vwxyz" }, @as(usize, 4), S.orderLength));
+    try std.testing.expectEqual(2, binarySearch([]const u8, &[_][]const u8{ "", "abc", "1234", "vwxyz" }, @as([]const u8, "1234"), mem.order(u8)));
 }
 
 /// Returns the index of the first element in `items` that is greater than or equal to `context`,
