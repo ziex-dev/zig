@@ -12,14 +12,12 @@ comptime {
 
 const digits = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-fn a64l(str: [*:0]const u8) c_long {
-    const ptr: [*:0]const u8 = @ptrCast(str);
-
+fn a64l(str: [*:0]const u8) callconv(.c) c_long {
     var x: u32 = 0;
     var e: u32 = 0;
     var n: usize = 0;
     while (n < 6) : (n += 1) {
-        const chr = ptr[n];
+        const chr = str[n];
         if (chr == 0) break;
         const idx = std.mem.indexOfScalar(u8, digits, chr) orelse break;
         x |= @as(u32, @intCast(idx)) << @intCast(e);
@@ -29,7 +27,7 @@ fn a64l(str: [*:0]const u8) c_long {
     return @as(c_long, @intCast(@as(i32, @bitCast(x))));
 }
 
-fn l64a(x0: c_long) [*:0]u8 {
+fn l64a(x0: c_long) callconv(.c) [*:0]u8 {
     const static = struct {
         var str: [6:0]u8 = undefined;
     };
