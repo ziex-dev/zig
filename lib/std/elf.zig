@@ -854,6 +854,13 @@ pub const Header = struct {
 
         return std.fmt.allocPrint(allocator, "{s}-{s}", .{ prefix, suffix });
     }
+
+    pub fn endianName(h: Header) []const u8 {
+        return switch (h.endian) {
+            .little => "little-endian",
+            .big => "big-endian",
+        };
+    }
 };
 
 pub const ProgramHeaderIterator = struct {
