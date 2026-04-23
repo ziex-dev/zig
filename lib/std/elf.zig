@@ -1702,6 +1702,35 @@ pub const OSABI = enum(u8) {
     STANDALONE = 255,
 
     _,
+
+    pub fn description(osabi: OSABI) []const u8 {
+        return switch (osabi) {
+            .NONE => "UNIX System V",
+            .HPUX => "HP-UX",
+            .NETBSD => "NetBSD",
+            .GNU => "GNU (Hurd/Linux)",
+            .SOLARIS => "Solaris",
+            .AIX => "AIX",
+            .IRIX => "IRIX",
+            .FREEBSD => "FreeBSD",
+            .TRU64 => "TRU64 UNIX",
+            .MODESTO => "Novell Modesto",
+            .OPENBSD => "OpenBSD",
+            .OPENVMS => "OpenVMS",
+            .NSK => "Hewlett-Packard Non-Stop Kernel",
+            .AROS => "AROS",
+            .FENIXOS => "FenixOS",
+            .CLOUDABI => "Nuxi CloudABI",
+            .OPENVOS => "Stratus Technologies OpenVOS",
+            .CUDA => "NVIDIA CUDA architecture",
+            .AMDGPU_HSA => "AMD HSA Runtime",
+            .AMDGPU_PAL => "AMD PAL Runtime",
+            .AMDGPU_MESA3D => "AMD Mesa3D Runtime",
+            .ARM => "ARM",
+            .STANDALONE => "Standalone (embedded) application",
+            else => @tagName(osabi),
+        };
+    }
 };
 
 /// Machine architectures.
