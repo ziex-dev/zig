@@ -48,7 +48,7 @@ inputs: Inputs,
 /// max_rss value that does not exceed the `max_total_rss` value of the build
 /// runner. This value is configurable on the command line, and defaults to the
 /// total system memory available.
-max_rss: usize,
+max_rss: u64,
 
 state: State,
 pending_deps: u32,
@@ -59,7 +59,7 @@ result_stderr: []const u8,
 result_cached: bool,
 result_duration_ns: ?u64,
 /// 0 means unavailable or not reported.
-result_peak_rss: usize,
+result_peak_rss: u64,
 /// If the step is failed and this field is populated, this is the command which failed.
 /// This field may be populated even if the step succeeded.
 result_failed_command: ?[]const u8,
@@ -226,7 +226,7 @@ pub const StepOptions = struct {
     owner: *Build,
     makeFn: MakeFn = makeNoOp,
     first_ret_addr: ?usize = null,
-    max_rss: usize = 0,
+    max_rss: u64 = 0,
 };
 
 pub fn init(options: StepOptions) Step {
@@ -449,7 +449,7 @@ pub fn evalZigProcess(
             const term = zp.child.wait(io) catch |e| {
                 return s.fail("unable to wait for {s}: {t}", .{ argv[0], e });
             };
-            s.result_peak_rss = zp.child.resource_usage_statistics.getMaxRss() orelse 0;
+            s.result_peak_rss = @as(u64, zp.child.resource_usage_statistics.getMaxRss() orelse 0);
             exited = true;
             try handleChildProcessTerm(s, term);
             return error.MakeFailed;
@@ -494,7 +494,7 @@ pub fn evalZigProcess(
         const term = zp.child.wait(io) catch |err| {
             return s.fail("unable to wait for {s}: {t}", .{ argv[0], err });
         };
-        s.result_peak_rss = zp.child.resource_usage_statistics.getMaxRss() orelse 0;
+        s.result_peak_rss = @as(u64, zp.child.resource_usage_statistics.getMaxRss() orelse 0);
 
         // Special handling for Compile step that is expecting compile errors.
         if (s.cast(Compile)) |compile| switch (term) {

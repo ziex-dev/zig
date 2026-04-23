@@ -661,7 +661,7 @@ fn countSubProcesses(all_steps: []const *Step) usize {
 const Run = struct {
     gpa: Allocator,
 
-    available_rss: usize,
+    available_rss: u64,
     max_rss_is_default: bool,
     max_rss_mutex: Io.Mutex,
     skip_oom_steps: bool,
@@ -715,7 +715,7 @@ fn prepare(
     {
         // Check that we have enough memory to complete the build.
         var any_problems = false;
-        var max_needed: usize = 0;
+        var max_needed: u64 = 0;
         for (step_stack.keys()) |s| {
             if (s.max_rss == 0) continue;
             max_needed = @max(max_needed, s.max_rss);

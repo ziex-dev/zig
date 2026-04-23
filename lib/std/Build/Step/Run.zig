@@ -2105,7 +2105,7 @@ const FuzzTestRunner = struct {
 
         f.batch.cancel(io);
         gpa.free(f.batch.storage);
-        var total_rss: usize = 0;
+        var total_rss: u64 = 0;
         for (f.instances) |*instance| {
             instance.child.kill(io);
             instance.message.deinit(gpa);
