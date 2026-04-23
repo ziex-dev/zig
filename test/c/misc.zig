@@ -6,12 +6,12 @@ const testing = std.testing;
 
 test "a64l" {
     if (builtin.target.os.tag == .windows) return; // no a64l
-    try testing.expectEqual(123, c.a64l("v/"));
-    try testing.expectEqual(-1, c.a64l("zzzzzz"));
-    try testing.expectEqual(-262021, c.a64l("v/.zzzz"));
-    try testing.expectEqual(0, c.a64l("."));
-    try testing.expectEqual(1, c.a64l("/"));
-    try testing.expectEqual(1, c.a64l("/."));
+    try testing.expectEqual(@as(c_long, 123), c.a64l("v/"));
+    try testing.expectEqual(@as(c_long, -1), c.a64l("zzzzzz"));
+    try testing.expectEqual(@as(c_long, -262021), c.a64l("v/.zzzz"));
+    try testing.expectEqual(@as(c_long, 0), c.a64l("."));
+    try testing.expectEqual(@as(c_long, 1), c.a64l("/"));
+    try testing.expectEqual(@as(c_long, 1), c.a64l("/."));
 }
 
 test "l64a" {

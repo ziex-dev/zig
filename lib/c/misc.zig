@@ -23,21 +23,6 @@ fn a64l(str: [*:0]const u8) callconv(.c) c_long {
         x |= @as(u32, @intCast(idx)) << @intCast(e);
         e += 6;
     }
-    std.debug.print("x: {X}\n", .{x});
-
-    const x_i32 = @as(i32, @bitCast(x));
-    std.debug.print("x_i32: {X}\n", .{x_i32});
-
-    const x_long = @as(c_long, @intCast(x_i32));
-    std.debug.print("x_long: {X}\n", .{x_long});
-
-    const x_org = @as(c_long, @intCast(@as(i32, @bitCast(x))));
-    std.debug.print("x_org1: {X}\n", .{x_org});
-
-    const x_org2: i64 = @intCast(@as(i32, @bitCast(x)));
-    std.debug.print("x_org2: {X}\n", .{x_org2});
-
-    std.debug.print("\n", .{});
     return @intCast(@as(i32, @bitCast(x)));
 }
 
