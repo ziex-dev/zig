@@ -834,6 +834,26 @@ pub const Header = struct {
             .shstrndx = hdr.e_shstrndx,
         };
     }
+
+    pub fn targetName(h: Header, allocator: std.mem.Allocator) ![]const u8 {
+        const prefix = if (h.is_64) "elf64" else "elf32";
+        const suffix = switch (h.machine) {
+            .X86_64 => "x86-64",
+            .@"386" => "i386",
+            .AARCH64 => if (h.endian == .little) "littleaarch64" else "bigaarch64",
+            .ARM => if (h.endian == .little) "littlearm" else "bigarm",
+            .RISCV => "littleriscv",
+            .PPC64 => if (h.endian == .little) "powerpcle" else "powerpc",
+            .PPC => if (h.endian == .little) "powerpcle" else "powerpc",
+            .MIPS => if (h.endian == .little) "tradlittlemips" else "tradbigmips",
+            .LOONGARCH => "loongarch",
+            .S390 => "s390",
+            .SPARCV9 => "sparc",
+            else => "unknown",
+        };
+
+        return std.fmt.allocPrint(allocator, "{s}-{s}", .{ prefix, suffix });
+    }
 };
 
 pub const ProgramHeaderIterator = struct {
