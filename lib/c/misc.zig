@@ -26,7 +26,7 @@ fn a64l(str: [*:0]const u8) c_long {
         e += 6;
     }
 
-    return @as(i32, @bitCast(x));
+    return @as(c_long, @intCast(@as(i32, @bitCast(x))));
 }
 
 fn l64a(x0: c_long) [*:0]u8 {
@@ -34,7 +34,7 @@ fn l64a(x0: c_long) [*:0]u8 {
         var str: [6:0]u8 = undefined;
     };
 
-    var x: u32 = @truncate(@as(c_ulong, @bitCast(x0)));
+    var x: u32 = @bitCast(@as(i32, @truncate(x0)));
     var n: usize = 0;
     while (n < 6) : (n += 1) {
         if (x == 0) break;
