@@ -15,8 +15,7 @@ const digits = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 fn a64l(str: [*:0]const u8) callconv(.c) c_long {
     var x: u32 = 0;
     var e: u32 = 0;
-    var n: usize = 0;
-    while (n < 6) : (n += 1) {
+    for (0..6) |n| {
         const chr = str[n];
         if (chr == 0) break;
         const idx = std.mem.indexOfScalar(u8, digits, chr) orelse break;
@@ -28,17 +27,15 @@ fn a64l(str: [*:0]const u8) callconv(.c) c_long {
 
 fn l64a(x0: c_long) callconv(.c) [*:0]u8 {
     const static = struct {
-        var str: [6:0]u8 = undefined;
+        var str: [7]u8 = @splat(0);
     };
 
     var x: u32 = @bitCast(@as(i32, @truncate(x0)));
-    var n: usize = 0;
-    while (n < 6) : (n += 1) {
+    for (0..6) |n| {
         if (x == 0) break;
         static.str[n] = digits[x & 63];
         x >>= 6;
+        static.str[n + 1] = 0;
     }
-
-    static.str[n] = 0;
-    return &static.str;
+    return @ptrCast(&static.str);
 }
