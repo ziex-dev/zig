@@ -12,8 +12,7 @@ comptime {
 
 const digits = "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-fn a64l(str: [*c]const u8) c_long {
-    if (str == null) return 0;
+fn a64l(str: [*:0]const u8) c_long {
     const ptr: [*:0]const u8 = @ptrCast(str);
 
     var x: u32 = 0;
@@ -30,9 +29,9 @@ fn a64l(str: [*c]const u8) c_long {
     return @as(i32, @bitCast(x));
 }
 
-fn l64a(x0: c_long) [*c]u8 {
+fn l64a(x0: c_long) [*:0]u8 {
     const static = struct {
-        var str: [7]u8 = undefined;
+        var str: [6:0]u8 = undefined;
     };
 
     var x: u32 = @truncate(@as(c_ulong, @bitCast(x0)));
