@@ -979,6 +979,9 @@ pub const Timestamp = struct {
         const now_ts = clock.now(io);
         return t.durationTo(now_ts);
     }
+    pub fn compare(ts1: Timestamp, op: math.CompareOperator, ts2: Timestamp) bool {
+        return math.compare(ts1, op, ts2);
+    }
 };
 
 pub const Duration = struct {
