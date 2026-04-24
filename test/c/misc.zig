@@ -12,7 +12,7 @@ test "a64l" {
     try testing.expectEqual(1, c.a64l(@ptrCast("/")));
     try testing.expectEqual(1, c.a64l(@ptrCast("/.")));
 
-    // TODO: he glibc calls are failing; this needs to be fixed.
+    // TODO: the glibc calls are failing; this needs to be fixed.
     // try testing.expectEqual(-1, c.a64l(@ptrCast("zzzzzz")));
     // try testing.expectEqual(-262021, c.a64l(@ptrCast("v/.zzzz")));
 }
@@ -24,8 +24,6 @@ test "l64a" {
     try testing.expectEqualStrings("v/", std.mem.span(@as([*:0]const u8, c.l64a(123))));
     try testing.expectEqualStrings("/", std.mem.span(@as([*:0]const u8, c.l64a(1))));
     try testing.expectEqualStrings("./", std.mem.span(@as([*:0]const u8, c.l64a(64))));
-
-    // TODO: he glibc calls are failing; this needs to be fixed.
-    // try testing.expectEqualStrings("zzzzz1", std.mem.span(@as([*:0]const u8, c.l64a(-1))));
-    // try testing.expectEqualStrings("v/.zz1", std.mem.span(@as([*:0]const u8, c.l64a(-262021))));
+    try testing.expectEqualStrings("zzzzz1", std.mem.span(@as([*:0]const u8, c.l64a(-1))));
+    try testing.expectEqualStrings("v/.zz1", std.mem.span(@as([*:0]const u8, c.l64a(-262021))));
 }
