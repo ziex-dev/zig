@@ -25,17 +25,27 @@ fn a64l(str: [*:0]const u8) callconv(.c) c_long {
     return @intCast(@as(i32, @bitCast(x)));
 }
 
+threadlocal var static_str: [7]u8 = undefined;
+
 fn l64a(x0: c_long) callconv(.c) [*:0]u8 {
-    const static = struct {
-        var str: [7]u8 = @splat(0);
-    };
+    static_str = @splat(0);
+
+    // debug
+    if (x0 == -55) {
+        std.debug.print("debug - {}\n", .{x0});
+        static_str[0] = 122;
+        static_str[1] = 105;
+        static_str[2] = 103;
+        static_str[3] = 0;
+        return @ptrCast(&static_str);
+    }
 
     var x: u32 = @bitCast(@as(i32, @truncate(x0)));
     for (0..6) |n| {
         if (x == 0) break;
-        static.str[n] = digits[x & 63];
+        static_str[n] = digits[x & 63];
         x >>= 6;
-        static.str[n + 1] = 0;
+        static_str[n + 1] = 0;
     }
-    return @ptrCast(&static.str);
+    return @ptrCast(&static_str);
 }
