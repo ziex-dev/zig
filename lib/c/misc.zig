@@ -29,17 +29,6 @@ threadlocal var static_str: [7]u8 = undefined;
 
 fn l64a(x0: c_long) callconv(.c) [*:0]u8 {
     static_str = @splat(0);
-
-    // debug
-    if (x0 == -55) {
-        std.debug.print("debug - {}\n", .{x0});
-        static_str[0] = 122;
-        static_str[1] = 105;
-        static_str[2] = 103;
-        static_str[3] = 0;
-        return @ptrCast(&static_str);
-    }
-
     var x: u32 = @bitCast(@as(i32, @truncate(x0)));
     for (0..6) |n| {
         if (x == 0) break;
