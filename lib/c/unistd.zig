@@ -5,6 +5,7 @@ const linux = std.os.linux;
 
 const symbol = @import("../c.zig").symbol;
 const errno = @import("../c.zig").errno;
+const errnoIsize = @import("../c.zig").errnoIsize;
 
 comptime {
     if (builtin.target.isMuslLibC()) {
@@ -23,6 +24,7 @@ comptime {
         symbol(&dupLinux, "dup");
         symbol(&dup2Linux, "dup2");
         symbol(&dup3Linux, "dup3");
+        symbol(&ftruncateLinux, "ftruncate");
 
         symbol(&getegidLinux, "getegid");
         symbol(&geteuidLinux, "geteuid");
@@ -41,6 +43,8 @@ comptime {
         symbol(&linkLinux, "link");
         symbol(&linkatLinux, "linkat");
         symbol(&pipeLinux, "pipe");
+        symbol(&readlinkLinux, "readlink");
+        symbol(&readlinkatLinux, "readlinkat");
         symbol(&renameatLinux, "renameat");
         symbol(&symlinkLinux, "symlink");
         symbol(&symlinkatLinux, "symlinkat");
@@ -128,6 +132,10 @@ fn dup3Linux(old: c_int, new: c_int, flags: c_int) callconv(.c) c_int {
     return errno(res);
 }
 
+fn ftruncateLinux(fd: c_int, length: linux.off_t) callconv(.c) c_int {
+    return errno(linux.ftruncate(fd, length));
+}
+
 fn getegidLinux() callconv(.c) linux.gid_t {
     return linux.getegid();
 }
@@ -186,6 +194,22 @@ fn linkatLinux(old_fd: c_int, old: [*:0]const c_char, new_fd: c_int, new: [*:0]c
 
 fn pipeLinux(fd: *[2]c_int) callconv(.c) c_int {
     return errno(linux.pipe(@ptrCast(fd)));
+}
+
+fn readlinkLinux(noalias path: [*:0]const c_char, noalias buf: [*]c_char, bufsize: usize) callconv(.c) isize {
+    const casted_buf: [*]u8 = @ptrCast(buf);
+    var dummy_buf: [1]u8 = undefined;
+    const unempty_buf = if (bufsize == 0) &dummy_buf else casted_buf[0..bufsize];
+    const result = errnoIsize(linux.readlink(@ptrCast(path), unempty_buf.ptr, unempty_buf.len));
+    return if (bufsize == 0 and result > 0) 0 else result;
+}
+
+fn readlinkatLinux(fd: c_int, noalias path: [*:0]const c_char, noalias buf: [*]c_char, bufsize: usize) callconv(.c) isize {
+    const casted_buf: [*]u8 = @ptrCast(buf);
+    var dummy_buf: [1]u8 = undefined;
+    const unempty_buf = if (bufsize == 0) &dummy_buf else casted_buf[0..bufsize];
+    const result = errnoIsize(linux.readlinkat(fd, @ptrCast(path), unempty_buf.ptr, unempty_buf.len));
+    return if (bufsize == 0 and result > 0) 0 else result;
 }
 
 fn renameatLinux(old_fd: c_int, old: [*:0]const c_char, new_fd: c_int, new: [*:0]const c_char) callconv(.c) c_int {
