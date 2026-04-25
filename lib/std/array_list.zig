@@ -544,6 +544,9 @@ pub fn AlignedManaged(comptime T: type, comptime alignment: ?mem.Alignment) type
             return self.allocatedSlice()[self.items.len..];
         }
 
+        /// Deprecated in favor of `getLast`
+        pub const getLastOrNull = getLast;
+
         /// Returns the last element from the list, or `null` if the list is empty.
         pub fn getLast(self: Self) ?T {
             if (self.items.len == 0) return null;
