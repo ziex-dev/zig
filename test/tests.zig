@@ -412,6 +412,14 @@ const module_test_targets = blk: {
 
         .{
             .target = .{
+                .cpu_arch = .loongarch32,
+                .os_tag = .linux,
+                .abi = .none,
+            },
+        },
+
+        .{
+            .target = .{
                 .cpu_arch = .loongarch64,
                 .os_tag = .linux,
                 .abi = .none,
@@ -439,9 +447,37 @@ const module_test_targets = blk: {
             .target = .{
                 .cpu_arch = .loongarch64,
                 .os_tag = .linux,
+                .abi = .muslsf,
+            },
+            .link_libc = true,
+            .extra_target = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .loongarch64,
+                .os_tag = .linux,
+                .abi = .muslsf,
+            },
+            .linkage = .dynamic,
+            .link_libc = true,
+            .extra_target = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .loongarch64,
+                .os_tag = .linux,
                 .abi = .gnu,
             },
             .link_libc = true,
+        },
+        .{
+            .target = .{
+                .cpu_arch = .loongarch64,
+                .os_tag = .linux,
+                .abi = .gnusf,
+            },
+            .link_libc = true,
+            .extra_target = true,
         },
 
         .{
@@ -1713,20 +1749,26 @@ const c_abi_targets = blk: {
             },
         },
 
-        // https://gitlab.com/qemu-project/qemu/-/issues/3291
-        // .{
-        //     .target = .{
-        //         .cpu_arch = .hexagon,
-        //         .os_tag = .linux,
-        //         .abi = .musl,
-        //     },
-        // },
+        .{
+            .target = .{
+                .cpu_arch = .hexagon,
+                .os_tag = .linux,
+                .abi = .musl,
+            },
+        },
 
         .{
             .target = .{
                 .cpu_arch = .loongarch64,
                 .os_tag = .linux,
                 .abi = .musl,
+            },
+        },
+        .{
+            .target = .{
+                .cpu_arch = .loongarch64,
+                .os_tag = .linux,
+                .abi = .muslsf,
             },
         },
 
@@ -2196,27 +2238,6 @@ pub fn addStandaloneTests(
             .simple_skip_release_safe = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseSafe) == null,
             .simple_skip_release_fast = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseFast) == null,
             .simple_skip_release_small = mem.indexOfScalar(OptimizeMode, optimize_modes, .ReleaseSmall) == null,
-        });
-        const test_cases_dep_step = test_cases_dep.builder.default_step;
-        test_cases_dep_step.name = b.dupe(test_cases_dep_name);
-        step.dependOn(test_cases_dep.builder.default_step);
-    }
-    return step;
-}
-
-pub fn addLinkTests(
-    b: *std.Build,
-    enable_macos_sdk: bool,
-    enable_ios_sdk: bool,
-    enable_symlinks_windows: bool,
-) *Step {
-    const step = b.step("test-link", "Run the linker tests");
-    if (compilerHasPackageManager(b)) {
-        const test_cases_dep_name = "link_test_cases";
-        const test_cases_dep = b.dependency(test_cases_dep_name, .{
-            .enable_ios_sdk = enable_ios_sdk,
-            .enable_macos_sdk = enable_macos_sdk,
-            .enable_symlinks_windows = enable_symlinks_windows,
         });
         const test_cases_dep_step = test_cases_dep.builder.default_step;
         test_cases_dep_step.name = b.dupe(test_cases_dep_name);
