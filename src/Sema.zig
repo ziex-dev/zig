@@ -12520,7 +12520,7 @@ fn validateSwitchItemOrRange(
             }
         },
         .@"union", .@"struct" => {
-            const backing_int_val = ip.indexToKey(item_val.toIntern()).bitpack.backing_int_val;
+            const backing_int_val = ip.indexToKey(item_val.toIntern()).@"bitpack".backing_int_val;
             break :maybe_prev_src range_set.addAssumeCapacity(.{
                 .first = .fromInterned(backing_int_val),
                 .last = .fromInterned(backing_int_val),

@@ -1156,12 +1156,12 @@ fn pegPrimaryTypeExpr(a: *AstSmith) SourceError!void {
     }
 }
 
-/// ContainerDecl <- (KEYWORD_extern / KEYWORD_packed)? ContainerDeclAuto
+/// ContainerDecl <- (KEYWORD_bitpack / KEYWORD_extern)? ContainerDeclAuto
 fn pegContainerDecl(a: *AstSmith) SourceError!void {
     switch (a.smith.value(enum { auto, @"extern", @"packed" })) {
         .auto => {},
+        .@"packed" => try a.pegToken(.keyword_bitpack),
         .@"extern" => try a.pegToken(.keyword_extern),
-        .@"packed" => try a.pegToken(.keyword_packed),
     }
     try a.pegContainerDeclAuto();
 }

@@ -1219,7 +1219,7 @@ pub const DeclGen = struct {
                 },
                 else => unreachable,
             },
-            .bitpack => |bitpack| return dg.renderValue(w, .fromInterned(bitpack.backing_int_val), location),
+            .@"bitpack" => |@"bitpack"| return dg.renderValue(w, .fromInterned(@"bitpack".backing_int_val), location),
             .un => |un| {
                 const loaded_union = ip.loadUnionType(ty.toIntern());
                 if (un.tag == .none) {
@@ -1585,7 +1585,7 @@ pub const DeclGen = struct {
                 .opt,
                 .aggregate,
                 .un,
-                .bitpack,
+                .@"bitpack",
                 .memoized_call,
                 => unreachable, // values, not types
             },

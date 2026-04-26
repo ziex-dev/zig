@@ -50,6 +50,7 @@ zig_keywords = {
     'anyframe',
     'anytype',
     'asm',
+    'bitpack',
     'break',
     'callconv',
     'catch',

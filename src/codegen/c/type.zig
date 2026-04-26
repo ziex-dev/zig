@@ -12,7 +12,7 @@ pub const CType = union(enum) {
 
     @"fn": Type,
     @"enum": Type,
-    bitpack: Type,
+    @"bitpack": Type,
     @"struct": Type,
     union_auto: Type,
     union_extern: Type,
@@ -70,7 +70,7 @@ pub const CType = union(enum) {
             .float,
             .@"fn",
             .@"enum",
-            .bitpack,
+            .@"bitpack",
             .@"struct",
             .union_auto,
             .union_extern,
@@ -386,7 +386,7 @@ pub const CType = union(enum) {
                     try deps.addType(gpa, cur_ty, allow_incomplete);
                     switch (cur_ty.containerLayout(zcu)) {
                         .auto, .@"extern" => return .{ .@"struct" = cur_ty },
-                        .@"packed" => return .{ .bitpack = cur_ty },
+                        .@"packed" => return .{ .@"bitpack" = cur_ty },
                     }
                 },
                 .@"union" => {
@@ -394,7 +394,7 @@ pub const CType = union(enum) {
                     switch (cur_ty.containerLayout(zcu)) {
                         .auto => return .{ .union_auto = cur_ty },
                         .@"extern" => return .{ .union_extern = cur_ty },
-                        .@"packed" => return .{ .bitpack = cur_ty },
+                        .@"packed" => return .{ .@"bitpack" = cur_ty },
                     }
                 },
                 .@"enum" => {
@@ -727,7 +727,7 @@ pub const CType = union(enum) {
             .float => |float| try w.writeAll(@tagName(float)),
             .@"fn" => |ty| try w.print("{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .@"enum" => |ty| try w.print("enum__{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
-            .bitpack => |ty| try w.print("bitpack__{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
+            .@"bitpack" => |ty| try w.print("bitpack__{f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .@"struct" => |ty| try w.print("struct {f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .union_auto => |ty| try w.print("struct {f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
             .union_extern => |ty| try w.print("union {f}_{d}", .{ fmtZigType(ty, zcu), ty.toIntern() }),
@@ -803,7 +803,7 @@ pub const CType = union(enum) {
             .float,
             .@"fn",
             .@"enum",
-            .bitpack,
+            .@"bitpack",
             .@"struct",
             .union_auto,
             .union_extern,
@@ -1029,7 +1029,7 @@ pub const CType = union(enum) {
             .opt,
             .aggregate,
             .un,
-            .bitpack,
+            .@"bitpack",
             // memoization, not types
             .memoized_call,
             => unreachable,

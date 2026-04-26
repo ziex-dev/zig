@@ -2379,7 +2379,7 @@ fn parseSuffixExpr(p: *Parse) !?Node.Index {
 ///      / KEYWORD_unreachable
 ///      / STRINGLITERAL
 ///
-/// ContainerDecl <- (KEYWORD_extern / KEYWORD_packed)? ContainerDeclAuto
+/// ContainerDecl <- (KEYWORD_bitpack, KEYWORD_extern)? ContainerDeclAuto
 ///
 /// ContainerDeclAuto <- ContainerDeclType LBRACE ContainerMembers RBRACE
 ///
@@ -2436,6 +2436,7 @@ fn parsePrimaryTypeExpr(p: *Parse) !?Node.Index {
         .keyword_if => return try p.parseIf(expectTypeExpr),
         .keyword_switch => return try p.expectSwitchExpr(false),
 
+        .keyword_bitpack,
         .keyword_extern,
         .keyword_packed,
         => {
