@@ -81,7 +81,7 @@ const elf = struct {
             \\{s}: file format {s}
             \\
             \\Binary type: {s}
-            \\Machine:     {s} (EM_{s})
+            \\Machine:     {s}
             \\Entry point: 0x{x:0>16}
             \\Byte order:  {s}
             \\Class:       {s}
@@ -91,12 +91,11 @@ const elf = struct {
             c.input_path,
             try h.targetName(c.allocator),
             @tagName(h.type),
-            h.machine.description(),
             @tagName(h.machine),
             h.entry,
-            h.endianName(),
+            @tagName(h.endian),
             if (h.is_64) "ELF64" else "ELF32",
-            h.os_abi.description(),
+            @tagName(h.os_abi),
         });
     }
 };
