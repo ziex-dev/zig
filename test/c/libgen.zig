@@ -13,6 +13,7 @@ fn expectDirname(input: [:0]const u8, expected: []const u8) !void {
 }
 
 test "dirname" {
+    if (builtin.target.os.tag == .windows) return; // windows has backslash instead of slash
     try expectDirname("", ".");
     try expectDirname(".", ".");
     try expectDirname("..", ".");

@@ -11194,6 +11194,8 @@ pub extern "c" fn rintf(x: f32) f32;
 pub extern "c" fn rint(x: f64) f64;
 pub extern "c" fn rintl(x: c_longdouble) c_longdouble;
 
+pub extern "c" fn dirname(s: ?[*:0]c_char) callconv(.c) [*:0]c_char;
+
 // OS-specific bits. These are protected from being used on the wrong OS by
 // comptime assertions inside each OS-specific file.
 
