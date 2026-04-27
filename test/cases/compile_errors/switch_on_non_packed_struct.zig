@@ -20,6 +20,6 @@ export fn entry2(s: Extern) void {
 // error
 //
 // :6:13: error: switch on struct with auto layout
-// :1:14: note: consider 'packed struct' here
+// :1:14: note: consider 'bitpack struct' here
 // :15:13: error: switch on struct with extern layout
-// :11:23: note: consider 'packed struct' here
+// :11:23: note: consider 'bitpack struct' here

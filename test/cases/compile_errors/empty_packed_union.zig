@@ -5,4 +5,4 @@ export fn foo() void {
 
 // error
 //
-// :2:23: error: packed union has no fields
+// :2:23: error: bitpack union has no fields

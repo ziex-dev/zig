@@ -53,7 +53,7 @@ const io = std.Io.Threaded.global_single_threaded.io();
 #expect_error=main.zig:2:36: error: field bit width does not match backing integer
 #expect_error=main.zig:2:36: note: field type 'u10' has bit width '10'
 #expect_error=main.zig:2:27: note: backing integer 'i8' has bit width '8'
-#expect_error=main.zig:2:36: note: all fields in a packed union must have the same bit width
+#expect_error=main.zig:2:36: note: all fields in a bitpack union must have the same bit width
 
 #update=make backing types too big
 #file=main.zig
@@ -74,4 +74,4 @@ const io = std.Io.Threaded.global_single_threaded.io();
 #expect_error=main.zig:2:37: error: field bit width does not match backing integer
 #expect_error=main.zig:2:37: note: field type 'u10' has bit width '10'
 #expect_error=main.zig:2:27: note: backing integer 'u32' has bit width '32'
-#expect_error=main.zig:2:37: note: all fields in a packed union must have the same bit width
+#expect_error=main.zig:2:37: note: all fields in a bitpack union must have the same bit width

@@ -6,4 +6,4 @@ const U = bitpack union {
 
 // error
 //
-// :3:17: error: unable to override alignment of packed union fields
+// :3:17: error: unable to override alignment of bitpack union fields

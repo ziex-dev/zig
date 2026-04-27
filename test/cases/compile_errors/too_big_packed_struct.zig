@@ -8,4 +8,4 @@ pub export fn entry() void {
 
 // error
 //
-// :2:23: error: packed struct bit width '131070' exceeds maximum bit width of 65535
+// :2:23: error: bitpack struct bit width '131070' exceeds maximum bit width of 65535

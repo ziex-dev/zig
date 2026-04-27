@@ -62,10 +62,10 @@ export fn entry8() void {
 
 // error
 //
-// :7:30: error: cannot capture tag of packed union
+// :7:30: error: cannot capture tag of bitpack union
 // :1:19: note: union declared here
 // :1:19: note: consider using a tagged union
-// :13:30: error: cannot capture tag of packed union
+// :13:30: error: cannot capture tag of bitpack union
 // :1:19: note: union declared here
 // :1:19: note: consider using a tagged union
 // :21:19: error: cannot capture tag of non-union type 'tmp.E'

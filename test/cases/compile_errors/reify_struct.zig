@@ -12,4 +12,4 @@ comptime {
 //
 // :2:46: error: comptime field without default initialization value
 // :5:51: error: extern struct fields cannot be marked comptime
-// :8:51: error: packed struct fields cannot be aligned
+// :8:51: error: bitpack struct fields cannot be aligned

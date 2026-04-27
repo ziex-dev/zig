@@ -2421,7 +2421,7 @@ fn failWithInvalidSwitchTagCapture(sema: *Sema, block: *Block, tag_capture_src: 
     if (operand_ty.zigTypeTag(zcu) == .@"union") {
         assert(operand_ty.containerLayout(zcu) == .@"packed");
         return sema.failWithOwnedErrorMsg(block, msg: {
-            const msg = try sema.errMsg(tag_capture_src, "cannot capture tag of packed union", .{});
+            const msg = try sema.errMsg(tag_capture_src, "cannot capture tag of bitpack union", .{});
             errdefer msg.destroy(sema.gpa);
             try sema.addDeclaredHereNote(msg, operand_ty);
             if (operand_ty.srcLocOrNull(zcu)) |ty_src| {
@@ -11076,7 +11076,7 @@ fn validateSwitchBlock(
                     const msg = try sema.errMsg(operand_src, "switch on struct with {t} layout", .{layout});
                     errdefer msg.destroy(sema.gpa);
                     if (operand_ty.srcLocOrNull(zcu)) |struct_src| {
-                        try sema.errNote(struct_src, msg, "consider 'packed struct' here", .{});
+                        try sema.errNote(struct_src, msg, "consider 'bitpack struct' here", .{});
                     }
                     break :msg msg;
                 });
@@ -18128,14 +18128,14 @@ fn zirPtrType(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air
 
     if (host_size != 0) {
         if (bit_offset >= host_size * 8) {
-            return sema.fail(block, bitoffset_src, "packed type '{f}' at bit offset {d} starts {d} bits after the end of a {d} byte host integer", .{
+            return sema.fail(block, bitoffset_src, "bitpack type '{f}' at bit offset {d} starts {d} bits after the end of a {d} byte host integer", .{
                 elem_ty.fmt(pt), bit_offset, bit_offset - host_size * 8, host_size,
             });
         }
         try sema.ensureLayoutResolved(elem_ty, elem_ty_src, .bit_ptr_child);
         const elem_bit_size = elem_ty.bitSize(zcu);
         if (elem_bit_size > host_size * 8 - bit_offset) {
-            return sema.fail(block, bitoffset_src, "packed type '{f}' at bit offset {d} ends {d} bits after the end of a {d} byte host integer", .{
+            return sema.fail(block, bitoffset_src, "bitpack type '{f}' at bit offset {d} ends {d} bits after the end of a {d} byte host integer", .{
                 elem_ty.fmt(pt), bit_offset, elem_bit_size - (host_size * 8 - bit_offset), host_size,
             });
         }
@@ -19950,7 +19950,7 @@ fn zirReifyStruct(
 
     const backing_int_ty: ?Type = if (backing_int_ty_val.optionalValue(zcu)) |backing| ty: {
         switch (layout) {
-            .auto, .@"extern" => return sema.fail(block, backing_ty_src, "non-packed struct does not support backing integer type", .{}),
+            .auto, .@"extern" => return sema.fail(block, backing_ty_src, "non-bitpack struct does not support backing integer type", .{}),
             .@"packed" => {},
         }
         break :ty backing.toType();
@@ -20009,7 +20009,7 @@ fn zirReifyStruct(
 
         if (field_attr_align.optionalValue(zcu)) |align_val| {
             if (layout == .@"packed") {
-                return sema.fail(block, field_attrs_src, "packed struct fields cannot be aligned", .{});
+                return sema.fail(block, field_attrs_src, "bitpack struct fields cannot be aligned", .{});
             }
             // Trigger a compile error if the alignment is invalid.
             _ = try sema.validateAlign(block, field_attrs_src, align_val.toUnsignedInt(zcu));
@@ -20256,7 +20256,7 @@ fn zirReifyUnion(
         );
         if (field_attrs.@"align") |bytes| {
             if (layout == .@"packed") {
-                return sema.fail(block, field_attrs_src, "packed union fields cannot be aligned", .{});
+                return sema.fail(block, field_attrs_src, "bitpack union fields cannot be aligned", .{});
             }
             // Trigger a compile error if the alignment is invalid.
             _ = try sema.validateAlign(block, field_attrs_src, bytes);
@@ -22512,7 +22512,7 @@ fn checkAtomicPtrOperand(
         error.BadType => return sema.fail(
             block,
             elem_ty_src,
-            "expected bool, integer, float, enum, packed struct, or pointer type; found '{f}'",
+            "expected bool, integer, float, enum, bitpack struct, or pointer type; found '{f}'",
             .{elem_ty.fmt(pt)},
         ),
     };
@@ -22847,7 +22847,7 @@ fn zirCmpxchg(
         return sema.fail(
             block,
             elem_ty_src,
-            "expected bool, integer, enum, packed struct, or pointer type; found '{f}'",
+            "expected bool, integer, enum, bitpack struct, or pointer type; found '{f}'",
             .{elem_ty.fmt(pt)},
         );
     }
@@ -25426,10 +25426,10 @@ pub fn explainWhyTypeIsNotExtern(
                 .auto => try sema.errNote(src_loc, msg, "struct with automatic layout has no guaranteed in-memory representation", .{}),
                 .@"extern" => unreachable,
                 .@"packed" => switch (struct_obj.packed_backing_mode) {
-                    .auto => try sema.errNote(src_loc, msg, "inferred backing integer of packed struct has unspecified signedness", .{}),
+                    .auto => try sema.errNote(src_loc, msg, "inferred backing integer of bitpack struct has unspecified signedness", .{}),
                     .explicit => {
                         const backing_int_ty: Type = .fromInterned(struct_obj.packed_backing_int_type);
-                        try sema.errNote(src_loc, msg, "packed struct backing integer type '{f}' is not extern compatible", .{backing_int_ty.fmt(pt)});
+                        try sema.errNote(src_loc, msg, "bitpack struct backing integer type '{f}' is not extern compatible", .{backing_int_ty.fmt(pt)});
                         try sema.explainWhyTypeIsNotExtern(msg, src_loc, backing_int_ty, position);
                     },
                 },
@@ -25441,10 +25441,10 @@ pub fn explainWhyTypeIsNotExtern(
                 .auto => try sema.errNote(src_loc, msg, "union with automatic layout has no guaranteed in-memory representation", .{}),
                 .@"extern" => unreachable,
                 .@"packed" => switch (union_obj.packed_backing_mode) {
-                    .auto => try sema.errNote(src_loc, msg, "inferred backing integer of packed union has unspecified signedness", .{}),
+                    .auto => try sema.errNote(src_loc, msg, "inferred backing integer of bitpack union has unspecified signedness", .{}),
                     .explicit => {
                         const backing_int_ty: Type = .fromInterned(union_obj.packed_backing_int_type);
-                        try sema.errNote(src_loc, msg, "packed union backing integer type '{f}' is not extern compatible", .{backing_int_ty.fmt(pt)});
+                        try sema.errNote(src_loc, msg, "bitpack union backing integer type '{f}' is not extern compatible", .{backing_int_ty.fmt(pt)});
                         try sema.explainWhyTypeIsNotExtern(msg, src_loc, backing_int_ty, position);
                     },
                 },
@@ -25480,11 +25480,11 @@ pub fn explainWhyTypeIsUnpackable(
             try sema.errNote(enum_src, msg, "consider explicitly specifying the integer tag type", .{});
         },
         .non_packed_struct => |struct_ty| {
-            try sema.errNote(src, msg, "non-packed structs do not have a bit-packed representation", .{});
+            try sema.errNote(src, msg, "non-bitpack structs do not have a bit-packed representation", .{});
             try sema.addDeclaredHereNote(msg, struct_ty);
         },
         .non_packed_union => |union_ty| {
-            try sema.errNote(src, msg, "non-packed unions do not have a bit-packed representation", .{});
+            try sema.errNote(src, msg, "non-bitpack unions do not have a bit-packed representation", .{});
             try sema.addDeclaredHereNote(msg, union_ty);
         },
         .slice => try sema.errNote(src, msg, "slices do not have a bit-packed representation", .{}),

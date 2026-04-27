@@ -22,8 +22,8 @@ export fn errorSet() void {
 
 // error
 //
-// :3:22: error: expected bool, integer, enum, packed struct, or pointer type; found 'f32'
-// :9:22: error: expected bool, integer, float, enum, packed struct, or pointer type; found 'tmp.NormalStruct'
+// :3:22: error: expected bool, integer, enum, bitpack struct, or pointer type; found 'f32'
+// :9:22: error: expected bool, integer, float, enum, bitpack struct, or pointer type; found 'tmp.NormalStruct'
 // :6:22: note: struct declared here
-// :14:22: error: expected bool, integer, float, enum, packed struct, or pointer type; found 'anyerror'
-// :20:22: error: expected bool, integer, float, enum, packed struct, or pointer type; found 'error{A,B}'
+// :14:22: error: expected bool, integer, float, enum, bitpack struct, or pointer type; found 'anyerror'
+// :20:22: error: expected bool, integer, float, enum, bitpack struct, or pointer type; found 'error{A,B}'

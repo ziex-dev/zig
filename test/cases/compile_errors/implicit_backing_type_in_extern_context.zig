@@ -40,10 +40,10 @@ comptime {
 // error
 //
 // :26:38: error: extern structs cannot contain fields of type 'tmp.PackedStruct'
-// :26:38: note: inferred backing integer of packed struct has unspecified signedness
+// :26:38: note: inferred backing integer of bitpack struct has unspecified signedness
 // :1:30: note: struct declared here
 // :27:38: error: extern structs cannot contain fields of type 'tmp.PackedUnion'
-// :27:38: note: inferred backing integer of packed union has unspecified signedness
+// :27:38: note: inferred backing integer of bitpack union has unspecified signedness
 // :2:29: note: union declared here
 // :28:38: error: extern structs cannot contain fields of type 'tmp.Enum'
 // :5:14: note: integer tag type of enum is inferred
