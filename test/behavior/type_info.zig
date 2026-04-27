@@ -309,15 +309,15 @@ const TestStruct = struct {
     fieldB: *const [6:0]u8 = "foobar",
 };
 
-test "type info: packed struct info" {
+test "type info: bitpack struct info" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    try testPackedStruct();
-    try comptime testPackedStruct();
+    try testBitpackStruct();
+    try comptime testBitpackStruct();
 }
 
-fn testPackedStruct() !void {
-    const struct_info = @typeInfo(TestPackedStruct);
+fn testBitpackStruct() !void {
+    const struct_info = @typeInfo(TestBitpackStruct);
     try expect(struct_info == .@"struct");
     try expect(struct_info.@"struct".is_tuple == false);
     try expect(struct_info.@"struct".layout == .@"packed");
@@ -335,7 +335,7 @@ fn testPackedStruct() !void {
     try expect(struct_info.@"struct".decl_names.len == 1);
 }
 
-const TestPackedStruct = bitpack struct {
+const TestBitpackStruct = bitpack struct {
     fieldA: u64,
     fieldB: void,
     fieldC: f32,

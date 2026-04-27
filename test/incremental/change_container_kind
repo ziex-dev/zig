@@ -32,16 +32,16 @@ pub const T = opaque {};
 #expect_compile_log=@as(type, foo.T)
 #expect_compile_log=@as(*const [6:0]u8, "opaque")
 
-#update=T is packed struct
+#update=T is bitpack struct
 #file=foo.zig
 pub const T = bitpack struct {};
 #expect_error=main.zig:3:5: error: found compile log statement
 #expect_compile_log=@as(type, foo.T)
 #expect_compile_log=@as(*const [6:0]u8, "struct")
 
-#update=T is packed union
+#update=T is bitpack union
 #file=foo.zig
-pub const T = bitpack union { x: void }; // packed unions need at least 1 field
+pub const T = bitpack union { x: void }; // bitpack unions need at least 1 field
 #expect_error=main.zig:3:5: error: found compile log statement
 #expect_compile_log=@as(type, foo.T)
 #expect_compile_log=@as(*const [5:0]u8, "union")

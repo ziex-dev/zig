@@ -1,5 +1,5 @@
-const PackedStruct = bitpack struct { x: u32 };
-const PackedUnion = bitpack union { x: u32 };
+const BitpackStruct = bitpack struct { x: u32 };
+const BitpackUnion = bitpack union { x: u32 };
 
 /// This enum has 256 fields, so `u8` will be its inferred tag type.
 const Enum = enum {
@@ -23,8 +23,8 @@ const Enum = enum {
     // zig fmt: on
 };
 
-const Extern0 = extern struct { val: PackedStruct };
-const Extern1 = extern struct { val: PackedUnion };
+const Extern0 = extern struct { val: BitpackStruct };
+const Extern1 = extern struct { val: BitpackUnion };
 const Extern2 = extern struct { val: Enum };
 
 comptime {
@@ -39,12 +39,12 @@ comptime {
 
 // error
 //
-// :26:38: error: extern structs cannot contain fields of type 'tmp.PackedStruct'
+// :26:38: error: extern structs cannot contain fields of type 'tmp.BitpackStruct'
 // :26:38: note: inferred backing integer of bitpack struct has unspecified signedness
-// :1:30: note: struct declared here
-// :27:38: error: extern structs cannot contain fields of type 'tmp.PackedUnion'
+// :1:31: note: struct declared here
+// :27:38: error: extern structs cannot contain fields of type 'tmp.BitpackUnion'
 // :27:38: note: inferred backing integer of bitpack union has unspecified signedness
-// :2:29: note: union declared here
+// :2:30: note: union declared here
 // :28:38: error: extern structs cannot contain fields of type 'tmp.Enum'
 // :5:14: note: integer tag type of enum is inferred
 // :5:14: note: consider explicitly specifying the integer tag type

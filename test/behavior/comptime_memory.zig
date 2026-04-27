@@ -380,7 +380,7 @@ test "accessing reinterpreted memory of parent object" {
     }
 }
 
-test "bitcast packed union to integer" {
+test "bitcast bitpack union to integer" {
     const U = bitpack union {
         x: i2,
         y: u2,
@@ -538,7 +538,7 @@ test "comptime store of extern struct with void field into array" {
     }
 }
 
-test "comptime store of packed struct with void field" {
+test "comptime store of bitpack struct with void field" {
     comptime {
         var x: bitpack struct { a: u8, b: void } = undefined;
         x = .{ .a = 123, .b = {} };
@@ -546,7 +546,7 @@ test "comptime store of packed struct with void field" {
     }
 }
 
-test "comptime store of packed struct with void field into array" {
+test "comptime store of bitpack struct with void field into array" {
     comptime {
         var x: [3]bitpack struct { a: u8, b: void } = undefined;
         x[1] = .{ .a = 123, .b = {} };

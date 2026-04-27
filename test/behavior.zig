@@ -9,6 +9,9 @@ test {
     _ = @import("behavior/basic.zig");
     _ = @import("behavior/bit_shifting.zig");
     _ = @import("behavior/bitcast.zig");
+    _ = @import("behavior/bitpack-struct.zig");
+    _ = @import("behavior/bitpack_struct_explicit_backing_int.zig");
+    _ = @import("behavior/bitpack-union.zig");
     _ = @import("behavior/bitreverse.zig");
     _ = @import("behavior/bool.zig");
     _ = @import("behavior/builtin_functions_returning_void_or_noreturn.zig");
@@ -60,9 +63,6 @@ test {
     _ = @import("behavior/nan.zig");
     _ = @import("behavior/null.zig");
     _ = @import("behavior/optional.zig");
-    _ = @import("behavior/packed-struct.zig");
-    _ = @import("behavior/packed_struct_explicit_backing_int.zig");
-    _ = @import("behavior/packed-union.zig");
     _ = @import("behavior/pointers.zig");
     _ = @import("behavior/popcount.zig");
     _ = @import("behavior/prefetch.zig");

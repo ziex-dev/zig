@@ -75,7 +75,7 @@ test "@offsetOf" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    // Packed structs have fixed memory layout
+    // Bitpack structs have fixed memory layout
     try expect(@offsetOf(P, "a") == 0);
     try expect(@offsetOf(P, "b") == 1);
     try expect(@offsetOf(P, "c") == 5);
@@ -102,7 +102,7 @@ test "@offsetOf" {
 test "@bitOffsetOf" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
-    // Packed structs have fixed memory layout
+    // Bitpack structs have fixed memory layout
     try expect(@bitOffsetOf(P, "a") == 0);
     try expect(@bitOffsetOf(P, "b") == 8);
     try expect(@bitOffsetOf(P, "c") == 40);
