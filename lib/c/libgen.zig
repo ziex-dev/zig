@@ -10,8 +10,10 @@ comptime {
     }
 }
 
+var dot_buf: [2]c_char = .{ '.', 0 };
+
 fn basename(s: ?[*:0]c_char) callconv(.c) [*:0]c_char {
-    const dot: [*:0]c_char = @ptrCast(@constCast("."));
+    const dot: [*:0]c_char = @ptrCast(&dot_buf);
 
     if (s == null) return dot;
 

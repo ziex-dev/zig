@@ -13,6 +13,7 @@ fn expectBasename(input: [:0]const u8, expected: []const u8) !void {
 }
 
 test "basename" {
+    if (builtin.target.os.tag == .windows) return; // windows has backslash instead of slash
     try expectBasename("", ".");
     try expectBasename(".", ".");
     try expectBasename("..", "..");
