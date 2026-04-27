@@ -3193,6 +3193,10 @@ fn buildOutputType(
         preopens,
         self_exe_path,
         environ_map,
+        switch (native_os) {
+            .wasi => null,
+            else => (try findBuildRoot(arena, io, .{})).directory,
+        },
     );
     defer dirs.deinit(io);
 
@@ -5232,6 +5236,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
         .empty,
         self_exe_path,
         environ_map,
+        build_root.directory,
     );
     defer dirs.deinit(io);
 
@@ -5772,6 +5777,7 @@ fn jitCmdInner(
         preopens,
         self_exe_path,
         environ_map,
+        (try findBuildRoot(arena, io, .{})).directory,
     );
     defer dirs.deinit(io);
 

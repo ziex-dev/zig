@@ -412,6 +412,7 @@ pub const Path = struct {
         /// so that `Path.digest` gives hashes which can be stored in the Zig cache (as they
         /// don't depend on a specific compiler instance).
         none,
+        build_root,
     };
 
     /// In general, we can only construct canonical `Path`s at runtime, because weird nesting might
@@ -448,6 +449,7 @@ pub const Path = struct {
             .zig_lib => dirs.zig_lib.handle,
             .global_cache => dirs.global_cache.handle,
             .local_cache => dirs.local_cache.handle,
+            .build_root => dirs.build_root.handle,
         };
         if (p.sub_path.len == 0) return .{ dir, "." };
         assert(!fs.path.isAbsolute(p.sub_path));
@@ -466,6 +468,7 @@ pub const Path = struct {
                 .zig_lib => f.comp.dirs.zig_lib.path orelse ".",
                 .global_cache => f.comp.dirs.global_cache.path orelse ".",
                 .local_cache => f.comp.dirs.local_cache.path orelse ".",
+                .build_root => f.comp.dirs.build_root.path orelse ".",
                 .none => {
                     const cwd_sub_path = absToCwdRelative(f.p.sub_path, f.comp.dirs.cwd);
                     try w.writeAll(cwd_sub_path);
@@ -507,10 +510,11 @@ pub const Path = struct {
         // so that we prefer `.root = .local_cache` over `.root = .zig_lib`. The easiest way to do
         // this is simply to prioritize the longest root path.
         const PathAndRoot = struct { ?[]const u8, Root };
-        var roots: [3]PathAndRoot = .{
+        var roots: [4]PathAndRoot = .{
             .{ dirs.zig_lib.path, .zig_lib },
             .{ dirs.global_cache.path, .global_cache },
             .{ dirs.local_cache.path, .local_cache },
+            .{ dirs.build_root.path, .build_root },
         };
         // This must be a stable sort, because the global and local cache directories may be the same, in
         // which case we need to make a consistent choice.
@@ -585,6 +589,7 @@ pub const Path = struct {
                 .zig_lib => dirs.zig_lib.path orelse "",
                 .global_cache => dirs.global_cache.path orelse "",
                 .local_cache => dirs.local_cache.path orelse "",
+                .build_root => dirs.build_root.path orelse "",
                 .none => "",
             },
             sub_path,
@@ -607,6 +612,7 @@ pub const Path = struct {
                 .zig_lib => dirs.zig_lib.path orelse "",
                 .global_cache => dirs.global_cache.path orelse "",
                 .local_cache => dirs.local_cache.path orelse "",
+                .build_root => dirs.build_root.path orelse "",
                 .none => "",
             },
             p.sub_path,
@@ -626,6 +632,7 @@ pub const Path = struct {
                 .zig_lib => dirs.zig_lib.path orelse "",
                 .global_cache => dirs.global_cache.path orelse "",
                 .local_cache => dirs.local_cache.path orelse "",
+                .build_root => dirs.build_root.path orelse "",
                 .none => "",
             },
             p.sub_path,
@@ -639,6 +646,7 @@ pub const Path = struct {
             .zig_lib => dirs.zig_lib,
             .global_cache => dirs.global_cache,
             .local_cache => dirs.local_cache,
+            .build_root => dirs.build_root,
             else => {
                 const cwd_sub_path = absToCwdRelative(p.sub_path, dirs.cwd);
                 return .{
@@ -662,6 +670,7 @@ pub const Path = struct {
             .zig_lib => dirs.zig_lib.path orelse "",
             .global_cache => dirs.global_cache.path orelse "",
             .local_cache => dirs.local_cache.path orelse "",
+            .build_root => dirs.build_root.path orelse "",
             .none => "",
         };
         return fs.path.resolve(gpa, &.{
@@ -713,6 +722,7 @@ pub const Directories = struct {
     /// `local_cache.path` is resolved (`introspect.resolvePath`) or `null` for cwd.
     /// This may be the same as `global_cache`.
     local_cache: Cache.Directory,
+    build_root: Cache.Directory,
 
     pub fn deinit(dirs: *Directories, io: Io) void {
         // The local and global caches could be the same.
@@ -732,6 +742,7 @@ pub const Directories = struct {
             .zig_lib = dirs.zig_lib,
             .global_cache = dirs.global_cache,
             .local_cache = dirs.global_cache,
+            .build_root = dirs.build_root,
         };
     }
 
@@ -752,6 +763,7 @@ pub const Directories = struct {
             else => []const u8,
         },
         environ_map: *const std.process.Environ.Map,
+        build_root: ?Cache.Directory,
     ) Directories {
         const wasi = builtin.target.os.tag == .wasi;
 
@@ -800,6 +812,7 @@ pub const Directories = struct {
             .zig_lib = zig_lib,
             .global_cache = global_cache,
             .local_cache = local_cache,
+            .build_root = build_root orelse .{ .path = null, .handle = std.Io.Dir.cwd() },
         };
     }
     fn getPreopen(preopens: std.process.Preopens, name: []const u8) Cache.Directory {
@@ -2109,6 +2122,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
         cache.addPrefix(options.dirs.zig_lib);
         cache.addPrefix(options.dirs.local_cache);
         cache.addPrefix(options.dirs.global_cache);
+        cache.addPrefix(options.dirs.build_root);
         errdefer cache.manifest_dir.close(io);
 
         // This is shared hasher state common to zig source and all C source files.
@@ -3257,6 +3271,7 @@ pub fn appendFileSystemInput(comp: *Compilation, path: Compilation.Path) Allocat
         .zig_lib => comp.dirs.zig_lib,
         .global_cache => comp.dirs.global_cache,
         .local_cache => comp.dirs.local_cache,
+        .build_root => comp.dirs.build_root,
         .none => .cwd(),
     };
     const prefix: u8 = for (prefixes, 1..) |prefix_dir, i| {

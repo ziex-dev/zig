@@ -37,6 +37,7 @@ pub fn cmdEnv(
         preopens,
         if (builtin.target.os.tag != .wasi) self_exe_path,
         environ_map,
+        null,
     );
     defer dirs.deinit(io);
 

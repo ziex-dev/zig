@@ -28,7 +28,7 @@ mutex: Io.Mutex = .init,
 /// are replaced with single-character indicators. This is not to save
 /// space but to eliminate absolute file paths. This improves portability
 /// and usefulness of the cache for advanced use cases.
-prefixes_buffer: [4]Directory = undefined,
+prefixes_buffer: [5]Directory = undefined,
 prefixes_len: usize = 0,
 /// Used to identify prefixes. References external memory.
 cwd: []const u8,
@@ -1250,7 +1250,7 @@ pub const Manifest = struct {
     pub fn populateOtherManifest(man: *Manifest, other: *Manifest, prefix_map: [4]u8) Allocator.Error!void {
         const gpa = other.cache.gpa;
         assert(@typeInfo(std.zig.Server.Message.PathPrefix).@"enum".fields.len == man.cache.prefixes_len);
-        assert(man.cache.prefixes_len == 4);
+        assert(man.cache.prefixes_len == 5);
         for (man.files.keys()) |file| {
             const prefixed_path: PrefixedPath = .{
                 .prefix = prefix_map[file.prefixed_path.prefix],
