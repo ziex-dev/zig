@@ -6,12 +6,11 @@ const c = std.c;
 comptime {
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         symbol(&basename, "basename");
-        symbol(&basename, "xpg_basename");
     }
 }
 
 fn basename(s: ?[*:0]c_char) callconv(.c) [*:0]c_char {
-    const dot: [*c]c_char = @ptrCast(@constCast("."));
+    const dot: [*:0]c_char = @ptrCast(@constCast("."));
 
     if (s == null) return dot;
 
