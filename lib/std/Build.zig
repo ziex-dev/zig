@@ -2229,7 +2229,7 @@ fn dependencyInner(
 
     const build_root: std.Build.Cache.Directory = .{
         .path = build_root_string,
-        .handle = Io.Dir.cwd().openDir(io, build_root_string, .{}) catch |err| {
+        .handle = b.build_root.handle.openDir(io, build_root_string, .{}) catch |err| {
             std.debug.print("unable to open '{s}': {s}\n", .{
                 build_root_string, @errorName(err),
             });

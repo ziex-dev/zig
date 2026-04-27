@@ -607,6 +607,14 @@ fn zigProcessUpdate(s: *Step, zp: *ZigProcess, watch: bool, web_server: ?*Build.
                             };
                             try addWatchInputFromPath(s, path, std.fs.path.basename(sub_path));
                         },
+                        .build_root => {
+                            const path: Build.Cache.Path = .{
+                                .root_dir = b.build_root,
+                                .sub_path = sub_path_dirname,
+                            };
+
+                            try addWatchInputFromPath(s, path, std.fs.path.basename(sub_path));
+                        },
                         .zig_lib => zl: {
                             if (s.cast(Step.Compile)) |compile| {
                                 if (compile.zig_lib_dir) |zig_lib_dir| {

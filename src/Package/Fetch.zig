@@ -280,10 +280,27 @@ pub const JobQueue = struct {
                 }
             }
 
-            try buf.print(
-                \\        pub const build_root = "{f}";
-                \\
-            , .{std.fmt.alt(fetch.package_root, .formatEscapeString)});
+            {
+                // Without this the path to dependency could be stored as "/**/cur-package/../dep" which
+                // means that the entry is dependent on absolute paths of both dependency and current package.
+                // So it is resolved to remove redundant path segments. This makes the entry dependent
+                // only on absolute path of the dependency. Eventually this path shall become package-relative,
+                // to make the cache entry even more resilient to path changes.
+                const alloc = fetch.arena.allocator();
+                const resolved = try std.Io.Dir.path.resolve(
+                    alloc,
+                    &.{ fetch.package_root.root_dir.path orelse "", fetch.package_root.sub_path },
+                );
+                defer alloc.free(resolved);
+                const path_resolved: Cache.Path = .{
+                    .root_dir = .{ .path = null, .handle = .{ .handle = std.Io.Dir.cwd().handle } },
+                    .sub_path = resolved,
+                };
+                try buf.print(
+                    \\        pub const build_root = "{f}";
+                    \\
+                , .{std.fmt.alt(path_resolved, .formatEscapeString)});
+            }
 
             if (fetch.has_build_zig) {
                 try buf.print(

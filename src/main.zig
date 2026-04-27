@@ -3177,6 +3177,11 @@ fn buildOutputType(
         else => process.executablePathAlloc(io, arena) catch |err| fatal("unable to find zig self exe path: {t}", .{err}),
     };
 
+    const cwd_path = try introspect.getResolvedCwd(io, arena);
+    const build_root = try findBuildRoot(arena, io, .{
+        .cwd_path = cwd_path,
+        .build_file = null,
+    });
     // This `init` calls `fatal` on error.
     var dirs: Compilation.Directories = .init(
         arena,
@@ -3193,6 +3198,7 @@ fn buildOutputType(
         preopens,
         self_exe_path,
         environ_map,
+        build_root.directory,
     );
     defer dirs.deinit(io);
 
@@ -5232,6 +5238,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
         .empty,
         self_exe_path,
         environ_map,
+        build_root.directory,
     );
     defer dirs.deinit(io);
 
@@ -5772,6 +5779,7 @@ fn jitCmdInner(
         preopens,
         self_exe_path,
         environ_map,
+        null,
     );
     defer dirs.deinit(io);
 
