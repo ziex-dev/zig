@@ -1,4 +1,4 @@
-const S = packed struct(u16) {
+const S = bitpack struct(u16) {
     a: bool,
     b: bool,
     _padding: @Int(.unsigned, 17 - @typeInfo(S).Struct.fields.len) = 0,

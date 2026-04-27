@@ -52,7 +52,7 @@ pub const Diags = struct {
         wasm: File.Wasm.SourceLocation,
     };
 
-    pub const Flags = packed struct {
+    pub const Flags = bitpack struct {
         no_entry_point_found: bool = false,
         missing_libc: bool = false,
         alloc_failure_occurred: bool = false,

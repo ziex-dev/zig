@@ -178,12 +178,12 @@ pub fn containerLayout(comptime T: type) Type.ContainerLayout {
 
 test containerLayout {
     const S1 = struct {};
-    const S2 = packed struct {};
+    const S2 = bitpack struct {};
     const S3 = extern struct {};
     const U1 = union {
         a: u8,
     };
-    const U2 = packed union {
+    const U2 = bitpack union {
         a: u8,
     };
     const U3 = extern union {
@@ -935,7 +935,7 @@ test hasUniqueRepresentation {
 
     try testing.expect(!hasUniqueRepresentation(TestStruct5));
 
-    const TestStruct6 = packed struct(u8) {
+    const TestStruct6 = bitpack struct(u8) {
         @"0": bool,
         @"1": bool,
         @"2": bool,

@@ -1,4 +1,4 @@
-const P = packed union(u8) {
+const P = bitpack union(u8) {
     a: u8,
     b: i8,
 };
@@ -63,11 +63,11 @@ export fn entry8() void {
 // error
 //
 // :7:30: error: cannot capture tag of packed union
-// :1:18: note: union declared here
-// :1:18: note: consider using a tagged union
+// :1:19: note: union declared here
+// :1:19: note: consider using a tagged union
 // :13:30: error: cannot capture tag of packed union
-// :1:18: note: union declared here
-// :1:18: note: consider using a tagged union
+// :1:19: note: union declared here
+// :1:19: note: consider using a tagged union
 // :21:19: error: cannot capture tag of non-union type 'tmp.E'
 // :18:11: note: enum declared here
 // :27:19: error: cannot capture tag of non-union type 'tmp.E'

@@ -9,7 +9,7 @@ const Allocator = mem.Allocator;
 
 pub const cpu_type_t = c_int;
 pub const cpu_subtype_t = c_int;
-pub const vm_prot_t = packed struct(u32) {
+pub const vm_prot_t = bitpack struct(u32) {
     READ: bool = false,
     WRITE: bool = false,
     EXEC: bool = false,
@@ -851,8 +851,8 @@ pub const nlist = extern struct {
 
 pub const nlist_64 = extern struct {
     n_strx: u32,
-    n_type: packed union(u8) {
-        bits: packed struct(u8) {
+    n_type: bitpack union(u8) {
+        bits: bitpack struct(u8) {
             ext: bool,
             type: enum(u3) {
                 undf = 0,
@@ -901,7 +901,7 @@ pub const nlist_64 = extern struct {
         },
     },
     n_sect: u8,
-    n_desc: packed struct(u16) {
+    n_desc: bitpack struct(u16) {
         _pad0: u3 = 0,
         arm_thumb_def: bool,
         referenced_dynamically: bool,
@@ -929,7 +929,7 @@ pub const nlist_64 = extern struct {
 /// This modification is required to support symbols in an arbitrary number of
 /// sections not just the three sections (text, data and bss) in a 4.3BSD file.
 /// Also the last 4 bits have had the r_type tag added to them.
-pub const relocation_info = packed struct {
+pub const relocation_info = bitpack struct {
     /// offset in the section to what is being relocated
     r_address: i32,
 
@@ -2073,7 +2073,7 @@ pub const unwind_info_compressed_second_level_page_header = extern struct {
     // encodings array
 };
 
-pub const UnwindInfoCompressedEntry = packed struct(u32) {
+pub const UnwindInfoCompressedEntry = bitpack struct(u32) {
     funcOffset: u24,
     encodingIndex: u8,
 };
@@ -2133,10 +2133,10 @@ pub const UNWIND_ARM64_FRAME_D14_D15_PAIR: u32 = 0x00000800;
 pub const UNWIND_ARM64_FRAMELESS_STACK_SIZE_MASK: u32 = 0x00FFF000;
 pub const UNWIND_ARM64_DWARF_SECTION_OFFSET: u32 = 0x00FFFFFF;
 
-pub const CompactUnwindEncoding = packed struct(u32) {
-    value: packed union {
-        x86_64: packed union {
-            frame: packed struct(u24) {
+pub const CompactUnwindEncoding = bitpack struct(u32) {
+    value: bitpack union {
+        x86_64: bitpack union {
+            frame: bitpack struct(u24) {
                 reg4: u3,
                 reg3: u3,
                 reg2: u3,
@@ -2145,15 +2145,15 @@ pub const CompactUnwindEncoding = packed struct(u32) {
                 unused: u1 = 0,
                 frame_offset: u8,
             },
-            frameless: packed struct(u24) {
+            frameless: bitpack struct(u24) {
                 stack_reg_permutation: u10,
                 stack_reg_count: u3,
-                stack: packed union {
-                    direct: packed struct(u11) {
+                stack: bitpack union {
+                    direct: bitpack struct(u11) {
                         _: u3,
                         stack_size: u8,
                     },
-                    indirect: packed struct(u11) {
+                    indirect: bitpack struct(u11) {
                         stack_adjust: u3,
                         sub_offset: u8,
                     },
@@ -2161,16 +2161,16 @@ pub const CompactUnwindEncoding = packed struct(u32) {
             },
             dwarf: u24,
         },
-        arm64: packed union {
-            frame: packed struct(u24) {
-                x_reg_pairs: packed struct(u5) {
+        arm64: bitpack union {
+            frame: bitpack struct(u24) {
+                x_reg_pairs: bitpack struct(u5) {
                     x19_x20: u1,
                     x21_x22: u1,
                     x23_x24: u1,
                     x25_x26: u1,
                     x27_x28: u1,
                 },
-                d_reg_pairs: packed struct(u4) {
+                d_reg_pairs: bitpack struct(u4) {
                     d8_d9: u1,
                     d10_d11: u1,
                     d12_d13: u1,
@@ -2178,14 +2178,14 @@ pub const CompactUnwindEncoding = packed struct(u32) {
                 },
                 _: u15,
             },
-            frameless: packed struct(u24) {
+            frameless: bitpack struct(u24) {
                 _: u12 = 0,
                 stack_size: u12,
             },
             dwarf: u24,
         },
     },
-    mode: packed union {
+    mode: bitpack union {
         x86_64: UNWIND_X86_64_MODE,
         arm64: UNWIND_ARM64_MODE,
     },

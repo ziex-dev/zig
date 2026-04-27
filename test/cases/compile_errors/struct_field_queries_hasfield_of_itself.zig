@@ -1,4 +1,4 @@
-const Foo = packed struct {
+const Foo = bitpack struct {
     bar: (T: {
         _ = @hasField(Foo, "bar");
         break :T void;

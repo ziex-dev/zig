@@ -1,4 +1,4 @@
-const S = packed struct(u2) {
+const S = bitpack struct(u2) {
     a: u2,
 };
 export fn entry1(x: u8) void {
@@ -15,7 +15,7 @@ export fn entry2(x: u8) void {
     }
 }
 
-const U = packed union(u2) {
+const U = bitpack union(u2) {
     a: u2,
     b: i2,
 };

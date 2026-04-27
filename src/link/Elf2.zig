@@ -2027,7 +2027,7 @@ const Symbol = struct {
     };
 
     /// Opaque, stable identifier for a symbol. Does not necessarily equal the index into the symtab.
-    const Id = packed struct(u32) {
+    const Id = bitpack struct(u32) {
         kind: enum(u1) { local, global },
         raw: u31,
 

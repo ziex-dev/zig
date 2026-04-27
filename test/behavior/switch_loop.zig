@@ -517,7 +517,7 @@ test "switch loop for error handling" {
 test "switch loop with packed structs" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const P = packed struct {
+    const P = bitpack struct {
         a: u7,
         b: u20,
 
@@ -536,7 +536,7 @@ test "switch loop with packed structs" {
 test "switch loop with packed unions" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const P = packed union {
+    const P = bitpack union {
         a: u7,
         b: i7,
 
@@ -553,7 +553,7 @@ test "switch loop with packed unions" {
 }
 
 test "switch loop with packed unions with OPV" {
-    const P = packed union {
+    const P = bitpack union {
         a: u0,
         b: void,
 

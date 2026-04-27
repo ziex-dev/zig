@@ -1,4 +1,4 @@
-const U = packed union {
+const U = bitpack union {
     x: f32,
     y: u8 align(10),
     z: u32,

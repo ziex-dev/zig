@@ -163,7 +163,7 @@ loop_switches: std.AutoHashMapUnmanaged(Air.Inst.Index, struct {
 next_temp_index: Temp.Index = @enumFromInt(0),
 temp_type: [Temp.Index.max]Type = undefined,
 
-const MaskInfo = packed struct {
+const MaskInfo = bitpack struct {
     kind: enum(u1) { sign, all },
     inverted: bool = false,
     scalar: Memory.Size,
@@ -221,7 +221,7 @@ pub const MCValue = union(enum) {
     load_extern_func: Mir.NullTerminatedString,
     lea_extern_func: Mir.NullTerminatedString,
     /// Supports integer_per_element abi
-    elementwise_args: packed struct { regs: u3, frame_off: i29, frame_index: FrameIndex },
+    elementwise_args: bitpack struct { regs: u3, frame_off: i29, frame_index: FrameIndex },
     /// This indicates that we have already allocated a frame index for this instruction,
     /// but it has not been spilled there yet in the current control flow.
     /// Payload is a frame index.
@@ -187925,10 +187925,10 @@ const Select = struct {
         src_constraints: [@intFromEnum(Select.Operand.Ref.none) - @intFromEnum(Select.Operand.Ref.src0)]Constraint = @splat(.any),
         dst_constraints: [@intFromEnum(Select.Operand.Ref.src0) - @intFromEnum(Select.Operand.Ref.dst0)]Constraint = @splat(.any),
         patterns: []const Select.Pattern,
-        call_frame: packed struct(u16) { size: u10 = 0, alignment: InternPool.Alignment } = .{ .size = 0, .alignment = .none },
+        call_frame: bitpack struct(u16) { size: u10 = 0, alignment: InternPool.Alignment } = .{ .size = 0, .alignment = .none },
         extra_temps: [@intFromEnum(Select.Operand.Ref.dst0) - @intFromEnum(Select.Operand.Ref.tmp0)]TempSpec = @splat(.unused),
         dst_temps: [@intFromEnum(Select.Operand.Ref.src0) - @intFromEnum(Select.Operand.Ref.dst0)]TempSpec.Kind = @splat(.unused),
-        clobbers: packed struct {
+        clobbers: bitpack struct {
             eflags: bool = false,
             caller_preserved: CallConv = .none,
         } = .{},
@@ -189017,11 +189017,11 @@ const Select = struct {
     };
     const Label = enum { @"0:", @"1:", @"2:", @"3:", @"4:", @"_", pseudo };
     const Operand = struct {
-        flags: packed struct(u32) {
+        flags: bitpack struct(u32) {
             tag: Tag,
             adjust: Adjust = .none,
             base: Ref.Sized = .none,
-            index: packed struct(u7) {
+            index: bitpack struct(u7) {
                 ref: Ref,
                 scale: Memory.Scale = .@"1",
             } = .{ .ref = .none },
@@ -189038,7 +189038,7 @@ const Select = struct {
             lea,
             mem,
         };
-        const Adjust = packed struct(u12) {
+        const Adjust = bitpack struct(u12) {
             sign: enum(u1) { neg, pos },
             lhs: enum(u6) {
                 none,
@@ -189179,7 +189179,7 @@ const Select = struct {
             src2,
             none,
 
-            const Sized = packed struct(u9) {
+            const Sized = bitpack struct(u9) {
                 ref: Ref,
                 size: Memory.Size,
 

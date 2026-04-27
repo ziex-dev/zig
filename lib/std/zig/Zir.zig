@@ -2411,7 +2411,7 @@ pub const Inst = struct {
         int: u64,
         float: f64,
         ptr_type: struct {
-            flags: packed struct {
+            flags: bitpack struct {
                 is_allowzero: bool,
                 is_mutable: bool,
                 is_volatile: bool,
@@ -2539,7 +2539,7 @@ pub const Inst = struct {
         output_type_bits: u32,
         clobbers: Ref,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             is_volatile: bool,
             outputs_len: u7,
             inputs_len: u8,
@@ -2580,7 +2580,7 @@ pub const Inst = struct {
         param_block: Index,
         body_len: u32,
 
-        pub const RetTy = packed struct(u32) {
+        pub const RetTy = bitpack struct(u32) {
             /// 0 means `void`.
             /// 1 means the type is a simple `Ref`.
             /// Otherwise, the length of a trailing body.
@@ -2629,7 +2629,7 @@ pub const Inst = struct {
 
         /// If both has_cc_ref and has_cc_body are false, it means auto calling convention.
         /// If both has_ret_ty_ref and has_ret_ty_body are false, it means void return type.
-        pub const Bits = packed struct(u32) {
+        pub const Bits = bitpack struct(u32) {
             is_var_args: bool,
             is_inferred_error: bool,
             is_noinline: bool,
@@ -2750,7 +2750,7 @@ pub const Inst = struct {
             value_body: ?[]const Inst.Index,
         };
 
-        pub const Flags = packed struct(u64) {
+        pub const Flags = bitpack struct(u64) {
             src_line: u30,
             src_column: u29,
             id: Id,
@@ -3053,7 +3053,7 @@ pub const Inst = struct {
         flags: Flags,
         callee: Ref,
 
-        pub const Flags = packed struct {
+        pub const Flags = bitpack struct {
             /// std.lang.CallModifier in packed form
             pub const PackedModifier = u3;
             pub const PackedArgsLen = u27;
@@ -3102,7 +3102,7 @@ pub const Inst = struct {
         callee: Ref,
         args: Ref,
 
-        pub const Flags = packed struct {
+        pub const Flags = bitpack struct {
             is_nosuspend: bool,
             ensure_result_used: bool,
             _: u30 = 0,
@@ -3332,7 +3332,7 @@ pub const Inst = struct {
         raw_operand: Ref,
         bits: Bits,
 
-        pub const Bits = packed struct(u32) {
+        pub const Bits = bitpack struct(u32) {
             /// If true, one or more prongs have multiple items.
             has_multi_cases: bool,
             /// If true, one or more prongs have ranges.
@@ -3355,7 +3355,7 @@ pub const Inst = struct {
             pub const ScalarCasesLen = u24;
         };
 
-        pub const ProngInfo = packed struct(u32) {
+        pub const ProngInfo = bitpack struct(u32) {
             body_len: u27,
             capture: ProngInfo.Capture,
             is_inline: bool,
@@ -3368,13 +3368,13 @@ pub const Inst = struct {
                 by_ref,
             };
 
-            pub const NonErr = packed struct(u32) {
+            pub const NonErr = bitpack struct(u32) {
                 body_len: u29,
                 capture: ProngInfo.Capture,
                 operand_is_ref: bool,
             };
 
-            pub const Else = packed struct(u32) {
+            pub const Else = bitpack struct(u32) {
                 body_len: u27,
                 capture: ProngInfo.Capture,
                 is_inline: bool,
@@ -3383,7 +3383,7 @@ pub const Inst = struct {
             };
         };
 
-        pub const ItemInfo = packed struct(u32) {
+        pub const ItemInfo = bitpack struct(u32) {
             kind: ItemInfo.Kind,
             data: u30,
 
@@ -3474,7 +3474,7 @@ pub const Inst = struct {
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             has_fields_len: bool,
@@ -3490,7 +3490,7 @@ pub const Inst = struct {
     };
 
     /// Represents a single value being captured in a type declaration's closure.
-    pub const Capture = packed struct(u32) {
+    pub const Capture = bitpack struct(u32) {
         tag: enum(u3) {
             /// `data` is a `u16` index into the parent closure.
             nested,
@@ -3560,7 +3560,7 @@ pub const Inst = struct {
         dbg_var,
     };
 
-    pub const FullPtrCastFlags = packed struct(u5) {
+    pub const FullPtrCastFlags = bitpack struct(u5) {
         ptr_cast: bool = false,
         align_cast: bool = false,
         addrspace_cast: bool = false,
@@ -3629,7 +3629,7 @@ pub const Inst = struct {
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             has_fields_len: bool,
@@ -3666,7 +3666,7 @@ pub const Inst = struct {
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             has_fields_len: bool,
@@ -3721,7 +3721,7 @@ pub const Inst = struct {
         /// This node provides a new absolute baseline node for all instructions within this struct.
         src_node: Ast.Node.Index,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_captures_len: bool,
             has_decls_len: bool,
             name_strategy: NameStrategy,
@@ -3876,7 +3876,7 @@ pub const Inst = struct {
         name: NullTerminatedString,
         type: Type,
 
-        pub const Type = packed struct(u32) {
+        pub const Type = bitpack struct(u32) {
             /// The body contains the type of the parameter.
             body_len: u31,
             /// Whether the type is generic, i.e. refers to one or more previous parameters.
@@ -3890,7 +3890,7 @@ pub const Inst = struct {
     pub const AllocExtended = struct {
         src_node: Ast.Node.Offset,
 
-        pub const Small = packed struct(u16) {
+        pub const Small = bitpack struct(u16) {
             has_type: bool,
             has_align: bool,
             is_const: bool,
@@ -5085,7 +5085,7 @@ pub const UnwrappedSwitchBlock = struct {
         item_infos: []const Inst.SwitchBlock.ItemInfo,
         range_infos: []const [2]Inst.SwitchBlock.ItemInfo,
 
-        pub const Index = packed struct(u32) {
+        pub const Index = bitpack struct(u32) {
             kind: enum(u1) { scalar, multi },
             value: u31,
 

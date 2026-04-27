@@ -23,7 +23,7 @@ pub const Token = struct {
 
 pub const TokenWithExpansionLocs = struct {
     id: Token.Id,
-    flags: packed struct {
+    flags: bitpack struct {
         expansion_disabled: bool = false,
         is_macro_arg: bool = false,
     } = .{},
@@ -133,7 +133,7 @@ pub fn deinit(tree: *Tree) void {
     tree.* = undefined;
 }
 
-pub const GNUAssemblyQualifiers = packed struct(u32) {
+pub const GNUAssemblyQualifiers = bitpack struct(u32) {
     @"volatile": bool = false,
     @"inline": bool = false,
     goto: bool = false,
@@ -1848,7 +1848,7 @@ pub const Node = union(enum) {
         data: [3]u32,
         tok: TokenIndex,
 
-        pub const DeclAttr = packed struct(u32) {
+        pub const DeclAttr = bitpack struct(u32) {
             @"extern": bool = false,
             static: bool = false,
             @"inline": bool = false,

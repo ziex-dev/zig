@@ -164,10 +164,10 @@ test "@bitCast packed structs at runtime and comptime" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const Full = packed struct {
+    const Full = bitpack struct {
         number: u16,
     };
-    const Divided = packed struct {
+    const Divided = bitpack struct {
         half1: u8,
         quarter3: u4,
         quarter4: u4,
@@ -225,7 +225,7 @@ test "bitcast packed struct to integer and back" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    const LevelUpMove = packed struct {
+    const LevelUpMove = bitpack struct {
         move_id: u9,
         level: u7,
     };
@@ -260,7 +260,7 @@ test "implicit cast to error union by returning" {
 }
 
 test "bitcast packed struct literal to byte" {
-    const Foo = packed struct {
+    const Foo = bitpack struct {
         value: u8,
     };
     const casted = @as(u8, @bitCast(Foo{ .value = 0xF }));
@@ -268,7 +268,7 @@ test "bitcast packed struct literal to byte" {
 }
 
 test "comptime bitcast used in expression has the correct type" {
-    const Foo = packed struct {
+    const Foo = bitpack struct {
         value: u8,
     };
     try expect(@as(u8, @bitCast(Foo{ .value = 0xF })) == 0xf);
@@ -302,14 +302,14 @@ test "@bitCast packed struct of floats" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    const Foo = packed struct {
+    const Foo = bitpack struct {
         a: f16 = 0,
         b: f32 = 1,
         c: f64 = 2,
         d: f128 = 3,
     };
 
-    const Foo2 = packed struct {
+    const Foo2 = bitpack struct {
         a: f16 = 0,
         b: f32 = 1,
         c: f64 = 2,
@@ -339,7 +339,7 @@ test "comptime @bitCast packed struct to int and back" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    const S = packed struct {
+    const S = bitpack struct {
         void: void = {},
         uint: u8 = 13,
         uint_bit_aligned: u3 = 2,
@@ -493,7 +493,7 @@ test "@bitCast of packed struct of bools all true" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
-    const P = packed struct {
+    const P = bitpack struct {
         b0: bool,
         b1: bool,
         b2: bool,
@@ -513,7 +513,7 @@ test "@bitCast of packed struct of bools all false" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // TODO
 
-    const P = packed struct {
+    const P = bitpack struct {
         b0: bool,
         b1: bool,
         b2: bool,
@@ -597,7 +597,7 @@ test "@bitCast of float to extern struct" {
 }
 
 test "@bitCast of packed struct with void field to integer" {
-    const S = packed struct(u8) {
+    const S = bitpack struct(u8) {
         v: void,
         x: u8,
 

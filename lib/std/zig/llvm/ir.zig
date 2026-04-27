@@ -204,7 +204,7 @@ pub const ModuleBlock = struct {
     };
 
     pub const Variable = struct {
-        const AddrSpaceAndIsConst = packed struct {
+        const AddrSpaceAndIsConst = bitpack struct {
             is_const: bool,
             one: u1 = 1,
             addr_space: Builder.AddrSpace,
@@ -873,7 +873,7 @@ pub const ModuleBlock = struct {
         };
 
         pub const Call = struct {
-            pub const CallType = packed struct(u17) {
+            pub const CallType = bitpack struct(u17) {
                 tail: bool = false,
                 call_conv: Builder.CallConv,
                 reserved: u3 = 0,
@@ -899,7 +899,7 @@ pub const ModuleBlock = struct {
         };
 
         pub const CallFast = struct {
-            const CallType = packed struct(u18) {
+            const CallType = bitpack struct(u18) {
                 tail: bool = false,
                 call_conv: Builder.CallConv,
                 reserved: u3 = 0,
@@ -977,7 +977,7 @@ pub const ModuleBlock = struct {
             lhs: u32,
             rhs: u32,
             opcode: BinaryOpcode,
-            flags: packed struct(u2) {
+            flags: bitpack struct(u2) {
                 no_unsigned_wrap: bool,
                 no_signed_wrap: bool,
             },
@@ -1087,7 +1087,7 @@ pub const ModuleBlock = struct {
         };
 
         pub const Alloca = struct {
-            pub const Flags = packed struct(u11) {
+            pub const Flags = bitpack struct(u11) {
                 align_lower: u5,
                 inalloca: bool,
                 explicit_type: bool,
@@ -1823,7 +1823,7 @@ pub const ModuleBlock = struct {
         };
 
         pub const Enumerator = struct {
-            pub const Flags = packed struct(u3) {
+            pub const Flags = bitpack struct(u3) {
                 distinct: bool = false,
                 unsigned: bool,
                 bigint: bool = true,

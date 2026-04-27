@@ -656,7 +656,7 @@ pub const WebSocket = struct {
     input: *Reader,
     output: *Writer,
 
-    pub const Header0 = packed struct(u8) {
+    pub const Header0 = bitpack struct(u8) {
         opcode: Opcode,
         rsv3: u1 = 0,
         rsv2: u1 = 0,
@@ -664,7 +664,7 @@ pub const WebSocket = struct {
         fin: bool,
     };
 
-    pub const Header1 = packed struct(u8) {
+    pub const Header1 = bitpack struct(u8) {
         payload_len: enum(u7) {
             len16 = 126,
             len64 = 127,

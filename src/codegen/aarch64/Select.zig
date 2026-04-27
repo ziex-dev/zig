@@ -8875,7 +8875,7 @@ pub const Value = struct {
         if (!std.debug.runtime_safety) assert(@sizeOf(Value) == 32);
     }
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         alignment: InternPool.Alignment,
         parent_tag: Parent.Tag,
         location_tag: Location.Tag,
@@ -8916,7 +8916,7 @@ pub const Value = struct {
         };
     };
 
-    pub const Indirect = packed struct(u32) {
+    pub const Indirect = bitpack struct(u32) {
         base: Register.Alias,
         offset: i25,
 

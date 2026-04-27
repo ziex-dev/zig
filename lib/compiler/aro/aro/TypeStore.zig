@@ -106,7 +106,7 @@ const Index = enum(u29) {
 
 const TypeStore = @This();
 
-pub const QualType = packed struct(u32) {
+pub const QualType = bitpack struct(u32) {
     @"const": bool = false,
     @"volatile": bool = false,
     restrict: bool = false,

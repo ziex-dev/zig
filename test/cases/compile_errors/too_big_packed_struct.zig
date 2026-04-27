@@ -1,5 +1,5 @@
 pub export fn entry() void {
-    const T = packed struct {
+    const T = bitpack struct {
         a: u65535,
         b: u65535,
     };
@@ -8,4 +8,4 @@ pub export fn entry() void {
 
 // error
 //
-// :2:22: error: packed struct bit width '131070' exceeds maximum bit width of 65535
+// :2:23: error: packed struct bit width '131070' exceeds maximum bit width of 65535

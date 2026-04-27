@@ -39,7 +39,7 @@ pub const Header = extern struct {
     generated_files_len: u32,
     flags: Flags,
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         poisoned: bool,
         _: u31 = 0,
     };
@@ -510,7 +510,7 @@ pub const Step = extern struct {
     };
 
     /// Shared by all steps.
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         tag: Tag,
         _: u27 = 0,
     };
@@ -538,7 +538,7 @@ pub const Step = extern struct {
         flags: @This().Flags = .{},
         description: String,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .top_level,
             _: u27 = 0,
         };
@@ -554,7 +554,7 @@ pub const Step = extern struct {
         h_dir: Storage.FlagOptional(.flags, .h_dir, InstallDestDir),
         bin_sub_path: Storage.FlagOptional(.flags, .bin_sub_path, String),
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .install_artifact,
             dylib_symlinks: bool,
             bin_dir: bool,
@@ -601,7 +601,7 @@ pub const Step = extern struct {
             producer: Storage.FlagOptional(.flags, .producer, Step.Index),
             generated: Storage.FlagOptional(.flags, .generated, GeneratedFileIndex),
 
-            pub const Flags = packed struct(u32) {
+            pub const Flags = bitpack struct(u32) {
                 tag: Arg.Tag,
                 prefix: bool,
                 suffix: bool,
@@ -655,7 +655,7 @@ pub const Step = extern struct {
 
         pub const ExpectTermStatus = enum(u2) { exited, signal, stopped, unknown };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .run,
             disable_zig_progress: bool,
             skip_foreign_checks: bool,
@@ -676,7 +676,7 @@ pub const Step = extern struct {
             _: u4 = 0,
         };
 
-        pub const Flags2 = packed struct(u32) {
+        pub const Flags2 = bitpack struct(u32) {
             expect_stderr_exact: bool,
             expect_stdout_exact: bool,
             expect_stderr_match: bool,
@@ -738,7 +738,7 @@ pub const Step = extern struct {
             file: File,
             directory: Directory,
 
-            pub const Flags = packed struct(u32) {
+            pub const Flags = bitpack struct(u32) {
                 tag: InstalledHeader.Tag,
                 _: u24 = 0,
             };
@@ -753,7 +753,7 @@ pub const Step = extern struct {
                 source: LazyPath.Index,
                 dest_sub_path: String,
 
-                pub const Flags = packed struct(u32) {
+                pub const Flags = bitpack struct(u32) {
                     tag: InstalledHeader.Tag = .file,
                     _: u24 = 0,
                 };
@@ -766,7 +766,7 @@ pub const Step = extern struct {
                 exclude_extensions: Storage.FlagLengthPrefixedList(.flags, .exclude_extensions, String),
                 include_extensions: Storage.FlagLengthPrefixedList(.flags, .include_extensions, String),
 
-                pub const Flags = packed struct(u32) {
+                pub const Flags = bitpack struct(u32) {
                     tag: InstalledHeader.Tag = .directory,
                     exclude_extensions: bool,
                     include_extensions: bool,
@@ -922,7 +922,7 @@ pub const Step = extern struct {
             }
         };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .compile,
 
             filters_len: bool,
@@ -955,7 +955,7 @@ pub const Step = extern struct {
             mingw_unicode_entry_point: bool,
         };
 
-        pub const Flags2 = packed struct(u32) {
+        pub const Flags2 = bitpack struct(u32) {
             pie: DefaultingBool,
             formatted_panics: DefaultingBool,
             bundle_compiler_rt: DefaultingBool,
@@ -974,7 +974,7 @@ pub const Step = extern struct {
             linkage: Linkage,
         };
 
-        pub const Flags3 = packed struct(u32) {
+        pub const Flags3 = bitpack struct(u32) {
             is_linking_libc: bool,
             is_linking_libcpp: bool,
             version: bool,
@@ -996,7 +996,7 @@ pub const Step = extern struct {
             subsystem: Subsystem,
         };
 
-        pub const Flags4 = packed struct(u32) {
+        pub const Flags4 = bitpack struct(u32) {
             libc_file: bool,
             link_z_common_page_size: bool,
             link_z_max_page_size: bool,
@@ -1050,7 +1050,7 @@ pub const Step = extern struct {
         expected_matches: Storage.FlagLengthPrefixedList(.flags, .expected_matches, Bytes),
         max_bytes: Storage.FlagOptional(.flags, .max_bytes, u32),
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .check_file,
             expected_exact: bool,
             expected_matches: bool,
@@ -1093,7 +1093,7 @@ pub const Step = extern struct {
             ident: Storage.EnumOptional(.flags, .tag, .ident, String),
             string: Storage.EnumOptional(.flags, .tag, .string, String),
 
-            pub const Flags = packed struct(u32) {
+            pub const Flags = bitpack struct(u32) {
                 tag: Value.Tag,
                 small: u29,
             };
@@ -1192,7 +1192,7 @@ pub const Step = extern struct {
             }
         };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .config_header,
             template_file: bool,
             style: Style,
@@ -1206,7 +1206,7 @@ pub const Step = extern struct {
         flags: @This().Flags = .{},
         msg: String,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .fail,
             _: u27 = 0,
         };
@@ -1217,7 +1217,7 @@ pub const Step = extern struct {
         paths: Storage.FlagLengthPrefixedList(.flags, .paths, LazyPath.Index),
         exclude_paths: Storage.FlagLengthPrefixedList(.flags, .exclude_paths, LazyPath.Index),
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .fmt,
             paths: bool,
             exclude_paths: bool,
@@ -1231,7 +1231,7 @@ pub const Step = extern struct {
         names: StringList,
         found_path: GeneratedFileIndex,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .find_program,
             _: u27 = 0,
         };
@@ -1246,7 +1246,7 @@ pub const Step = extern struct {
         include_extensions: Storage.FlagLengthPrefixedList(.flags, .include_extensions, String),
         blank_extensions: Storage.FlagLengthPrefixedList(.flags, .blank_extensions, String),
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .install_dir,
             dest_sub_path: bool,
             exclude_extensions: bool,
@@ -1263,7 +1263,7 @@ pub const Step = extern struct {
         dest_dir: InstallDestDir,
         dest_sub_path: String,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .install_file,
             _: u27 = 0,
         };
@@ -1311,14 +1311,14 @@ pub const Step = extern struct {
             section_name: String,
             flags: @This().Flags,
 
-            pub const Flags = packed struct(u32) {
+            pub const Flags = bitpack struct(u32) {
                 section_flags: SectionFlags,
                 alignment: Alignment,
                 _: u17 = 0,
             };
         };
 
-        pub const SectionFlags = packed struct(u9) {
+        pub const SectionFlags = bitpack struct(u9) {
             /// add SHF_ALLOC
             alloc: bool = false,
             /// if section is SHT_NOBITS, set SHT_PROGBITS, otherwise do nothing
@@ -1341,7 +1341,7 @@ pub const Step = extern struct {
             pub const default: @This() = .{};
         };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .obj_copy,
             basename: bool,
             debug_file: bool,
@@ -1368,7 +1368,7 @@ pub const Step = extern struct {
             path: LazyPath.Index,
         };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .options,
             args: bool,
             _: u26 = 0,
@@ -1384,7 +1384,7 @@ pub const Step = extern struct {
         c_macros: Storage.FlagLengthPrefixedList(.flags, .c_macros, String),
         target: ResolvedTarget.OptionalIndex,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .translate_c,
             include_dirs: bool,
             system_libs: bool,
@@ -1403,7 +1403,7 @@ pub const Step = extern struct {
         pub const Embed = WriteFile.Embed;
         pub const Copy = WriteFile.Copy;
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .update_source_files,
             embeds: bool,
             copies: bool,
@@ -1442,7 +1442,7 @@ pub const Step = extern struct {
             mutate,
         };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .write_file,
             embeds: bool,
             copies: bool,
@@ -1485,7 +1485,7 @@ pub const LazyPath = union(@This().Tag) {
         generated,
     };
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         tag: Tag,
         _: u24 = 0,
     };
@@ -1517,7 +1517,7 @@ pub const LazyPath = union(@This().Tag) {
         owner: Package.Index,
         sub_path: String,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .source_path,
             _: u24 = 0,
         };
@@ -1529,7 +1529,7 @@ pub const LazyPath = union(@This().Tag) {
         /// Applied after `up`.
         sub_path: String = .empty,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .generated,
             /// The number of parent directories to go up.
             /// 0 means the generated file itself.
@@ -1543,7 +1543,7 @@ pub const LazyPath = union(@This().Tag) {
         flags: @This().Flags,
         sub_path: String,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             tag: Tag = .relative,
             base: Path.Base,
             _: u16 = 0,
@@ -1676,7 +1676,7 @@ pub const Module = struct {
         }
     };
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         optimize: Optimize,
         strip: DefaultingBool,
         unwind_tables: UnwindTables,
@@ -1697,7 +1697,7 @@ pub const Module = struct {
         export_symbol_names: bool,
     };
 
-    pub const Flags2 = packed struct(u32) {
+    pub const Flags2 = bitpack struct(u32) {
         valgrind: DefaultingBool,
         pic: DefaultingBool,
         red_zone: DefaultingBool,
@@ -1740,7 +1740,7 @@ pub const Module = struct {
         flags: @This().Flags,
         name: String,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             needed: bool,
             weak: bool,
             _: u30 = 0,
@@ -2005,7 +2005,7 @@ pub const SystemLib = struct {
 
     pub const LinkMode = std.builtin.LinkMode;
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         needed: bool,
         weak: bool,
         use_pkg_config: UsePkgConfig,
@@ -2031,7 +2031,7 @@ pub const CSourceFiles = struct {
         }
     };
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         /// C compiler CLI flags.
         args_len: u29,
         lang: OptionalCSourceLanguage,
@@ -2051,7 +2051,7 @@ pub const CSourceFile = struct {
         }
     };
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         /// C compiler CLI flags.
         args_len: u29,
         lang: OptionalCSourceLanguage,
@@ -2072,7 +2072,7 @@ pub const RcSourceFile = struct {
         }
     };
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         /// C compiler CLI flags.
         args_len: u31,
         include_paths: bool,
@@ -2746,7 +2746,7 @@ pub const TargetQuery = struct {
         }
     };
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         cpu_arch: CpuArch,
         cpu_model: CpuModel,
         cpu_features_add: bool,
@@ -3007,7 +3007,7 @@ pub const Storage = enum {
 
             pub const Tag = @typeInfo(Union).@"union".tag_type.?;
             pub const MetaInt = @Int(.unsigned, @bitSizeOf(Tag) + 1);
-            pub const Meta = packed struct(MetaInt) {
+            pub const Meta = bitpack struct(MetaInt) {
                 tag: Tag,
                 last: bool,
             };
