@@ -23,6 +23,17 @@ pub fn build(b: *std.Build) void {
 
     const check_config_header = b.addCheckFile(config_header.getOutputFile(), .{ .expected_exact = @embedFile("config.h") });
 
+    const file_config_header = b.addConfigHeader(.{
+        .style = .blank,
+        .include_path = "stub-header.h",
+    }, .{});
+    file_config_header.addFile(b.path("values.txt"), .{});
+    const check_file_config_header = b.addCheckFile(
+        file_config_header.getOutputFile(),
+        .{ .expected_exact = @embedFile("values-expected.h") },
+    );
+
     const test_step = b.step("test", "Test it");
     test_step.dependOn(&check_config_header.step);
+    test_step.dependOn(&check_file_config_header.step);
 }

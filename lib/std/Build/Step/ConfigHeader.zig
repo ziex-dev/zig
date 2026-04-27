@@ -35,10 +35,22 @@ pub const Value = union(enum) {
     int: i64,
     ident: []const u8,
     string: []const u8,
+
+    pub fn parse(str: []const u8) ?Value {
+        if (std.mem.eql(u8, str, "undef")) return .undef;
+        if (std.mem.eql(u8, str, "defined")) return .defined;
+        if (std.mem.eql(u8, str, "false")) return .{ .boolean = false };
+        if (std.mem.eql(u8, str, "true")) return .{ .boolean = true };
+        if (std.fmt.parseInt(i64, str, 10)) |int| return .{ .int = int } else |_| {}
+        if (std.mem.startsWith(u8, str, ":")) return .{ .ident = str[1..] };
+        if (str.len >= 2 and str[0] == '"' and str[str.len - 1] == '"') return .{ .string = str[1 .. str.len - 1] };
+        return null;
+    }
 };
 
 step: Step,
 values: std.array_hash_map.String(Value),
+files: std.ArrayList(File),
 /// This directory contains the generated file under the name `include_path`.
 generated_dir: std.Build.GeneratedFile,
 
@@ -96,6 +108,7 @@ pub fn create(owner: *std.Build, options: Options) *ConfigHeader {
         }),
         .style = options.style,
         .values = .empty,
+        .files = .empty,
 
         .max_bytes = options.max_bytes,
         .include_path = include_path,
@@ -122,6 +135,38 @@ pub fn addValues(config_header: *ConfigHeader, values: anytype) void {
     inline for (@typeInfo(@TypeOf(values)).@"struct".fields) |field| {
         addValue(config_header, field.name, field.type, @field(values, field.name));
     }
+}
+
+const File = struct {
+    path: std.Build.LazyPath,
+    options: FileOptions,
+};
+const FileOptions = struct {
+    max_bytes: usize = 20 * 1024 * 1024,
+};
+
+/// Add a file whose content is configuration. Blank lines and those starting
+/// with `#` are ignored, otherwise, each line is of the form `NAME VALUE`.
+///
+/// VALUE supports literals `undef`, `defined`, `false`, `true` as well as integers.
+/// Use double-quotes to specify a "string". Use a colon to indicate an `ident`
+/// value, i.e.
+///
+/// ```
+/// FOO1 undef
+/// FOO2 defined
+/// FOO3 false
+/// FOO4 true
+/// FOO5 -100
+/// FOO6 "a string"
+/// FOO7 :an ident value
+/// ```
+///
+/// NOTE: strings and idents are passed along verbatim, there is no escape substituation performed.
+pub fn addFile(config_header: *ConfigHeader, file: std.Build.LazyPath, options: FileOptions) void {
+    const arena = config_header.step.owner.allocator;
+    file.addStepDependencies(&config_header.step);
+    config_header.files.append(arena, .{ .path = file, .options = options }) catch @panic("OOM");
 }
 
 pub fn getOutputDir(ch: *ConfigHeader) std.Build.LazyPath {
@@ -201,6 +246,31 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     man.hash.add(@as(u32, 0xdef08d23));
     man.hash.addBytes(config_header.include_path);
     man.hash.addOptionalBytes(config_header.include_guard_override);
+
+    for (config_header.files.items) |file| {
+        const file_path = try file.path.getPath4(b, step);
+        const content = file_path.root_dir.handle.readFileAlloc(
+            io,
+            file_path.subPathOrDot(),
+            b.allocator,
+            .limited(file.options.max_bytes),
+        ) catch |err| return step.fail(
+            "unable to read config values from '{f}': {t}",
+            .{ file_path, err },
+        );
+        var line_it = std.mem.splitScalar(u8, content, '\n');
+        var line_num: u32 = 0;
+        while (line_it.next()) |line| {
+            line_num += 1;
+            if (line.len == 0 or line[0] == '#') continue;
+            if (FileEntry.parse(line)) |entry| {
+                config_header.values.put(arena, entry.name, entry.value) catch @panic("OOM");
+            } else |err| {
+                step.addError("{f}:{d}: {t} '{s}'", .{ file_path, line_num, err, line }) catch @panic("OOM");
+            }
+        }
+        if (step.result_error_msgs.items.len != 0) return error.MakeFailed;
+    }
 
     var aw: Writer.Allocating = .init(gpa);
     defer aw.deinit();
@@ -794,6 +864,27 @@ fn testReplaceVariablesCMake(
     try std.testing.expectEqualStrings(expected, actual);
 }
 
+test "ConfigHeader.Value.parse" {
+    try std.testing.expectEqual(Value.undef, Value.parse("undef"));
+    try std.testing.expectEqual(@as(?Value, null), Value.parse("undefined"));
+    try std.testing.expectEqual(Value.defined, Value.parse("defined"));
+    try std.testing.expectEqual(@as(?Value, null), Value.parse("defined "));
+    try std.testing.expectEqual(Value{ .boolean = false }, Value.parse("false"));
+    try std.testing.expectEqual(Value{ .boolean = true }, Value.parse("true"));
+    try std.testing.expectEqual(Value{ .int = -3829 }, Value.parse("-3829"));
+    try std.testing.expectEqual(Value{ .int = -1 }, Value.parse("-1"));
+    try std.testing.expectEqual(Value{ .int = 999 }, Value.parse("999"));
+    try std.testing.expectEqual(@as(?Value, null), Value.parse("999 "));
+    try std.testing.expectEqualDeep(Value{ .ident = "" }, Value.parse(":"));
+    try std.testing.expectEqualDeep(Value{ .ident = "hello there" }, Value.parse(":hello there"));
+    try std.testing.expectEqualDeep(Value{ .string = "" }, Value.parse("\"\""));
+    try std.testing.expectEqualDeep(Value{ .string = "an example string" }, Value.parse("\"an example string\""));
+    try std.testing.expectEqual(@as(?Value, null), Value.parse("\""));
+    try std.testing.expectEqual(@as(?Value, null), Value.parse("a\"\""));
+    try std.testing.expectEqual(@as(?Value, null), Value.parse("\"\"a"));
+    try std.testing.expectEqual(@as(?Value, null), Value.parse("\"abc\"d"));
+}
+
 test "expand_variables_autoconf_at simple cases" {
     const allocator = std.testing.allocator;
     var values: std.array_hash_map.String(Value) = .init(allocator);
@@ -1074,3 +1165,16 @@ test "expand_variables_cmake escaped characters" {
     // backslash is skipped when checking for invalid characters, yet it mangles the key
     try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${string\\}", "", values));
 }
+
+pub const FileEntry = struct {
+    name: []const u8,
+    value: Value,
+
+    pub fn parse(line: []const u8) error{ MissingValue, InvalidValue }!FileEntry {
+        const first_space = std.mem.indexOfScalar(u8, line, ' ') orelse return error.MissingValue;
+        return .{
+            .name = line[0..first_space],
+            .value = Value.parse(line[first_space + 1 ..]) orelse return error.InvalidValue,
+        };
+    }
+};

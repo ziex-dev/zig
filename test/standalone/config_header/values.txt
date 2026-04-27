@@ -1,0 +1,9 @@
+# comment line
+FOO1 undef
+FOO2 defined
+FOO3 true
+FOO4 false
+FOO5 42
+FOO7 -7
+FOO8 :a verbatim/identical example value
+FOO9 "here's a string for ya"
