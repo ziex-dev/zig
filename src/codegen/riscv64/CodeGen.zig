@@ -92,7 +92,7 @@ scope_generation: u32,
 /// which is a relative jump, based on the address following the reloc.
 exitlude_jump_relocs: std.ArrayList(usize) = .empty,
 
-reused_operands: std.StaticBitSet(Air.Liveness.bpi - 1) = undefined,
+reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 
 /// Whenever there is a runtime branch, we push a Branch onto this stack,
 /// and pop it off when the runtime branch joins. This provides an "overlay"
@@ -671,11 +671,12 @@ fn restoreState(func: *Func, state: State, deaths: []const Air.Inst.Index, compt
     for (deaths) |death| try func.processDeath(death);
 
     const ExpectedContents = [@typeInfo(RegisterManager.TrackedRegisters).array.len]RegisterLock;
-    var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-        if (opts.update_tracking) {} else std.heap.stackFallback(@sizeOf(ExpectedContents), func.gpa);
+    const stack_buf_len = if (opts.update_tracking) 0 else 1;
+    var bfa_buf: [stack_buf_len]ExpectedContents = undefined;
+    var bfa = if (opts.update_tracking) {} else std.heap.BufferFirstAllocator.init(@ptrCast(&bfa_buf), func.gpa);
 
     var reg_locks = if (opts.update_tracking) {} else try std.array_list.Managed(RegisterLock).initCapacity(
-        stack.get(),
+        bfa.allocator(),
         @typeInfo(ExpectedContents).array.len,
     );
     defer if (!opts.update_tracking) {
@@ -811,7 +812,7 @@ pub fn generate(
 
     const fn_info = zcu.typeToFunc(fn_type).?;
     var call_info = function.resolveCallingConventionValues(fn_info, &.{}) catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         else => |e| return e,
     };
 
@@ -840,7 +841,7 @@ pub fn generate(
     }));
 
     function.gen() catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
@@ -892,7 +893,7 @@ pub fn generateLazy(
     defer function.mir_instructions.deinit(gpa);
 
     function.genLazy(lazy_sym) catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
@@ -1414,8 +1415,6 @@ fn genBody(func: *Func, body: []const Air.Inst.Index) InnerError!void {
             .shl, .shl_exact,
             .shr, .shr_exact,
 
-            .bool_and,
-            .bool_or,
             .bit_and,
             .bit_or,
 
@@ -2701,13 +2700,11 @@ fn genBinOp(
 
         .bit_and,
         .bit_or,
-        .bool_and,
-        .bool_or,
         => {
             _ = try func.addInst(.{
                 .tag = switch (tag) {
-                    .bit_and, .bool_and => .@"and",
-                    .bit_or, .bool_or => .@"or",
+                    .bit_and => .@"and",
+                    .bit_or => .@"or",
                     else => unreachable,
                 },
                 .data = .{
@@ -2718,13 +2715,6 @@ fn genBinOp(
                     },
                 },
             });
-
-            switch (tag) {
-                .bool_and,
-                .bool_or,
-                => try func.truncateRegister(Type.bool, dst_reg),
-                else => {},
-            }
         },
 
         .shr,
@@ -4807,9 +4797,9 @@ fn airCall(func: *Func, inst: Air.Inst.Index, modifier: std.builtin.CallModifier
     const ExpectedContents = extern struct {
         vals: [expected_num_args][@sizeOf(MCValue)]u8 align(@alignOf(MCValue)),
     };
-    var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-        std.heap.stackFallback(@sizeOf(ExpectedContents), func.gpa);
-    const allocator = stack.get();
+    var bfa_buf: ExpectedContents = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), func.gpa);
+    const allocator = bfa.allocator();
 
     const arg_tys = try allocator.alloc(Type, arg_refs.len);
     defer allocator.free(arg_tys);

@@ -882,15 +882,16 @@ pub fn fieldValue(val: Value, pt: Zcu.PerThread, index: usize) !Value {
                 else => unreachable,
             };
             // Avoid hitting gpa for accesses to small packed structs
-            var sfba_state = std.heap.stackFallback(128, zcu.comp.gpa);
-            const sfba = sfba_state.get();
-            const buf = try sfba.alloc(u8, @intCast((ty.bitSize(zcu) + 7) / 8));
-            defer sfba.free(buf);
+            var bfa_buf: [128]u8 = undefined;
+            var bfa_state: std.heap.BufferFirstAllocator = .init(&bfa_buf, zcu.comp.gpa);
+            const bfa = bfa_state.allocator();
+            const buf = try bfa.alloc(u8, @intCast((ty.bitSize(zcu) + 7) / 8));
+            defer bfa.free(buf);
             int_val.writeToPackedMemory(zcu, buf, 0) catch |err| switch (err) {
                 error.ReinterpretDeclRef => unreachable, // it's an integer
                 error.OutOfMemory => |e| return e,
             };
-            return Value.readFromPackedMemory(field_ty, pt, buf, field_bit_offset, sfba) catch |err| switch (err) {
+            return Value.readFromPackedMemory(field_ty, pt, buf, field_bit_offset, bfa) catch |err| switch (err) {
                 error.IllDefinedMemoryLayout => unreachable, // it's a bitpack
                 error.OutOfMemory => |e| return e,
             };
@@ -1610,7 +1611,7 @@ pub fn hasRepeatedByteRepr(val: Value, zcu: *const Zcu) !?u8 {
     defer zcu.gpa.free(byte_buffer);
 
     writeToMemory(val, zcu, byte_buffer) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
         error.ReinterpretDeclRef => return null,
         // TODO: The writeToMemory function was originally created for the purpose
         // of comptime pointer casting. However, it is now additionally being used

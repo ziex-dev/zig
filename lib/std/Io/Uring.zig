@@ -779,7 +779,6 @@ pub fn io(ev: *Evented) Io {
             .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
             .netSend = netSendUnavailable,
-            .netRead = netReadUnavailable,
             .netWrite = netWriteUnavailable,
             .netWriteFile = netWriteFileUnavailable,
             .netClose = netClose,
@@ -2105,6 +2104,12 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 };
             },
         },
+        .net_read => |o| .{
+            .net_read = r: {
+                _ = o;
+                break :r error.NetworkDown; // TODO
+            },
+        },
     };
 }
 
@@ -2392,6 +2397,10 @@ fn batchDrainSubmitted(
                 _ = o;
                 @panic("TODO implement batchDrainSubmitted for net_receive");
             },
+            .net_read => |o| {
+                _ = o;
+                @panic("TODO implement batchDrainSubmitted for net_read");
+            },
         })) |result| {
             switch (batch.completed.tail) {
                 .none => batch.completed.head = index,
@@ -2493,6 +2502,7 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                 },
                 .device_io_control => unreachable,
                 .net_receive => @panic("TODO"),
+                .net_read => @panic("TODO"),
             })) |result| {
                 switch (batch.completed.tail) {
                     .none => batch.completed.head = index,
@@ -3060,7 +3070,7 @@ fn dirRead(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Read
             }
             const n = while (true) {
                 try sync.cancel_region.await(.nothing);
-                const rc = linux.getdents64(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
+                const rc = linux.getdents64(dr.dir.handle, dr.buffer.ptr, @min(dr.buffer.len, std.math.maxInt(c_uint)));
                 switch (linux.errno(rc)) {
                     .SUCCESS => break rc,
                     .INTR => {},
@@ -4948,7 +4958,7 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     var cancel_region: CancelRegion = .init();
     defer cancel_region.deinit();
     ev.urandomReadAll(&cancel_region, buffer) catch |err| switch (err) {
-        error.Canceled => return error.Canceled,
+        error.Canceled => |e| return e,
         else => return error.EntropyUnavailable,
     };
 }
@@ -5140,18 +5150,6 @@ fn netReceive(
             else => |err| return .{ unexpectedErrno(err), message_i },
         }
     }
-}
-
-fn netReadUnavailable(
-    userdata: ?*anyopaque,
-    fd: net.Socket.Handle,
-    data: [][]u8,
-) net.Stream.Reader.Error!usize {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = fd;
-    _ = data;
-    return error.NetworkDown;
 }
 
 fn netWriteUnavailable(

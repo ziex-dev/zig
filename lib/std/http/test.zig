@@ -34,7 +34,7 @@ test "content length reader state update" {
 }
 
 test "trailers" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -121,7 +121,7 @@ test "trailers" {
 }
 
 test "HTTP server handles a chunked transfer coding request" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -267,7 +267,7 @@ const EchoServer = struct {
 };
 
 test "echo content server with TCP sockets" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -285,7 +285,7 @@ test "echo content server with TCP sockets" {
 }
 
 test "echo content server with Unix sockets" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
     if (!std.Io.net.has_unix_sockets) return error.SkipZigTest;
 
@@ -314,7 +314,7 @@ test "echo content server with Unix sockets" {
 }
 
 test "Server.Request.respondStreaming non-chunked, unknown content-length" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -393,7 +393,7 @@ test "Server.Request.respondStreaming non-chunked, unknown content-length" {
 }
 
 test "receiving arbitrary http headers from the client" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -621,7 +621,7 @@ const CoverageServer = struct {
 };
 
 test "general client/server API coverage with TCP sockets" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -645,7 +645,7 @@ test "general client/server API coverage with TCP sockets" {
 }
 
 test "general client/server API coverage with Unix sockets" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
     if (!std.Io.net.has_unix_sockets) return error.SkipZigTest;
 
@@ -679,7 +679,7 @@ test "general client/server API coverage with Unix sockets" {
 }
 
 test "Server streams both reading and writing" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -710,7 +710,7 @@ test "Server streams both reading and writing" {
                 try response.flush();
                 const buf = br.peekGreedy(1) catch |err| switch (err) {
                     error.EndOfStream => break,
-                    error.ReadFailed => return error.ReadFailed,
+                    error.ReadFailed => |e| return e,
                 };
                 br.toss(buf.len);
                 for (buf) |*b| b.* = std.ascii.toUpper(b.*);
@@ -1331,7 +1331,7 @@ fn createTestServerOnUnixSocket(gpa: std.mem.Allocator, io: Io, S: type) !*TestS
 }
 
 test "redirect to different connection" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;
@@ -1419,7 +1419,7 @@ test "redirect to different connection" {
 }
 
 test "boot failed connections from the pool" {
-    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/171879
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/194257
     if (builtin.os.tag == .openbsd) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/30806
 
     const io = std.testing.io;

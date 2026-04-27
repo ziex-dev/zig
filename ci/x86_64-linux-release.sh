@@ -7,11 +7,11 @@ set -e
 
 TARGET="x86_64-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
-export PATH="$HOME/deps/wasmtime-v42.0.1-x86_64-linux:$HOME/deps/qemu-linux-x86_64-10.2.2/bin:$HOME/local/bin:$PATH"
+export PATH="$HOME/deps/wasmtime-v44.0.0-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.0.0/bin:$HOME/local/bin:$PATH"
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
@@ -76,6 +76,9 @@ stage3-release/bin/zig build test docs \
 # Ensure that the fuzzer at least compiles.
 stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
 stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
+
+# Ensure that reduce compiles
+stage3-release/bin/zig reduce -h
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \

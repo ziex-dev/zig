@@ -176,7 +176,6 @@ pub const Id = enum {
             .update_source_files => UpdateSourceFiles,
             .run => Run,
             .check_file => CheckFile,
-            .check_object => CheckObject,
             .config_header => ConfigHeader,
             .objcopy => ObjCopy,
             .options => Options,
@@ -186,7 +185,6 @@ pub const Id = enum {
 };
 
 pub const CheckFile = @import("Step/CheckFile.zig");
-pub const CheckObject = @import("Step/CheckObject.zig");
 pub const ConfigHeader = @import("Step/ConfigHeader.zig");
 pub const Fail = @import("Step/Fail.zig");
 pub const Fmt = @import("Step/Fmt.zig");
@@ -282,8 +280,7 @@ pub fn make(s: *Step, options: MakeOptions) error{ MakeFailed, MakeSkipped }!voi
     }
 
     make_result catch |err| switch (err) {
-        error.MakeFailed => return error.MakeFailed,
-        error.MakeSkipped => return error.MakeSkipped,
+        error.MakeFailed, error.MakeSkipped => |e| return e,
         else => {
             s.result_error_msgs.append(arena, @errorName(err)) catch @panic("OOM");
             return error.MakeFailed;
@@ -845,8 +842,7 @@ fn failWithCacheError(
                 });
             },
         },
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Canceled => return error.Canceled,
+        error.OutOfMemory, error.Canceled => |e| return e,
         error.InvalidFormat => return s.fail("failed to check cache: invalid manifest file format", .{}),
     }
 }
@@ -1006,7 +1002,6 @@ pub fn invalidateResult(step: *Step, gpa: Allocator) bool {
 
 test {
     _ = CheckFile;
-    _ = CheckObject;
     _ = Fail;
     _ = Fmt;
     _ = InstallArtifact;

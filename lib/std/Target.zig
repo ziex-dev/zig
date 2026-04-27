@@ -845,6 +845,12 @@ pub const Abi = enum {
                 => .eabi,
                 else => .none,
             },
+            .fuchsia => switch (arch) {
+                .arm,
+                .thumb,
+                => .eabihf,
+                else => .none,
+            },
             .haiku => switch (arch) {
                 .arm,
                 .powerpc,
@@ -928,7 +934,6 @@ pub const Abi = enum {
             .wasi, .emscripten => .musl,
 
             .contiki,
-            .fuchsia,
             .hermit,
             .illumos,
             .managarm,
@@ -1014,6 +1019,7 @@ pub const Abi = enum {
             .gnueabi,
             .musleabi,
             .gnusf,
+            .muslsf,
             .ohoseabi,
             => .soft,
             else => .hard,
@@ -1219,7 +1225,7 @@ pub const Cpu = struct {
         pub const Set = struct {
             ints: [usize_count]usize,
 
-            pub const needed_bit_count = 317;
+            pub const needed_bit_count = 347;
             pub const byte_count = (needed_bit_count + 7) / 8;
             pub const usize_count = (byte_count + (@sizeOf(usize) - 1)) / @sizeOf(usize);
             pub const Index = std.math.Log2Int(std.meta.Int(.unsigned, usize_count * @bitSizeOf(usize)));
@@ -2055,6 +2061,7 @@ pub const Cpu = struct {
                 .hppa => &hppa.cpu.pa_7300lc,
                 .kvx => &kvx.cpu.coolidge_v2,
                 .lanai => &lanai.cpu.v11, // clang does not have a generic lanai model.
+                .loongarch32 => &loongarch.cpu.la32v1_0,
                 .loongarch64 => &loongarch.cpu.la64v1_0,
                 .m68k => &m68k.cpu.M68000,
                 .mips => &mips.cpu.mips32r2,
@@ -2442,8 +2449,10 @@ pub const DynamicLinker = struct {
     pub fn standard(cpu: Cpu, os: Os, abi: Abi) DynamicLinker {
         return switch (os.tag) {
             .fuchsia => switch (cpu.arch) {
+                .arm,
                 .aarch64,
                 .riscv64,
+                .thumb,
                 .x86_64,
                 => init("ld.so.1"), // Fuchsia is unusual in that `DT_INTERP` is just a basename.
                 else => none,
@@ -2673,9 +2682,8 @@ pub const DynamicLinker = struct {
                         else => none,
                     },
 
-                    .powerpc64,
-                    .powerpc64le,
-                    => if (abi == .gnu) init("/lib64/ld64.so.2") else none,
+                    .powerpc64 => if (abi == .gnu) init("/lib64/ld64.so.1") else none,
+                    .powerpc64le => if (abi == .gnu) init("/lib64/ld64.so.2") else none,
 
                     .riscv32,
                     .riscv64,
@@ -3082,8 +3090,6 @@ pub fn cTypeByteSize(t: *const Target, c_type: CType) u16 {
         => @divExact(cTypeBitSize(t, c_type), 8),
 
         .longdouble => switch (cTypeBitSize(t, c_type)) {
-            16 => 2,
-            32 => 4,
             64 => 8,
             80 => @intCast(std.mem.alignForward(usize, 10, cTypeAlignment(t, .longdouble))),
             128 => 16,
@@ -3734,10 +3740,10 @@ pub fn cCallingConvention(target: *const Target) ?std.builtin.CallingConvention 
         .riscv32, .riscv32be => .{ .riscv32_ilp32 = .{} },
         .sparc64 => .{ .sparc64_sysv = .{} },
         .sparc => .{ .sparc_sysv = .{} },
-        .powerpc64 => if (target.abi.isMusl())
-            .{ .powerpc64_elf_v2 = .{} }
+        .powerpc64 => if (target.abi.isGnu())
+            .{ .powerpc64_elf = .{} }
         else
-            .{ .powerpc64_elf = .{} },
+            .{ .powerpc64_elf_v2 = .{} },
         .powerpc64le => .{ .powerpc64_elf_v2 = .{} },
         .powerpc, .powerpcle => .{ .powerpc_sysv = .{} },
         .wasm32, .wasm64 => .{ .wasm_mvp = .{} },

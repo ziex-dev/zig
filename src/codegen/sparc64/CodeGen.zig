@@ -79,7 +79,7 @@ end_di_column: u32,
 /// which is a relative jump, based on the address following the reloc.
 exitlude_jump_relocs: std.ArrayList(usize) = .empty,
 
-reused_operands: std.StaticBitSet(Air.Liveness.bpi - 1) = undefined,
+reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 
 /// Whenever there is a runtime branch, we push a Branch onto this stack,
 /// and pop it off when the runtime branch joins. This provides an "overlay"
@@ -308,7 +308,7 @@ pub fn generate(
     defer function.exitlude_jump_relocs.deinit(gpa);
 
     var call_info = function.resolveCallingConventionValues(func_ty, .callee) catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         else => |e| return e,
     };
     defer call_info.deinit(&function);
@@ -319,18 +319,17 @@ pub fn generate(
     function.max_end_stack = call_info.stack_byte_count;
 
     function.gen() catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
 
-    var mir: Mir = .{
+    try function.mir_extra.shrinkToLen(gpa);
+
+    return .{
         .instructions = function.mir_instructions.toOwnedSlice(),
-        .extra = &.{}, // fallible, so populated after errdefer
+        .extra = function.mir_extra.toOwnedSliceAssert(),
     };
-    errdefer mir.deinit(gpa);
-    mir.extra = try function.mir_extra.toOwnedSlice(gpa);
-    return mir;
 }
 
 fn gen(self: *Self) !void {
@@ -499,8 +498,6 @@ fn genBody(self: *Self, body: []const Air.Inst.Index) InnerError!void {
             .shl_exact       => try self.airBinOp(inst, .shl_exact),
             .shr             => try self.airBinOp(inst, .shr),
             .shr_exact       => try self.airBinOp(inst, .shr_exact),
-            .bool_and        => try self.airBinOp(inst, .bool_and),
-            .bool_or         => try self.airBinOp(inst, .bool_or),
             .bit_and         => try self.airBinOp(inst, .bit_and),
             .bit_or          => try self.airBinOp(inst, .bit_or),
             .xor             => try self.airBinOp(inst, .xor),
@@ -2936,26 +2933,6 @@ fn binOp(
                         const addr = try self.binOp(tag, lhs, offset, Type.manyptr_u8, Type.usize, null);
                         return addr;
                     }
-                },
-                else => unreachable,
-            }
-        },
-
-        .bool_and,
-        .bool_or,
-        => {
-            switch (lhs_ty.zigTypeTag(zcu)) {
-                .bool => {
-                    assert(lhs != .immediate); // should have been handled by Sema
-                    assert(rhs != .immediate); // should have been handled by Sema
-
-                    const mir_tag: Mir.Inst.Tag = switch (tag) {
-                        .bool_and => .@"and",
-                        .bool_or => .@"or",
-                        else => unreachable,
-                    };
-
-                    return try self.binOpRegister(mir_tag, lhs, rhs, lhs_ty, rhs_ty, metadata);
                 },
                 else => unreachable,
             }

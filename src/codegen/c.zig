@@ -1629,7 +1629,7 @@ pub const DeclGen = struct {
             if (func_analysis.branch_hint == .cold)
                 try w.writeAll("zig_cold ");
 
-            if (kind == .definition and func_analysis.disable_intrinsics or dg.mod.no_builtin)
+            if (kind == .definition and (func_analysis.disable_intrinsics or dg.mod.no_builtin))
                 try w.writeAll("zig_no_builtin ");
         }
 
@@ -2728,9 +2728,8 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
             },
             .cmp_lte_errors_len => try airCmpLteErrorsLen(f, inst),
 
-            // bool_and and bool_or are non-short-circuit operations
-            .bool_and, .bit_and => try airBinOp(f, inst, "&",  "and", .none),
-            .bool_or,  .bit_or  => try airBinOp(f, inst, "|",  "or",  .none),
+            .bit_and => try airBinOp(f, inst, "&",  "and", .none),
+            .bit_or  => try airBinOp(f, inst, "|",  "or",  .none),
             .xor                => try airBinOp(f, inst, "^",  "xor", .none),
             .shr, .shr_exact    => try airBinBuiltinCall(f, inst, "shr", .none),
             .shl,               => try airBinBuiltinCall(f, inst, "shlw", .bits),
@@ -3498,9 +3497,27 @@ fn airOverflow(f: *Function, inst: Air.Inst.Index, operation: []const u8, info: 
     try w.writeAll(operation);
     try w.writeAll("o_");
     try f.dg.renderTypeForBuiltinFnName(w, scalar_ty);
-    try w.writeAll("(&");
+    try w.writeByte('(');
+
+    // '&dest', possibly preceded by a cast
+    switch (zcu.intern_pool.indexToKey(scalar_ty.toIntern())) {
+        .int_type => {}, // we already have a '[u]intX_t *'
+        .simple_type => {
+            // '&dest' will be something like a 'uintptr_t *', which might be a different C type to
+            // the equivalent sized integer (e.g. 'uint64_t *'), so we need a cast. We don't need a
+            // cast on the *operands* because they are passed by value (except for big integers,
+            // where this issue doesn't exist because no "simple" int type needs bigint repr).
+            try w.print("({s}int{d}_t *)", .{
+                if (scalar_ty.isUnsignedInt(zcu)) "u" else "",
+                scalar_ty.abiSize(zcu) * 8,
+            });
+        },
+        else => unreachable,
+    }
+    try w.writeByte('&');
     try f.writeCValueMember(w, local, .{ .field = 0 });
     try v.elem(f, w);
+
     try w.writeAll(", ");
     if (ref_arg) try w.writeByte('&');
     try f.writeCValue(w, lhs, .other);
@@ -4841,8 +4858,9 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
         {
             const asm_source = unwrapped_asm.source;
 
-            var stack = std.heap.stackFallback(256, f.dg.gpa);
-            const allocator = stack.get();
+            var bfa_buf: [256]u8 = undefined;
+            var bfa: std.heap.BufferFirstAllocator = .init(&bfa_buf, f.dg.gpa);
+            const allocator = bfa.allocator();
             const fixed_asm_source = try allocator.alloc(u8, asm_source.len);
             defer allocator.free(fixed_asm_source);
 

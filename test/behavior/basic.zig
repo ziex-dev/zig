@@ -1147,7 +1147,6 @@ test "arrays and vectors with big integers" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23805
@@ -1408,11 +1407,7 @@ test "allocation and looping over 3-byte integer" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
-    if (builtin.zig_backend == .stage2_llvm and builtin.os.tag.isDarwin()) {
-        return error.SkipZigTest; // TODO
-    }
-    if (builtin.cpu.arch == .s390x and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_llvm and builtin.os.tag.isDarwin()) return error.SkipZigTest; // TODO
 
     try expect(@sizeOf(u24) == 4);
     try expect(@sizeOf([1]u24) == 4);

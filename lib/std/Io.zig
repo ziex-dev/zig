@@ -243,8 +243,6 @@ pub const VTable = struct {
     netConnectUnix: *const fn (?*anyopaque, *const net.UnixAddress) net.UnixAddress.ConnectError!net.Socket.Handle,
     netSocketCreatePair: *const fn (?*anyopaque, net.Socket.CreatePairOptions) net.Socket.CreatePairError![2]net.Socket,
     netSend: *const fn (?*anyopaque, net.Socket.Handle, []net.OutgoingMessage, net.SendFlags) struct { ?net.Socket.SendError, usize },
-    /// Returns 0 on end of stream.
-    netRead: *const fn (?*anyopaque, src: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize,
     netWrite: *const fn (?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize,
     netWriteFile: *const fn (?*anyopaque, net.Socket.Handle, header: []const u8, *Io.File.Reader, Io.Limit) net.Stream.Writer.WriteFileError!usize,
     netClose: *const fn (?*anyopaque, handle: []const net.Socket.Handle) void,
@@ -261,6 +259,7 @@ pub const Operation = union(enum) {
     /// other systems this tag is unreachable.
     device_io_control: DeviceIoControl,
     net_receive: NetReceive,
+    net_read: NetRead,
 
     pub const Tag = @typeInfo(Operation).@"union".tag_type.?;
 
@@ -384,6 +383,23 @@ pub const Operation = union(enum) {
         } || Io.UnexpectedError;
 
         pub const Result = struct { ?net.Socket.ReceiveError, usize };
+    };
+
+    pub const NetRead = struct {
+        socket_handle: net.Socket.Handle,
+        data: [][]u8,
+
+        pub const Error = error{
+            SystemResources,
+            ConnectionResetByPeer,
+            SocketUnconnected,
+            /// The file descriptor does not hold the required rights to read
+            /// from it.
+            AccessDenied,
+            NetworkDown,
+        } || Io.UnexpectedError;
+
+        pub const Result = Error!usize;
     };
 
     pub const Result = Result: {
@@ -874,7 +890,7 @@ pub const Clock = enum {
             if (t.clock == clock) return t;
             const now_old = t.clock.now(io);
             const now_new = clock.now(io);
-            const duration = now_old.durationTo(t);
+            const duration = now_old.durationTo(t.raw);
             return .{
                 .clock = clock,
                 .raw = now_new.addDuration(duration),
@@ -1665,20 +1681,29 @@ pub const Condition = struct {
         .epoch = .init(0),
     };
 
-    pub fn wait(cond: *Condition, io: Io, mutex: *Mutex) Cancelable!void {
-        try waitInner(cond, io, mutex, false);
-    }
-
-    /// Same as `wait`, except does not introduce a cancelation point.
+    /// Blocks until the condition is signaled or canceled.
     ///
-    /// For a description of cancelation and cancelation points, see `Future.cancel`.
-    pub fn waitUncancelable(cond: *Condition, io: Io, mutex: *Mutex) void {
-        waitInner(cond, io, mutex, true) catch |err| switch (err) {
-            error.Canceled => unreachable,
+    /// See also:
+    /// * `waitUncancelable`
+    /// * `waitTimeout`
+    pub fn wait(cond: *Condition, io: Io, mutex: *Mutex) Cancelable!void {
+        waitTimeout(cond, io, mutex, .none) catch |err| switch (err) {
+            error.Timeout => unreachable,
+            error.Canceled => |e| return e,
         };
     }
 
-    fn waitInner(cond: *Condition, io: Io, mutex: *Mutex, uncancelable: bool) Cancelable!void {
+    pub const WaitTimeoutError = Cancelable || Timeout.Error;
+
+    /// Blocks until the condition is signaled, canceled, or the provided
+    /// timeout expires.
+    ///
+    /// See also:
+    /// * `wait`
+    /// * `waitUncancelable`
+    pub fn waitTimeout(cond: *Condition, io: Io, mutex: *Mutex, timeout: Timeout) WaitTimeoutError!void {
+        const deadline = timeout.toDeadline(io);
+
         var epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before state load
 
         {
@@ -1690,10 +1715,7 @@ pub const Condition = struct {
         defer mutex.lockUncancelable(io);
 
         while (true) {
-            const result = if (uncancelable)
-                io.futexWaitUncancelable(u32, &cond.epoch.raw, epoch)
-            else
-                io.futexWait(u32, &cond.epoch.raw, epoch);
+            const result = io.futexWaitTimeout(u32, &cond.epoch.raw, epoch, deadline);
 
             epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before `state` laod
 
@@ -1713,13 +1735,62 @@ pub const Condition = struct {
             }
 
             // There are no more signals available; this was a spurious wakeup or an error. If it
-            // was an error, we will remove ourselves as a waiter and return that error. Otherwise,
-            // we'll loop back to the futex wait.
+            // was an error, we will remove ourselves as a waiter and return that error. If a
+            // timeout was specified and the deadline has passed, we remove ourselves as a waiter
+            // and return `error.Timeout`. Otherwise, we'll loop back to the futex wait.
             result catch |err| {
                 const prev_state = cond.state.fetchSub(.{ .waiters = 1, .signals = 0 }, .monotonic);
                 assert(prev_state.waiters > 0); // underflow caused by illegal state
                 return err;
             };
+            switch (deadline) {
+                .none => {},
+                .deadline => |d| if (d.untilNow(io).raw.nanoseconds >= 0) {
+                    const prev_state = cond.state.fetchSub(.{ .waiters = 1, .signals = 0 }, .monotonic);
+                    assert(prev_state.waiters > 0); // underflow caused by illegal state
+                    return error.Timeout;
+                },
+                .duration => unreachable,
+            }
+        }
+    }
+
+    /// Same as `wait`, except does not introduce a cancelation point.
+    ///
+    /// See `Future.cancel` for a description of cancelation points.
+    pub fn waitUncancelable(cond: *Condition, io: Io, mutex: *Mutex) void {
+        var epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before state load
+
+        {
+            const prev_state = cond.state.fetchAdd(.{ .waiters = 1, .signals = 0 }, .monotonic);
+            assert(prev_state.waiters < math.maxInt(u16)); // overflow caused by too many waiters
+        }
+
+        mutex.unlock(io);
+        defer mutex.lockUncancelable(io);
+
+        while (true) {
+            io.futexWaitUncancelable(u32, &cond.epoch.raw, epoch);
+
+            epoch = cond.epoch.load(.acquire); // `.acquire` to ensure ordered before `state` laod
+
+            // Even on error, try to consume a pending signal first. Otherwise a race might
+            // cause a signal to get stuck in the state with no corresponding waiter.
+            {
+                var prev_state = cond.state.load(.monotonic);
+                while (prev_state.signals > 0) {
+                    prev_state = cond.state.cmpxchgWeak(prev_state, .{
+                        .waiters = prev_state.waiters - 1,
+                        .signals = prev_state.signals - 1,
+                    }, .acquire, .monotonic) orelse {
+                        // We successfully consumed a signal.
+                        return;
+                    };
+                }
+            }
+
+            // There are no more signals available; this was a spurious wakeup,
+            // so we'll loop back to the futex wait.
         }
     }
 
@@ -2626,7 +2697,6 @@ pub const failing: std.Io = .{
         .netConnectUnix = failingNetConnectUnix,
         .netSocketCreatePair = failingNetSocketCreatePair,
         .netSend = failingNetSend,
-        .netRead = failingNetRead,
         .netWrite = failingNetWrite,
         .netWriteFile = failingNetWriteFile,
         .netClose = unreachableNetClose,
@@ -2774,6 +2844,7 @@ pub fn failingOperate(userdata: ?*anyopaque, operation: Operation) Cancelable!Op
         .file_write_streaming => .{ .file_write_streaming = error.InputOutput },
         .device_io_control => unreachable,
         .net_receive => .{ .net_receive = .{ error.NetworkDown, 0 } },
+        .net_read => .{ .net_read = error.NetworkDown },
     };
 }
 
@@ -3375,13 +3446,6 @@ pub fn failingNetSend(userdata: ?*anyopaque, handle: net.Socket.Handle, messages
     _ = messages;
     _ = flags;
     return .{ error.NetworkDown, 0 };
-}
-
-pub fn failingNetRead(userdata: ?*anyopaque, src: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usize {
-    _ = userdata;
-    _ = src;
-    _ = data;
-    return error.NetworkDown;
 }
 
 pub fn failingNetWrite(userdata: ?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize {

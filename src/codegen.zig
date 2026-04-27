@@ -484,7 +484,11 @@ pub fn generateSymbol(
             },
             .vector_type => |vector_type| {
                 const abi_size = math.cast(usize, ty.abiSize(zcu)) orelse return error.Overflow;
-                if (vector_type.child == .bool_type) {
+                const vector_bool_bitpacked = switch (zcu.comp.getZigBackend()) {
+                    .stage2_wasm => false,
+                    else => true,
+                };
+                if (vector_type.child == .bool_type and vector_bool_bitpacked) {
                     const bytes = try w.writableSlice(abi_size);
                     @memset(bytes, 0xaa);
                     var index: usize = 0;
@@ -760,7 +764,7 @@ fn lowerUavRef(
         .offset = w.end,
         .addend = @intCast(offset),
     }) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
         else => |e| std.debug.panic("TODO rework lowerUav. internal error: {t}", .{e}),
     };
     const endian = target.cpu.arch.endian();
@@ -903,7 +907,7 @@ pub fn genNavRef(
         }
     } else if (lf.cast(.elf2)) |elf| {
         return .{ .sym_index = @intFromEnum(elf.navSymbol(zcu, nav_index) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
+            error.OutOfMemory => |e| return e,
             else => |e| return .{ .fail = try ErrorMsg.create(
                 zcu.gpa,
                 src_loc,

@@ -162,6 +162,7 @@ pub fn targetTriple(allocator: Allocator, target: *const std.Target) ![]const u8
             .{ .v9_4a, "v9.4a" },
             .{ .v9_5a, "v9.5a" },
             .{ .v9_6a, "v9.6a" },
+            .{ .v9_7a, "v9.7a" },
         }),
         .powerpc => subArchName(target, .powerpc, .{
             .{ .spe, "spe" },
@@ -255,11 +256,15 @@ pub fn targetTriple(allocator: Allocator, target: *const std.Target) ![]const u8
         .none,
         .windows,
         => {},
-        .semver => |ver| try llvm_triple.print("{d}.{d}.{d}", .{
-            ver.min.major,
-            ver.min.minor,
-            ver.min.patch,
-        }),
+        .semver => |ver| if (target.os.tag == .wasi and ver.min.major == 0) {
+            try llvm_triple.print("p{d}", .{ver.min.minor});
+        } else {
+            try llvm_triple.print("{d}.{d}.{d}", .{
+                ver.min.major,
+                ver.min.minor,
+                ver.min.patch,
+            });
+        },
         inline .linux, .hurd => |ver| try llvm_triple.print("{d}.{d}.{d}", .{
             ver.range.min.major,
             ver.range.min.minor,
@@ -383,16 +388,9 @@ pub fn dataLayout(target: *const std.Target) []const u8 {
         .powerpc => "E-m:e-p:32:32-Fn32-i64:64-n32",
         .powerpcle => "e-m:e-p:32:32-Fn32-i64:64-n32",
         .powerpc64 => switch (target.os.tag) {
-            .linux => if (target.abi.isMusl())
-                "E-m:e-Fn32-i64:64-i128:128-n32:64-S128-v256:256:256-v512:512:512"
-            else
-                "E-m:e-Fi64-i64:64-i128:128-n32:64-S128-v256:256:256-v512:512:512",
+            .linux => "E-m:e-Fn32-i64:64-i128:128-n32:64-S128-v256:256:256-v512:512:512",
             .ps3 => "E-m:e-p:32:32-Fi64-i64:64-i128:128-n32:64",
-            else => if (target.os.tag == .openbsd or
-                (target.os.tag == .freebsd and target.os.version_range.semver.isAtLeast(.{ .major = 13, .minor = 0, .patch = 0 }) orelse false))
-                "E-m:e-Fn32-i64:64-i128:128-n32:64"
-            else
-                "E-m:e-Fi64-i64:64-i128:128-n32:64",
+            else => "E-m:e-Fn32-i64:64-i128:128-n32:64",
         },
         .powerpc64le => if (target.os.tag == .linux)
             "e-m:e-Fn32-i64:64-i128:128-n32:64-S128-v256:256:256-v512:512:512"
@@ -400,7 +398,7 @@ pub fn dataLayout(target: *const std.Target) []const u8 {
             "e-m:e-Fn32-i64:64-i128:128-n32:64",
         .nvptx => "e-p:32:32-p6:32:32-p7:32:32-i64:64-i128:128-v16:16-v32:32-n16:32:64",
         .nvptx64 => "e-p6:32:32-i64:64-i128:128-v16:16-v32:32-n16:32:64",
-        .amdgcn => "e-p:64:64-p1:64:64-p2:32:32-p3:32:32-p4:64:64-p5:32:32-p6:32:32-p7:160:256:256:32-p8:128:128:128:48-p9:192:256:256:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8:9",
+        .amdgcn => "e-m:e-p:64:64-p1:64:64-p2:32:32-p3:32:32-p4:64:64-p5:32:32-p6:32:32-p7:160:256:256:32-p8:128:128:128:48-p9:192:256:256:32-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64-S32-A5-G1-ni:7:8:9",
         .riscv32 => if (target.cpu.has(.riscv, .e))
             "e-m:e-p:32:32-i64:64-n32-S32"
         else
@@ -1358,24 +1356,22 @@ pub const Object = struct {
                     },
                     .multiple_llvm_types => {
                         assert(!it.byval_attr);
-                        const field_types = it.types_buffer[0..it.types_len];
                         const param_ty: Type = .fromInterned(fn_info.param_types.get(ip)[it.zig_index - 1]);
                         const param_llvm_ty = try o.lowerType(param_ty);
-                        const param_alignment = param_ty.abiAlignment(zcu).toLlvm();
-                        const arg_ptr = try buildAllocaInner(&wip, param_llvm_ty, param_alignment, target);
-                        const llvm_ty = try o.builder.structType(.normal, field_types);
-                        const llvm_args_start = it.llvm_index - field_types.len;
-                        for (0..field_types.len, llvm_args_start..) |field_i, llvm_arg_index| {
+                        const param_alignment = param_ty.abiAlignment(zcu);
+                        const llvm_ty = try o.builder.arrayType(it.offsets_buffer[it.types_len], .i8);
+                        const arg_ptr = try buildAllocaInner(&wip, llvm_ty, param_alignment.toLlvm(), target);
+                        const llvm_args_start = it.llvm_index - it.types_len;
+                        for (llvm_args_start.., it.offsets_buffer[0..it.types_len]) |llvm_arg_index, offset| {
                             const param = wip.arg(@intCast(llvm_arg_index));
-                            const field_ptr = try wip.gepStruct(llvm_ty, arg_ptr, field_i, "");
-                            const alignment = Type.ptrAbiAlignment(target).toLlvm();
-                            _ = try wip.store(.normal, param, field_ptr, alignment);
+                            const part_ptr = try o.ptraddConst(&wip, arg_ptr, offset);
+                            _ = try wip.store(.normal, param, part_ptr, param_alignment.offset(offset).toLlvm());
                         }
 
                         if (isByRef(param_ty, zcu)) {
                             args.appendAssumeCapacity(arg_ptr);
                         } else {
-                            args.appendAssumeCapacity(try wip.load(.normal, param_llvm_ty, arg_ptr, param_alignment, ""));
+                            args.appendAssumeCapacity(try wip.load(.normal, param_llvm_ty, arg_ptr, param_alignment.toLlvm(), ""));
                         }
                     },
                     .float_array => {
@@ -1750,6 +1746,7 @@ pub const Object = struct {
                 if (name.eqlSlice("WinMainCRTStartup", ip)) flags.winmain_crt_startup = true;
                 if (name.eqlSlice("wWinMainCRTStartup", ip)) flags.wwinmain_crt_startup = true;
                 if (name.eqlSlice("DllMainCRTStartup", ip)) flags.dllmain_crt_startup = true;
+                if (name.eqlSlice("_DllMainCRTStartup", ip)) flags.dllmain_crt_startup = true;
             }
         }
 
@@ -3605,11 +3602,9 @@ pub const Object = struct {
                             vals: [Builder.expected_fields_len]Builder.Constant,
                             fields: [Builder.expected_fields_len]Builder.Type,
                         };
-                        var stack align(@max(
-                            @alignOf(std.heap.StackFallbackAllocator(0)),
-                            @alignOf(ExpectedContents),
-                        )) = std.heap.stackFallback(@sizeOf(ExpectedContents), o.gpa);
-                        const allocator = stack.get();
+                        var bfa_buf: ExpectedContents = undefined;
+                        var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), o.gpa);
+                        const allocator = bfa.allocator();
                         const vals = try allocator.alloc(Builder.Constant, elems.len);
                         defer allocator.free(vals);
                         const fields = try allocator.alloc(Builder.Type, elems.len);
@@ -3636,11 +3631,9 @@ pub const Object = struct {
                             vals: [Builder.expected_fields_len]Builder.Constant,
                             fields: [Builder.expected_fields_len]Builder.Type,
                         };
-                        var stack align(@max(
-                            @alignOf(std.heap.StackFallbackAllocator(0)),
-                            @alignOf(ExpectedContents),
-                        )) = std.heap.stackFallback(@sizeOf(ExpectedContents), o.gpa);
-                        const allocator = stack.get();
+                        var bfa_buf: ExpectedContents = undefined;
+                        var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), o.gpa);
+                        const allocator = bfa.allocator();
                         const vals = try allocator.alloc(Builder.Constant, len_including_sentinel);
                         defer allocator.free(vals);
                         const fields = try allocator.alloc(Builder.Type, len_including_sentinel);
@@ -3668,11 +3661,9 @@ pub const Object = struct {
                     switch (aggregate.storage) {
                         .bytes, .elems => {
                             const ExpectedContents = [Builder.expected_fields_len]Builder.Constant;
-                            var stack align(@max(
-                                @alignOf(std.heap.StackFallbackAllocator(0)),
-                                @alignOf(ExpectedContents),
-                            )) = std.heap.stackFallback(@sizeOf(ExpectedContents), o.gpa);
-                            const allocator = stack.get();
+                            var bfa_buf: ExpectedContents = undefined;
+                            var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), o.gpa);
+                            const allocator = bfa.allocator();
                             const vals = try allocator.alloc(Builder.Constant, vector_type.len);
                             defer allocator.free(vals);
 
@@ -3701,11 +3692,9 @@ pub const Object = struct {
                         vals: [Builder.expected_fields_len]Builder.Constant,
                         fields: [Builder.expected_fields_len]Builder.Type,
                     };
-                    var stack align(@max(
-                        @alignOf(std.heap.StackFallbackAllocator(0)),
-                        @alignOf(ExpectedContents),
-                    )) = std.heap.stackFallback(@sizeOf(ExpectedContents), o.gpa);
-                    const allocator = stack.get();
+                    var bfa_buf: ExpectedContents = undefined;
+                    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), o.gpa);
+                    const allocator = bfa.allocator();
                     const vals = try allocator.alloc(Builder.Constant, llvm_len);
                     defer allocator.free(vals);
                     const fields = try allocator.alloc(Builder.Type, llvm_len);
@@ -3779,11 +3768,9 @@ pub const Object = struct {
                         vals: [Builder.expected_fields_len]Builder.Constant,
                         fields: [Builder.expected_fields_len]Builder.Type,
                     };
-                    var stack align(@max(
-                        @alignOf(std.heap.StackFallbackAllocator(0)),
-                        @alignOf(ExpectedContents),
-                    )) = std.heap.stackFallback(@sizeOf(ExpectedContents), o.gpa);
-                    const allocator = stack.get();
+                    var bfa_buf: ExpectedContents = undefined;
+                    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), o.gpa);
+                    const allocator = bfa.allocator();
                     const vals = try allocator.alloc(Builder.Constant, llvm_len);
                     defer allocator.free(vals);
                     const fields = try allocator.alloc(Builder.Type, llvm_len);
@@ -4372,6 +4359,13 @@ pub const Object = struct {
             toLlvmAddressSpace(.generic, o.zcu.getTarget()),
         );
     }
+
+    pub fn ptraddConst(o: *Object, wip: *Builder.WipFunction, ptr: Builder.Value, offset: u64) Allocator.Error!Builder.Value {
+        if (offset == 0) return ptr;
+        const llvm_usize_ty = try o.lowerType(.usize);
+        const offset_val = try o.builder.intValue(llvm_usize_ty, offset);
+        return wip.gep(.inbounds, .i8, ptr, &.{offset_val}, "");
+    }
 };
 
 const CallingConventionInfo = struct {
@@ -4657,20 +4651,6 @@ fn toLlvmGlobalAddressSpace(wanted_address_space: std.builtin.AddressSpace, targ
 /// or if it produces miscompilations.
 pub fn backendSupportsF16(target: *const std.Target) bool {
     return switch (target.cpu.arch) {
-        // https://github.com/llvm/llvm-project/issues/97981
-        .csky,
-        // https://github.com/llvm/llvm-project/issues/97981
-        .powerpc,
-        .powerpcle,
-        .powerpc64,
-        .powerpc64le,
-        // https://github.com/llvm/llvm-project/issues/97981
-        .wasm32,
-        .wasm64,
-        // https://github.com/llvm/llvm-project/issues/97981
-        .sparc,
-        .sparc64,
-        => false,
         .arm,
         .armeb,
         .thumb,
@@ -4697,11 +4677,6 @@ pub fn backendSupportsF128(target: *const std.Target) bool {
     return switch (target.cpu.arch) {
         // https://github.com/llvm/llvm-project/issues/121122
         .amdgcn,
-        // Test failures all over the place.
-        .mips64,
-        .mips64el,
-        // https://github.com/llvm/llvm-project/issues/41838
-        .sparc,
         => false,
         .arm,
         .armeb,
@@ -4844,7 +4819,7 @@ pub fn initializeLLVMTarget(arch: std.Target.Cpu.Arch) void {
                 bindings.LLVMInitializeXtensaTarget();
                 bindings.LLVMInitializeXtensaTargetInfo();
                 bindings.LLVMInitializeXtensaTargetMC();
-                // There is no LLVMInitializeXtensaAsmPrinter function.
+                bindings.LLVMInitializeXtensaAsmPrinter();
                 bindings.LLVMInitializeXtensaAsmParser();
             }
         },

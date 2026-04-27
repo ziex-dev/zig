@@ -8,7 +8,7 @@ set -e
 ZIGDIR="$PWD"
 TARGET="aarch64-macos-none"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -54,6 +54,9 @@ stage3-release/bin/zig build test docs \
 # Ensure that the fuzzer at least compiles.
 stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
 stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
+
+# Ensure that reduce compiles
+stage3-release/bin/zig reduce -h
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \

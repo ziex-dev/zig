@@ -1200,37 +1200,32 @@ pub const CObject = struct {
                     .end_block => |block| switch (@as(BlockId, @enumFromInt(block.id))) {
                         .Meta => {},
                         .Diag => {
+                            try stack.items[stack.items.len - 2].sub_diags.ensureUnusedCapacity(gpa, 1);
+                            try stack.items[stack.items.len - 1].src_ranges.shrinkToLen(gpa);
+                            try stack.items[stack.items.len - 1].sub_diags.shrinkToLen(gpa);
+
                             var wip_diag = stack.pop().?;
-                            errdefer wip_diag.deinit(gpa);
 
-                            const src_ranges = try wip_diag.src_ranges.toOwnedSlice(gpa);
-                            errdefer gpa.free(src_ranges);
-
-                            const sub_diags = try wip_diag.sub_diags.toOwnedSlice(gpa);
-                            errdefer {
-                                for (sub_diags) |*sub_diag| sub_diag.deinit(gpa);
-                                gpa.free(sub_diags);
-                            }
-
-                            try stack.items[stack.items.len - 1].sub_diags.append(gpa, .{
+                            stack.items[stack.items.len - 1].sub_diags.appendAssumeCapacity(.{
                                 .level = wip_diag.level,
                                 .category = wip_diag.category,
                                 .msg = wip_diag.msg,
                                 .src_loc = wip_diag.src_loc,
-                                .src_ranges = src_ranges,
-                                .sub_diags = sub_diags,
+                                .src_ranges = wip_diag.src_ranges.toOwnedSliceAssert(),
+                                .sub_diags = wip_diag.sub_diags.toOwnedSliceAssert(),
                             });
                         },
                         _ => {},
                     },
                 };
+                assert(stack.items.len == 1);
+                try stack.items[0].sub_diags.shrinkToLen(gpa);
 
                 const bundle = try gpa.create(Bundle);
-                assert(stack.items.len == 1);
                 bundle.* = .{
                     .file_names = file_names,
                     .category_names = category_names,
-                    .diags = try stack.items[0].sub_diags.toOwnedSlice(gpa),
+                    .diags = stack.items[0].sub_diags.toOwnedSliceAssert(),
                 };
                 return bundle;
             }
@@ -2184,7 +2179,7 @@ pub fn create(gpa: Allocator, arena: Allocator, io: Io, diag: *CreateDiagnostic,
                 .global = options.config,
                 .parent = options.root_mod,
             }) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
+                error.OutOfMemory => |e| return e,
                 // None of these are possible because the configuration matches the root module
                 // which already passed these checks.
                 error.ValgrindUnsupportedOnTarget => unreachable,
@@ -2948,8 +2943,7 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
                         );
                     },
                 },
-                error.OutOfMemory => return error.OutOfMemory,
-                error.Canceled => return error.Canceled,
+                error.OutOfMemory, error.Canceled => |e| return e,
                 error.InvalidFormat => return comp.setMiscFailure(
                     .check_whole_cache,
                     "failed to check cache: invalid manifest file format",
@@ -3018,6 +3012,13 @@ pub fn update(comp: *Compilation, main_progress_node: std.Progress.Node) UpdateE
         comp.c_object_work_queue.pushBackAssumeCapacity(c_object);
         try comp.appendFileSystemInput(try .fromUnresolved(arena, comp.dirs, &.{c_object.src.src_path}));
     }
+
+    for (comp.link_inputs) |input| if (input.path()) |path| {
+        try comp.appendFileSystemInput(try .fromUnresolved(arena, comp.dirs, &.{
+            path.root_dir.path orelse ".",
+            path.sub_path,
+        }));
+    };
 
     // For compiling Win32 resources, we rely on the cache hash system to avoid duplicating work.
     // Add a Job for each Win32 resource file.
@@ -3368,7 +3369,7 @@ fn flush(comp: *Compilation, arena: Allocator, tid: Zcu.PerThread.Id) (Io.Cancel
                 .lto = comp.config.lto,
             }) catch |err| switch (err) {
                 error.LinkFailure => {}, // Already reported.
-                error.OutOfMemory => return error.OutOfMemory,
+                error.OutOfMemory => |e| return e,
             };
         }
     }
@@ -4769,12 +4770,12 @@ fn writeDepFile(
 
     try w.print("{f}:", .{bin_file});
 
-    {
+    if (fsi.len > 0) {
         var it = std.mem.splitScalar(u8, fsi, 0);
         while (it.next()) |input| try w.print(" \\\n {f}{s}", .{ prefixes[input[0] - 1], input[1..] });
     }
 
-    {
+    if (fsi.len > 0) {
         var it = std.mem.splitScalar(u8, fsi, 0);
         while (it.next()) |input| try w.print("\n\n{f}{s}:", .{ prefixes[input[0] - 1], input[1..] });
     }
@@ -6361,6 +6362,13 @@ fn addCommonCCArgs(
                     try argv.append(
                         try std.fmt.allocPrint(arena, "-D_WIN32_WINNT=0x{x:0>4}", .{minver}),
                     );
+
+                    // MinGW-w64's inline functions in headers (e.g. `fabs`), which are emitted with `linkonce_odr`
+                    // linkage, sometimes cause duplicate symbol errors due to us providing the same symbols with
+                    // `weak` linkage in compiler-rt or libzigc. So just disable them. Besides, they undermine the
+                    // goal of moving more libc code to Zig, and they're also just kind of unnecessary since LLVM is
+                    // perfectly capable of recognizing and optimizing libcalls.
+                    try argv.append("-D__CRT__NO_INLINE");
                 } else if (target.isFreeBSDLibC()) {
                     // https://docs.freebsd.org/en/books/porters-handbook/versions
                     const min_ver = target.os.version_range.semver.min;
@@ -6800,6 +6808,8 @@ pub fn addCCArgs(
                     // We communicate these to Clang through the dedicated options.
                     if (std.mem.startsWith(u8, llvm_name, "soft-float") or
                         std.mem.startsWith(u8, llvm_name, "hard-float") or
+                        (target.cpu.arch.isPowerPC() and std.mem.startsWith(u8, llvm_name, "64bit")) or
+                        (target.cpu.arch.isX86() and std.mem.startsWith(u8, llvm_name, "x32")) or
                         (target.cpu.arch == .s390x and std.mem.eql(u8, llvm_name, "backchain")))
                         continue;
 
@@ -7236,7 +7246,7 @@ pub fn dumpArgv(io: Io, argv: []const []const u8) Io.Cancelable!void {
     const w = &stderr.file_writer.interface;
     return dumpArgvWriter(w, argv) catch |err| switch (err) {
         error.WriteFailed => switch (stderr.file_writer.err.?) {
-            error.Canceled => return error.Canceled,
+            error.Canceled => |e| return e,
             else => return,
         },
     };

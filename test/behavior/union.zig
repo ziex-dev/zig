@@ -1592,7 +1592,6 @@ test "memset packed union" {
 
     try comptime S.doTheTest();
 
-    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest; // TODO
     try S.doTheTest();
 }
 
@@ -1750,8 +1749,6 @@ test "reinterpret packed union" {
     try comptime S.doTheTest();
 
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.endian() == .big) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21050
     try S.doTheTest();
 }
 
@@ -2184,7 +2181,6 @@ test "matching captures causes union equivalence" {
 test "signed enum tag with negative value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const Enum = enum(i8) {
