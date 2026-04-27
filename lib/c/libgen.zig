@@ -6,6 +6,7 @@ const c = std.c;
 comptime {
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         symbol(&basename, "basename");
+        symbol(&basename, "__xpg_basename");
     }
 }
 
