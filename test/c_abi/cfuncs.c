@@ -535,9 +535,9 @@ struct MedStructMixed {
 void zig_med_struct_mixed(struct MedStructMixed);
 struct MedStructMixed zig_ret_med_struct_mixed();
 
-void zig_small_packed_struct(uint8_t);
+void zig_small_bitpack_struct(uint8_t);
 #ifndef ZIG_NO_I128
-void zig_big_packed_struct(__int128);
+void zig_big_bitpack_struct(__int128);
 #endif
 
 struct SplitStructInts {
@@ -3052,7 +3052,7 @@ void run_c_tests(void) {
         __int128 s = 0;
         s |= 1 << 0;
         s |= (__int128)2 << 64;
-        zig_big_packed_struct(s);
+        zig_big_bitpack_struct(s);
     }
 #endif
 
@@ -3062,7 +3062,7 @@ void run_c_tests(void) {
         s |= 1 << 2;
         s |= 2 << 4;
         s |= 3 << 6;
-        zig_small_packed_struct(s);
+        zig_small_bitpack_struct(s);
     }
 
 #if !defined __i386__ && !defined __arm__ && \
@@ -5469,7 +5469,7 @@ void c_split_struct_mixed(struct SplitStructMixed x) {
     assert_or_panic(y.c == 1337.0f);
 }
 
-uint8_t c_ret_small_packed_struct() {
+uint8_t c_ret_small_bitpack_struct() {
     uint8_t s = 0;
     s |= 0 << 0;
     s |= 1 << 2;
@@ -5478,7 +5478,7 @@ uint8_t c_ret_small_packed_struct() {
     return s;
 }
 
-void c_small_packed_struct(uint8_t x) {
+void c_small_bitpack_struct(uint8_t x) {
     assert_or_panic(((x >> 0) & 0x3) == 0);
     assert_or_panic(((x >> 2) & 0x3) == 1);
     assert_or_panic(((x >> 4) & 0x3) == 2);
@@ -5486,14 +5486,14 @@ void c_small_packed_struct(uint8_t x) {
 }
 
 #ifndef ZIG_NO_I128
-__int128 c_ret_big_packed_struct() {
+__int128 c_ret_big_bitpack_struct() {
     __int128 s = 0;
     s |= 1 << 0;
     s |= (__int128)2 << 64;
     return s;
 }
 
-void c_big_packed_struct(__int128 x) {
+void c_big_bitpack_struct(__int128 x) {
     assert_or_panic(((x >> 0) & 0xFFFFFFFFFFFFFFFF) == 1);
     assert_or_panic(((x >> 64) & 0xFFFFFFFFFFFFFFFF) == 2);
 }
