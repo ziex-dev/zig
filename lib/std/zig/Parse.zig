@@ -2438,8 +2438,13 @@ fn parsePrimaryTypeExpr(p: *Parse) !?Node.Index {
 
         .keyword_bitpack,
         .keyword_extern,
+        => {
+            p.tok_i += 1;
+            return try p.parseContainerDeclAuto();
+        },
         .keyword_packed,
         => {
+            try p.warnExpected(.keyword_bitpack);
             p.tok_i += 1;
             return try p.parseContainerDeclAuto();
         },
