@@ -54,19 +54,8 @@ else switch (native_os) {
         // https://github.com/pspdev/newlib/blob/9e0a073634ad73e8e088f2e071c55a9fe5d39709/newlib/libc/sys/psp/sys/dirent.h#L19
         pub const NAME_MAX = 255;
     },
-    else => struct {
-        pub const pid_t = void;
-        pub const pollfd = void;
-        pub const fd_t = void;
-        pub const uid_t = void;
-        pub const gid_t = void;
-        pub const mode_t = u0;
-        pub const nlink_t = u0;
-        pub const blksize_t = void;
-        pub const ino_t = void;
-        pub const IFNAMESIZE = {};
-        pub const SIG = void;
-    },
+    // Use `linux as a fallback for unknown targets.
+    else => linux,
 };
 
 pub const AF = system.AF;
