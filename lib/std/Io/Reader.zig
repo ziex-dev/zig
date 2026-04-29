@@ -97,6 +97,14 @@ pub const VTable = struct {
     /// The default implementation moves buffered data to the start of
     /// `buffer`, setting `seek` to zero, and cannot fail.
     rebase: *const fn (r: *Reader, capacity: usize) RebaseError!void = defaultRebase,
+
+    /// Writes up to `limit` bytes to `w`. Implementations may use zero-copy
+    /// paths such as `sendfile` or `splice`. The default loops over `stream`.
+    transferTo: *const fn (r: *Reader, w: *Writer, limit: Limit) StreamRemainingError!usize = defaultTransferTo,
+};
+
+pub const TransferOptions = struct {
+    limit: Limit = .unlimited,
 };
 
 pub const StreamError = error{
@@ -262,6 +270,26 @@ pub fn streamRemaining(r: *Reader, w: *Writer) StreamRemainingError!usize {
             else => |e| return e,
         };
     }
+}
+
+/// Transfers bytes from `r` to `w` using the best available kernel path.
+/// Returns total bytes transferred.
+pub fn transfer(r: *Reader, w: *Writer, options: TransferOptions) StreamRemainingError!usize {
+    return r.vtable.transferTo(r, w, options.limit);
+}
+
+pub fn defaultTransferTo(r: *Reader, w: *Writer, limit: Limit) StreamRemainingError!usize {
+    var total: usize = 0;
+    var rem = limit;
+    while (rem != .nothing) {
+        const n = r.stream(w, rem) catch |err| switch (err) {
+            error.EndOfStream => return total,
+            else => |e| return e,
+        };
+        total += n;
+        rem = rem.subtract(n) orelse return total;
+    }
+    return total;
 }
 
 /// Consumes the stream until the end, ignoring all the data, returning the
@@ -2307,4 +2335,19 @@ fn testLeb128(comptime T: type, encoded: []const u8) !T {
 
 test {
     _ = Limited;
+}
+
+test transfer {
+    const Case = struct { options: TransferOptions, n: usize, out: []const u8 };
+    for (&[_]Case{
+        .{ .options = .{}, .n = 5, .out = "hello" },
+        .{ .options = .{ .limit = .limited(3) }, .n = 3, .out = "hel" },
+    }) |c| {
+        var r: Reader = .fixed("hello");
+        var w: Writer.Allocating = .init(testing.allocator);
+        defer w.deinit();
+        try w.ensureUnusedCapacity(1);
+        try testing.expectEqual(c.n, try r.transfer(&w.writer, c.options));
+        try testing.expectEqualStrings(c.out, w.writer.buffered());
+    }
 }

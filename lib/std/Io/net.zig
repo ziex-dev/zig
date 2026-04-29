@@ -3,6 +3,8 @@ const native_os = builtin.os.tag;
 const std = @import("../std.zig");
 const Io = std.Io;
 const assert = std.debug.assert;
+const posix = std.posix;
+const linux = std.os.linux;
 
 pub const HostName = @import("net/HostName.zig");
 
@@ -1277,6 +1279,7 @@ pub const Stream = struct {
                     .vtable = &.{
                         .stream = streamImpl,
                         .readVec = readVec,
+                        .transferTo = transferToImpl,
                     },
                     .buffer = buffer,
                     .seek = 0,
@@ -1285,6 +1288,19 @@ pub const Stream = struct {
                 .stream = stream,
                 .err = null,
             };
+        }
+
+        fn transferToImpl(io_r: *Io.Reader, io_w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamRemainingError!usize {
+            if (comptime native_os == .linux) {
+                if (io_w.vtable == &Writer.vtable) {
+                    const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+                    const w: *Writer = @alignCast(@fieldParentPtr("interface", io_w));
+                    return spliceTransfer(r.stream.socket.handle, w.stream.socket.handle, limit) catch {
+                        return Io.Reader.defaultTransferTo(io_r, io_w, limit);
+                    };
+                }
+            }
+            return Io.Reader.defaultTransferTo(io_r, io_w, limit);
         }
 
         fn streamImpl(io_r: *Io.Reader, io_w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamError!usize {
@@ -1356,15 +1372,17 @@ pub const Stream = struct {
             NetworkDown,
         } || Io.Cancelable || Io.UnexpectedError;
 
+        pub const vtable: Io.Writer.VTable = .{
+            .drain = drain,
+            .sendFile = sendFile,
+        };
+
         pub fn init(stream: Stream, io: Io, buffer: []u8) Writer {
             return .{
                 .io = io,
                 .stream = stream,
                 .interface = .{
-                    .vtable = &.{
-                        .drain = drain,
-                        .sendFile = sendFile,
-                    },
+                    .vtable = &vtable,
                     .buffer = buffer,
                 },
             };
@@ -1398,6 +1416,39 @@ pub const Stream = struct {
         return .init(stream, io, buffer);
     }
 };
+
+fn spliceTransfer(fd_in: posix.fd_t, fd_out: posix.fd_t, limit: Io.Limit) !usize {
+    var pipe_fds: [2]linux.fd_t = undefined;
+    const rc = linux.pipe2(&pipe_fds, .{ .CLOEXEC = true });
+    if (rc != 0) return error.ReadFailed;
+    defer {
+        _ = linux.close(pipe_fds[0]);
+        _ = linux.close(pipe_fds[1]);
+    }
+
+    const chunk_size: usize = 65536;
+    var total: usize = 0;
+    var rem = limit;
+
+    while (rem != .nothing) {
+        const want: usize = @min(chunk_size, @intFromEnum(rem));
+        const n_in = linux.splice(fd_in, null, pipe_fds[1], null, want, linux.SPLICE_F.MOVE);
+        if (n_in == 0) break;
+        if (n_in > std.math.maxInt(isize)) return error.ReadFailed;
+
+        var written: usize = 0;
+        while (written < n_in) {
+            const n_out = linux.splice(pipe_fds[0], null, fd_out, null, n_in - written, linux.SPLICE_F.MOVE);
+            if (n_out == 0 or n_out > std.math.maxInt(isize)) return error.WriteFailed;
+            written += n_out;
+        }
+
+        total += n_in;
+        rem = rem.subtract(n_in) orelse break;
+    }
+
+    return total;
+}
 
 pub const Server = struct {
     socket: Socket,

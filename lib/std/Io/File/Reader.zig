@@ -74,11 +74,17 @@ pub fn initInterface(buffer: []u8) Io.Reader {
             .stream = stream,
             .discard = discard,
             .readVec = readVec,
+            .transferTo = transferToImpl,
         },
         .buffer = buffer,
         .seek = 0,
         .end = 0,
     };
+}
+
+fn transferToImpl(io_r: *Io.Reader, io_w: *Io.Writer, limit: Io.Limit) Io.Reader.StreamRemainingError!usize {
+    const r: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+    return io_w.sendFileAll(r, limit);
 }
 
 pub fn init(file: File, io: Io, buffer: []u8) Reader {
