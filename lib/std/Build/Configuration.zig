@@ -3091,7 +3091,7 @@ pub const Storage = enum {
                 return @enumFromInt(buffer[i.*]);
             },
             .@"struct" => |info| switch (info.layout) {
-                .@"packed" => switch (info.backing_integer.?) {
+                .@"bitpack" => switch (info.backing_integer.?) {
                     u32 => {
                         defer i.* += 1;
                         return @bitCast(buffer[i.*]);
@@ -3230,7 +3230,7 @@ pub const Storage = enum {
             },
             .@"enum" => 1,
             .@"struct" => |info| switch (info.layout) {
-                .@"packed" => switch (info.backing_integer.?) {
+                .@"bitpack" => switch (info.backing_integer.?) {
                     u32 => 1,
                     u64 => 2,
                     else => comptime unreachable,
@@ -3282,7 +3282,7 @@ pub const Storage = enum {
                 return 1;
             },
             .@"struct" => |info| switch (info.layout) {
-                .@"packed" => switch (info.backing_integer.?) {
+                .@"bitpack" => switch (info.backing_integer.?) {
                     u32 => {
                         buffer[i] = @bitCast(value);
                         return 1;

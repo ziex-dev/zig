@@ -2419,7 +2419,7 @@ fn failWithInvalidSwitchTagCapture(sema: *Sema, block: *Block, tag_capture_src: 
     const zcu = pt.zcu;
 
     if (operand_ty.zigTypeTag(zcu) == .@"union") {
-        assert(operand_ty.containerLayout(zcu) == .@"packed");
+        assert(operand_ty.containerLayout(zcu) == .@"bitpack");
         return sema.failWithOwnedErrorMsg(block, msg: {
             const msg = try sema.errMsg(tag_capture_src, "cannot capture tag of bitpack union", .{});
             errdefer msg.destroy(sema.gpa);
@@ -9927,7 +9927,7 @@ fn analyzeSwitchBlock(
         const maybe_operand_opv = try operand_ty.onePossibleValue(pt);
         const init_cond: Air.Inst.Ref, const item_ty: Type = init: {
             if (operand_ty.zigTypeTag(zcu) == .@"union" and
-                operand_ty.containerLayout(zcu) != .@"packed")
+                operand_ty.containerLayout(zcu) != .@"bitpack")
             {
                 const tag_val = try sema.unionToTag(block, val);
                 break :init .{ tag_val, sema.typeOf(tag_val) };
@@ -9967,7 +9967,7 @@ fn analyzeSwitchBlock(
     const raw_operand_ty = sema.typeOf(raw_operand);
 
     const tagged_union_originally = operand_ty.zigTypeTag(zcu) == .@"union" and
-        operand_ty.containerLayout(zcu) != .@"packed";
+        operand_ty.containerLayout(zcu) != .@"bitpack";
     const err_set = operand_ty.zigTypeTag(zcu) == .error_set;
 
     if (item_ty.zigTypeTag(zcu) == .@"enum" and
@@ -10320,7 +10320,7 @@ fn finishSwitchBr(
     const else_is_named_only = has_else and has_under;
 
     const tagged_union_originally = operand_ty.zigTypeTag(zcu) == .@"union" and
-        operand_ty.containerLayout(zcu) != .@"packed";
+        operand_ty.containerLayout(zcu) != .@"bitpack";
     const err_set = operand_ty.zigTypeTag(zcu) == .error_set;
 
     const item_ty = if (tagged_union_originally)
@@ -11050,7 +11050,7 @@ fn validateSwitchBlock(
                         break :item_ty .fromInterned(union_obj.enum_tag_type);
                     },
                     .none => {
-                        if (union_obj.layout == .@"packed") {
+                        if (union_obj.layout == .@"bitpack") {
                             break :item_ty operand_ty;
                         }
                     },
@@ -11069,7 +11069,7 @@ fn validateSwitchBlock(
             .@"struct" => {
                 operand_ty.assertHasLayout(zcu);
                 const layout = operand_ty.containerLayout(zcu);
-                if (layout == .@"packed") {
+                if (layout == .@"bitpack") {
                     break :item_ty operand_ty;
                 }
                 return sema.failWithOwnedErrorMsg(block, msg: {
@@ -11463,7 +11463,7 @@ fn resolveSwitchBlock(
     const operand_ty = sema.typeOf(operand.simple.by_val);
 
     const tagged_union_originally = operand_ty.zigTypeTag(zcu) == .@"union" and
-        operand_ty.containerLayout(zcu) != .@"packed";
+        operand_ty.containerLayout(zcu) != .@"bitpack";
     const err_set = operand_ty.zigTypeTag(zcu) == .error_set;
 
     const item_ty = if (tagged_union_originally)
@@ -11894,7 +11894,7 @@ fn analyzeSwitchCaptures(
     const zcu = pt.zcu;
 
     if (operand_ty.zigTypeTag(zcu) == .@"union" and
-        operand_ty.containerLayout(zcu) != .@"packed")
+        operand_ty.containerLayout(zcu) != .@"bitpack")
     {
         if (capture == .none) {
             const tag_ref: Air.Inst.Ref = tag_ref: {
@@ -16426,7 +16426,7 @@ fn zirTypeInfo(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
                 const alignment_val: Value = val: {
                     const a: Alignment = switch (layout) {
                         .auto, .@"extern" => ty.explicitFieldAlignment(field_index, zcu),
-                        .@"packed" => .none,
+                        .@"bitpack" => .none,
                     };
                     const bytes = a.toByteUnits() orelse {
                         break :val try pt.nullValue(alignment_ty);
@@ -16542,7 +16542,7 @@ fn zirTypeInfo(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
 
             const backing_integer_val = try pt.intern(.{ .opt = .{
                 .ty = (try pt.optionalType(.type_type)).toIntern(),
-                .val = if (layout == .@"packed") val: {
+                .val = if (layout == .@"bitpack") val: {
                     assert(Type.fromInterned(union_obj.packed_backing_int_type).isInt(zcu));
                     break :val union_obj.packed_backing_int_type;
                 } else .none,
@@ -16693,7 +16693,7 @@ fn zirTypeInfo(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
                     const alignment_val: Value = val: {
                         const a: Alignment = switch (struct_type.layout) {
                             .auto, .@"extern" => ty.explicitFieldAlignment(field_index, zcu),
-                            .@"packed" => .none,
+                            .@"bitpack" => .none,
                         };
                         const bytes = a.toByteUnits() orelse {
                             break :val try pt.nullValue(alignment_ty);
@@ -18326,7 +18326,7 @@ fn zirUnionInit(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!A
 
     const payload = try sema.coerce(block, field_ty, sema.resolveInst(extra.init), payload_src);
 
-    if (union_ty.containerLayout(zcu) == .@"packed") {
+    if (union_ty.containerLayout(zcu) == .@"bitpack") {
         return sema.bitCast(block, union_ty, payload, block.nodeOffset(inst_data.src_node), payload_src);
     }
 
@@ -18463,7 +18463,7 @@ fn zirStructInit(
         const uncoerced_init_inst = sema.resolveInst(item.data.init);
         const init_inst = try sema.coerce(block, field_ty, uncoerced_init_inst, field_src);
 
-        if (resolved_ty.containerLayout(zcu) == .@"packed") {
+        if (resolved_ty.containerLayout(zcu) == .@"bitpack") {
             const union_val = try sema.bitCast(block, resolved_ty, init_inst, src, field_src);
             const result_val = try sema.coerce(block, result_ty, union_val, src);
             if (is_ref) {
@@ -18626,7 +18626,7 @@ fn finishStructInit(
             const final_val_ref = try sema.coerce(block, result_ty, .fromValue(struct_val), init_src);
             return sema.addConstantMaybeRef(sema.resolveValue(final_val_ref).?, is_ref);
         },
-        .@"packed" => {
+        .@"bitpack" => {
             const buf = try sema.arena.alloc(u8, @intCast((struct_ty.bitSize(zcu) + 7) / 8));
             var bit_offset: u16 = 0;
             for (field_inits) |field_init| {
@@ -19951,7 +19951,7 @@ fn zirReifyStruct(
     const backing_int_ty: ?Type = if (backing_int_ty_val.optionalValue(zcu)) |backing| ty: {
         switch (layout) {
             .auto, .@"extern" => return sema.fail(block, backing_ty_src, "non-bitpack struct does not support backing integer type", .{}),
-            .@"packed" => {},
+            .@"bitpack" => {},
         }
         break :ty backing.toType();
     } else null;
@@ -20008,7 +20008,7 @@ fn zirReifyStruct(
         }
 
         if (field_attr_align.optionalValue(zcu)) |align_val| {
-            if (layout == .@"packed") {
+            if (layout == .@"bitpack") {
                 return sema.fail(block, field_attrs_src, "bitpack struct fields cannot be aligned", .{});
             }
             // Trigger a compile error if the alignment is invalid.
@@ -20173,7 +20173,7 @@ fn zirReifyUnion(
     const arg_ty_uncoerced = sema.resolveInst(extra.arg_ty);
     const arg_ty_coerced = try sema.coerce(block, .optional_type, arg_ty_uncoerced, arg_ty_src);
     const arg_ty_val = try sema.resolveConstDefinedValue(block, arg_ty_src, arg_ty_coerced, switch (layout) {
-        .@"packed" => .{ .simple = .packed_union_backing_int_type },
+        .@"bitpack" => .{ .simple = .packed_union_backing_int_type },
         .auto, .@"extern" => .{ .simple = .union_enum_tag_type },
     });
 
@@ -20233,7 +20233,7 @@ fn zirReifyUnion(
         const arg_ty = arg_ty_val.optionalValue(zcu) orelse break :ty .{ null, null };
         switch (layout) {
             .@"extern" => return sema.fail(block, arg_ty_src, "extern union does not support enum tag type", .{}),
-            .@"packed" => break :ty .{ null, arg_ty.toType() },
+            .@"bitpack" => break :ty .{ null, arg_ty.toType() },
             .auto => break :ty .{ arg_ty.toType(), null },
         }
     };
@@ -20255,7 +20255,7 @@ fn zirReifyUnion(
             std.lang.Type.Union.FieldAttributes,
         );
         if (field_attrs.@"align") |bytes| {
-            if (layout == .@"packed") {
+            if (layout == .@"bitpack") {
                 return sema.fail(block, field_attrs_src, "bitpack union fields cannot be aligned", .{});
             }
             // Trigger a compile error if the alignment is invalid.
@@ -22273,7 +22273,7 @@ fn bitOffsetOf(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!u6
     }
 
     switch (ty.containerLayout(zcu)) {
-        .@"packed" => {
+        .@"bitpack" => {
             var bit_sum: u64 = 0;
             const struct_type = ip.loadStructType(ty.toIntern());
             for (0..struct_type.field_types.len) |i| {
@@ -23707,7 +23707,7 @@ fn zirFieldParentPtr(sema: *Sema, block: *Block, extended: Zir.Inst.Extended.Ins
         field_ptr_src,
         casted_field_ptr,
     )) |field_ptr_val| switch (parent_ty.containerLayout(zcu)) {
-        .@"packed" => .fromValue(try pt.getCoerced(field_ptr_val, unaligned_parent_ptr_ty)),
+        .@"bitpack" => .fromValue(try pt.getCoerced(field_ptr_val, unaligned_parent_ptr_ty)),
         .@"extern" => switch (parent_ty.zigTypeTag(zcu)) {
             .@"struct" => .fromValue(try sema.ptrSubtract(
                 block,
@@ -25425,7 +25425,7 @@ pub fn explainWhyTypeIsNotExtern(
             switch (struct_obj.layout) {
                 .auto => try sema.errNote(src_loc, msg, "struct with automatic layout has no guaranteed in-memory representation", .{}),
                 .@"extern" => unreachable,
-                .@"packed" => switch (struct_obj.packed_backing_mode) {
+                .@"bitpack" => switch (struct_obj.packed_backing_mode) {
                     .auto => try sema.errNote(src_loc, msg, "inferred backing integer of bitpack struct has unspecified signedness", .{}),
                     .explicit => {
                         const backing_int_ty: Type = .fromInterned(struct_obj.packed_backing_int_type);
@@ -25440,7 +25440,7 @@ pub fn explainWhyTypeIsNotExtern(
             switch (union_obj.layout) {
                 .auto => try sema.errNote(src_loc, msg, "union with automatic layout has no guaranteed in-memory representation", .{}),
                 .@"extern" => unreachable,
-                .@"packed" => switch (union_obj.packed_backing_mode) {
+                .@"bitpack" => switch (union_obj.packed_backing_mode) {
                     .auto => try sema.errNote(src_loc, msg, "inferred backing integer of bitpack union has unspecified signedness", .{}),
                     .explicit => {
                         const backing_int_ty: Type = .fromInterned(union_obj.packed_backing_int_type);
@@ -26867,7 +26867,7 @@ fn unionFieldPtr(
                     return sema.failWithOwnedErrorMsg(block, msg);
                 }
             },
-            .@"packed", .@"extern" => {},
+            .@"bitpack", .@"extern" => {},
         }
         return .fromValue(try union_ptr_val.ptrField(field_index, pt));
     }
@@ -26941,7 +26941,7 @@ fn unionFieldVal(
             } else {
                 // Runtime-known due to a pointer-to-integer conversion.
             },
-            .@"packed" => {
+            .@"bitpack" => {
                 const field_val = try sema.bitCastVal(union_val, field_ty, 0, union_ty.bitSize(zcu), 0) orelse {
                     unreachable; // `null` is only possible if the input value contains a pointer, which a packed union cannot.
                 };
@@ -34773,8 +34773,8 @@ fn zirUnionDecl(
             => .tagged,
 
             .@"extern",
-            .@"packed",
-            .packed_explicit,
+            .@"bitpack",
+            .bitpack_explicit,
             => .none,
         },
         .enum_tag_mode = switch (union_decl.kind) {
@@ -34782,7 +34782,7 @@ fn zirUnionDecl(
             else => .auto,
         },
         .packed_backing_mode = switch (union_decl.kind) {
-            .packed_explicit => .explicit,
+            .bitpack_explicit => .explicit,
             else => .auto,
         },
     })) {

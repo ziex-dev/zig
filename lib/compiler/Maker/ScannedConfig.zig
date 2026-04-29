@@ -126,7 +126,7 @@ fn printValue(sc: *const ScannedConfig, s: *Serializer, comptime Field: type, fi
                 }
             },
             .@"struct" => |info| switch (info.layout) {
-                .@"packed" => {
+                .@"bitpack" => {
                     try s.value(field_value, .{});
                 },
                 .@"extern" => {
@@ -318,7 +318,7 @@ pub fn printUsage(sc: *const ScannedConfig, graph: *Graph, w: *Writer) !void {
         \\  --watch                      Continuously rebuild when source files are modified
         \\  --debounce <ms>              Delay before rebuilding after changed file detected
         \\  --webui[=ip]                 Enable the web interface on the given IP address
-        \\  --fuzz[=limit]               Continuously search for unit test failures with an optional 
+        \\  --fuzz[=limit]               Continuously search for unit test failures with an optional
         \\                               limit to the max number of iterations. The argument supports
         \\                               an optional 'K', 'M', or 'G' suffix (e.g. '10K'). Implies
         \\                               '--webui' when no limit is specified.

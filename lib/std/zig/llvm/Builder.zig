@@ -328,7 +328,7 @@ pub const Type = enum(u32) {
         fields_len: u32,
         //fields: [fields_len]Type,
 
-        pub const Kind = enum { normal, @"packed" };
+        pub const Kind = enum { normal, @"bitpack" };
     };
 
     pub const NamedStructure = struct {
@@ -466,7 +466,7 @@ pub const Type = enum(u32) {
     pub fn structKind(self: Type, builder: *const Builder) Type.Structure.Kind {
         return switch (self.unnamedTag(builder)) {
             .structure => .normal,
-            .packed_structure => .@"packed",
+            .packed_structure => .@"bitpack",
             else => unreachable,
         };
     }
@@ -10940,7 +10940,7 @@ fn structTypeAssumeCapacity(
 ) Type {
     const tag: Type.Tag = switch (kind) {
         .normal => .structure,
-        .@"packed" => .packed_structure,
+        .@"bitpack" => .packed_structure,
     };
     const Adapter = struct {
         builder: *const Builder,

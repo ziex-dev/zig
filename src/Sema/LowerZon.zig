@@ -812,7 +812,7 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
 
     const result: Value = switch (struct_info.layout) {
         .auto, .@"extern" => try pt.aggregateValue(res_ty, field_values),
-        .@"packed" => result: {
+        .@"bitpack" => result: {
             const arena = self.sema.arena;
             const buf = try arena.alloc(u8, @intCast((res_ty.bitSize(zcu) + 7) / 8));
             var bit_offset: u16 = 0;
@@ -981,7 +981,7 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     };
     const result: Value = switch (union_info.layout) {
         .auto, .@"extern" => try pt.unionValue(res_ty, tag, val),
-        .@"packed" => try self.sema.bitCastVal(val, res_ty, 0, 0, 0) orelse {
+        .@"bitpack" => try self.sema.bitCastVal(val, res_ty, 0, 0, 0) orelse {
             unreachable; // `null` is only possible if the input value contains a pointer, which a packed union cannot.
         },
     };

@@ -141,7 +141,7 @@ pub fn classifyWindows(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
             1, 2, 4, 8 => .integer,
             else => switch (ty.zigTypeTag(zcu)) {
                 .int => .win_i128,
-                .@"struct", .@"union" => if (ty.containerLayout(zcu) == .@"packed")
+                .@"struct", .@"union" => if (ty.containerLayout(zcu) == .@"bitpack")
                     .win_i128
                 else
                     .memory,
@@ -278,7 +278,7 @@ pub fn classifySystemV(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
             switch (ty.containerLayout(zcu)) {
                 .auto => unreachable,
                 .@"extern" => {},
-                .@"packed" => {
+                .@"bitpack" => {
                     if (ty_size <= 8) return Class.one_integer;
                     if (ty_size <= 16) return Class.two_integers;
                     unreachable; // frontend should not have allowed this type as extern
@@ -358,7 +358,7 @@ fn classifySystemVStruct(
                     byte_offset = classifySystemVStruct(result, byte_offset, field_loaded_struct, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         } else if (zcu.typeToUnion(field_ty)) |field_loaded_union| {
             switch (field_loaded_union.layout) {
@@ -367,7 +367,7 @@ fn classifySystemVStruct(
                     byte_offset = classifySystemVUnion(result, byte_offset, field_loaded_union, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         }
         const field_classes = std.mem.sliceTo(&classifySystemV(field_ty, zcu, target, .other), .none);
@@ -401,7 +401,7 @@ fn classifySystemVUnion(
                     _ = classifySystemVStruct(result, starting_byte_offset, field_loaded_struct, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         } else if (zcu.typeToUnion(field_ty)) |field_loaded_union| {
             switch (field_loaded_union.layout) {
@@ -410,7 +410,7 @@ fn classifySystemVUnion(
                     _ = classifySystemVUnion(result, starting_byte_offset, field_loaded_union, zcu, target);
                     continue;
                 },
-                .@"packed" => {},
+                .@"bitpack" => {},
             }
         }
         const field_classes = std.mem.sliceTo(&classifySystemV(field_ty, zcu, target, .other), .none);

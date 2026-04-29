@@ -1442,8 +1442,8 @@ const Writer = struct {
         try stream.print("{s}, ", .{@tagName(struct_decl.name_strategy)});
 
         if (struct_decl.backing_int_type_body) |backing_int_type_body| {
-            assert(struct_decl.layout == .@"packed");
-            try stream.writeAll("packed(");
+            assert(struct_decl.layout == .@"bitpack");
+            try stream.writeAll("bitpack(");
             try self.writeBracedDecl(stream, backing_int_type_body);
             try stream.writeAll("), ");
         } else {
@@ -1506,9 +1506,9 @@ const Writer = struct {
         switch (union_decl.kind) {
             .auto => try stream.writeAll("auto, "),
             .@"extern" => try stream.writeAll("extern, "),
-            .@"packed" => try stream.writeAll("packed, "),
-            .packed_explicit => {
-                try stream.writeAll("packed(");
+            .@"bitpack" => try stream.writeAll("bitpack, "),
+            .bitpack_explicit => {
+                try stream.writeAll("bitpack(");
                 try self.writeBracedDecl(stream, union_decl.arg_type_body.?);
                 try stream.writeAll("), ");
             },

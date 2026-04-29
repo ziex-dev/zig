@@ -1231,7 +1231,7 @@ pub inline fn takeStruct(r: *Reader, comptime T: type, endian: std.builtin.Endia
                 if (native_endian != endian) std.mem.byteSwapAllFields(T, &res);
                 return res;
             },
-            .@"packed" => {
+            .@"bitpack" => {
                 return @bitCast(try takeInt(r, info.backing_integer.?, endian));
             },
         },
@@ -1256,7 +1256,7 @@ pub inline fn peekStruct(r: *Reader, comptime T: type, endian: std.builtin.Endia
                 if (native_endian != endian) std.mem.byteSwapAllFields(T, &res);
                 return res;
             },
-            .@"packed" => {
+            .@"bitpack" => {
                 return @bitCast(try peekInt(r, info.backing_integer.?, endian));
             },
         },

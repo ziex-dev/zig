@@ -19,7 +19,7 @@ pub fn classifyType(ty: Type, zcu: *Zcu, ctx: Context) Class {
     switch (ty.zigTypeTag(zcu)) {
         .@"struct" => {
             const bit_size = ty.bitSize(zcu);
-            if (ty.containerLayout(zcu) == .@"packed") {
+            if (ty.containerLayout(zcu) == .@"bitpack") {
                 if (bit_size > max_direct_size) return .memory;
                 return .byval;
             }
@@ -30,7 +30,7 @@ pub fn classifyType(ty: Type, zcu: *Zcu, ctx: Context) Class {
         },
         .@"union" => {
             const bit_size = ty.bitSize(zcu);
-            if (ty.containerLayout(zcu) == .@"packed") {
+            if (ty.containerLayout(zcu) == .@"bitpack") {
                 if (bit_size > max_direct_size) return .memory;
                 return .byval;
             }

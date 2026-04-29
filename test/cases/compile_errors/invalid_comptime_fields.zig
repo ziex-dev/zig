@@ -15,5 +15,5 @@ const X = extern struct {
 //
 // :2:5: error: union fields cannot be marked comptime
 // :5:5: error: enum fields cannot be marked comptime
-// :8:5: error: packed struct fields cannot be marked comptime
+// :8:5: error: bitpack struct fields cannot be marked comptime
 // :11:5: error: extern struct fields cannot be marked comptime
