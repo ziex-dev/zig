@@ -2763,6 +2763,25 @@ pub fn copy_file_range(fd_in: fd_t, off_in: ?*off_t, fd_out: fd_t, off_out: ?*of
     );
 }
 
+pub const SPLICE_F = struct {
+    pub const MOVE: u32 = 1;
+    pub const NONBLOCK: u32 = 2;
+    pub const MORE: u32 = 4;
+    pub const GIFT: u32 = 8;
+};
+
+pub fn splice(fd_in: fd_t, off_in: ?*off_t, fd_out: fd_t, off_out: ?*off_t, len: usize, flags: u32) usize {
+    return syscall6(
+        .splice,
+        @as(u32, @bitCast(fd_in)),
+        @intFromPtr(off_in),
+        @as(u32, @bitCast(fd_out)),
+        @intFromPtr(off_out),
+        len,
+        flags,
+    );
+}
+
 pub fn bpf(cmd: BPF.Cmd, attr: *BPF.Attr, size: u32) usize {
     return syscall3(.bpf, @intFromEnum(cmd), @intFromPtr(attr), size);
 }
