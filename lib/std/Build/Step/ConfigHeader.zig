@@ -233,7 +233,7 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
                     src_path, @errorName(err),
                 });
             };
-            try render_cmake(step, contents, bw, config_header.values, src_path);
+            try render_cmake(step, contents, bw, &config_header.values, src_path);
         },
         .blank => {
             try bw.writeAll(c_generated_line);
@@ -389,7 +389,7 @@ fn render_cmake(
     step: *Step,
     contents: []const u8,
     bw: *Writer,
-    values: std.array_hash_map.String(Value),
+    values: *const std.array_hash_map.String(Value),
     src_path: []const u8,
 ) !void {
     const build = step.owner;
@@ -635,7 +635,7 @@ fn expand_variables_autoconf_at(
 fn expand_variables_cmake(
     allocator: Allocator,
     contents: []const u8,
-    values: std.array_hash_map.String(Value),
+    values: *const std.array_hash_map.String(Value),
 ) ![]const u8 {
     var result: std.array_list.Managed(u8) = .init(allocator);
     errdefer result.deinit();
@@ -767,7 +767,7 @@ fn testReplaceVariablesAutoconfAt(
     allocator: Allocator,
     contents: []const u8,
     expected: []const u8,
-    values: std.array_hash_map.String(Value),
+    values: *const std.array_hash_map.String(Value),
 ) !void {
     var aw: Writer.Allocating = .init(allocator);
     defer aw.deinit();
@@ -786,7 +786,7 @@ fn testReplaceVariablesCMake(
     allocator: Allocator,
     contents: []const u8,
     expected: []const u8,
-    values: std.array_hash_map.String(Value),
+    values: *const std.array_hash_map.String(Value),
 ) !void {
     const actual = try expand_variables_cmake(allocator, contents, values);
     defer allocator.free(actual);
@@ -796,281 +796,281 @@ fn testReplaceVariablesCMake(
 
 test "expand_variables_autoconf_at simple cases" {
     const allocator = std.testing.allocator;
-    var values: std.array_hash_map.String(Value) = .init(allocator);
-    defer values.deinit();
+    var values: std.array_hash_map.String(Value) = .empty;
+    defer values.deinit(allocator);
 
     // empty strings are preserved
-    try testReplaceVariablesAutoconfAt(allocator, "", "", values);
+    try testReplaceVariablesAutoconfAt(allocator, "", "", &values);
 
     // line with misc content is preserved
-    try testReplaceVariablesAutoconfAt(allocator, "no substitution", "no substitution", values);
+    try testReplaceVariablesAutoconfAt(allocator, "no substitution", "no substitution", &values);
 
     // empty @ sigils are preserved
-    try testReplaceVariablesAutoconfAt(allocator, "@", "@", values);
-    try testReplaceVariablesAutoconfAt(allocator, "@@", "@@", values);
-    try testReplaceVariablesAutoconfAt(allocator, "@@@", "@@@", values);
-    try testReplaceVariablesAutoconfAt(allocator, "@@@@", "@@@@", values);
+    try testReplaceVariablesAutoconfAt(allocator, "@", "@", &values);
+    try testReplaceVariablesAutoconfAt(allocator, "@@", "@@", &values);
+    try testReplaceVariablesAutoconfAt(allocator, "@@@", "@@@", &values);
+    try testReplaceVariablesAutoconfAt(allocator, "@@@@", "@@@@", &values);
 
     // simple substitution
-    try values.putNoClobber("undef", .undef);
-    try testReplaceVariablesAutoconfAt(allocator, "@undef@", "", values);
+    try values.putNoClobber(allocator, "undef", .undef);
+    try testReplaceVariablesAutoconfAt(allocator, "@undef@", "", &values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("defined", .defined);
-    try testReplaceVariablesAutoconfAt(allocator, "@defined@", "", values);
+    try values.putNoClobber(allocator, "defined", .defined);
+    try testReplaceVariablesAutoconfAt(allocator, "@defined@", "", &values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("true", Value{ .boolean = true });
-    try testReplaceVariablesAutoconfAt(allocator, "@true@", "1", values);
+    try values.putNoClobber(allocator, "true", Value{ .boolean = true });
+    try testReplaceVariablesAutoconfAt(allocator, "@true@", "1", &values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("false", Value{ .boolean = false });
-    try testReplaceVariablesAutoconfAt(allocator, "@false@", "0", values);
+    try values.putNoClobber(allocator, "false", Value{ .boolean = false });
+    try testReplaceVariablesAutoconfAt(allocator, "@false@", "0", &values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try testReplaceVariablesAutoconfAt(allocator, "@int@", "42", values);
+    try values.putNoClobber(allocator, "int", Value{ .int = 42 });
+    try testReplaceVariablesAutoconfAt(allocator, "@int@", "42", &values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("ident", Value{ .string = "value" });
-    try testReplaceVariablesAutoconfAt(allocator, "@ident@", "value", values);
+    try values.putNoClobber(allocator, "ident", Value{ .string = "value" });
+    try testReplaceVariablesAutoconfAt(allocator, "@ident@", "value", &values);
     values.clearRetainingCapacity();
 
-    try values.putNoClobber("string", Value{ .string = "text" });
-    try testReplaceVariablesAutoconfAt(allocator, "@string@", "text", values);
+    try values.putNoClobber(allocator, "string", Value{ .string = "text" });
+    try testReplaceVariablesAutoconfAt(allocator, "@string@", "text", &values);
     values.clearRetainingCapacity();
 
     // double packed substitution
-    try values.putNoClobber("string", Value{ .string = "text" });
-    try testReplaceVariablesAutoconfAt(allocator, "@string@@string@", "texttext", values);
+    try values.putNoClobber(allocator, "string", Value{ .string = "text" });
+    try testReplaceVariablesAutoconfAt(allocator, "@string@@string@", "texttext", &values);
     values.clearRetainingCapacity();
 
     // triple packed substitution
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try values.putNoClobber("string", Value{ .string = "text" });
-    try testReplaceVariablesAutoconfAt(allocator, "@string@@int@@string@", "text42text", values);
+    try values.putNoClobber(allocator, "int", Value{ .int = 42 });
+    try values.putNoClobber(allocator, "string", Value{ .string = "text" });
+    try testReplaceVariablesAutoconfAt(allocator, "@string@@int@@string@", "text42text", &values);
     values.clearRetainingCapacity();
 
     // double separated substitution
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try testReplaceVariablesAutoconfAt(allocator, "@int@.@int@", "42.42", values);
+    try values.putNoClobber(allocator, "int", Value{ .int = 42 });
+    try testReplaceVariablesAutoconfAt(allocator, "@int@.@int@", "42.42", &values);
     values.clearRetainingCapacity();
 
     // triple separated substitution
-    try values.putNoClobber("true", Value{ .boolean = true });
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try testReplaceVariablesAutoconfAt(allocator, "@int@.@true@.@int@", "42.1.42", values);
+    try values.putNoClobber(allocator, "true", Value{ .boolean = true });
+    try values.putNoClobber(allocator, "int", Value{ .int = 42 });
+    try testReplaceVariablesAutoconfAt(allocator, "@int@.@true@.@int@", "42.1.42", &values);
     values.clearRetainingCapacity();
 
     // misc prefix is preserved
-    try values.putNoClobber("false", Value{ .boolean = false });
-    try testReplaceVariablesAutoconfAt(allocator, "false is @false@", "false is 0", values);
+    try values.putNoClobber(allocator, "false", Value{ .boolean = false });
+    try testReplaceVariablesAutoconfAt(allocator, "false is @false@", "false is 0", &values);
     values.clearRetainingCapacity();
 
     // misc suffix is preserved
-    try values.putNoClobber("true", Value{ .boolean = true });
-    try testReplaceVariablesAutoconfAt(allocator, "@true@ is true", "1 is true", values);
+    try values.putNoClobber(allocator, "true", Value{ .boolean = true });
+    try testReplaceVariablesAutoconfAt(allocator, "@true@ is true", "1 is true", &values);
     values.clearRetainingCapacity();
 
     // surrounding content is preserved
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try testReplaceVariablesAutoconfAt(allocator, "what is 6*7? @int@!", "what is 6*7? 42!", values);
+    try values.putNoClobber(allocator, "int", Value{ .int = 42 });
+    try testReplaceVariablesAutoconfAt(allocator, "what is 6*7? @int@!", "what is 6*7? 42!", &values);
     values.clearRetainingCapacity();
 
     // incomplete key is preserved
-    try testReplaceVariablesAutoconfAt(allocator, "@undef", "@undef", values);
+    try testReplaceVariablesAutoconfAt(allocator, "@undef", "@undef", &values);
 
     // unknown key leads to an error
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesAutoconfAt(allocator, "@bad@", "", values));
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesAutoconfAt(allocator, "@bad@", "", &values));
 
     // unused key leads to an error
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try values.putNoClobber("false", Value{ .boolean = false });
-    try std.testing.expectError(error.UnusedValue, testReplaceVariablesAutoconfAt(allocator, "@int", "", values));
+    try values.putNoClobber(allocator, "int", Value{ .int = 42 });
+    try values.putNoClobber(allocator, "false", Value{ .boolean = false });
+    try std.testing.expectError(error.UnusedValue, testReplaceVariablesAutoconfAt(allocator, "@int", "", &values));
     values.clearRetainingCapacity();
 }
 
 test "expand_variables_autoconf_at edge cases" {
     const allocator = std.testing.allocator;
-    var values: std.array_hash_map.String(Value) = .init(allocator);
-    defer values.deinit();
+    var values: std.array_hash_map.String(Value) = .empty;
+    defer values.deinit(allocator);
 
     // @-vars resolved only when they wrap valid characters, otherwise considered literals
-    try values.putNoClobber("string", Value{ .string = "text" });
-    try testReplaceVariablesAutoconfAt(allocator, "@@string@@", "@text@", values);
+    try values.putNoClobber(allocator, "string", Value{ .string = "text" });
+    try testReplaceVariablesAutoconfAt(allocator, "@@string@@", "@text@", &values);
     values.clearRetainingCapacity();
 
     // expanded variables are considered strings after expansion
-    try values.putNoClobber("string_at", Value{ .string = "@string@" });
-    try testReplaceVariablesAutoconfAt(allocator, "@string_at@", "@string@", values);
+    try values.putNoClobber(allocator, "string_at", Value{ .string = "@string@" });
+    try testReplaceVariablesAutoconfAt(allocator, "@string_at@", "@string@", &values);
     values.clearRetainingCapacity();
 }
 
 test "expand_variables_cmake simple cases" {
     const allocator = std.testing.allocator;
-    var values: std.array_hash_map.String(Value) = .init(allocator);
-    defer values.deinit();
+    var values: std.array_hash_map.String(Value) = .empty;
+    defer values.deinit(allocator);
 
-    try values.putNoClobber("undef", .undef);
-    try values.putNoClobber("defined", .defined);
-    try values.putNoClobber("true", Value{ .boolean = true });
-    try values.putNoClobber("false", Value{ .boolean = false });
-    try values.putNoClobber("int", Value{ .int = 42 });
-    try values.putNoClobber("ident", Value{ .string = "value" });
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber(allocator, "undef", .undef);
+    try values.putNoClobber(allocator, "defined", .defined);
+    try values.putNoClobber(allocator, "true", Value{ .boolean = true });
+    try values.putNoClobber(allocator, "false", Value{ .boolean = false });
+    try values.putNoClobber(allocator, "int", Value{ .int = 42 });
+    try values.putNoClobber(allocator, "ident", Value{ .string = "value" });
+    try values.putNoClobber(allocator, "string", Value{ .string = "text" });
 
     // empty strings are preserved
-    try testReplaceVariablesCMake(allocator, "", "", values);
+    try testReplaceVariablesCMake(allocator, "", "", &values);
 
     // line with misc content is preserved
-    try testReplaceVariablesCMake(allocator, "no substitution", "no substitution", values);
+    try testReplaceVariablesCMake(allocator, "no substitution", "no substitution", &values);
 
     // empty ${} wrapper leads to an error
-    try std.testing.expectError(error.MissingKey, testReplaceVariablesCMake(allocator, "${}", "", values));
+    try std.testing.expectError(error.MissingKey, testReplaceVariablesCMake(allocator, "${}", "", &values));
 
     // empty @ sigils are preserved
-    try testReplaceVariablesCMake(allocator, "@", "@", values);
-    try testReplaceVariablesCMake(allocator, "@@", "@@", values);
-    try testReplaceVariablesCMake(allocator, "@@@", "@@@", values);
-    try testReplaceVariablesCMake(allocator, "@@@@", "@@@@", values);
+    try testReplaceVariablesCMake(allocator, "@", "@", &values);
+    try testReplaceVariablesCMake(allocator, "@@", "@@", &values);
+    try testReplaceVariablesCMake(allocator, "@@@", "@@@", &values);
+    try testReplaceVariablesCMake(allocator, "@@@@", "@@@@", &values);
 
     // simple substitution
-    try testReplaceVariablesCMake(allocator, "@undef@", "", values);
-    try testReplaceVariablesCMake(allocator, "${undef}", "", values);
-    try testReplaceVariablesCMake(allocator, "@defined@", "", values);
-    try testReplaceVariablesCMake(allocator, "${defined}", "", values);
-    try testReplaceVariablesCMake(allocator, "@true@", "1", values);
-    try testReplaceVariablesCMake(allocator, "${true}", "1", values);
-    try testReplaceVariablesCMake(allocator, "@false@", "0", values);
-    try testReplaceVariablesCMake(allocator, "${false}", "0", values);
-    try testReplaceVariablesCMake(allocator, "@int@", "42", values);
-    try testReplaceVariablesCMake(allocator, "${int}", "42", values);
-    try testReplaceVariablesCMake(allocator, "@ident@", "value", values);
-    try testReplaceVariablesCMake(allocator, "${ident}", "value", values);
-    try testReplaceVariablesCMake(allocator, "@string@", "text", values);
-    try testReplaceVariablesCMake(allocator, "${string}", "text", values);
+    try testReplaceVariablesCMake(allocator, "@undef@", "", &values);
+    try testReplaceVariablesCMake(allocator, "${undef}", "", &values);
+    try testReplaceVariablesCMake(allocator, "@defined@", "", &values);
+    try testReplaceVariablesCMake(allocator, "${defined}", "", &values);
+    try testReplaceVariablesCMake(allocator, "@true@", "1", &values);
+    try testReplaceVariablesCMake(allocator, "${true}", "1", &values);
+    try testReplaceVariablesCMake(allocator, "@false@", "0", &values);
+    try testReplaceVariablesCMake(allocator, "${false}", "0", &values);
+    try testReplaceVariablesCMake(allocator, "@int@", "42", &values);
+    try testReplaceVariablesCMake(allocator, "${int}", "42", &values);
+    try testReplaceVariablesCMake(allocator, "@ident@", "value", &values);
+    try testReplaceVariablesCMake(allocator, "${ident}", "value", &values);
+    try testReplaceVariablesCMake(allocator, "@string@", "text", &values);
+    try testReplaceVariablesCMake(allocator, "${string}", "text", &values);
 
     // double packed substitution
-    try testReplaceVariablesCMake(allocator, "@string@@string@", "texttext", values);
-    try testReplaceVariablesCMake(allocator, "${string}${string}", "texttext", values);
+    try testReplaceVariablesCMake(allocator, "@string@@string@", "texttext", &values);
+    try testReplaceVariablesCMake(allocator, "${string}${string}", "texttext", &values);
 
     // triple packed substitution
-    try testReplaceVariablesCMake(allocator, "@string@@int@@string@", "text42text", values);
-    try testReplaceVariablesCMake(allocator, "@string@${int}@string@", "text42text", values);
-    try testReplaceVariablesCMake(allocator, "${string}@int@${string}", "text42text", values);
-    try testReplaceVariablesCMake(allocator, "${string}${int}${string}", "text42text", values);
+    try testReplaceVariablesCMake(allocator, "@string@@int@@string@", "text42text", &values);
+    try testReplaceVariablesCMake(allocator, "@string@${int}@string@", "text42text", &values);
+    try testReplaceVariablesCMake(allocator, "${string}@int@${string}", "text42text", &values);
+    try testReplaceVariablesCMake(allocator, "${string}${int}${string}", "text42text", &values);
 
     // double separated substitution
-    try testReplaceVariablesCMake(allocator, "@int@.@int@", "42.42", values);
-    try testReplaceVariablesCMake(allocator, "${int}.${int}", "42.42", values);
+    try testReplaceVariablesCMake(allocator, "@int@.@int@", "42.42", &values);
+    try testReplaceVariablesCMake(allocator, "${int}.${int}", "42.42", &values);
 
     // triple separated substitution
-    try testReplaceVariablesCMake(allocator, "@int@.@true@.@int@", "42.1.42", values);
-    try testReplaceVariablesCMake(allocator, "@int@.${true}.@int@", "42.1.42", values);
-    try testReplaceVariablesCMake(allocator, "${int}.@true@.${int}", "42.1.42", values);
-    try testReplaceVariablesCMake(allocator, "${int}.${true}.${int}", "42.1.42", values);
+    try testReplaceVariablesCMake(allocator, "@int@.@true@.@int@", "42.1.42", &values);
+    try testReplaceVariablesCMake(allocator, "@int@.${true}.@int@", "42.1.42", &values);
+    try testReplaceVariablesCMake(allocator, "${int}.@true@.${int}", "42.1.42", &values);
+    try testReplaceVariablesCMake(allocator, "${int}.${true}.${int}", "42.1.42", &values);
 
     // misc prefix is preserved
-    try testReplaceVariablesCMake(allocator, "false is @false@", "false is 0", values);
-    try testReplaceVariablesCMake(allocator, "false is ${false}", "false is 0", values);
+    try testReplaceVariablesCMake(allocator, "false is @false@", "false is 0", &values);
+    try testReplaceVariablesCMake(allocator, "false is ${false}", "false is 0", &values);
 
     // misc suffix is preserved
-    try testReplaceVariablesCMake(allocator, "@true@ is true", "1 is true", values);
-    try testReplaceVariablesCMake(allocator, "${true} is true", "1 is true", values);
+    try testReplaceVariablesCMake(allocator, "@true@ is true", "1 is true", &values);
+    try testReplaceVariablesCMake(allocator, "${true} is true", "1 is true", &values);
 
     // surrounding content is preserved
-    try testReplaceVariablesCMake(allocator, "what is 6*7? @int@!", "what is 6*7? 42!", values);
-    try testReplaceVariablesCMake(allocator, "what is 6*7? ${int}!", "what is 6*7? 42!", values);
+    try testReplaceVariablesCMake(allocator, "what is 6*7? @int@!", "what is 6*7? 42!", &values);
+    try testReplaceVariablesCMake(allocator, "what is 6*7? ${int}!", "what is 6*7? 42!", &values);
 
     // incomplete key is preserved
-    try testReplaceVariablesCMake(allocator, "@undef", "@undef", values);
-    try testReplaceVariablesCMake(allocator, "${undef", "${undef", values);
-    try testReplaceVariablesCMake(allocator, "{undef}", "{undef}", values);
-    try testReplaceVariablesCMake(allocator, "undef@", "undef@", values);
-    try testReplaceVariablesCMake(allocator, "undef}", "undef}", values);
+    try testReplaceVariablesCMake(allocator, "@undef", "@undef", &values);
+    try testReplaceVariablesCMake(allocator, "${undef", "${undef", &values);
+    try testReplaceVariablesCMake(allocator, "{undef}", "{undef}", &values);
+    try testReplaceVariablesCMake(allocator, "undef@", "undef@", &values);
+    try testReplaceVariablesCMake(allocator, "undef}", "undef}", &values);
 
     // unknown key leads to an error
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@bad@", "", values));
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${bad}", "", values));
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@bad@", "", &values));
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${bad}", "", &values));
 }
 
 test "expand_variables_cmake edge cases" {
     const allocator = std.testing.allocator;
-    var values: std.array_hash_map.String(Value) = .init(allocator);
-    defer values.deinit();
+    var values: std.array_hash_map.String(Value) = .empty;
+    defer values.deinit(allocator);
 
     // special symbols
-    try values.putNoClobber("at", Value{ .string = "@" });
-    try values.putNoClobber("dollar", Value{ .string = "$" });
-    try values.putNoClobber("underscore", Value{ .string = "_" });
+    try values.putNoClobber(allocator, "at", Value{ .string = "@" });
+    try values.putNoClobber(allocator, "dollar", Value{ .string = "$" });
+    try values.putNoClobber(allocator, "underscore", Value{ .string = "_" });
 
     // basic value
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber(allocator, "string", Value{ .string = "text" });
 
     // proxy case values
-    try values.putNoClobber("string_proxy", Value{ .string = "string" });
-    try values.putNoClobber("string_at", Value{ .string = "@string@" });
-    try values.putNoClobber("string_curly", Value{ .string = "{string}" });
-    try values.putNoClobber("string_var", Value{ .string = "${string}" });
+    try values.putNoClobber(allocator, "string_proxy", Value{ .string = "string" });
+    try values.putNoClobber(allocator, "string_at", Value{ .string = "@string@" });
+    try values.putNoClobber(allocator, "string_curly", Value{ .string = "{string}" });
+    try values.putNoClobber(allocator, "string_var", Value{ .string = "${string}" });
 
     // stack case values
-    try values.putNoClobber("nest_underscore_proxy", Value{ .string = "underscore" });
-    try values.putNoClobber("nest_proxy", Value{ .string = "nest_underscore_proxy" });
+    try values.putNoClobber(allocator, "nest_underscore_proxy", Value{ .string = "underscore" });
+    try values.putNoClobber(allocator, "nest_proxy", Value{ .string = "nest_underscore_proxy" });
 
     // @-vars resolved only when they wrap valid characters, otherwise considered literals
-    try testReplaceVariablesCMake(allocator, "@@string@@", "@text@", values);
-    try testReplaceVariablesCMake(allocator, "@${string}@", "@text@", values);
+    try testReplaceVariablesCMake(allocator, "@@string@@", "@text@", &values);
+    try testReplaceVariablesCMake(allocator, "@${string}@", "@text@", &values);
 
     // @-vars are resolved inside ${}-vars
-    try testReplaceVariablesCMake(allocator, "${@string_proxy@}", "text", values);
+    try testReplaceVariablesCMake(allocator, "${@string_proxy@}", "text", &values);
 
     // expanded variables are considered strings after expansion
-    try testReplaceVariablesCMake(allocator, "@string_at@", "@string@", values);
-    try testReplaceVariablesCMake(allocator, "${string_at}", "@string@", values);
-    try testReplaceVariablesCMake(allocator, "$@string_curly@", "${string}", values);
-    try testReplaceVariablesCMake(allocator, "$${string_curly}", "${string}", values);
-    try testReplaceVariablesCMake(allocator, "${string_var}", "${string}", values);
-    try testReplaceVariablesCMake(allocator, "@string_var@", "${string}", values);
-    try testReplaceVariablesCMake(allocator, "${dollar}{${string}}", "${text}", values);
-    try testReplaceVariablesCMake(allocator, "@dollar@{${string}}", "${text}", values);
-    try testReplaceVariablesCMake(allocator, "@dollar@{@string@}", "${text}", values);
+    try testReplaceVariablesCMake(allocator, "@string_at@", "@string@", &values);
+    try testReplaceVariablesCMake(allocator, "${string_at}", "@string@", &values);
+    try testReplaceVariablesCMake(allocator, "$@string_curly@", "${string}", &values);
+    try testReplaceVariablesCMake(allocator, "$${string_curly}", "${string}", &values);
+    try testReplaceVariablesCMake(allocator, "${string_var}", "${string}", &values);
+    try testReplaceVariablesCMake(allocator, "@string_var@", "${string}", &values);
+    try testReplaceVariablesCMake(allocator, "${dollar}{${string}}", "${text}", &values);
+    try testReplaceVariablesCMake(allocator, "@dollar@{${string}}", "${text}", &values);
+    try testReplaceVariablesCMake(allocator, "@dollar@{@string@}", "${text}", &values);
 
     // when expanded variables contain invalid characters, they prevent further expansion
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${${string_var}}", "", values));
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${@string_var@}", "", values));
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${${string_var}}", "", &values));
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${@string_var@}", "", &values));
 
     // nested expanded variables are expanded from the inside out
-    try testReplaceVariablesCMake(allocator, "${string${underscore}proxy}", "string", values);
-    try testReplaceVariablesCMake(allocator, "${string@underscore@proxy}", "string", values);
+    try testReplaceVariablesCMake(allocator, "${string${underscore}proxy}", "string", &values);
+    try testReplaceVariablesCMake(allocator, "${string@underscore@proxy}", "string", &values);
 
     // nested vars are only expanded when ${} is closed
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@underscore@proxy@", "", values));
-    try testReplaceVariablesCMake(allocator, "${nest${underscore}proxy}", "nest_underscore_proxy", values);
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@@nest_underscore@underscore@proxy@@proxy@", "", values));
-    try testReplaceVariablesCMake(allocator, "${nest${${nest_underscore${underscore}proxy}}proxy}", "nest_underscore_proxy", values);
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@underscore@proxy@", "", &values));
+    try testReplaceVariablesCMake(allocator, "${nest${underscore}proxy}", "nest_underscore_proxy", &values);
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "@nest@@nest_underscore@underscore@proxy@@proxy@", "", &values));
+    try testReplaceVariablesCMake(allocator, "${nest${${nest_underscore${underscore}proxy}}proxy}", "nest_underscore_proxy", &values);
 
     // invalid characters lead to an error
-    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str*ing}", "", values));
-    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str$ing}", "", values));
-    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str@ing}", "", values));
+    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str*ing}", "", &values));
+    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str$ing}", "", &values));
+    try std.testing.expectError(error.InvalidCharacter, testReplaceVariablesCMake(allocator, "${str@ing}", "", &values));
 }
 
 test "expand_variables_cmake escaped characters" {
     const allocator = std.testing.allocator;
-    var values: std.array_hash_map.String(Value) = .init(allocator);
-    defer values.deinit();
+    var values: std.array_hash_map.String(Value) = .empty;
+    defer values.deinit(allocator);
 
-    try values.putNoClobber("string", Value{ .string = "text" });
+    try values.putNoClobber(allocator, "string", Value{ .string = "text" });
 
     // backslash is an invalid character for @ lookup
-    try testReplaceVariablesCMake(allocator, "\\@string\\@", "\\@string\\@", values);
+    try testReplaceVariablesCMake(allocator, "\\@string\\@", "\\@string\\@", &values);
 
     // backslash is preserved, but doesn't affect ${} variable expansion
-    try testReplaceVariablesCMake(allocator, "\\${string}", "\\text", values);
+    try testReplaceVariablesCMake(allocator, "\\${string}", "\\text", &values);
 
     // backslash breaks ${} opening bracket identification
-    try testReplaceVariablesCMake(allocator, "$\\{string}", "$\\{string}", values);
+    try testReplaceVariablesCMake(allocator, "$\\{string}", "$\\{string}", &values);
 
     // backslash is skipped when checking for invalid characters, yet it mangles the key
-    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${string\\}", "", values));
+    try std.testing.expectError(error.MissingValue, testReplaceVariablesCMake(allocator, "${string\\}", "", &values));
 }

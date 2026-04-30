@@ -1002,6 +1002,7 @@ pub fn invalidateResult(step: *Step, gpa: Allocator) bool {
 
 test {
     _ = CheckFile;
+    _ = ConfigHeader;
     _ = Fail;
     _ = Fmt;
     _ = InstallArtifact;
