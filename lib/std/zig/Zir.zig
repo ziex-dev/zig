@@ -651,6 +651,9 @@ pub const Inst = struct {
         /// Returns the integer type for the RHS of a shift operation.
         /// Uses the `un_node` field.
         typeof_log2_int_type,
+        /// Emit an error message and fail compilation.
+        /// Uses the `pl_node` field. Payload is `MultiOp`.
+        compile_error,
         /// Asserts control-flow will not reach this instruction (`unreachable`).
         /// Uses the `@"unreachable"` union field.
         @"unreachable",
@@ -853,9 +856,6 @@ pub const Inst = struct {
         /// Implement builtin `@intFromPtr`. Uses `un_node`.
         /// Convert a pointer to a `usize` integer.
         int_from_ptr,
-        /// Emit an error message and fail compilation.
-        /// Uses the `un_node` field.
-        compile_error,
         /// Changes the maximum number of backwards branches that compile-time
         /// code execution can use before giving up and making a compile error.
         /// Uses the `un_node` union field.
@@ -1757,7 +1757,6 @@ pub const Inst = struct {
                 .validate_const = .un_node,
 
                 .int_from_ptr = .un_node,
-                .compile_error = .un_node,
                 .set_eval_branch_quota = .un_node,
                 .int_from_enum = .un_node,
                 .align_of = .un_node,
@@ -1794,6 +1793,7 @@ pub const Inst = struct {
                 .ptr_cast = .pl_node,
                 .truncate = .pl_node,
                 .typeof_builtin = .pl_node,
+                .compile_error = .pl_node,
 
                 .has_decl = .pl_node,
                 .has_field = .pl_node,

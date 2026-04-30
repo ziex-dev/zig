@@ -227,7 +227,6 @@ const Writer = struct {
             .bit_size_of,
             .typeof_log2_int_type,
             .int_from_ptr,
-            .compile_error,
             .set_eval_branch_quota,
             .int_from_enum,
             .align_of,
@@ -414,7 +413,9 @@ const Writer = struct {
             .coerce_ptr_elem_ty,
             => try self.writePlNodeBin(stream, inst),
 
-            .for_len => try self.writePlNodeMultiOp(stream, inst),
+            .for_len,
+            .compile_error,
+            => try self.writePlNodeMultiOp(stream, inst),
 
             .elem_val_imm => try self.writeElemValImm(stream, inst),
 

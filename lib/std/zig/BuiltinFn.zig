@@ -327,7 +327,7 @@ pub const list = list: {
             "@compileError",
             .{
                 .tag = .compile_error,
-                .param_count = 1,
+                .param_count = null,
             },
         },
         .{
