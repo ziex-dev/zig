@@ -90,38 +90,42 @@ pub const Tag = struct {
         };
     }
 
-    pub fn encode(self: Tag, writer: *std.Io.Writer) @TypeOf(writer).Error!void {
+    pub fn encodeToSlice(self: Tag, buf: *[3]u8) []const u8 {
         var tag1 = FirstTag{
             .number = undefined,
             .constructed = self.constructed,
             .class = self.class,
         };
 
-        var buffer: [3]u8 = undefined;
-        var writer2: std.Io.Writer = .init(&buffer);
-
         switch (@intFromEnum(self.number)) {
             0...std.math.maxInt(u5) => |n| {
                 tag1.number = @intCast(n);
-                writer2.writeByte(@bitCast(tag1)) catch unreachable;
+                buf[0] = @bitCast(tag1);
+                return buf[0..1];
             },
             std.math.maxInt(u5) + 1...std.math.maxInt(u7) => |n| {
                 tag1.number = 15;
                 const tag2 = NextTag{ .number = @intCast(n), .continues = false };
-                writer2.writeByte(@bitCast(tag1)) catch unreachable;
-                writer2.writeByte(@bitCast(tag2)) catch unreachable;
+                buf[0] = @bitCast(tag1);
+                buf[1] = @bitCast(tag2);
+                return buf[0..2];
             },
             else => |n| {
                 tag1.number = 15;
                 const tag2 = NextTag{ .number = @intCast(n >> 7), .continues = true };
                 const tag3 = NextTag{ .number = @truncate(n), .continues = false };
-                writer2.writeByte(@bitCast(tag1)) catch unreachable;
-                writer2.writeByte(@bitCast(tag2)) catch unreachable;
-                writer2.writeByte(@bitCast(tag3)) catch unreachable;
+                buf[0] = @bitCast(tag1);
+                buf[1] = @bitCast(tag2);
+                buf[2] = @bitCast(tag3);
+                return buf[0..3];
             },
         }
+    }
 
-        _ = try writer.write(writer2.buffered());
+    pub fn encode(self: Tag, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        var buffer: [3]u8 = undefined;
+        const bytes = self.encodeToSlice(&buffer);
+        _ = try writer.write(bytes);
     }
 
     const FirstTag = packed struct(u8) { number: u5, constructed: bool, class: Tag.Class };
@@ -327,8 +331,8 @@ pub const BitString = struct {
     }
 
     pub fn encodeDer(self: BitString, encoder: *der.Encoder) !void {
-        try encoder.writer().writeAll(self.bytes);
-        try encoder.writer().writeByte(self.right_padding);
+        try encoder.bytes(self.bytes);
+        try encoder.bytes(&.{self.right_padding});
         try encoder.length(self.bytes.len + 1);
         try encoder.tag(asn1_tag);
     }

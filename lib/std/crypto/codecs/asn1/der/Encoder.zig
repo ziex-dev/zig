@@ -78,7 +78,9 @@ fn anyTag(self: *Encoder, tag_: Tag, val: anytype) !void {
 /// Encode a tag.
 pub fn tag(self: *Encoder, tag_: Tag) !void {
     const t = self.mergedTag(tag_);
-    try t.encode(self.writer());
+    var buf: [3]u8 = undefined;
+    const data = t.encodeToSlice(&buf);
+    try self.buffer.prependSlice(data);
 }
 
 fn mergedTag(self: *Encoder, tag_: Tag) Tag {
@@ -94,15 +96,16 @@ fn mergedTag(self: *Encoder, tag_: Tag) Tag {
 
 /// Encode a length.
 pub fn length(self: *Encoder, len: usize) !void {
-    const writer_ = self.writer();
     if (len < 128) {
-        try writer_.writeInt(u8, @intCast(len), .big);
+        try self.buffer.prependSlice(&.{@intCast(len)});
         return;
     }
     inline for ([_]type{ u8, u16, u32 }) |T| {
         if (len < std.math.maxInt(T)) {
-            try writer_.writeInt(T, @intCast(len), .big);
-            try writer_.writeInt(u8, @sizeOf(T) | 0x80, .big);
+            var buf: [@sizeOf(T) + 1]u8 = undefined;
+            buf[0] = @sizeOf(T) | 0x80;
+            std.mem.writeInt(T, buf[1..], @intCast(len), .big);
+            try self.buffer.prependSlice(&buf);
             return;
         }
     }
@@ -110,18 +113,18 @@ pub fn length(self: *Encoder, len: usize) !void {
 }
 
 /// Encode a tag and length-prefixed bytes.
-pub fn tagBytes(self: *Encoder, tag_: Tag, bytes: []const u8) !void {
-    try self.buffer.prependSlice(bytes);
-    try self.length(bytes.len);
+pub fn tagBytes(self: *Encoder, tag_: Tag, data: []const u8) !void {
+    try self.buffer.prependSlice(data);
+    try self.length(data.len);
     try self.tag(tag_);
 }
 
-/// Warning: This writer writes backwards. `fn print` will NOT work as expected.
-pub fn writer(self: *Encoder) ArrayListReverse.Writer {
-    return self.buffer.writer();
+/// Prepend raw bytes to the output buffer. Preserves byte order.
+pub fn bytes(self: *Encoder, data: []const u8) !void {
+    try self.buffer.prependSlice(data);
 }
 
-fn int(self: *Encoder, comptime T: type, value: T) !void {
+pub fn int(self: *Encoder, comptime T: type, value: T) !void {
     const big = std.mem.nativeTo(T, value, .big);
     const big_bytes = std.mem.asBytes(&big);
 
@@ -135,9 +138,11 @@ fn int(self: *Encoder, comptime T: type, value: T) !void {
     } else 0;
     const bytes_needed = try std.math.divCeil(usize, bits_needed, 8) + needs_padding;
 
-    const writer_ = self.writer();
-    for (0..bytes_needed - needs_padding) |i| try writer_.writeByte(big_bytes[big_bytes.len - i - 1]);
-    if (needs_padding == 1) try writer_.writeByte(0);
+    const val_len = bytes_needed - needs_padding;
+    const start = big_bytes.len - val_len;
+
+    try self.buffer.prependSlice(big_bytes[start..]);
+    if (needs_padding == 1) try self.buffer.prependSlice(&.{0});
 }
 
 test int {
@@ -155,6 +160,10 @@ test int {
     encoder.buffer.clearAndFree();
     try encoder.int(u32, 0xffff);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 0xff, 0xff }, encoder.buffer.data);
+
+    encoder.buffer.clearAndFree();
+    try encoder.int(u32, 0x01020304);
+    try std.testing.expectEqualSlices(u8, &[_]u8{ 0x01, 0x02, 0x03, 0x04 }, encoder.buffer.data);
 }
 
 const std = @import("std");
