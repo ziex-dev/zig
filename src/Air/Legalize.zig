@@ -158,7 +158,7 @@ pub const Feature = enum {
     expand_packed_store,
     /// Replace `struct_field_val` of a packed field with a `bitcast` to integer, `shr`, `trunc`, and `bitcast` to field type.
     expand_packed_struct_field_val,
-    /// Replace `aggregate_init` of a packed struct with a sequence of `shl_exact`, `bitcast`, `intcast`, and `bit_or`.
+    /// Replace `aggregate_init` of a bitpack struct with a sequence of `shl_exact`, `bitcast`, `intcast`, and `bit_or`.
     expand_packed_aggregate_init,
 
     /// Replace all arithmetic operations on 16-bit floating-point types with calls to soft-float

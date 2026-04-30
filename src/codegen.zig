@@ -1115,7 +1115,7 @@ pub fn fieldOffset(ptr_agg_ty: Type, ptr_field_ty: Type, field_index: u32, zcu: 
     return switch (agg_ty.containerLayout(zcu)) {
         .auto, .@"extern" => agg_ty.structFieldOffset(field_index, zcu),
         .@"bitpack" => @divExact(@as(u64, ptr_agg_ty.ptrInfo(zcu).packed_offset.bit_offset) +
-            (if (zcu.typeToPackedStruct(agg_ty)) |loaded_struct| zcu.structPackedFieldBitOffset(loaded_struct, field_index) else 0) -
+            (if (zcu.typeToBitpackStruct(agg_ty)) |loaded_struct| zcu.structPackedFieldBitOffset(loaded_struct, field_index) else 0) -
             ptr_field_ty.ptrInfo(zcu).packed_offset.bit_offset, 8),
     };
 }

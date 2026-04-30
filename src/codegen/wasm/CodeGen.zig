@@ -2335,7 +2335,7 @@ const IntType = struct {
                 const loaded_struct = ip.loadStructType(ty_index);
                 switch (loaded_struct.layout) {
                     .auto, .@"extern" => unreachable,
-                    .@"bitpack" => ty_index = loaded_struct.packed_backing_int_type,
+                    .@"bitpack" => ty_index = loaded_struct.bitpack_backing_int_type,
                 }
             },
             .union_type => return switch (ip.loadUnionType(ty_index).layout) {
@@ -4785,10 +4785,10 @@ fn lowerConstant(cg: *CodeGen, val: Value) InnerError!WValue {
                 val.writeToMemory(zcu, &buf) catch unreachable;
                 return cg.storeSimdImmd(buf);
             },
-            .struct_type => unreachable, // packed structs use `bitpack`
+            .struct_type => unreachable, // bitpack structs use `bitpack`
             else => unreachable,
         },
-        .un => unreachable, // packed unions use `bitpack`
+        .un => unreachable, // bitpack unions use `bitpack`
         .@"bitpack" => |@"bitpack"| return cg.lowerConstant(.fromInterned(@"bitpack".backing_int_val)),
         .memoized_call => unreachable,
     }

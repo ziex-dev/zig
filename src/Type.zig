@@ -213,7 +213,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
                     break struct_obj.class;
                 },
                 .@"bitpack" => {
-                    cur_ty = .fromInterned(struct_obj.packed_backing_int_type);
+                    cur_ty = .fromInterned(struct_obj.bitpack_backing_int_type);
                     continue;
                 },
             }
@@ -226,7 +226,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
                     break union_obj.class;
                 },
                 .@"bitpack" => {
-                    cur_ty = .fromInterned(union_obj.packed_backing_int_type);
+                    cur_ty = .fromInterned(union_obj.bitpack_backing_int_type);
                     continue;
                 },
             }
@@ -1034,7 +1034,7 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
         .struct_type => {
             const struct_obj = ip.loadStructType(ty.toIntern());
             switch (struct_obj.layout) {
-                .@"bitpack" => return Type.fromInterned(struct_obj.packed_backing_int_type).abiAlignment(zcu),
+                .@"bitpack" => return Type.fromInterned(struct_obj.bitpack_backing_int_type).abiAlignment(zcu),
                 .auto, .@"extern" => {
                     assert(struct_obj.alignment != .none);
                     return struct_obj.alignment;
@@ -1044,7 +1044,7 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
         .union_type => {
             const union_obj = ip.loadUnionType(ty.toIntern());
             switch (union_obj.layout) {
-                .@"bitpack" => return Type.fromInterned(union_obj.packed_backing_int_type).abiAlignment(zcu),
+                .@"bitpack" => return Type.fromInterned(union_obj.bitpack_backing_int_type).abiAlignment(zcu),
                 .auto, .@"extern" => {
                     assert(union_obj.alignment != .none);
                     return union_obj.alignment;
@@ -1186,14 +1186,14 @@ pub fn abiSize(ty: Type, zcu: *const Zcu) u64 {
         .struct_type => {
             const struct_obj = ip.loadStructType(ty.toIntern());
             switch (struct_obj.layout) {
-                .@"bitpack" => return Type.fromInterned(struct_obj.packed_backing_int_type).abiSize(zcu),
+                .@"bitpack" => return Type.fromInterned(struct_obj.bitpack_backing_int_type).abiSize(zcu),
                 .auto, .@"extern" => return struct_obj.size,
             }
         },
         .union_type => {
             const union_obj = ip.loadUnionType(ty.toIntern());
             switch (union_obj.layout) {
-                .@"bitpack" => return Type.fromInterned(union_obj.packed_backing_int_type).abiSize(zcu),
+                .@"bitpack" => return Type.fromInterned(union_obj.bitpack_backing_int_type).abiSize(zcu),
                 .auto, .@"extern" => return union_obj.size,
             }
         },
@@ -1306,14 +1306,14 @@ pub fn bitSize(ty: Type, zcu: *const Zcu) u64 {
         .struct_type => {
             const struct_obj = ip.loadStructType(ty.toIntern());
             switch (struct_obj.layout) {
-                .@"bitpack" => return Type.fromInterned(struct_obj.packed_backing_int_type).bitSize(zcu),
+                .@"bitpack" => return Type.fromInterned(struct_obj.bitpack_backing_int_type).bitSize(zcu),
                 .auto, .@"extern" => return struct_obj.size * 8, // will be `unreachable` under #19755
             }
         },
         .union_type => {
             const union_obj = ip.loadUnionType(ty.toIntern());
             switch (union_obj.layout) {
-                .@"bitpack" => return Type.fromInterned(union_obj.packed_backing_int_type).bitSize(zcu),
+                .@"bitpack" => return Type.fromInterned(union_obj.bitpack_backing_int_type).bitSize(zcu),
                 .auto, .@"extern" => return union_obj.size * 8, // will be `unreachable` under #19755
             }
         },
@@ -1644,7 +1644,7 @@ pub fn externUnionBackingType(ty: Type, pt: Zcu.PerThread) !Type {
     }
 }
 
-/// Asserts that `ty` is a non-packed union type.
+/// Asserts that `ty` is a non-bitpack union type.
 pub fn unionGetLayout(ty: Type, zcu: *const Zcu) Zcu.UnionLayout {
     assertHasLayout(ty, zcu);
     const union_obj = zcu.intern_pool.loadUnionType(ty.toIntern());
@@ -1664,8 +1664,8 @@ pub fn containerLayout(ty: Type, zcu: *const Zcu) std.lang.Type.ContainerLayout 
 pub fn bitpackBackingInt(ty: Type, zcu: *const Zcu) Type {
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(ty.toIntern())) {
-        .struct_type => .fromInterned(ip.loadStructType(ty.toIntern()).packed_backing_int_type),
-        .union_type => .fromInterned(ip.loadUnionType(ty.toIntern()).packed_backing_int_type),
+        .struct_type => .fromInterned(ip.loadStructType(ty.toIntern()).bitpack_backing_int_type),
+        .union_type => .fromInterned(ip.loadUnionType(ty.toIntern()).bitpack_backing_int_type),
         else => unreachable,
     };
 }
@@ -1822,7 +1822,7 @@ pub fn isUnsignedInt(ty: Type, zcu: *const Zcu) bool {
     };
 }
 
-/// Returns true for integers, enums, error sets, and packed structs/unions.
+/// Returns true for integers, enums, error sets, and bitpack structs/unions.
 /// If this function returns true, then intInfo() can be called on the type.
 pub fn isAbiInt(ty: Type, zcu: *const Zcu) bool {
     return switch (ty.zigTypeTag(zcu)) {
@@ -1858,12 +1858,12 @@ pub fn intInfo(starting_ty: Type, zcu: *const Zcu) InternPool.Key.IntType {
             .struct_type => {
                 const struct_obj = ip.loadStructType(ty.toIntern());
                 assert(struct_obj.layout == .@"bitpack");
-                ty = .fromInterned(struct_obj.packed_backing_int_type);
+                ty = .fromInterned(struct_obj.bitpack_backing_int_type);
             },
             .union_type => {
                 const union_obj = ip.loadUnionType(ty.toIntern());
                 assert(union_obj.layout == .@"bitpack");
-                ty = .fromInterned(union_obj.packed_backing_int_type);
+                ty = .fromInterned(union_obj.bitpack_backing_int_type);
             },
             .enum_type => ty = .fromInterned(ip.loadEnumType(ty.toIntern()).int_tag_type),
             .vector_type => |vector_type| ty = Type.fromInterned(vector_type.child),
@@ -2127,7 +2127,7 @@ pub fn onePossibleValue(ty: Type, pt: Zcu.PerThread) !?Value {
             switch (struct_obj.layout) {
                 .auto, .@"extern" => {},
                 .@"bitpack" => {
-                    const backing_ty: Type = .fromInterned(struct_obj.packed_backing_int_type);
+                    const backing_ty: Type = .fromInterned(struct_obj.bitpack_backing_int_type);
                     const backing_val = try backing_ty.onePossibleValue(pt) orelse return null;
                     return try pt.bitpackValue(ty, backing_val);
                 },
@@ -2152,7 +2152,7 @@ pub fn onePossibleValue(ty: Type, pt: Zcu.PerThread) !?Value {
         .union_type => {
             const union_obj = ip.loadUnionType(ty.toIntern());
             if (union_obj.layout == .@"bitpack") {
-                const backing_ty: Type = .fromInterned(union_obj.packed_backing_int_type);
+                const backing_ty: Type = .fromInterned(union_obj.bitpack_backing_int_type);
                 const backing_val = try backing_ty.onePossibleValue(pt) orelse return null;
                 return try pt.bitpackValue(ty, backing_val);
             }
@@ -2972,7 +2972,7 @@ pub fn fieldPtrType(ptr_ty: Type, field_index: u32, pt: Zcu.PerThread) Allocator
                     field_ptr_info.flags.alignment = aggregate_ty.abiAlignment(zcu);
                 }
                 field_ptr_info.packed_offset = packed_offset: {
-                    comptime assert(Type.packed_struct_layout_version == 2);
+                    comptime assert(Type.bitpack_struct_layout_version == 2);
                     const bit_offset = zcu.structPackedFieldBitOffset(
                         ip.loadStructType(aggregate_ty.toIntern()),
                         field_index,
@@ -3233,7 +3233,7 @@ pub fn validateExtern(ty: Type, position: ExternPosition, zcu: *const Zcu) bool 
                 .@"extern" => true,
                 .@"bitpack" => switch (struct_obj.packed_backing_mode) {
                     .auto => false,
-                    .explicit => Type.fromInterned(struct_obj.packed_backing_int_type).validateExtern(position, zcu),
+                    .explicit => Type.fromInterned(struct_obj.bitpack_backing_int_type).validateExtern(position, zcu),
                 },
             };
         },
@@ -3244,7 +3244,7 @@ pub fn validateExtern(ty: Type, position: ExternPosition, zcu: *const Zcu) bool 
                 .@"extern" => true,
                 .@"bitpack" => switch (union_obj.packed_backing_mode) {
                     .auto => false,
-                    .explicit => Type.fromInterned(union_obj.packed_backing_int_type).validateExtern(position, zcu),
+                    .explicit => Type.fromInterned(union_obj.bitpack_backing_int_type).validateExtern(position, zcu),
                 },
             };
         },
@@ -3629,8 +3629,8 @@ pub fn smallestUnsignedBits(max: u64) u16 {
 }
 
 /// This is only used for comptime asserts. Bump this number when you make a change
-/// to packed struct layout to find out all the places in the codebase you need to edit!
-pub const packed_struct_layout_version = 2;
+/// to bitpack struct layout to find out all the places in the codebase you need to edit!
+pub const bitpack_struct_layout_version = 2;
 
 fn cTypeAlign(target: *const Target, c_type: Target.CType) Alignment {
     return Alignment.fromByteUnits(target.cTypeAlignment(c_type));

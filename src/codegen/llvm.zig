@@ -2374,7 +2374,7 @@ pub const Object = struct {
                             null, // file
                             ty_fwd_ref,
                             0, // line
-                            try o.getDebugType(pt, .fromInterned(struct_type.packed_backing_int_type)),
+                            try o.getDebugType(pt, .fromInterned(struct_type.bitpack_backing_int_type)),
                             ty.abiSize(zcu) * 8,
                             ty.abiAlignment(zcu).toByteUnits().? * 8,
                             0, // offset
@@ -2438,7 +2438,7 @@ pub const Object = struct {
                         null, // file
                         ty_fwd_ref,
                         0, // line
-                        try o.getDebugType(pt, .fromInterned(union_type.packed_backing_int_type)),
+                        try o.getDebugType(pt, .fromInterned(union_type.bitpack_backing_int_type)),
                         ty.abiSize(zcu) * 8,
                         ty.abiAlignment(zcu).toByteUnits().? * 8,
                         0, // offset
@@ -3190,7 +3190,7 @@ pub const Object = struct {
                     const struct_type = ip.loadStructType(t.toIntern());
 
                     if (struct_type.layout == .@"bitpack") {
-                        const int_ty = try o.lowerType(.fromInterned(struct_type.packed_backing_int_type));
+                        const int_ty = try o.lowerType(.fromInterned(struct_type.bitpack_backing_int_type));
                         try o.type_map.put(o.gpa, t.toIntern(), int_ty);
                         return int_ty;
                     }
@@ -3306,7 +3306,7 @@ pub const Object = struct {
                     const union_obj = ip.loadUnionType(t.toIntern());
 
                     if (union_obj.layout == .@"bitpack") {
-                        const int_ty = try o.lowerType(.fromInterned(union_obj.packed_backing_int_type));
+                        const int_ty = try o.lowerType(.fromInterned(union_obj.bitpack_backing_int_type));
                         try o.type_map.put(o.gpa, t.toIntern(), int_ty);
                         return int_ty;
                     }

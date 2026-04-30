@@ -143,7 +143,7 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
                 .any_comptime_fields = true,
                 .any_field_defaults = true,
                 .any_field_aligns = false,
-                .packed_backing_int_type = .none,
+                .bitpack_backing_int_type = .none,
             })) {
                 .existing => |ty| .fromInterned(ty),
                 .wip => |wip| ty: {
@@ -982,7 +982,7 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     const result: Value = switch (union_info.layout) {
         .auto, .@"extern" => try pt.unionValue(res_ty, tag, val),
         .@"bitpack" => try self.sema.bitCastVal(val, res_ty, 0, 0, 0) orelse {
-            unreachable; // `null` is only possible if the input value contains a pointer, which a packed union cannot.
+            unreachable; // `null` is only possible if the input value contains a pointer, which a bitpack union cannot.
         },
     };
     return result.toIntern();

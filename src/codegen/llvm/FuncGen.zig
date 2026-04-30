@@ -5897,10 +5897,10 @@ fn airAggregateInit(self: *FuncGen, inst: Air.Inst.Index) Allocator.Error!Builde
         .@"struct" => switch (result_ty.containerLayout(zcu)) {
             .@"bitpack" => {
                 const struct_type = ip.loadStructType(result_ty.toIntern());
-                const backing_int_ty: Type = .fromInterned(struct_type.packed_backing_int_type);
+                const backing_int_ty: Type = .fromInterned(struct_type.bitpack_backing_int_type);
                 const big_bits = backing_int_ty.bitSize(zcu);
                 const int_ty = try o.builder.intType(@intCast(big_bits));
-                comptime assert(Type.packed_struct_layout_version == 2);
+                comptime assert(Type.bitpack_struct_layout_version == 2);
                 var running_int = try o.builder.intValue(int_ty, 0);
                 var running_bits: u16 = 0;
                 for (elements, struct_type.field_types.get(ip)) |elem, field_ty| {

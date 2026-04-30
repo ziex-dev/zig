@@ -2014,7 +2014,7 @@ pub const Key = union(enum) {
     aggregate: Aggregate,
     /// An instance of a union.
     un: Union,
-    /// An instance of a `packed struct` or `packed union`.
+    /// An instance of a `bitpack struct` or `bitpack union`.
     @"bitpack": Bitpack,
 
     /// A comptime function call with a memoized result.
@@ -2538,10 +2538,10 @@ pub const Key = union(enum) {
     pub const Union = extern struct {
         /// This is the union type; not the field type.
         ty: Index,
-        /// Indicates the active field. This could be `none`, which indicates the tag is not known. `none` is only a valid value for extern and packed unions.
+        /// Indicates the active field. This could be `none`, which indicates the tag is not known. `none` is only a valid value for extern and bitpack unions.
         /// In those cases, the type of `val` is:
         ///   extern: a u8 array of the same byte length as the union
-        ///   packed: an unsigned integer with the same bit size as the union
+        ///   bitpack: an unsigned integer with the same bit size as the union
         tag: Index,
         /// The value of the active field.
         val: Index,
@@ -2568,7 +2568,7 @@ pub const Key = union(enum) {
 
     /// As well as a key, this type doubles as the payload in `extra` for `Tag.bitpack`.
     pub const Bitpack = struct {
-        /// The `packed struct` or `packed union` type.
+        /// The `bitpack struct` or `bitpack union` type.
         ty: Index,
         /// The contents of the bitpack, represented as the backing integer value. The type of this
         /// value is the same as the backing integer type of `ty`.
@@ -3221,7 +3221,7 @@ pub const LoadedStructType = struct {
     /// If `layout` is `.@"bitpack"`, this is `.empty`.
     field_offsets: Offsets,
     /// Only valid if `layout` is `.@"bitpack"`.
-    packed_backing_int_type: Index,
+    bitpack_backing_int_type: Index,
     /// Only valid if `layout` is *not* `.@"bitpack"`.
     class: TypeClass,
     /// Only valid if `layout` is *not* `.@"bitpack"`.
@@ -3411,7 +3411,7 @@ pub const LoadedUnionType = struct {
     /// the union's "hypothetical" tag type.
     enum_tag_type: Index,
     /// Only valid if `layout` is `.@"bitpack"`.
-    packed_backing_int_type: Index,
+    bitpack_backing_int_type: Index,
     /// Not valid if `layout` is `.@"bitpack"`.
     class: TypeClass,
     /// Not valid if `layout` is `.@"bitpack"`.
@@ -3605,7 +3605,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
                 .field_is_comptime_bits = field_is_comptime_bits,
                 .field_runtime_order = field_runtime_order,
                 .field_offsets = field_offsets,
-                .packed_backing_int_type = .none,
+                .bitpack_backing_int_type = .none,
                 .class = extra.data.flags.class,
                 .size = extra.data.size,
                 .alignment = extra.data.flags.alignment,
@@ -3665,7 +3665,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
         .field_is_comptime_bits = .empty,
         .field_runtime_order = .empty,
         .field_offsets = .empty,
-        .packed_backing_int_type = extra.data.backing_int_type,
+        .bitpack_backing_int_type = extra.data.backing_int_type,
         .class = undefined,
         .size = undefined,
         .alignment = undefined,
@@ -3677,7 +3677,7 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
     const extra_list = unwrapped_index.getExtra(ip);
     const extra_items = extra_list.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
-    // Exiting this `switch` means this is a `packed union`.
+    // Exiting this `switch` means this is a `bitpack union`.
     const backing_mode: BackingTypeMode = switch (item.tag) {
         .type_union_packed_auto => .auto,
         .type_union_packed_explicit => .explicit,
@@ -3735,7 +3735,7 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
                 .enum_tag_mode = extra.data.flags.enum_tag_mode,
                 .enum_tag_type = extra.data.enum_tag_type,
                 .packed_backing_mode = undefined,
-                .packed_backing_int_type = undefined,
+                .bitpack_backing_int_type = undefined,
                 .reified_field_names = reified_field_names,
                 .want_layout = extra.data.flags.want_layout,
                 .field_types = field_types,
@@ -3787,7 +3787,7 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
         .enum_tag_mode = .auto,
         .enum_tag_type = extra.data.enum_tag_type,
         .packed_backing_mode = backing_mode,
-        .packed_backing_int_type = extra.data.backing_int_type,
+        .bitpack_backing_int_type = extra.data.backing_int_type,
         .reified_field_names = reified_field_names,
         .want_layout = extra.data.bits.want_layout,
         .field_types = field_types,
@@ -5035,7 +5035,7 @@ pub const Tag = enum(u8) {
     /// An instance of an array or vector with every element being the same value.
     /// data is extra index to `Repeated`.
     repeated,
-    /// An instance of a `packed struct` or `packed union`.
+    /// An instance of a `bitpack struct` or `bitpack union`.
     /// data is extra index to `Key.Bitpack`.
     @"bitpack",
 
@@ -5659,7 +5659,7 @@ pub const Tag = enum(u8) {
 
         /// The corresponding `BackingTypeMode` depends on the item's `Tag`.
         backing_int_type: Index,
-        /// Although packed unions do not semantically have a tag type, the compiler still assigns
+        /// Although bitpack unions do not semantically have a tag type, the compiler still assigns
         /// them a "hypothetical" tag type.
         enum_tag_type: Index,
 
@@ -5754,8 +5754,8 @@ pub const BackingTypeMode = enum(u1) {
     /// The backing type was explicitly provided by the user. For instance:
     ///   union(T)
     ///   enum(T)
-    ///   packed struct(T)
-    ///   packed union(T)
+    ///   bitpack struct(T)
+    ///   bitpack union(T)
     /// Type layout resolution will evaluate the user-provided expression and validate that type.
     explicit,
     /// No backing type was explicitly provided by the user. Type layout resolution will populate
@@ -8002,8 +8002,8 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
         },
         .@"bitpack" => |@"bitpack"| {
             switch (ip.zigTypeTag(@"bitpack".ty)) {
-                .@"struct" => assert(ip.typeOf(@"bitpack".backing_int_val) == ip.loadStructType(@"bitpack".ty).packed_backing_int_type),
-                .@"union" => assert(ip.typeOf(@"bitpack".backing_int_val) == ip.loadUnionType(@"bitpack".ty).packed_backing_int_type),
+                .@"struct" => assert(ip.typeOf(@"bitpack".backing_int_val) == ip.loadStructType(@"bitpack".ty).bitpack_backing_int_type),
+                .@"union" => assert(ip.typeOf(@"bitpack".backing_int_val) == ip.loadUnionType(@"bitpack".ty).bitpack_backing_int_type),
                 else => unreachable,
             }
             assert(!ip.isUndef(@"bitpack".backing_int_val));
@@ -8201,7 +8201,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
     any_field_defaults: bool,
     any_field_aligns: bool,
     /// Explicitly specified backing int type. `.none` if not packed or if backing type is inferred.
-    packed_backing_int_type: Index,
+    bitpack_backing_int_type: Index,
 }) Allocator.Error!WipContainerType.Result {
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .struct_type = .{ .reified = .{
         .zir_index = ini.zir_index,
@@ -8237,7 +8237,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
                 .name = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
-                .backing_int_type = ini.packed_backing_int_type,
+                .backing_int_type = ini.bitpack_backing_int_type,
                 .fields_len = ini.fields_len,
                 .field_name_map = field_name_map,
             });
@@ -8251,7 +8251,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
                 extra.appendNTimesAssumeCapacity(.{@intFromEnum(Index.none)}, ini.fields_len); // field_default
             }
             items.appendAssumeCapacity(.{
-                .tag = switch (ini.packed_backing_int_type) {
+                .tag = switch (ini.bitpack_backing_int_type) {
                     .none => if (ini.any_field_defaults) .type_struct_bitpack_auto_defaults else .type_struct_bitpack_auto,
                     else => if (ini.any_field_defaults) .type_struct_bitpack_explicit_defaults else .type_struct_bitpack_explicit,
                 },
@@ -8499,7 +8499,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
     /// Explicitly specified enum tag type. `.none` if `tag_usage != .tagged`.
     enum_tag_type: Index,
     /// Explicitly specified backing int type. `.none` if not packed or if backing type is inferred.
-    packed_backing_int_type: Index,
+    bitpack_backing_int_type: Index,
 }) Allocator.Error!WipContainerType.Result {
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .union_type = .{ .reified = .{
         .zir_index = ini.zir_index,
@@ -8531,7 +8531,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
                 .name = undefined, // set by `finish`
                 .name_nav = undefined, // set by `finish`
                 .namespace = undefined, // set by `finish`
-                .backing_int_type = ini.packed_backing_int_type,
+                .backing_int_type = ini.bitpack_backing_int_type,
                 .enum_tag_type = .none,
                 .fields_len = ini.fields_len,
             });
@@ -8541,7 +8541,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
             const field_types_start = extra.mutate.len;
             extra.appendNTimesAssumeCapacity(.{@intFromEnum(Index.none)}, ini.fields_len); // field_type
             items.appendAssumeCapacity(.{
-                .tag = switch (ini.packed_backing_int_type) {
+                .tag = switch (ini.bitpack_backing_int_type) {
                     .none => .type_union_packed_auto,
                     else => .type_union_packed_explicit,
                 },
@@ -12684,7 +12684,7 @@ const PackedCallingConvention = bitpack struct(u18) {
     }
 };
 
-/// Asserts that `struct_type` is a non-packed struct type.
+/// Asserts that `struct_type` is a non-bitpack struct type.
 /// As well as calling this function, the caller must also populate these arrays:
 /// * `field_types`
 /// * `field_aligns`
@@ -12714,7 +12714,7 @@ pub fn resolveStructLayout(
     flags.alignment = alignment;
 }
 
-/// Asserts that `union_type` is a non-packed union type.
+/// Asserts that `union_type` is a non-bitpack union type.
 /// As well as calling this function, the caller must also populate these arrays:
 /// * `field_types`
 /// * `field_aligns`
@@ -12748,8 +12748,8 @@ pub fn resolveUnionLayout(
     flags.alignment = alignment;
 }
 
-/// Asserts that `struct_type` is a packed struct type.
-pub fn resolvePackedStructLayout(
+/// Asserts that `struct_type` is a bitpack struct type.
+pub fn resolveBitpackStructLayout(
     ip: *InternPool,
     io: Io,
     struct_type: Index,
@@ -12775,8 +12775,8 @@ pub fn resolvePackedStructLayout(
     extra_items[item.data + std.meta.fieldIndex(Tag.TypeStructPacked, "backing_int_type").?] = @intFromEnum(backing_int_type);
 }
 
-/// Asserts that `union_type` is a packed union type.
-pub fn resolvePackedUnionLayout(
+/// Asserts that `union_type` is a bitpack union type.
+pub fn resolveBitpackUnionLayout(
     ip: *InternPool,
     io: Io,
     union_type: Index,

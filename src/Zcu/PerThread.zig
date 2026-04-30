@@ -4261,7 +4261,7 @@ pub fn floatValue(pt: Zcu.PerThread, ty: Type, x: anytype) Allocator.Error!Value
     } }));
 }
 
-/// Create a value whose type is a `packed struct` or `packed union`, from the backing integer value.
+/// Create a value whose type is a `bitpack struct` or `bitpack union`, from the backing integer value.
 pub fn bitpackValue(pt: Zcu.PerThread, ty: Type, backing_int_val: Value) Allocator.Error!Value {
     assert(backing_int_val.typeOf(pt.zcu).toIntern() == ty.bitpackBackingInt(pt.zcu).toIntern());
     return .fromInterned(try pt.intern(.{ .@"bitpack" = .{
