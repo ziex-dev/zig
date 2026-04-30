@@ -17,5 +17,5 @@ export fn entry1() void {
 // :4:14: note: non-bitpack structs do not have a bit-packed representation
 // :1:11: note: struct declared here
 // :10:12: error: bitpack unions cannot contain fields of type '*const u32'
-// :10:12: note: pointers cannot be directly bitpacked
+// :10:12: note: pointers cannot be directly bit-packed
 // :10:12: note: consider using 'usize' and '@intFromPtr'
