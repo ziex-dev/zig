@@ -980,11 +980,11 @@ fn addCxxKnownPath(
         return error.RequiredLibraryNotFound;
 
     const path_padded = run: {
-        var args = std.array_list.Managed([]const u8).init(b.allocator);
-        try args.append(ctx.cxx_compiler);
+        var args: std.ArrayList([]const u8) = .empty;
+        try args.append(b.allocator, ctx.cxx_compiler);
         var it = std.mem.tokenizeAny(u8, ctx.cxx_compiler_arg1, &std.ascii.whitespace);
-        while (it.next()) |arg| try args.append(arg);
-        try args.append(b.fmt("-print-file-name={s}", .{objname}));
+        while (it.next()) |arg| try args.append(b.allocator, arg);
+        try args.append(b.allocator, b.fmt("-print-file-name={s}", .{objname}));
         break :run b.run(args.items);
     };
     var tokenizer = mem.tokenizeAny(u8, path_padded, "\r\n");

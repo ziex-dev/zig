@@ -108,8 +108,8 @@ pub fn main(init: process.Init.Minimal) !void {
         dependencies.root_deps,
     );
 
-    var targets = std.array_list.Managed([]const u8).init(arena);
-    var debug_log_scopes = std.array_list.Managed([]const u8).init(arena);
+    var targets: std.ArrayList([]const u8) = .empty;
+    var debug_log_scopes: std.ArrayList([]const u8) = .empty;
 
     var install_prefix: ?[]const u8 = null;
     var dir_list = std.Build.DirList{};
@@ -302,7 +302,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 };
             } else if (mem.eql(u8, arg, "--debug-log")) {
                 const next_arg = nextArgOrFatal(args, &arg_idx);
-                try debug_log_scopes.append(next_arg);
+                try debug_log_scopes.append(arena, next_arg);
             } else if (mem.eql(u8, arg, "--debug-pkg-config")) {
                 builder.debug_pkg_config = true;
             } else if (mem.eql(u8, arg, "--debug-rt")) {
@@ -430,7 +430,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 fatalWithHint("unrecognized argument: '{s}'", .{arg});
             }
         } else {
-            try targets.append(arg);
+            try targets.append(arena, arg);
         }
     }
 

@@ -2013,7 +2013,7 @@ const FuzzTestRunner = struct {
 
     const Instance = struct {
         child: process.Child,
-        message: std.ArrayListAligned(u8, .@"4"),
+        message: std.array_list.Aligned(u8, .@"4"),
         broadcast_written: usize,
         stderr: std.ArrayList(u8),
         stdin_vec: [1][]u8,
