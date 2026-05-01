@@ -2238,6 +2238,24 @@ pub fn addCliTests(b: *std.Build) *Step {
     const s = std.fs.path.sep_str;
 
     {
+        // Test that all JIT'd commands compile.
+        for (&[_][]const u8{
+            "libc",
+            "objcopy",
+            "objdump",
+            "rc",
+            "reduce",
+            "std",
+        }) |cmd| {
+            const run_help = b.addSystemCommand(&.{ b.graph.zig_exe, cmd, "--help" });
+            run_help.setName(b.fmt("zig {s} --help", .{cmd}));
+            run_help.expectStdErrEqual("");
+            run_help.expectExitCode(0);
+            step.dependOn(&run_help.step);
+        }
+    }
+
+    {
         // Test `zig init`.
         const tmp_path = b.tmpPath();
         const init_exe = b.addSystemCommand(&.{ b.graph.zig_exe, "init" });
@@ -2465,7 +2483,9 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
     if (options.test_only) |test_only| {
         const test_target: ModuleTestTarget = switch (test_only) {
-            .default => module_test_targets[0],
+            .default => .{
+                .link_libc = if (std.mem.eql(u8, options.name, "libc")) true else null,
+            },
             .fuzz => |optimize| .{
                 .optimize_mode = optimize,
                 .use_llvm = true,
