@@ -55,7 +55,7 @@ pub fn main(init: std.process.Init) !void {
         .{
             .exit_help = true,
             .exit_usage_error = true,
-            .render_help = true,
+            .render_help = .verbatim,
             .render_usage_errors = true,
         },
     );
