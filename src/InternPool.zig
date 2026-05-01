@@ -9079,7 +9079,7 @@ pub fn getExtern(
     }) catch unreachable; // capacity asserted above
     const decoration_type, const location_or_descriptor_set, const descriptor_binding = if (key.decoration) |decoration| switch (decoration) {
         .location => |location| .{ Tag.Extern.Flags.DecorationType.location, location, undefined },
-        .descriptor => |descriptor| .{ Tag.Extern.Flags.DecorationType.descriptor, descriptor.binding, descriptor.set },
+        .descriptor => |descriptor| .{ Tag.Extern.Flags.DecorationType.descriptor, descriptor.set, descriptor.binding },
     } else .{ Tag.Extern.Flags.DecorationType.none, undefined, undefined };
     const extra_index = addExtraAssumeCapacity(extra, Tag.Extern{
         .ty = key.ty,
