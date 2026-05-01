@@ -9,7 +9,8 @@ var stdout_buffer: [4000]u8 = undefined;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    const allocator = init.arena.allocator();
+    const args = try init.minimal.args.toSlice(allocator);
 
     var opt_input_path: ?[]const u8 = null;
     var i: usize = 1;
@@ -37,7 +38,7 @@ pub fn main(init: std.process.Init) !void {
     var buffer: [4000]u8 = undefined;
     var file_reader = file.reader(io, &buffer);
     var stdout_writer = std.Io.File.stdout().writerStreaming(io, &stdout_buffer);
-    dump(init.arena.allocator(), &file_reader.interface, &stdout_writer.interface) catch |err| switch (err) {
+    dump(allocator, &file_reader.interface, &stdout_writer.interface) catch |err| switch (err) {
         error.ReadFailed => return file_reader.err.?,
         error.WriteFailed => return stdout_writer.err.?,
         error.UnknownFile => fatal("unrecognized file: {s}", .{input_path}),
