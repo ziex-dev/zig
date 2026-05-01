@@ -164,9 +164,7 @@ fn processInstruction(ass: *Assembler) !void {
         .OpEntryPoint => {
             return ass.fail(ass.currentToken().start, "cannot export entry points in assembly", .{});
         },
-        .OpExecutionMode, .OpExecutionModeId => {
-            return ass.fail(ass.currentToken().start, "cannot set execution mode in assembly", .{});
-        },
+        // OpExecutionMode is handled by processGenericInstruction's switch.
         .OpCapability => {
             try module.addCapability(@enumFromInt(ass.inst.operands.items[0].value));
             return;
