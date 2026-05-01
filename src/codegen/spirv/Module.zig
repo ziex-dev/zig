@@ -39,6 +39,8 @@ ptr_types: std.AutoHashMapUnmanaged(struct { Id, spec.StorageClass }, Id) = .{},
 /// For test declarations compiled for Vulkan target, we have to add a buffer.
 /// We only need to generate this once, this holds the link information related to that.
 error_buffer: ?Decl.Index = null,
+uses_physical_storage_buffer: bool = false,
+uses_storage_buffer: bool = false,
 /// SPIR-V instructions return result-ids.
 /// This variable holds the module-wide counter for these.
 next_result_id: Word = 1,
@@ -337,6 +339,13 @@ fn entryPoints(module: *Module) !Section {
                 else => unreachable,
             }
         }
+
+        if (entry_point.exec_mode == null and entry_point.exec_model == .gl_compute and target.os.tag == .vulkan) {
+            try module.sections.execution_modes.emit(module.gpa, .OpExecutionMode, .{
+                .entry_point = entry_point_id,
+                .mode = .{ .local_size = .{ .x_size = 1, .y_size = 1, .z_size = 1 } },
+            });
+        }
     }
 
     return entry_points;
@@ -354,9 +363,12 @@ pub fn finalize(module: *Module, gpa: Allocator) ![]Word {
         .vulkan => {
             try module.addCapability(.shader);
             try module.addCapability(.matrix);
-            if (target.cpu.arch == .spirv64) {
+            if (target.cpu.arch == .spirv64 and module.uses_physical_storage_buffer) {
                 try module.addExtension("SPV_KHR_physical_storage_buffer");
                 try module.addCapability(.physical_storage_buffer_addresses);
+            }
+            if (module.uses_storage_buffer and !target.cpu.has(.spirv, .v1_3)) {
+                try module.addExtension("SPV_KHR_storage_buffer_storage_class");
             }
         },
         .opencl, .amdhsa => {
@@ -394,7 +406,7 @@ pub fn finalize(module: *Module, gpa: Allocator) ![]Word {
     // Emit memory model
     const addressing_model: spec.AddressingModel = switch (target.os.tag) {
         .opengl => .logical,
-        .vulkan => if (target.cpu.arch == .spirv32) .logical else .physical_storage_buffer64,
+        .vulkan => if (target.cpu.arch == .spirv32 or !module.uses_physical_storage_buffer) .logical else .physical_storage_buffer64,
         .opencl => if (target.cpu.arch == .spirv32) .physical32 else .physical64,
         .amdhsa => .physical64,
         else => unreachable,
@@ -929,8 +941,14 @@ pub fn storageClass(module: *Module, as: std.builtin.AddressSpace) spec.StorageC
         .push_constant => .push_constant,
         .output => .output,
         .uniform => .uniform,
-        .storage_buffer => .storage_buffer,
-        .physical_storage_buffer => .physical_storage_buffer,
+        .storage_buffer => blk: {
+            module.uses_storage_buffer = true;
+            break :blk .storage_buffer;
+        },
+        .physical_storage_buffer => blk: {
+            module.uses_physical_storage_buffer = true;
+            break :blk .physical_storage_buffer;
+        },
         .constant => .uniform_constant,
         .shared => .workgroup,
         .local => .function,
