@@ -272,7 +272,7 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
                 .vulkan, .opengl => {
                     if (ty.zigTypeTag(zcu) == .@"struct") {
                         switch (storage_class) {
-                            .uniform, .push_constant => try cg.module.decorate(ty_id, .block),
+                            .uniform, .push_constant, .storage_buffer => try cg.module.decorate(ty_id, .block),
                             else => {},
                         }
                     }
