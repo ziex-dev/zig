@@ -254,7 +254,11 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
             try cg.module.debugName(func_result_id, nav.fqn.toSlice(ip));
         },
         .global => {
-            const key = ip.indexToKey(val.toIntern()).@"extern";
+            // Non-extern globals have a `.undef` value key.
+            const maybe_key: ?InternPool.Key.Extern = switch (ip.indexToKey(val.toIntern())) {
+                .@"extern" => |e| e,
+                else => null,
+            };
 
             const storage_class = cg.module.storageClass(nav.resolved.?.@"addrspace");
             assert(storage_class != .generic); // These should be instance globals
@@ -281,7 +285,7 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
                         .array_stride = .{ .array_stride = @intCast(ty.abiSize(zcu)) },
                     });
 
-                    if (key.decoration) |decoration| switch (decoration) {
+                    if (maybe_key) |key| if (key.decoration) |decoration| switch (decoration) {
                         .location => |location| {
                             if (storage_class != .output and storage_class != .input and storage_class != .uniform_constant) {
                                 return cg.fail("storage class must be one of (output, input, uniform_constant) but is {s}", .{@tagName(storage_class)});
