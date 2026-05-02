@@ -134,9 +134,16 @@ pub fn MultiArrayList(comptime T: type) type {
             }
 
             pub fn swap(self: Slice, a: usize, b: usize) void {
-                inline for (@typeInfo(Field).@"enum".fields) |field| {
+                inline for (fields) |field| {
                     const its = self.items(@field(Field, field.name));
                     std.mem.swap(@FieldType(T, field.name), &its[a], &its[b]);
+                }
+            }
+
+            pub fn reverse(self: Slice) void {
+                inline for (fields) |field| {
+                    const its = self.items(@field(Field, field.name));
+                    std.mem.reverse(@FieldType(T, field.name), its);
                 }
             }
 
@@ -276,6 +283,10 @@ pub fn MultiArrayList(comptime T: type) type {
 
         pub fn swap(self: Self, a: usize, b: usize) void {
             return self.slice().swap(a, b);
+        }
+
+        pub fn reverse(self: Self) void {
+            return self.slice().reverse();
         }
 
         /// Extend the list by 1 element.
@@ -792,6 +803,19 @@ test "basic usage" {
     try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 2, 1, 3 });
     try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'b', 'a', 'c' });
     list.swap(0, 1);
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
+
+    list.reverse();
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 3, 2, 1 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'c', 'b', 'a' });
+    list.slice().subslice(1, 2).reverse();
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 3, 1, 2 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'c', 'a', 'b' });
+    list.slice().subslice(1, 2).reverse();
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 3, 2, 1 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'c', 'b', 'a' });
+    list.reverse();
     try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
     try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
 
