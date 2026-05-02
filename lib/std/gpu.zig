@@ -169,3 +169,38 @@ pub fn workgroupBarrier() void {
         .workgroup_memory = true,
     });
 }
+
+/// Declare a storage buffer at `(set, binding)` of type `T`.
+pub inline fn storageBuffer(
+    comptime T: type,
+    comptime set: u32,
+    comptime bind: u32,
+    comptime name: [:0]const u8,
+) *addrspace(.storage_buffer) T {
+    return @extern(*addrspace(.storage_buffer) T, .{
+        .name = name,
+        .decoration = .{ .descriptor = .{ .set = set, .binding = bind } },
+    });
+}
+
+/// Declare a uniform buffer at `(set, binding)` of type `T`.
+pub inline fn uniformBuffer(
+    comptime T: type,
+    comptime set: u32,
+    comptime bind: u32,
+    comptime name: [:0]const u8,
+) *addrspace(.uniform) T {
+    return @extern(*addrspace(.uniform) T, .{
+        .name = name,
+        .decoration = .{ .descriptor = .{ .set = set, .binding = bind } },
+    });
+}
+
+/// Declare a push-constant block of type `T`. Push constants have no
+/// descriptor set/binding; the host supplies them via `vkCmdPushConstants`.
+pub inline fn pushConstant(
+    comptime T: type,
+    comptime name: [:0]const u8,
+) *addrspace(.push_constant) T {
+    return @extern(*addrspace(.push_constant) T, .{ .name = name });
+}
