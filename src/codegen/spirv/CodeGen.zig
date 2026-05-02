@@ -170,6 +170,50 @@ pub fn deinit(cg: *CodeGen) void {
 
 const Error = error{ CodegenFail, OutOfMemory };
 
+fn containsLogicalIncompatible(zcu: *const Zcu, ty: Type) bool {
+    const ip = &zcu.intern_pool;
+    return switch (ip.indexToKey(ty.toIntern())) {
+        .ptr_type => |p| switch (p.flags.size) {
+            .slice, .many, .c => true,
+            .one => containsLogicalIncompatible(zcu, .fromInterned(p.child)),
+        },
+        .array_type => |a| containsLogicalIncompatible(zcu, .fromInterned(a.child)),
+        .vector_type => |v| containsLogicalIncompatible(zcu, .fromInterned(v.child)),
+        .opt_type => |child| containsLogicalIncompatible(zcu, .fromInterned(child)),
+        .error_union_type => |eu| containsLogicalIncompatible(zcu, .fromInterned(eu.payload_type)),
+        .struct_type => {
+            const struct_type = ip.loadStructType(ty.toIntern());
+            for (0..struct_type.field_types.len) |i| {
+                if (containsLogicalIncompatible(zcu, .fromInterned(struct_type.field_types.get(ip)[i]))) return true;
+            }
+            return false;
+        },
+        .tuple_type => |t| {
+            for (t.types.get(ip)) |field_ty| {
+                if (containsLogicalIncompatible(zcu, .fromInterned(field_ty))) return true;
+            }
+            return false;
+        },
+        .union_type => {
+            const union_type = ip.loadUnionType(ty.toIntern());
+            for (union_type.field_types.get(ip)) |field_ty| {
+                if (containsLogicalIncompatible(zcu, .fromInterned(field_ty))) return true;
+            }
+            return false;
+        },
+        .int_type,
+        .simple_type,
+        .enum_type,
+        .error_set_type,
+        .inferred_error_set_type,
+        .anyframe_type,
+        .func_type,
+        .opaque_type,
+        => false,
+        else => unreachable,
+    };
+}
+
 pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
     const gpa = cg.module.gpa;
     const zcu = cg.module.zcu;
@@ -318,8 +362,23 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
             try cg.module.debugName(result_id, nav.fqn.toSlice(ip));
         },
         .invocation_global => {
+            // Logical addressing rejects materialized composites containing runtime pointers.
+            const skip_init = target.os.tag == .vulkan and containsLogicalIncompatible(zcu, ty);
+
             const ty_id = try cg.resolveType(ty, .indirect);
             const ptr_ty_id = try cg.module.ptrType(ty_id, .function);
+
+            if (skip_init) {
+                try cg.module.sections.globals.emit(gpa, .OpExtInst, .{
+                    .id_result_type = ptr_ty_id,
+                    .id_result = result_id,
+                    .set = try cg.module.importInstructionSet(.zig),
+                    .instruction = .{ .inst = @intFromEnum(spec.Zig.InvocationGlobal) },
+                    .id_ref_4 = &.{},
+                });
+                cg.module.declPtr(spv_decl_index).end_dep = cg.module.decl_deps.items.len;
+                return;
+            }
 
             // TODO: Combine with resolveAnonDecl?
             const void_ty_id = try cg.resolveType(.void, .direct);

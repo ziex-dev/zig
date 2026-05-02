@@ -15673,7 +15673,7 @@ pub const InstructionSet = enum {
                     .name = "InvocationGlobal",
                     .opcode = 0,
                     .operands = &.{
-                        .{ .kind = .id_ref, .quantifier = .required },
+                        .{ .kind = .id_ref, .quantifier = .optional },
                     },
                 },
             },
