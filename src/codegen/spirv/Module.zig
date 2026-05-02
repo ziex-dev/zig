@@ -303,6 +303,23 @@ pub fn addEntryPointDeps(
     }
 }
 
+fn hasExecutionMode(section: Section, entry_id: Id) bool {
+    const words = section.instructions.items;
+    var i: usize = 0;
+    while (i < words.len) {
+        const word_count = words[i] >> 16;
+        const opcode: spec.Opcode = @enumFromInt(@as(u16, @truncate(words[i])));
+        switch (opcode) {
+            .OpExecutionMode, .OpExecutionModeId => {
+                if (word_count >= 2 and @as(Id, @enumFromInt(words[i + 1])) == entry_id) return true;
+            },
+            else => {},
+        }
+        i += word_count;
+    }
+    return false;
+}
+
 fn entryPoints(module: *Module) !Section {
     const target = module.zcu.getTarget();
 
@@ -327,7 +344,11 @@ fn entryPoints(module: *Module) !Section {
             .interface = interface.items,
         });
 
-        if (entry_point.exec_mode == null and entry_point.exec_model == .fragment) {
+        // The asm path emits OpExecutionMode without setting exec_mode.
+        const has_mode = entry_point.exec_mode != null or
+            hasExecutionMode(module.sections.execution_modes, entry_point_id);
+
+        if (!has_mode and entry_point.exec_model == .fragment) {
             switch (target.os.tag) {
                 .vulkan, .opengl => |tag| {
                     try module.sections.execution_modes.emit(module.gpa, .OpExecutionMode, .{
@@ -340,7 +361,7 @@ fn entryPoints(module: *Module) !Section {
             }
         }
 
-        if (entry_point.exec_mode == null and entry_point.exec_model == .gl_compute and target.os.tag == .vulkan) {
+        if (!has_mode and entry_point.exec_model == .gl_compute and target.os.tag == .vulkan) {
             try module.sections.execution_modes.emit(module.gpa, .OpExecutionMode, .{
                 .entry_point = entry_point_id,
                 .mode = .{ .local_size = .{ .x_size = 1, .y_size = 1, .z_size = 1 } },
