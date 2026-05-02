@@ -2700,29 +2700,32 @@ pub const Allocating = struct {
 
     fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
         const a: *Allocating = @fieldParentPtr("writer", w);
-        const pattern = data[data.len - 1];
-        const splat_len = pattern.len * splat;
-        const start_len = a.writer.end;
-        assert(data.len != 0);
-        for (data) |bytes| {
-            a.ensureUnusedCapacity(bytes.len + splat_len + 1) catch return error.WriteFailed;
-            @memcpy(a.writer.buffer[a.writer.end..][0..bytes.len], bytes);
-            a.writer.end += bytes.len;
+
+        const body = data[0 .. data.len - 1];
+        const tail = data[data.len - 1];
+
+        var added = std.math.mul(usize, tail.len, splat) catch return error.WriteFailed;
+        for (body) |bytes| added = std.math.add(added, bytes.len) catch return error.WriteFailed;
+        a.ensureUnusedCapacity(added) catch return error.WriteFailed;
+        errdefer comptime unreachable;
+
+        for (body) |bytes| {
+            @memcpy(w.buffer[w.end..][0..bytes.len], bytes);
+            w.end += bytes.len;
         }
-        if (splat == 0) {
-            a.writer.end -= pattern.len;
-        } else switch (pattern.len) {
+
+        switch (tail.len) {
             0 => {},
             1 => {
-                @memset(a.writer.buffer[a.writer.end..][0 .. splat - 1], pattern[0]);
-                a.writer.end += splat - 1;
+                @memset(w.buffer[w.end..][0..splat], tail[0]);
+                w.end += splat;
             },
-            else => for (0..splat - 1) |_| {
-                @memcpy(a.writer.buffer[a.writer.end..][0..pattern.len], pattern);
-                a.writer.end += pattern.len;
+            else => for (0..splat) |_| {
+                @memcpy(w.buffer[w.end..][0..tail.len], tail);
+                w.end += tail.len;
             },
         }
-        return a.writer.end - start_len;
+        return added;
     }
 
     fn sendFile(w: *Writer, file_reader: *File.Reader, limit: Limit) FileError!usize {
@@ -2742,9 +2745,9 @@ pub const Allocating = struct {
 
     fn growingRebase(w: *Writer, preserve: usize, minimum_len: usize) Error!void {
         const a: *Allocating = @fieldParentPtr("writer", w);
-        const total = std.math.add(usize, preserve, minimum_len) catch return error.WriteFailed;
+        const total = std.math.add(usize, @max(w.end, preserve), minimum_len) catch
+            return error.WriteFailed;
         a.ensureTotalCapacity(total) catch return error.WriteFailed;
-        a.ensureUnusedCapacity(minimum_len) catch return error.WriteFailed;
     }
 
     fn testAllocating(comptime alignment: std.mem.Alignment) !void {
