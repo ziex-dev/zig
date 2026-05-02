@@ -325,9 +325,12 @@ pub fn genNav(cg: *CodeGen, do_codegen: bool) Error!void {
                         }
                     }
 
-                    try cg.module.decorate(ptr_ty_id, .{
-                        .array_stride = .{ .array_stride = @intCast(ty.abiSize(zcu)) },
-                    });
+                    switch (storage_class) {
+                        .uniform, .push_constant, .storage_buffer => try cg.module.decorate(ptr_ty_id, .{
+                            .array_stride = .{ .array_stride = @intCast(ty.abiSize(zcu)) },
+                        }),
+                        else => {},
+                    }
 
                     if (maybe_key) |key| if (key.decoration) |decoration| switch (decoration) {
                         .location => |location| {
@@ -1322,14 +1325,14 @@ fn resolveUnionType(cg: *CodeGen, ty: Type) !Id {
 
     if (layout.payload_padding_size != 0) {
         const len_id = try cg.constInt(.u32, layout.payload_padding_size);
-        const payload_padding_ty_id = try cg.module.arrayType(len_id, u8_ty_id);
+        const payload_padding_ty_id = try cg.module.arrayType(len_id, u8_ty_id, null);
         member_types[layout.payload_padding_index] = payload_padding_ty_id;
         member_names[layout.payload_padding_index] = "(payload padding)";
     }
 
     if (layout.padding_size != 0) {
         const len_id = try cg.constInt(.u32, layout.padding_size);
-        const padding_ty_id = try cg.module.arrayType(len_id, u8_ty_id);
+        const padding_ty_id = try cg.module.arrayType(len_id, u8_ty_id, null);
         member_types[layout.padding_index] = padding_ty_id;
         member_names[layout.padding_index] = "(padding)";
     }
@@ -1438,21 +1441,14 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                 // generate an array of 1 element instead, so that ptr_elem_ptr instructions
                 // can be lowered to ptrAccessChain instead of manually performing the math.
                 const len_id = try cg.constInt(.u32, 1);
-                return try cg.module.arrayType(len_id, elem_ty_id);
+                return try cg.module.arrayType(len_id, elem_ty_id, null);
             } else {
                 const total_len_id = try cg.constInt(.u32, total_len);
-                const result_id = try cg.module.arrayType(total_len_id, elem_ty_id);
-                switch (target.os.tag) {
-                    .vulkan, .opengl => {
-                        try cg.module.decorate(result_id, .{
-                            .array_stride = .{
-                                .array_stride = @intCast(elem_ty.abiSize(zcu)),
-                            },
-                        });
-                    },
-                    else => {},
-                }
-                return result_id;
+                const stride: ?u32 = switch (target.os.tag) {
+                    .vulkan, .opengl => @intCast(elem_ty.abiSize(zcu)),
+                    else => null,
+                };
+                return try cg.module.arrayType(total_len_id, elem_ty_id, stride);
             }
         },
         .vector => {
@@ -1461,7 +1457,7 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
             const len = ty.vectorLen(zcu);
             if (cg.isSpvVector(ty)) return try cg.module.vectorType(len, elem_ty_id);
             const len_id = try cg.constInt(.u32, len);
-            return try cg.module.arrayType(len_id, elem_ty_id);
+            return try cg.module.arrayType(len_id, elem_ty_id, null);
         },
         .@"fn" => switch (repr) {
             .direct => {
