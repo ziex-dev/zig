@@ -2705,7 +2705,8 @@ pub const Allocating = struct {
         const tail = data[data.len - 1];
 
         var added = std.math.mul(usize, tail.len, splat) catch return error.WriteFailed;
-        for (body) |bytes| added = std.math.add(added, bytes.len) catch return error.WriteFailed;
+        for (body) |bytes| added = std.math.add(usize, added, bytes.len) catch
+            return error.WriteFailed;
         a.ensureUnusedCapacity(added) catch return error.WriteFailed;
         errdefer comptime unreachable;
 
