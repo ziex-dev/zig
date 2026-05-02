@@ -60,8 +60,10 @@ cache: struct {
     float_types: std.AutoHashMapUnmanaged(std.builtin.Type.Float, Id) = .empty,
     vector_types: std.AutoHashMapUnmanaged(struct { Id, u32 }, Id) = .empty,
     array_types: std.AutoHashMapUnmanaged(struct { Id, Id }, Id) = .empty,
+    runtime_array_types: std.AutoHashMapUnmanaged(Id, Id) = .empty,
     /// Stride applied to the array only when it is referenced through a buffer-backed pointer.
     array_strides: std.AutoHashMapUnmanaged(Id, u32) = .empty,
+    ptr_strides: std.AutoHashMapUnmanaged(Id, u32) = .empty,
     struct_types: std.ArrayHashMapUnmanaged(StructType, Id, StructType.HashContext, true) = .empty,
     fn_types: std.ArrayHashMapUnmanaged(FnType, Id, FnType.HashContext, true) = .empty,
 
@@ -231,7 +233,9 @@ pub fn deinit(module: *Module) void {
     module.cache.float_types.deinit(module.gpa);
     module.cache.vector_types.deinit(module.gpa);
     module.cache.array_types.deinit(module.gpa);
+    module.cache.runtime_array_types.deinit(module.gpa);
     module.cache.array_strides.deinit(module.gpa);
+    module.cache.ptr_strides.deinit(module.gpa);
     module.cache.struct_types.deinit(module.gpa);
     module.cache.fn_types.deinit(module.gpa);
     module.cache.capabilities.deinit(module.gpa);
@@ -701,7 +705,32 @@ pub fn arrayType(module: *Module, len_id: Id, child_ty_id: Id, stride: ?u32) !Id
     return entry.value_ptr.*;
 }
 
+pub fn runtimeArrayType(module: *Module, child_ty_id: Id, stride: ?u32) !Id {
+    const entry = try module.cache.runtime_array_types.getOrPut(module.gpa, child_ty_id);
+    if (!entry.found_existing) {
+        const result_id = module.allocId();
+        entry.value_ptr.* = result_id;
+        try module.sections.globals.emit(module.gpa, .OpTypeRuntimeArray, .{
+            .id_result = result_id,
+            .element_type = child_ty_id,
+        });
+    }
+    if (stride) |s| try module.cache.array_strides.put(module.gpa, entry.value_ptr.*, s);
+    return entry.value_ptr.*;
+}
+
 pub fn ptrType(module: *Module, child_ty_id: Id, storage_class: spec.StorageClass) !Id {
+    return module.ptrTypeWithStride(child_ty_id, storage_class, null);
+}
+
+/// Adds an ArrayStride decoration on the resulting pointer type, needed by
+/// Vulkan when the pointer is used as the Base of OpPtrAccessChain.
+pub fn ptrTypeWithStride(
+    module: *Module,
+    child_ty_id: Id,
+    storage_class: spec.StorageClass,
+    elem_stride: ?u32,
+) !Id {
     const key = .{ child_ty_id, storage_class };
     const gop = try module.ptr_types.getOrPut(module.gpa, key);
     if (!gop.found_existing) {
@@ -717,6 +746,13 @@ pub fn ptrType(module: *Module, child_ty_id: Id, storage_class: spec.StorageClas
         .uniform, .push_constant, .storage_buffer => {
             if (module.cache.array_strides.get(child_ty_id)) |s| {
                 try module.decorate(child_ty_id, .{ .array_stride = .{ .array_stride = s } });
+            }
+            if (elem_stride) |s| {
+                const decorated = try module.cache.ptr_strides.getOrPut(module.gpa, gop.value_ptr.*);
+                if (!decorated.found_existing) {
+                    try module.decorate(gop.value_ptr.*, .{ .array_stride = .{ .array_stride = s } });
+                    decorated.value_ptr.* = s;
+                }
             }
         },
         else => {},

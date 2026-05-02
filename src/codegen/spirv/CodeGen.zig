@@ -157,6 +157,10 @@ id_scratch: std.ArrayList(Id) = .empty,
 prologue: Section = .{},
 body: Section = .{},
 error_msg: ?*Zcu.ErrorMsg = null,
+/// Ids whose SPIR-V type is `*RuntimeArray<T>` but whose Zig type is a
+/// `[*]T` (or a pointer to one). Indexing through these emits OpAccessChain
+/// into the runtime array; loading through one is a no-op.
+runtime_array_ptrs: std.AutoHashMapUnmanaged(Id, void) = .empty,
 
 pub fn deinit(cg: *CodeGen) void {
     const gpa = cg.module.gpa;
@@ -166,6 +170,7 @@ pub fn deinit(cg: *CodeGen) void {
     cg.id_scratch.deinit(gpa);
     cg.prologue.deinit(gpa);
     cg.body.deinit(gpa);
+    cg.runtime_array_ptrs.deinit(gpa);
 }
 
 const Error = error{ CodegenFail, OutOfMemory };
@@ -1367,6 +1372,24 @@ fn resolveFnReturnType(cg: *CodeGen, ret_ty: Type) !Id {
     return try cg.resolveType(ret_ty, .direct);
 }
 
+/// Multi-pointer field in a buffer addrspace -> emit OpTypeRuntimeArray of the pointee.
+fn runtimeArrayPointee(cg: *CodeGen, field_ty: Type) ?Type {
+    const zcu = cg.module.zcu;
+    const target = zcu.getTarget();
+    if (target.os.tag != .vulkan) return null;
+    if (field_ty.zigTypeTag(zcu) != .pointer) return null;
+    const info = field_ty.ptrInfo(zcu);
+    switch (info.flags.size) {
+        .many, .c => {},
+        else => return null,
+    }
+    switch (info.flags.address_space) {
+        .storage_buffer, .uniform => {},
+        else => return null,
+    }
+    return .fromInterned(info.child);
+}
+
 fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
     const gpa = cg.module.gpa;
     const pt = cg.pt;
@@ -1567,7 +1590,15 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                 if (!field_ty.hasRuntimeBits(zcu)) continue;
 
                 const field_name = struct_type.field_names.get(ip)[field_index];
-                try member_types.append(try cg.resolveType(field_ty, .indirect));
+                const field_id = if (cg.runtimeArrayPointee(field_ty)) |pointee| blk: {
+                    const elem_ty_id = try cg.resolveType(pointee, .indirect);
+                    const stride: ?u32 = switch (target.os.tag) {
+                        .vulkan => @intCast(pointee.abiSize(zcu)),
+                        else => null,
+                    };
+                    break :blk try cg.module.runtimeArrayType(elem_ty_id, stride);
+                } else try cg.resolveType(field_ty, .indirect);
+                try member_types.append(field_id);
                 try member_names.append(field_name.toSlice(ip));
                 try member_offsets.append(@intCast(ty.structFieldOffset(field_index, zcu)));
             }
@@ -4405,16 +4436,24 @@ fn airSliceElemVal(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
 
 fn ptrElemPtr(cg: *CodeGen, ptr_ty: Type, ptr_id: Id, index_id: Id) !Id {
     const zcu = cg.module.zcu;
+    const target = zcu.getTarget();
     // Construct new pointer type for the resulting pointer
     const elem_ty = ptr_ty.indexableElem(zcu);
     const elem_ty_id = try cg.resolveType(elem_ty, .indirect);
-    const elem_ptr_ty_id = try cg.module.ptrType(elem_ty_id, cg.module.storageClass(ptr_ty.ptrAddressSpace(zcu)));
+    const storage_class = cg.module.storageClass(ptr_ty.ptrAddressSpace(zcu));
     if (ptr_ty.isSinglePointer(zcu)) {
         // Pointer-to-array. In this case, the resulting pointer is not of the same type
         // as the ptr_ty (we want a *T, not a *[N]T), and hence we need to use accessChain.
+        const elem_ptr_ty_id = try cg.module.ptrType(elem_ty_id, storage_class);
+        return try cg.accessChainId(elem_ptr_ty_id, ptr_id, &.{index_id});
+    } else if (cg.runtime_array_ptrs.contains(ptr_id)) {
+        // ptr_id is a *RuntimeArray<elem_ty>; one access-chain step yields *elem_ty.
+        const elem_ptr_ty_id = try cg.module.ptrType(elem_ty_id, storage_class);
         return try cg.accessChainId(elem_ptr_ty_id, ptr_id, &.{index_id});
     } else {
-        // Resulting pointer type is the same as the ptr_ty, so use ptrAccessChain
+        // OpPtrAccessChain on Vulkan requires ArrayStride on the base pointer type.
+        const stride: ?u32 = if (target.os.tag == .vulkan) @intCast(elem_ty.abiSize(zcu)) else null;
+        const elem_ptr_ty_id = try cg.module.ptrTypeWithStride(elem_ty_id, storage_class, stride);
         return try cg.ptrAccessChain(elem_ptr_ty_id, ptr_id, index_id, &.{});
     }
 }
@@ -4764,10 +4803,30 @@ fn structFieldPtr(
     object_ptr: Id,
     field_index: u32,
 ) !Id {
-    const result_ty_id = try cg.resolveType(result_ptr_ty, .direct);
-
     const zcu = cg.module.zcu;
     const object_ty = object_ptr_ty.childType(zcu);
+
+    // Buffer struct field that we lowered as OpTypeRuntimeArray: emit a
+    // pointer-to-runtime-array, register the id, and let load/index handle it.
+    if (object_ty.zigTypeTag(zcu) == .@"struct") {
+        const field_ty = object_ty.fieldType(field_index, zcu);
+        if (cg.runtimeArrayPointee(field_ty)) |pointee| {
+            const elem_ty_id = try cg.resolveType(pointee, .indirect);
+            const target = zcu.getTarget();
+            const stride: ?u32 = switch (target.os.tag) {
+                .vulkan => @intCast(pointee.abiSize(zcu)),
+                else => null,
+            };
+            const arr_ty_id = try cg.module.runtimeArrayType(elem_ty_id, stride);
+            const storage_class = cg.module.storageClass(object_ptr_ty.ptrAddressSpace(zcu));
+            const arr_ptr_ty_id = try cg.module.ptrType(arr_ty_id, storage_class);
+            const id = try cg.accessChain(arr_ptr_ty_id, object_ptr, &.{field_index});
+            try cg.runtime_array_ptrs.put(cg.module.gpa, id, {});
+            return id;
+        }
+    }
+
+    const result_ty_id = try cg.resolveType(result_ptr_ty, .direct);
     switch (object_ty.zigTypeTag(zcu)) {
         .pointer => {
             assert(object_ty.isSlice(zcu));
@@ -5317,6 +5376,13 @@ fn airLoad(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     const elem_ty = cg.typeOfIndex(inst);
     const operand = try cg.resolve(ty_op.operand);
     if (!ptr_ty.isVolatilePtr(zcu) and cg.liveness.isUnused(inst)) return null;
+
+    // Loading a [*]T from a runtime-array field-pointer is a no-op: the
+    // SPIR-V "value" we hand back is the field pointer itself.
+    if (cg.runtime_array_ptrs.contains(operand)) {
+        try cg.runtime_array_ptrs.put(cg.module.gpa, operand, {});
+        return operand;
+    }
 
     return try cg.load(elem_ty, operand, .{ .is_volatile = ptr_ty.isVolatilePtr(zcu) });
 }

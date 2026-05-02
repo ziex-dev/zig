@@ -204,3 +204,24 @@ pub inline fn pushConstant(
 ) *addrspace(.push_constant) T {
     return @extern(*addrspace(.push_constant) T, .{ .name = name });
 }
+
+/// Wrapper struct for `runtimeArray`. Direct use is not the intended API;
+/// call `runtimeArray(T, ...)` and dereference the returned pointer's `.data`.
+pub fn RuntimeArray(comptime T: type) type {
+    return extern struct { data: [*]addrspace(.storage_buffer) T };
+}
+
+/// Declare a runtime-sized storage buffer of `T` at `(set, binding)`.
+/// Returns a pointer to a wrapper whose `.data` field is the runtime array;
+/// indexing requires `variable_pointers`.
+pub inline fn runtimeArray(
+    comptime T: type,
+    comptime set: u32,
+    comptime bind: u32,
+    comptime name: [:0]const u8,
+) *addrspace(.storage_buffer) RuntimeArray(T) {
+    return @extern(*addrspace(.storage_buffer) RuntimeArray(T), .{
+        .name = name,
+        .decoration = .{ .descriptor = .{ .set = set, .binding = bind } },
+    });
+}
