@@ -36,9 +36,6 @@
         .compile_asm = .{
             .path = "compile_asm",
         },
-        .issue_5825 = .{
-            .path = "issue_5825",
-        },
         .pkg_import = .{
             .path = "pkg_import",
         },
@@ -50,12 +47,6 @@
         },
         .emit_asm_and_bin = .{
             .path = "emit_asm_and_bin",
-        },
-        .emit_llvm_no_bin = .{
-            .path = "emit_llvm_no_bin",
-        },
-        .emit_asm_no_bin = .{
-            .path = "emit_asm_no_bin",
         },
         .child_process = .{
             .path = "child_process",
@@ -138,14 +129,8 @@
         .strip_empty_loop = .{
             .path = "strip_empty_loop",
         },
-        .strip_struct_init = .{
-            .path = "strip_struct_init",
-        },
         .cmakedefine = .{
             .path = "cmakedefine",
-        },
-        .zerolength_check = .{
-            .path = "zerolength_check",
         },
         .coff_dwarf = .{
             .path = "coff_dwarf",
@@ -167,9 +152,6 @@
         },
         .run_output_paths = .{
             .path = "run_output_paths",
-        },
-        .empty_global_error_set = .{
-            .path = "empty_global_error_set",
         },
         .config_header = .{
             .path = "config_header",
