@@ -1,5 +1,6 @@
 const std = @import("std.zig");
 const mem = std.mem;
+const assert = std.debug.assert;
 
 /// Static string map optimized for small sets of disparate string keys.
 /// Works by separating the keys by length at initialization and only checking
@@ -11,6 +12,7 @@ pub fn StaticStringMap(comptime V: type) type {
 /// Like `std.mem.eql`, but takes advantage of the fact that the lengths
 /// of `a` and `b` are known to be equal.
 pub fn defaultEql(a: []const u8, b: []const u8) bool {
+    assert(a.len == b.len);
     if (a.ptr == b.ptr) return true;
     for (a, b) |a_elem, b_elem| {
         if (a_elem != b_elem) return false;
@@ -21,6 +23,7 @@ pub fn defaultEql(a: []const u8, b: []const u8) bool {
 /// Like `std.ascii.eqlIgnoreCase` but takes advantage of the fact that
 /// the lengths of `a` and `b` are known to be equal.
 pub fn eqlAsciiIgnoreCase(a: []const u8, b: []const u8) bool {
+    assert(a.len == b.len);
     if (a.ptr == b.ptr) return true;
     for (a, b) |a_c, b_c| {
         if (std.ascii.toLower(a_c) != std.ascii.toLower(b_c)) return false;
