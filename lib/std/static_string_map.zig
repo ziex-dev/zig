@@ -47,6 +47,10 @@ pub fn StaticStringMapWithEql(
             key: []const u8,
             value: V,
         };
+        pub const KVPtr = struct {
+            key: []const u8,
+            value_ptr: *const V,
+        };
 
         const Self = @This();
         const KVs = struct {
@@ -235,10 +239,11 @@ pub fn StaticStringMapWithEql(
 
         /// Returns the value for the key if any, else null.
         pub fn get(self: Self, str: []const u8) ?V {
-            if (self.kvs.len == 0)
-                return null;
-
             return self.kvs.values[self.getIndex(str) orelse return null];
+        }
+        /// Returns a pointer to the constant value for the key if any, else null.
+        pub fn getPtr(self: Self, str: []const u8) ?*const V {
+            return &self.kvs.values[self.getIndex(str) orelse return null];
         }
 
         /// Returns the index corresponding to the `str` within the
@@ -272,13 +277,25 @@ pub fn StaticStringMapWithEql(
         /// `min_len` and calls `getIndex()` to check all keys with the given
         /// len.
         pub fn getLongestPrefix(self: Self, str: []const u8) ?KV {
-            if (self.kvs.len == 0)
-                return null;
             const i = self.getLongestPrefixIndex(str) orelse return null;
             const kvs = self.kvs.*;
             return .{
                 .key = kvs.keys[i],
                 .value = kvs.values[i],
+            };
+        }
+        /// Returns the key-value-pointer pair where key is the longest prefix
+        /// of `str` else null.
+        ///
+        /// This is effectively an O(N) algorithm which loops from `max_len` to
+        /// `min_len` and calls `getIndex()` to check all keys with the given
+        /// len.
+        pub fn getLongestPrefixPtr(self: Self, str: []const u8) ?KVPtr {
+            const i = self.getLongestPrefixIndex(str) orelse return null;
+            const kvs = self.kvs.*;
+            return .{
+                .key = kvs.keys[i],
+                .value_ptr = &kvs.values[i],
             };
         }
 
