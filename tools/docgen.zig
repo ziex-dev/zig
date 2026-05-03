@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
 
-    const parsed = try std.cli.parse(
+    const parsed = try std.cli.parseAlloc(
         command,
         arena,
         try init.minimal.args.toSlice(arena),
