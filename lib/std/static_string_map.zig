@@ -180,7 +180,7 @@ pub fn StaticStringMapWithEql(
             return self;
         }
 
-        /// this method should only be used with init() and not with initComptime().
+        /// This method should only be used with init() and not with initComptime().
         pub fn deinit(self: Self, allocator: mem.Allocator) void {
             allocator.free(self.len_indexes[0..self.len_indexes_len]);
             allocator.free(self.kvs.keys[0..self.kvs.len]);
@@ -343,11 +343,20 @@ const TestMap = StaticStringMap(TestEnum);
 const TestKV = struct { []const u8, TestEnum };
 const TestMapVoid = StaticStringMap(void);
 const TestKVVoid = struct { []const u8 };
-const TestMapWithEql = StaticStringMapWithEql(TestEnum, eqlAsciiIgnoreCase);
+const TestMapCaseInsensitive = StaticStringMapWithEql(TestEnum, eqlAsciiIgnoreCase);
 const testing = std.testing;
-const test_alloc = testing.allocator;
 
-test "list literal of list literals" {
+test "array of structs, case sensitive" {
+    const array = [_]TestKV{
+        .{ "these", .D },
+        .{ "have", .A },
+        .{ "nothing", .B },
+        .{ "incommon", .C },
+        .{ "samelen", .E },
+    };
+    try testMap(TestMap.initComptime(array), true);
+}
+test "slice of structs, case insensitive" {
     const slice: []const TestKV = &.{
         .{ "these", .D },
         .{ "have", .A },
@@ -355,22 +364,11 @@ test "list literal of list literals" {
         .{ "incommon", .C },
         .{ "samelen", .E },
     };
-
-    const map = TestMap.initComptime(slice);
-    try testMap(map);
-    // Default comparison is case sensitive
-    try testing.expect(null == map.get("NOTHING"));
-
-    // runtime init(), deinit()
-    const map_rt = try TestMap.init(slice, test_alloc);
-    defer map_rt.deinit(test_alloc);
-    try testMap(map_rt);
-    // Default comparison is case sensitive
-    try testing.expect(null == map_rt.get("NOTHING"));
+    try testMap(TestMapCaseInsensitive.initComptime(slice), false);
 }
-
-test "array of structs" {
-    const slice = [_]TestKV{
+test "runtime" {
+    const gpa = testing.allocator;
+    const kv_pairs: []const TestKV = &.{
         .{ "these", .D },
         .{ "have", .A },
         .{ "nothing", .B },
@@ -378,93 +376,66 @@ test "array of structs" {
         .{ "samelen", .E },
     };
 
-    try testMap(TestMap.initComptime(slice));
+    const map = try TestMap.init(kv_pairs, gpa);
+    defer map.deinit(gpa);
+
+    try testMap(map, true);
 }
-
-test "slice of structs" {
-    const slice = [_]TestKV{
-        .{ "these", .D },
-        .{ "have", .A },
-        .{ "nothing", .B },
-        .{ "incommon", .C },
-        .{ "samelen", .E },
-    };
-
-    try testMap(TestMap.initComptime(slice));
-}
-
-fn testMap(map: anytype) !void {
-    try testing.expectEqual(TestEnum.A, map.get("have").?);
-    try testing.expectEqual(TestEnum.B, map.get("nothing").?);
-    try testing.expect(null == map.get("missing"));
-    try testing.expectEqual(TestEnum.D, map.get("these").?);
-    try testing.expectEqual(TestEnum.E, map.get("samelen").?);
+fn testMap(map: anytype, case_sensitive: bool) !void {
+    try testing.expectEqual(.A, map.get("have").?);
+    try testing.expectEqual(.B, map.get("nothing").?);
+    try testing.expectEqual(null, map.get("missing"));
+    try testing.expectEqual(.D, map.get("these").?);
+    try testing.expectEqual(.E, map.get("samelen").?);
 
     try testing.expect(!map.has("missing"));
     try testing.expect(map.has("these"));
 
-    try testing.expect(null == map.get(""));
-    try testing.expect(null == map.get("averylongstringthathasnomatches"));
+    try testing.expectEqual(null, map.get(""));
+    try testing.expectEqual(null, map.get("averylongstringthathasnomatches"));
+
+    if (case_sensitive) {
+        try testing.expectEqual(null, map.get("NOTHING"));
+    } else {
+        try testing.expectEqual(.B, map.get("NOTHING"));
+    }
+
+    try testing.expectEqual(.A, map.getPtr("have").?.*);
+    try testing.expectEqual(null, map.getPtr("missing"));
 }
 
+test "void value type, array of structs" {
+    const array = [_]TestKVVoid{
+        .{"these"},
+        .{"have"},
+        .{"nothing"},
+        .{"incommon"},
+        .{"samelen"},
+    };
+    try testSet(TestMapVoid.initComptime(array));
+}
 test "void value type, slice of structs" {
-    const slice = [_]TestKVVoid{
+    const slice: []const TestKVVoid = &.{
         .{"these"},
         .{"have"},
         .{"nothing"},
         .{"incommon"},
         .{"samelen"},
     };
-    const map = TestMapVoid.initComptime(slice);
-    try testSet(map);
-    // Default comparison is case sensitive
-    try testing.expect(null == map.get("NOTHING"));
-}
-
-test "void value type, list literal of list literals" {
-    const slice = [_]TestKVVoid{
-        .{"these"},
-        .{"have"},
-        .{"nothing"},
-        .{"incommon"},
-        .{"samelen"},
-    };
-
     try testSet(TestMapVoid.initComptime(slice));
 }
-
 fn testSet(map: TestMapVoid) !void {
     try testing.expectEqual({}, map.get("have").?);
     try testing.expectEqual({}, map.get("nothing").?);
-    try testing.expect(null == map.get("missing"));
+    try testing.expectEqual(null, map.get("missing"));
     try testing.expectEqual({}, map.get("these").?);
     try testing.expectEqual({}, map.get("samelen").?);
 
     try testing.expect(!map.has("missing"));
     try testing.expect(map.has("these"));
 
-    try testing.expect(null == map.get(""));
-    try testing.expect(null == map.get("averylongstringthathasnomatches"));
-}
-
-fn testStaticStringMapWithEql(map: TestMapWithEql) !void {
-    try testMap(map);
-    try testing.expectEqual(TestEnum.A, map.get("HAVE").?);
-    try testing.expectEqual(TestEnum.E, map.get("SameLen").?);
-    try testing.expect(null == map.get("SameLength"));
-    try testing.expect(map.has("ThESe"));
-}
-
-test "StaticStringMapWithEql" {
-    const slice = [_]TestKV{
-        .{ "these", .D },
-        .{ "have", .A },
-        .{ "nothing", .B },
-        .{ "incommon", .C },
-        .{ "samelen", .E },
-    };
-
-    try testStaticStringMapWithEql(TestMapWithEql.initComptime(slice));
+    try testing.expectEqual(null, map.get(""));
+    try testing.expectEqual(null, map.get("averylongstringthathasnomatches"));
 }
 
 test "empty" {
@@ -474,11 +445,9 @@ test "empty" {
     const m2 = StaticStringMapWithEql(usize, eqlAsciiIgnoreCase).initComptime(.{});
     try testing.expect(null == m2.get("anything"));
 
-    const m3 = try StaticStringMap(usize).init(.{}, test_alloc);
+    // Doesn't allocate if empty.
+    const m3 = try StaticStringMap(usize).init(.{}, testing.failing_allocator);
     try testing.expect(null == m3.get("anything"));
-
-    const m4 = try StaticStringMapWithEql(usize, eqlAsciiIgnoreCase).init(.{}, test_alloc);
-    try testing.expect(null == m4.get("anything"));
 }
 
 test "redundant entries" {
@@ -499,7 +468,6 @@ test "redundant entries" {
 
     try testing.expectEqual(TestEnum.A, map.get("theNeedle").?);
 }
-
 test "redundant insensitive" {
     const slice = [_]TestKV{
         .{ "redundant", .D },
@@ -509,12 +477,12 @@ test "redundant insensitive" {
         .{ "redun" ++ "DANT", .E },
     };
 
-    const map = TestMapWithEql.initComptime(slice);
+    const map = TestMapCaseInsensitive.initComptime(slice);
 
     // No promises about which result you'll get ...
     try testing.expect(null != map.get("REDUNDANT"));
     try testing.expect(null != map.get("ReDuNdAnT"));
-    try testing.expectEqual(TestEnum.A, map.get("theNeedle").?);
+    try testing.expectEqual(.A, map.get("theNeedle").?);
 }
 
 test "comptime-only value" {
@@ -596,6 +564,15 @@ test "getLongestPrefix2" {
     try testing.expectEqual(9, map.getLongestPrefix("ninexxx").?.value);
     try testing.expectEqual(null, map.getLongestPrefix("n"));
     try testing.expectEqual(null, map.getLongestPrefix("xxx"));
+
+    try testing.expectEqual(1, map.getLongestPrefixPtr("one").?.value_ptr.*);
+    try testing.expectEqual(1, map.getLongestPrefixPtr("onexxx").?.value_ptr.*);
+    try testing.expectEqual(null, map.getLongestPrefixPtr("o"));
+    try testing.expectEqual(null, map.getLongestPrefixPtr("on"));
+    try testing.expectEqual(9, map.getLongestPrefixPtr("nine").?.value_ptr.*);
+    try testing.expectEqual(9, map.getLongestPrefixPtr("ninexxx").?.value_ptr.*);
+    try testing.expectEqual(null, map.getLongestPrefixPtr("n"));
+    try testing.expectEqual(null, map.getLongestPrefixPtr("xxx"));
 }
 
 test "sorting kvs doesn't exceed eval branch quota" {
