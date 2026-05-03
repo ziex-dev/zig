@@ -32,15 +32,14 @@ const command: std.cli.Command = .{
     .name = "docgen",
     .help = usage,
     .named_args = &.{
-        .init([:0]const u8, .{
-            .name = "code-dir",
+        .init("code-dir", [:0]const u8, .{
             .count = .one,
             .help = "Path to directory containing code example outputs",
         }),
     },
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "input", .count = .one }),
-        .init([:0]const u8, .{ .name = "output", .count = .one }),
+        .init("input", [:0]const u8, .{ .count = .one }),
+        .init("output", [:0]const u8, .{ .count = .one }),
     },
 };
 

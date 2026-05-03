@@ -34,7 +34,7 @@ const command: std.cli.Command = .{
     .name = "generate_c_size_and_align_checks",
     .help = usage,
     .positional_args = &.{
-        .init([:0]const u8, .{ .name = "target_triple" }),
+        .init("target_triple", [:0]const u8, .{}),
     },
 };
 
