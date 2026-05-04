@@ -748,6 +748,7 @@ test "vector reduce operation" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_c and builtin.cpu.arch.isArm()) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isPowerPC()) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/195562
     if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isSPARC()) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23719
 
     const S = struct {
