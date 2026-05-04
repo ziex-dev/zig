@@ -3060,9 +3060,12 @@ fn airArithOp(
     const info = cg.arithmeticTypeInfo(lhs.ty);
     const result = switch (info.class) {
         .composite_integer => unreachable, // TODO
-        .integer, .strange_integer => switch (info.signedness) {
-            .signed => try cg.buildBinary(sop, lhs, rhs),
-            .unsigned => try cg.buildBinary(uop, lhs, rhs),
+        .integer, .strange_integer => res: {
+            const raw = switch (info.signedness) {
+                .signed => try cg.buildBinary(sop, lhs, rhs),
+                .unsigned => try cg.buildBinary(uop, lhs, rhs),
+            };
+            break :res try cg.normalize(raw, info);
         },
         .float => try cg.buildBinary(fop, lhs, rhs),
         .bool => unreachable,
@@ -3437,7 +3440,6 @@ fn airReduce(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     const operand = try cg.resolve(reduce.operand);
     const operand_ty = cg.typeOf(reduce.operand);
     const scalar_ty = operand_ty.scalarType(zcu);
-    const scalar_ty_id = try cg.resolveType(scalar_ty, .direct);
     const info = cg.arithmeticTypeInfo(operand_ty);
     const len = operand_ty.vectorLen(zcu);
     const first = try cg.extractVectorComponent(scalar_ty, operand, 0);
@@ -3463,8 +3465,6 @@ fn airReduce(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
         else => {},
     }
 
-    var result_id = first;
-
     const opcode: Opcode = switch (info.class) {
         .bool => switch (reduce.operation) {
             .And => .OpLogicalAnd,
@@ -3488,19 +3488,18 @@ fn airReduce(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
         .composite_integer => unreachable, // TODO
     };
 
-    for (1..len) |i| {
-        const lhs = result_id;
-        const rhs = try cg.extractVectorComponent(scalar_ty, operand, @intCast(i));
-        result_id = cg.module.allocId();
+    const needs_normalize = info.class == .strange_integer and
+        (reduce.operation == .Add or reduce.operation == .Mul);
 
-        try cg.body.emitRaw(cg.module.gpa, opcode, 4);
-        cg.body.writeOperand(Id, scalar_ty_id);
-        cg.body.writeOperand(Id, result_id);
-        cg.body.writeOperand(Id, lhs);
-        cg.body.writeOperand(Id, rhs);
+    var result: Temporary = .init(scalar_ty, first);
+    for (1..len) |i| {
+        const rhs_id = try cg.extractVectorComponent(scalar_ty, operand, @intCast(i));
+        const rhs: Temporary = .init(scalar_ty, rhs_id);
+        const stepped = try cg.buildBinary(opcode, result, rhs);
+        result = if (needs_normalize) try cg.normalize(stepped, info) else stepped;
     }
 
-    return result_id;
+    return try result.materialize(cg);
 }
 
 fn airShuffleOne(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
@@ -3984,7 +3983,11 @@ fn airIntCast(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     const dst_info = cg.arithmeticTypeInfo(dst_ty);
 
     if (src_info.backing_bits == dst_info.backing_bits) {
-        return try src.materialize(cg);
+        const result = if (dst_info.bits < src_info.bits)
+            try cg.normalize(src.pun(dst_ty), dst_info)
+        else
+            src.pun(dst_ty);
+        return try result.materialize(cg);
     }
 
     const converted = try cg.buildConvert(dst_ty, src);
