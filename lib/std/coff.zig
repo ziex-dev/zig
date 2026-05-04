@@ -1022,7 +1022,7 @@ pub const Coff = struct {
             reader.seek = debug_dir.virtual_address;
         } else {
             // Get the file offset from the section the debug_dir is in
-            try self.getRvaPtr(debug_dir.virtual_address);
+            reader.seek = try self.getRvaPtr(debug_dir.virtual_address);
         }
 
         // Find the correct DebugDirectoryEntry, and where its data is stored.
