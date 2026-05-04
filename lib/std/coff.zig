@@ -953,6 +953,7 @@ pub const Error = error{
     InvalidPEMagic,
     InvalidPEHeader,
     InvalidMachine,
+    InvalidCoffSection,
     MissingPEHeader,
     MissingCoffSection,
     MissingStringTable,
@@ -970,28 +971,35 @@ pub const Coff = struct {
     age: u32 = undefined,
 
     // The lifetime of `data` must be longer than the lifetime of the returned Coff
-    pub fn init(data: []const u8, is_loaded: bool) error{ EndOfStream, MissingPEHeader }!Coff {
+    pub fn init(data: []const u8, is_loaded: bool) error{ EndOfStream, MissingPEHeader, InvalidPEMagic, InvalidCoffSection }!Coff {
         const pe_pointer_offset = 0x3C;
         const pe_magic = "PE\x00\x00";
+        const mz_magic = "MZ";
 
         if (data.len < pe_pointer_offset + 4) return error.EndOfStream;
-        const header_offset = mem.readInt(u32, data[pe_pointer_offset..][0..4], .little);
-        if (data.len < header_offset + 4) return error.EndOfStream;
-        const is_image = mem.eql(u8, data[header_offset..][0..4], pe_magic);
+
+        var is_image: bool = false;
+        var header_offset: usize = 0;
+        if (mem.eql(u8, data[0..2], mz_magic)) {
+            header_offset = mem.readInt(u32, data[pe_pointer_offset..][0..4], .little);
+            if (data.len < header_offset + 4) return error.EndOfStream;
+            if (!mem.eql(u8, data[header_offset..][0..4], pe_magic)) return error.InvalidPEMagic;
+            is_image = true;
+            header_offset += 4;
+        }
+        if (data.len < header_offset + @sizeOf(Header)) return error.EndOfStream;
 
         const coff: Coff = .{
             .data = data,
             .is_image = is_image,
             .is_loaded = is_loaded,
-            .coff_header_offset = o: {
-                if (is_image) break :o header_offset + 4;
-                break :o header_offset;
-            },
+            .coff_header_offset = header_offset,
         };
 
         // Do some basic validation upfront
+        const coff_header = coff.getHeader();
+        if (coff_header.number_of_sections == 0xffff) return error.InvalidCoffSection;
         if (is_image) {
-            const coff_header = coff.getHeader();
             if (coff_header.size_of_optional_header == 0) return error.MissingPEHeader;
         }
 
@@ -1013,13 +1021,8 @@ pub const Coff = struct {
         if (self.is_loaded) {
             reader.seek = debug_dir.virtual_address;
         } else {
-            // Find what section the debug_dir is in, in order to convert the RVA to a file offset
-            for (self.getSectionHeaders()) |*sect| {
-                if (debug_dir.virtual_address >= sect.virtual_address and debug_dir.virtual_address < sect.virtual_address + sect.virtual_size) {
-                    reader.seek = sect.pointer_to_raw_data + (debug_dir.virtual_address - sect.virtual_address);
-                    break;
-                }
-            } else return error.InvalidDebugDirectory;
+            // Get the file offset from the section the debug_dir is in
+            try self.getRvaPtr(debug_dir.virtual_address);
         }
 
         // Find the correct DebugDirectoryEntry, and where its data is stored.
@@ -1169,6 +1172,17 @@ pub const Coff = struct {
     pub fn getSectionDataAlloc(self: *const Coff, sec: *align(1) const SectionHeader, allocator: mem.Allocator) ![]u8 {
         const section_data = self.getSectionData(sec);
         return allocator.dupe(u8, section_data);
+    }
+    
+    pub fn getRvaPtr(self: *const Coff, virtual_address: u32) !u32 {
+        for (self.getSectionHeaders()) |*sect| {
+            if (virtual_address >= sect.virtual_address and virtual_address < sect.virtual_address + sect.virtual_size) {
+                if (sect.size_of_raw_data < sect.virtual_size and virtual_address >= sect.virtual_address + sect.size_of_raw_data) {
+                    return error.SectionStripped;
+                }
+                return sect.pointer_to_raw_data + (virtual_address - sect.virtual_address);
+            }
+        } else return error.InvalidDebugDirectory;
     }
 };
 
