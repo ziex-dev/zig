@@ -16011,8 +16011,6 @@ fn zirTypeInfo(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
                 } });
 
                 const param_fields = .{
-                    // is_generic: bool,
-                    Value.makeBool(is_generic).toIntern(),
                     // is_noalias: bool,
                     Value.makeBool(is_noalias).toIntern(),
                     // type: ?type,

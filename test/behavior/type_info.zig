@@ -419,29 +419,23 @@ extern fn typeInfoFooAligned(a: usize, b: bool, ...) align(4) callconv(.c) usize
 test "type info: generic function types" {
     const G1 = @typeInfo(@TypeOf(generic1));
     try expect(G1.@"fn".params.len == 1);
-    try expect(G1.@"fn".params[0].is_generic == true);
     try expect(G1.@"fn".params[0].type == null);
     try expect(G1.@"fn".return_type == void);
 
     const G2 = @typeInfo(@TypeOf(generic2));
     try expect(G2.@"fn".params.len == 3);
-    try expect(G2.@"fn".params[0].is_generic == false);
     try expect(G2.@"fn".params[0].type == type);
-    try expect(G2.@"fn".params[1].is_generic == true);
     try expect(G2.@"fn".params[1].type == null);
-    try expect(G2.@"fn".params[2].is_generic == false);
     try expect(G2.@"fn".params[2].type == u8);
     try expect(G2.@"fn".return_type == void);
 
     const G3 = @typeInfo(@TypeOf(generic3));
     try expect(G3.@"fn".params.len == 1);
-    try expect(G3.@"fn".params[0].is_generic == true);
     try expect(G3.@"fn".params[0].type == null);
     try expect(G3.@"fn".return_type == null);
 
     const G4 = @typeInfo(@TypeOf(generic4));
     try expect(G4.@"fn".params.len == 1);
-    try expect(G4.@"fn".params[0].is_generic == true);
     try expect(G4.@"fn".params[0].type == null);
     try expect(G4.@"fn".return_type == null);
 }
