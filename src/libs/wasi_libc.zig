@@ -621,7 +621,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/ctype/__ctype_get_mb_cur_max.c",
     "musl/src/ctype/__ctype_tolower_loc.c",
     "musl/src/ctype/__ctype_toupper_loc.c",
-    "musl/src/ctype/iswalnum.c",
     "musl/src/ctype/iswalpha.c",
     "musl/src/ctype/iswcntrl.c",
     "musl/src/ctype/iswctype.c",
