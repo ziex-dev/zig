@@ -781,7 +781,8 @@ If you will be debugging the Zig compiler itself, or if you will be debugging
 any project compiled with Zig's LLVM backend (not recommended with the LLDB
 fork, prefer vanilla LLDB with a version that matches the version of LLVM that
 Zig is using), you can get a better debugging experience by using
-[`lldb_pretty_printers.py`](https://codeberg.org/ziglang/zig/src/branch/master/lib/lldb/pretty_printers.py).
+[`pretty_printers.py`](https://codeberg.org/ziglang/zig/src/branch/master/lib/lldb/pretty_printers.py)
+(the file is located at `lib/lldb` in Zig's installation directory).
 
 Put this line in `~/.lldbinit`:
 
