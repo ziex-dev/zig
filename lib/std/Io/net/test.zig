@@ -388,7 +388,7 @@ test "UDP send and receive" {
     try testing.expectEqualStrings(&send_data, received.data);
 }
 
-test "UDP send and receiveTimeout" {
+test "UDP sendTimeout and receiveTimeout" {
     const io = testing.io;
     const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };
 
@@ -400,15 +400,16 @@ test "UDP send and receiveTimeout" {
     const send_sock = try localhost.bind(io, .{ .mode = .dgram });
     defer send_sock.close(io);
 
-    const send_data: [3]u8 = .{ '1', '2', '3' };
-    try send_sock.send(io, &recv_sock.address, &send_data);
-
     const timeo: Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(10) } };
-    var recv_buf: [4]u8 = undefined;
-    const received = recv_sock.receiveTimeout(io, &recv_buf, timeo) catch |err| switch (err) {
+
+    const send_data: [3]u8 = .{ '1', '2', '3' };
+    send_sock.sendTimeout(io, &recv_sock.address, &send_data, timeo) catch |err| switch (err) {
         error.ConcurrencyUnavailable => return error.SkipZigTest,
         else => |e| return e,
     };
+
+    var recv_buf: [4]u8 = undefined;
+    const received = try recv_sock.receiveTimeout(io, &recv_buf, timeo);
     try testing.expect(received.from.eql(&send_sock.address));
     try testing.expectEqualStrings(&send_data, received.data);
 
@@ -416,7 +417,7 @@ test "UDP send and receiveTimeout" {
     try testing.expectError(error.Timeout, recv_sock.receiveTimeout(io, &recv_buf, short));
 }
 
-test "UDP sendMany 1 recvManyTimeout 2" {
+test "UDP sendMany 2 and receive 2" {
     const io = testing.io;
     const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };
 
@@ -429,25 +430,111 @@ test "UDP sendMany 1 recvManyTimeout 2" {
     defer send_sock.close(io);
 
     const send_data: [3]u8 = .{ '1', '2', '3' };
+    var send_msgs: [2]Io.net.OutgoingMessage = @splat(.{
+        .address = &recv_sock.address,
+        .data_ptr = &send_data,
+        .data_len = 3,
+    });
+    // note sendMany is deprecated, but should remain tested until removed
+    try send_sock.sendMany(io, &send_msgs, .{});
+    for (0..2) |i|
+        try testing.expectEqual(3, send_msgs[i].data_len);
+
+    var recv_buf: [4]u8 = undefined;
+    for (0..2) |_| {
+        const received = try recv_sock.receive(io, &recv_buf);
+        try testing.expect(received.from.eql(&send_sock.address));
+        try testing.expectEqualStrings(&send_data, received.data);
+    }
+}
+
+test "UDP sendManyTimeout 1 recvManyTimeout 2" {
+    const io = testing.io;
+    const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };
+
+    const recv_sock = localhost.bind(io, .{ .mode = .dgram }) catch |err| switch (err) {
+        error.NetworkDown => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    defer recv_sock.close(io);
+    const send_sock = try localhost.bind(io, .{ .mode = .dgram });
+    defer send_sock.close(io);
+
+    const timeo: Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(10) } };
+
+    const send_data: [3]u8 = .{ '1', '2', '3' };
     var send_msg: Io.net.OutgoingMessage = .{
         .address = &recv_sock.address,
         .data_ptr = &send_data,
         .data_len = 3,
     };
-    try send_sock.sendMany(io, (&send_msg)[0..1], .{});
+
+    const maybe_send_err, const send_count = send_sock.sendManyTimeout(io, (&send_msg)[0..1], .{}, timeo);
+    if (maybe_send_err) |err| switch (err) {
+        error.ConcurrencyUnavailable => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    try testing.expectEqual(1, send_count);
     try testing.expectEqual(3, send_msg.data_len);
 
     // This should not wait 10 seconds for the absent second message, it should
     // complete as soon as the first one arrives
     var recv_msgs: [2]net.IncomingMessage = @splat(.init);
     var recv_buf: [10]u8 = undefined;
-    const timeo: Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(10) } };
     const maybe_recv_err, const recv_count = recv_sock.receiveManyTimeout(io, &recv_msgs, &recv_buf, .{}, timeo);
-    if (maybe_recv_err) |err| switch (err) {
-        error.ConcurrencyUnavailable => return error.SkipZigTest,
-        else => |e| return e,
-    };
+    if (maybe_recv_err) |err| return err;
     try testing.expectEqual(1, recv_count);
     try testing.expect(recv_msgs[0].from.eql(&send_sock.address));
     try testing.expectEqualStrings(&send_data, recv_msgs[0].data);
+}
+
+fn test_udp_sender(io: Io, send_sock: Io.net.Socket, send_data: []const u8, dest: Io.net.IpAddress) !void {
+    try io.sleep(.fromMilliseconds(10), .boot);
+    try send_sock.send(io, &dest, send_data);
+    try send_sock.send(io, &dest, send_data);
+    try io.sleep(.fromMilliseconds(10), .boot);
+    try send_sock.send(io, &dest, send_data);
+}
+
+test "UDP concurrency and timeouts" {
+    const io = testing.io;
+    const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };
+
+    const recv_sock = localhost.bind(io, .{ .mode = .dgram }) catch |err| switch (err) {
+        error.NetworkDown => return error.SkipZigTest,
+        else => |e| return e,
+    };
+    defer recv_sock.close(io);
+    const send_sock = try localhost.bind(io, .{ .mode = .dgram });
+    defer send_sock.close(io);
+
+    const send_data: [3]u8 = .{ '1', '2', '3' };
+    var sender = io.async(test_udp_sender, .{ io, send_sock, &send_data, recv_sock.address });
+    defer sender.cancel(io) catch {};
+
+    // Because the sender is async (may execute serially or concurrently) and
+    // it has some 10ms timing gaps, it's likely that there will be a variety
+    // of random behaviors (total iterations, messages per iteration) on the
+    // receive end of things related to the target and runner conditions. This
+    // should still suceed so long as all 3 packets arrive in reasonable time.
+    const timeo: Io.Timeout = .{ .duration = .{ .clock = .awake, .raw = .fromSeconds(10) } };
+    var received: usize = 0;
+    for (0..3) |_| {
+        var recv_msgs: [3]net.IncomingMessage = @splat(.init);
+        var recv_buf: [9]u8 = undefined;
+        const maybe_recv_err, const recv_count = recv_sock.receiveManyTimeout(io, &recv_msgs, &recv_buf, .{}, timeo);
+        if (maybe_recv_err) |err| switch (err) {
+            error.ConcurrencyUnavailable => return error.SkipZigTest,
+            else => |e| return e,
+        };
+        received += recv_count;
+        try testing.expect(received <= 3);
+        for (0..recv_count) |i| {
+            const msg = recv_msgs[i];
+            try testing.expect(msg.from.eql(&send_sock.address));
+            try testing.expectEqualStrings(&send_data, msg.data);
+        }
+        if (received == 3) break;
+    }
+    try testing.expectEqual(3, received);
 }
