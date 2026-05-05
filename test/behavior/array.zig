@@ -1124,3 +1124,22 @@ test "resist alias of explicit copy of array passed as arg" {
 
     try expect(buf_b[0] == 1234);
 }
+
+test "access element through reference" {
+    const S = struct {
+        fn doTheTest(x: u8) !void {
+            {
+                var val: [1]u8 = .{x};
+                const single_ptr: *[1]u8 = &val;
+                try expect(single_ptr.*[0] == x);
+            }
+            {
+                var val: [1]u8 = .{x};
+                const c_ptr: [*c][1]u8 = &val;
+                try expect(c_ptr.*[0] == x);
+            }
+        }
+    };
+    try comptime S.doTheTest(123);
+    try S.doTheTest(123);
+}

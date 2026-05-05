@@ -1788,18 +1788,38 @@ pub fn ptrField(parent_ptr: Value, field_idx: u32, pt: Zcu.PerThread) !Value {
     } }));
 }
 
-/// `orig_parent_ptr` must be either a single-pointer to an array, a slice, a many-item pointer, or a C pointer.
+/// `orig_parent_ptr` must be either a single-pointer or a C pointer to an array.
 /// Returns a pointer to the element at the specified index.
 /// Asserts that the layout of the pointer element type is resolved.
-pub fn ptrElem(orig_parent_ptr: Value, field_idx: u64, pt: Zcu.PerThread) !Value {
+pub fn ptrArrayElem(orig_parent_ptr: Value, field_idx: u64, pt: Zcu.PerThread) Allocator.Error!Value {
     const zcu = pt.zcu;
     const parent_ptr = switch (orig_parent_ptr.typeOf(zcu).ptrSize(zcu)) {
-        .one, .many, .c => orig_parent_ptr,
+        .many, .slice => unreachable, // assertion failure
+        .one, .c => orig_parent_ptr,
+    };
+    const parent_ptr_ty = parent_ptr.typeOf(zcu);
+    const result_ty = try parent_ptr_ty.elemPtrArrayType(field_idx, pt);
+    return ptrElemInner(parent_ptr, result_ty, field_idx, pt);
+}
+
+/// `orig_parent_ptr` must be either a slice, a many-item pointer, or a C pointer.
+/// Returns a pointer to the element at the specified index.
+/// Asserts that the layout of the pointer element type is resolved.
+pub fn ptrSliceElem(orig_parent_ptr: Value, field_idx: u64, pt: Zcu.PerThread) Allocator.Error!Value {
+    const zcu = pt.zcu;
+    const parent_ptr = switch (orig_parent_ptr.typeOf(zcu).ptrSize(zcu)) {
+        .one => unreachable, // assertion failure
+        .many, .c => orig_parent_ptr,
         .slice => orig_parent_ptr.slicePtr(zcu),
     };
-
     const parent_ptr_ty = parent_ptr.typeOf(zcu);
-    const result_ty = try parent_ptr_ty.elemPtrType(field_idx, pt);
+    const result_ty = try parent_ptr_ty.elemPtrSliceType(field_idx, pt);
+    return ptrElemInner(parent_ptr, result_ty, field_idx, pt);
+}
+
+fn ptrElemInner(parent_ptr: Value, result_ty: Type, field_idx: u64, pt: Zcu.PerThread) Allocator.Error!Value {
+    const zcu = pt.zcu;
+
     const elem_ty = result_ty.childType(zcu);
     elem_ty.assertHasLayout(zcu);
 

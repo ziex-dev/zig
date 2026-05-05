@@ -2819,38 +2819,64 @@ pub fn getUnionLayout(loaded_union: InternPool.LoadedUnionType, zcu: *const Zcu)
     };
 }
 
-/// Asserts that `ptr_ty` is either a many-item pointer, a slice, a C pointer, or a single pointer
-/// to array (in other words, a pointer which is indexed by pointer arithmetic), and returns the
+/// Asserts that `ptr_ty` is either a many-item pointer, a slice, or a C pointer and returns the
 /// type of the element pointer at the given index.
 ///
 /// Asserts that the layout of the pointer element type is resolved.
 ///
 /// If `index` is `null`, the index is an arbitrary runtime-known value.
-pub fn elemPtrType(ptr_ty: Type, index: ?u64, pt: Zcu.PerThread) Allocator.Error!Type {
+pub fn elemPtrSliceType(ptr_ty: Type, index: ?u64, pt: Zcu.PerThread) Allocator.Error!Type {
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const ptr_info = ip.indexToKey(ptr_ty.toIntern()).ptr_type;
     const elem_ty: Type = switch (ptr_info.flags.size) {
+        .one => unreachable, // assertion failure
         .slice, .many, .c => .fromInterned(ptr_info.child),
-        .one => switch (ip.indexToKey(ptr_info.child)) {
+    };
+    return elemPtrTypeInner(ptr_info.flags, index, elem_ty, pt);
+}
+
+/// Asserts that `ptr_ty` is either a C pointer or a single pointer to an array, and returns the
+/// type of the element pointer at the given index.
+///
+/// Asserts that the layout of the pointer element type is resolved.
+///
+/// If `index` is `null`, the index is an arbitrary runtime-known value.
+pub fn elemPtrArrayType(ptr_ty: Type, index: ?u64, pt: Zcu.PerThread) Allocator.Error!Type {
+    const zcu = pt.zcu;
+    const ip = &zcu.intern_pool;
+    const ptr_info = ip.indexToKey(ptr_ty.toIntern()).ptr_type;
+    const elem_ty: Type = switch (ptr_info.flags.size) {
+        .slice, .many => unreachable, // assertion failure
+        .one, .c => switch (ip.indexToKey(ptr_info.child)) {
             .array_type => |array_type| .fromInterned(array_type.child),
             else => unreachable,
         },
     };
+    return elemPtrTypeInner(ptr_info.flags, index, elem_ty, pt);
+}
+
+fn elemPtrTypeInner(
+    ptr_flags: InternPool.Key.PtrType.Flags,
+    index: ?u64,
+    elem_ty: Type,
+    pt: Zcu.PerThread,
+) Allocator.Error!Type {
+    const zcu = pt.zcu;
     elem_ty.assertHasLayout(zcu);
     const elem_align: Alignment = switch (elem_ty.classify(zcu)) {
         .no_possible_value,
         .one_possible_value,
-        => ptr_info.flags.alignment,
+        => ptr_flags.alignment,
 
         .partially_comptime,
         .fully_comptime,
-        => switch (ptr_info.flags.alignment) {
+        => switch (ptr_flags.alignment) {
             .none => .none,
             else => |array_align| .minStrict(array_align, elem_ty.abiAlignment(zcu)),
         },
 
-        .runtime => switch (ptr_info.flags.alignment) {
+        .runtime => switch (ptr_flags.alignment) {
             .none => .none,
             else => |array_align| elem_align: {
                 // If the index is runtime-known, use 1 as it gives the minimum possible alignment.
@@ -2865,10 +2891,10 @@ pub fn elemPtrType(ptr_ty: Type, index: ?u64, pt: Zcu.PerThread) Allocator.Error
         .child = elem_ty.toIntern(),
         .flags = .{
             .size = .one,
-            .is_const = ptr_info.flags.is_const,
-            .is_volatile = ptr_info.flags.is_volatile,
-            .is_allowzero = ptr_info.flags.is_allowzero and (index == null or index == 0),
-            .address_space = ptr_info.flags.address_space,
+            .is_const = ptr_flags.is_const,
+            .is_volatile = ptr_flags.is_volatile,
+            .is_allowzero = ptr_flags.is_allowzero and (index == null or index == 0),
+            .address_space = ptr_flags.address_space,
             .alignment = elem_align,
         },
     });

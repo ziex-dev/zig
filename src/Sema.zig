@@ -3572,17 +3572,20 @@ fn resolveComptimeKnownAllocPtr(sema: *Sema, block: *Block, alloc: Air.Inst.Ref,
             },
             .elem => |idx| ptr: {
                 const parent_ptr_val: Value = .fromInterned(decl_parent_ptr);
-                if (parent_ptr_val.typeOf(zcu).childType(zcu).zigTypeTag(zcu) == .vector) {
-                    const elem_ptr_ty: Type = .fromInterned(new_ptr_ty);
-                    // Vectors are a bit weird; see logic in `elemPtrVector`.
-                    if (elem_ptr_ty.ptrInfo(zcu).flags.vector_index != .none) {
-                        break :ptr (try pt.getCoerced(parent_ptr_val, elem_ptr_ty)).toIntern();
-                    } else {
-                        const bit_offset = idx * @divExact(elem_ptr_ty.childType(zcu).bitSize(zcu), 8);
-                        break :ptr (try parent_ptr_val.getOffsetPtr(bit_offset, elem_ptr_ty, pt)).toIntern();
-                    }
+                switch (parent_ptr_val.typeOf(zcu).childType(zcu).zigTypeTag(zcu)) {
+                    .vector => {
+                        const elem_ptr_ty: Type = .fromInterned(new_ptr_ty);
+                        // Vectors are a bit weird; see logic in `elemPtrVector`.
+                        if (elem_ptr_ty.ptrInfo(zcu).flags.vector_index != .none) {
+                            break :ptr (try pt.getCoerced(parent_ptr_val, elem_ptr_ty)).toIntern();
+                        } else {
+                            const bit_offset = idx * @divExact(elem_ptr_ty.childType(zcu).bitSize(zcu), 8);
+                            break :ptr (try parent_ptr_val.getOffsetPtr(bit_offset, elem_ptr_ty, pt)).toIntern();
+                        }
+                    },
+                    .array => break :ptr (try parent_ptr_val.ptrArrayElem(idx, pt)).toIntern(),
+                    else => break :ptr (try parent_ptr_val.ptrSliceElem(idx, pt)).toIntern(),
                 }
-                break :ptr (try parent_ptr_val.ptrElem(idx, pt)).toIntern();
             },
         };
         try ptr_mapping.put(air_ptr, new_ptr);
@@ -15132,7 +15135,7 @@ fn analyzePtrArithmetic(
         else => {},
     }
 
-    const elem_ptr_ty = try ptr_ty.elemPtrType(maybe_index, pt);
+    const elem_ptr_ty = try ptr_ty.elemPtrSliceType(maybe_index, pt);
     // `elem_ptr_ty` is a single-item pointer, but we want a many-item or C pointer, and to preserve
     // any input sentinel.
     const new_ptr_ty = try pt.ptrType(info: {
@@ -15152,7 +15155,7 @@ fn analyzePtrArithmetic(
             const elem_size = elem_ty.abiSize(zcu);
             return .fromValue(try sema.ptrSubtract(block, op_src, ptr_val, index * elem_size, new_ptr_ty));
         } else {
-            return .fromValue(try pt.getCoerced(try ptr_val.ptrElem(index, pt), new_ptr_ty));
+            return .fromValue(try pt.getCoerced(try ptr_val.ptrSliceElem(index, pt), new_ptr_ty));
         }
     }
 
@@ -26549,12 +26552,12 @@ fn elemPtrOneLayerOnly(
             ct: {
                 const ptr_val = maybe_ptr_val orelse break :ct;
                 const index: usize = @intCast(maybe_index orelse break :ct);
-                return .fromValue(try ptr_val.ptrElem(index, pt));
+                return .fromValue(try ptr_val.ptrSliceElem(index, pt));
             }
 
             try sema.checkLogicalPtrOperation(block, src, indexable_ty);
 
-            const result_ty = try indexable_ty.elemPtrType(maybe_index, pt);
+            const result_ty = try indexable_ty.elemPtrSliceType(maybe_index, pt);
 
             try sema.validateRuntimeElemAccess(block, elem_index_src, result_ty, indexable_ty, indexable_src);
             try sema.validateRuntimeValue(block, indexable_src, indexable);
@@ -26615,7 +26618,7 @@ fn elemVal(
                         const index: usize = @intCast(index_val.toUnsignedInt(zcu));
                         const many_ptr_ty = try pt.manyConstPtrType(child_ty);
                         const many_ptr_val = try pt.getCoerced(indexable_val, many_ptr_ty);
-                        const elem_ptr_val = try many_ptr_val.ptrElem(index, pt);
+                        const elem_ptr_val = try many_ptr_val.ptrSliceElem(index, pt);
                         return sema.analyzeLoad(block, src, .fromValue(elem_ptr_val), indexable_src);
                     }
 
@@ -26947,7 +26950,10 @@ fn elemPtrArray(
     const pt = sema.pt;
     const zcu = pt.zcu;
     const array_ptr_ty = sema.typeOf(array_ptr);
-    assert(array_ptr_ty.ptrSize(zcu) == .one);
+    switch (array_ptr_ty.ptrSize(zcu)) {
+        .one, .c => {},
+        .many, .slice => unreachable, // assertion failure
+    }
     const array_ty = array_ptr_ty.childType(zcu);
     assert(array_ty.zigTypeTag(zcu) == .array);
     const array_sent = array_ty.sentinel(zcu) != null;
@@ -26970,14 +26976,14 @@ fn elemPtrArray(
     } else null;
 
     array_ty.assertHasLayout(zcu);
-    const elem_ptr_ty = try array_ptr_ty.elemPtrType(maybe_index, pt);
+    const elem_ptr_ty = try array_ptr_ty.elemPtrArrayType(maybe_index, pt);
 
     if (maybe_undef_array_ptr_val) |array_ptr_val| {
         if (array_ptr_val.isUndef(zcu)) {
             return pt.undefRef(elem_ptr_ty);
         }
         if (maybe_index) |index| {
-            return .fromValue(try array_ptr_val.ptrElem(index, pt));
+            return .fromValue(try array_ptr_val.ptrArrayElem(index, pt));
         }
     }
 
@@ -27038,7 +27044,7 @@ fn elemValSlice(
                 const sentinel_label: []const u8 = if (slice_sent) " +1 (sentinel)" else "";
                 return sema.fail(block, elem_index_src, "index {d} outside slice of length {d}{s}", .{ index, slice_len, sentinel_label });
             }
-            const elem_ptr_val = try slice_val.ptrElem(index, pt);
+            const elem_ptr_val = try slice_val.ptrSliceElem(index, pt);
             return sema.analyzeLoad(block, src, .fromValue(elem_ptr_val), slice_src);
         }
     }
@@ -27084,7 +27090,7 @@ fn elemPtrSlice(
         break :o index_val.toUnsignedInt(zcu);
     } else null;
 
-    const elem_ptr_ty = try slice_ty.elemPtrType(offset, pt);
+    const elem_ptr_ty = try slice_ty.elemPtrSliceType(offset, pt);
     assert(elem_ptr_ty.childType(zcu).toIntern() == elem_ty.toIntern());
 
     if (maybe_undef_slice_val) |slice_val| {
@@ -27101,7 +27107,7 @@ fn elemPtrSlice(
                 const sentinel_label: []const u8 = if (slice_sent) " +1 (sentinel)" else "";
                 return sema.fail(block, elem_index_src, "index {d} outside slice of length {d}{s}", .{ index, slice_len, sentinel_label });
             }
-            return .fromValue(try slice_val.ptrElem(index, pt));
+            return .fromValue(try slice_val.ptrSliceElem(index, pt));
         }
     }
 
@@ -30698,7 +30704,7 @@ fn analyzeSlice(
 
                 const many_ptr_ty = try pt.manyConstPtrType(elem_ty);
                 const many_ptr_val = try pt.getCoerced(ptr_val, many_ptr_ty);
-                const elem_ptr = try many_ptr_val.ptrElem(sentinel_index, pt);
+                const elem_ptr = try many_ptr_val.ptrSliceElem(sentinel_index, pt);
                 const res = try sema.pointerDerefExtra(block, src, elem_ptr);
                 const actual_sentinel = switch (res) {
                     .runtime_load => break :sentinel_check,
