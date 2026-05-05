@@ -184,6 +184,9 @@ pub fn MultiArrayList(comptime T: type) type {
         /// `sizes.bytes_per_capacity`: the unaligned sum of `T`'s field sizes.
         /// `sizes.fields`: array of field ids.  a mapping from alignment-sorted order to declaration order.
         /// `sizes.offsets`: array of field offsets.
+        /// `sizes.bytes`: array of @sizeOf each T field. Sorted by alignment.
+        /// Note: sizes.bytes is not used in Zig anymore, only by lldb-zig.
+        /// TODO: update lldb-zig to use sizes.offsets instead, and remove it.
         ///
         /// When iterating over the different sub-slices of the storage,
         /// Visit fields in the order of `size.fields` to make the memory access more predictable.
@@ -210,11 +213,13 @@ pub fn MultiArrayList(comptime T: type) type {
             mem.sort(Data, &data, {}, Sort.bigAlignmentFirst);
             var field_indexes: [field_names.len]usize = undefined;
             var field_offsets: [field_names.len]usize = undefined;
+            var bytes: [field_names.len]usize = undefined;
             var bytes_per_capacity: usize = 0;
 
             for (data, 0..) |elem, i| {
                 field_indexes[i] = elem.field_index;
                 field_offsets[elem.field_index] = bytes_per_capacity;
+                bytes[i] = elem.size;
                 bytes_per_capacity += elem.size;
             }
 
@@ -223,6 +228,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 .bytes_per_capacity = bytes_per_capacity,
                 .fields = field_indexes,
                 .offsets = field_offsets,
+                .bytes = bytes,
             };
         };
 
