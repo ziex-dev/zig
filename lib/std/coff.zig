@@ -1173,7 +1173,7 @@ pub const Coff = struct {
         const section_data = self.getSectionData(sec);
         return allocator.dupe(u8, section_data);
     }
-    
+
     pub fn getRvaPtr(self: *const Coff, virtual_address: u32) !u32 {
         for (self.getSectionHeaders()) |*sect| {
             if (virtual_address >= sect.virtual_address and virtual_address < sect.virtual_address + sect.virtual_size) {
