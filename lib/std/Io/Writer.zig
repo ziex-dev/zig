@@ -2502,283 +2502,261 @@ pub fn Hashing(comptime Hasher: type) type {
 /// the hot paths when using this API.
 ///
 /// When using this API, it is not necessary to call `flush`.
-pub const Allocating = struct {
-    allocator: Allocator,
-    writer: Writer,
-    alignment: std.mem.Alignment,
+pub const Allocating = AlignedAllocating(.of(u8));
 
-    pub fn init(allocator: Allocator) Allocating {
-        return .initAligned(allocator, .of(u8));
-    }
+/// Maintains `Writer` state such that it writes to the unused capacity of an
+/// array list, filling it up completely before making a call through the
+/// vtable, causing a resize. Consequently, the same, optimized, non-generic
+/// machine code that uses `Writer`, such as formatted printing, takes
+/// the hot paths when using this API.
+///
+/// When using this API, it is not necessary to call `flush`.
+pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
+    return struct {
+        const Self = @This();
 
-    pub fn initAligned(allocator: Allocator, alignment: std.mem.Alignment) Allocating {
-        return .{
-            .allocator = allocator,
-            .writer = .{
-                .buffer = &.{},
-                .vtable = &vtable,
-            },
-            .alignment = alignment,
-        };
-    }
-
-    pub fn initCapacity(allocator: Allocator, capacity: usize) error{OutOfMemory}!Allocating {
-        return .{
-            .allocator = allocator,
-            .writer = .{
-                .buffer = if (capacity == 0)
-                    &.{}
-                else
-                    (allocator.rawAlloc(capacity, .of(u8), @returnAddress()) orelse
-                        return error.OutOfMemory)[0..capacity],
-                .vtable = &vtable,
-            },
-            .alignment = .of(u8),
-        };
-    }
-
-    pub fn initOwnedSlice(allocator: Allocator, slice: []u8) Allocating {
-        return initOwnedSliceAligned(allocator, .of(u8), slice);
-    }
-
-    pub fn initOwnedSliceAligned(
         allocator: Allocator,
-        comptime alignment: std.mem.Alignment,
-        slice: []align(alignment.toByteUnits()) u8,
-    ) Allocating {
-        return .{
-            .allocator = allocator,
-            .writer = .{
-                .buffer = slice,
-                .vtable = &vtable,
-            },
-            .alignment = alignment,
+        writer: Writer,
+
+        pub fn init(allocator: Allocator) Self {
+            return .initOwnedSlice(allocator, &.{});
+        }
+
+        pub fn initCapacity(allocator: Allocator, capacity: usize) error{OutOfMemory}!Self {
+            return .{
+                .allocator = allocator,
+                .writer = .{
+                    .buffer = if (capacity == 0)
+                        &.{}
+                    else
+                        (allocator.rawAlloc(capacity, .of(u8), @returnAddress()) orelse
+                            return error.OutOfMemory)[0..capacity],
+                    .vtable = &vtable,
+                },
+                .alignment = .of(u8),
+            };
+        }
+
+        pub fn initOwnedSlice(
+            allocator: Allocator,
+            slice: []align(alignment.toByteUnits()) u8,
+        ) Self {
+            return .{
+                .allocator = allocator,
+                .writer = .{
+                    .buffer = slice,
+                    .vtable = &vtable,
+                },
+                .alignment = alignment,
+            };
+        }
+
+        /// Replaces `array_list` with empty, taking ownership of the memory.
+        pub fn fromArrayList(
+            allocator: Allocator,
+            array_list: *std.array_list.Aligned(u8, alignment),
+        ) Allocating {
+            defer array_list.* = .empty;
+            return .{
+                .allocator = allocator,
+                .writer = .{
+                    .vtable = &vtable,
+                    .buffer = array_list.allocatedSlice(),
+                    .end = array_list.items.len,
+                },
+                .alignment = alignment,
+            };
+        }
+
+        const vtable: VTable = .{
+            .drain = Self.drain,
+            .sendFile = Self.sendFile,
+            .flush = noopFlush,
+            .rebase = growingRebase,
         };
-    }
 
-    /// Replaces `array_list` with empty, taking ownership of the memory.
-    pub fn fromArrayList(allocator: Allocator, array_list: *ArrayList(u8)) Allocating {
-        return fromArrayListAligned(allocator, .of(u8), array_list);
-    }
+        pub fn deinit(a: *Self) void {
+            if (a.writer.buffer.len == 0) return;
+            a.allocator.rawFree(a.writer.buffer, a.alignment, @returnAddress());
+            a.* = undefined;
+        }
 
-    /// Replaces `array_list` with empty, taking ownership of the memory.
-    pub fn fromArrayListAligned(
-        allocator: Allocator,
-        comptime alignment: std.mem.Alignment,
-        array_list: *std.array_list.Aligned(u8, alignment),
-    ) Allocating {
-        defer array_list.* = .empty;
-        return .{
-            .allocator = allocator,
-            .writer = .{
-                .vtable = &vtable,
-                .buffer = array_list.allocatedSlice(),
-                .end = array_list.items.len,
-            },
-            .alignment = alignment,
-        };
-    }
+        /// Returns an array list that takes ownership of the allocated memory.
+        /// Resets the `Allocating` to an empty state.
+        pub fn toArrayList(a: *Self) std.array_list.Aligned(u8, alignment) {
+            const w = &a.writer;
+            const result: std.array_list.Aligned(u8, alignment) = .{
+                .items = @alignCast(w.buffer[0..w.end]),
+                .capacity = w.buffer.len,
+            };
+            w.buffer = &.{};
+            w.end = 0;
+            return result;
+        }
 
-    const vtable: VTable = .{
-        .drain = Allocating.drain,
-        .sendFile = Allocating.sendFile,
-        .flush = noopFlush,
-        .rebase = growingRebase,
+        pub fn ensureUnusedCapacity(a: *Self, additional_count: usize) Allocator.Error!void {
+            const new_capacity = std.math.add(usize, a.writer.end, additional_count) catch return error.OutOfMemory;
+            return ensureTotalCapacity(a, new_capacity);
+        }
+
+        pub fn ensureTotalCapacity(a: *Self, new_capacity: usize) Allocator.Error!void {
+            // Protects growing unnecessarily since better_capacity will be larger.
+            if (a.writer.buffer.len >= new_capacity) return;
+            const better_capacity = ArrayList(u8).growCapacity(new_capacity);
+            return ensureTotalCapacityPrecise(a, better_capacity);
+        }
+
+        pub fn ensureTotalCapacityPrecise(a: *Self, new_capacity: usize) Allocator.Error!void {
+            const old_memory = a.writer.buffer;
+            if (old_memory.len >= new_capacity) return;
+            assert(new_capacity != 0);
+            if (old_memory.len > 0) {
+                if (a.allocator.rawRemap(old_memory, alignment, new_capacity, @returnAddress())) |new| {
+                    a.writer.buffer = new[0..new_capacity];
+                    return;
+                }
+            }
+            const new_memory = (a.allocator.rawAlloc(new_capacity, alignment, @returnAddress()) orelse
+                return error.OutOfMemory)[0..new_capacity];
+            const saved = old_memory[0..a.writer.end];
+            @memcpy(new_memory[0..saved.len], saved);
+            if (old_memory.len != 0) a.allocator.rawFree(old_memory, alignment, @returnAddress());
+            a.writer.buffer = new_memory;
+        }
+
+        pub fn toOwnedSlice(a: *Self) Allocator.Error![]u8 {
+            const old_memory = a.writer.buffer;
+            const buffered_len = a.writer.end;
+
+            if (old_memory.len > 0) {
+                if (buffered_len == 0) {
+                    a.allocator.rawFree(old_memory, alignment, @returnAddress());
+                    a.writer.buffer = &.{};
+                    a.writer.end = 0;
+                    return old_memory[0..0];
+                } else if (a.allocator.rawRemap(old_memory, alignment, buffered_len, @returnAddress())) |new| {
+                    a.writer.buffer = &.{};
+                    a.writer.end = 0;
+                    return new[0..buffered_len];
+                }
+            }
+
+            if (buffered_len == 0)
+                return a.writer.buffer[0..0];
+
+            const new_memory = (a.allocator.rawAlloc(buffered_len, alignment, @returnAddress()) orelse
+                return error.OutOfMemory)[0..buffered_len];
+            @memcpy(new_memory, old_memory[0..buffered_len]);
+            if (old_memory.len != 0) a.allocator.rawFree(old_memory, alignment, @returnAddress());
+            a.writer.buffer = &.{};
+            a.writer.end = 0;
+            return new_memory;
+        }
+
+        pub fn toOwnedSliceSentinel(a: *Self, comptime sentinel: u8) Allocator.Error![:sentinel]u8 {
+            // This addition can never overflow because `a.writer.buffer` can never occupy the whole address space.
+            try ensureTotalCapacityPrecise(a, a.writer.end + 1);
+            a.writer.buffer[a.writer.end] = sentinel;
+            a.writer.end += 1;
+            errdefer a.writer.end -= 1;
+            const result = try toOwnedSlice(a);
+            return result[0 .. result.len - 1 :sentinel];
+        }
+
+        pub fn written(a: *Self) []u8 {
+            return a.writer.buffered();
+        }
+
+        pub fn shrinkRetainingCapacity(a: *Self, new_len: usize) void {
+            a.writer.end = new_len;
+        }
+
+        pub fn clearRetainingCapacity(a: *Self) void {
+            a.shrinkRetainingCapacity(0);
+        }
+
+        fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
+            const a: *Self = @fieldParentPtr("writer", w);
+            const pattern = data[data.len - 1];
+            const splat_len = pattern.len * splat;
+            const start_len = a.writer.end;
+            assert(data.len != 0);
+            for (data) |bytes| {
+                a.ensureUnusedCapacity(bytes.len + splat_len + 1) catch return error.WriteFailed;
+                @memcpy(a.writer.buffer[a.writer.end..][0..bytes.len], bytes);
+                a.writer.end += bytes.len;
+            }
+            if (splat == 0) {
+                a.writer.end -= pattern.len;
+            } else switch (pattern.len) {
+                0 => {},
+                1 => {
+                    @memset(a.writer.buffer[a.writer.end..][0 .. splat - 1], pattern[0]);
+                    a.writer.end += splat - 1;
+                },
+                else => for (0..splat - 1) |_| {
+                    @memcpy(a.writer.buffer[a.writer.end..][0..pattern.len], pattern);
+                    a.writer.end += pattern.len;
+                },
+            }
+            return a.writer.end - start_len;
+        }
+
+        fn sendFile(w: *Writer, file_reader: *File.Reader, limit: Limit) FileError!usize {
+            if (File.Handle == void) return error.Unimplemented;
+            if (limit == .nothing) return 0;
+            const a: *Self = @fieldParentPtr("writer", w);
+            const pos = file_reader.logicalPos();
+            const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
+            if (additional == 0) return error.EndOfStream;
+            a.ensureUnusedCapacity(limit.minInt64(additional)) catch return error.WriteFailed;
+            const dest = limit.slice(a.writer.buffer[a.writer.end..]);
+            const n = try file_reader.interface.readSliceShort(dest);
+            if (n == 0) return error.EndOfStream;
+            a.writer.end += n;
+            return n;
+        }
+
+        fn growingRebase(w: *Writer, preserve: usize, minimum_len: usize) Error!void {
+            const a: *Self = @fieldParentPtr("writer", w);
+            const total = std.math.add(usize, preserve, minimum_len) catch return error.WriteFailed;
+            a.ensureTotalCapacity(total) catch return error.WriteFailed;
+            a.ensureUnusedCapacity(minimum_len) catch return error.WriteFailed;
+        }
     };
+}
 
-    pub fn deinit(a: *Allocating) void {
-        if (a.writer.buffer.len == 0) return;
-        a.allocator.rawFree(a.writer.buffer, a.alignment, @returnAddress());
-        a.* = undefined;
-    }
+fn testAlignedAllocating(comptime alignment: std.mem.Alignment) !void {
+    var a: AlignedAllocating(alignment) = .init(testing.allocator);
+    defer a.deinit();
+    const w = &a.writer;
 
-    /// Returns an array list that takes ownership of the allocated memory.
-    /// Resets the `Allocating` to an empty state.
-    pub fn toArrayList(a: *Allocating) ArrayList(u8) {
-        return toArrayListAligned(a, .of(u8));
-    }
+    const x: i32 = 42;
+    const y: i32 = 1234;
+    try w.print("x: {}\ny: {}\n", .{ x, y });
+    const expected = "x: 42\ny: 1234\n";
+    try testing.expectEqualSlices(u8, expected, a.written());
 
-    /// Returns an array list that takes ownership of the allocated memory.
-    /// Resets the `Allocating` to an empty state.
-    pub fn toArrayListAligned(
-        a: *Allocating,
-        comptime alignment: std.mem.Alignment,
-    ) std.array_list.Aligned(u8, alignment) {
-        assert(a.alignment == alignment); // Required for Allocator correctness.
-        const w = &a.writer;
-        const result: std.array_list.Aligned(u8, alignment) = .{
-            .items = @alignCast(w.buffer[0..w.end]),
-            .capacity = w.buffer.len,
-        };
-        w.buffer = &.{};
-        w.end = 0;
-        return result;
-    }
+    // exercise *Aligned methods
+    var l = a.toArrayList();
+    defer l.deinit(testing.allocator);
+    try testing.expectEqualSlices(u8, expected, l.items);
+    a = .fromArrayList(testing.allocator, &l);
+    try testing.expectEqualSlices(u8, expected, a.written());
+    const slice: []align(alignment.toByteUnits()) u8 = @alignCast(try a.toOwnedSlice());
+    try testing.expectEqualSlices(u8, expected, slice);
+    a = .initOwnedSlice(testing.allocator, slice);
+    try testing.expectEqualSlices(u8, expected, a.writer.buffer);
+}
 
-    pub fn ensureUnusedCapacity(a: *Allocating, additional_count: usize) Allocator.Error!void {
-        const new_capacity = std.math.add(usize, a.writer.end, additional_count) catch return error.OutOfMemory;
-        return ensureTotalCapacity(a, new_capacity);
-    }
-
-    pub fn ensureTotalCapacity(a: *Allocating, new_capacity: usize) Allocator.Error!void {
-        // Protects growing unnecessarily since better_capacity will be larger.
-        if (a.writer.buffer.len >= new_capacity) return;
-        const better_capacity = ArrayList(u8).growCapacity(new_capacity);
-        return ensureTotalCapacityPrecise(a, better_capacity);
-    }
-
-    pub fn ensureTotalCapacityPrecise(a: *Allocating, new_capacity: usize) Allocator.Error!void {
-        const old_memory = a.writer.buffer;
-        if (old_memory.len >= new_capacity) return;
-        assert(new_capacity != 0);
-        const alignment = a.alignment;
-        if (old_memory.len > 0) {
-            if (a.allocator.rawRemap(old_memory, alignment, new_capacity, @returnAddress())) |new| {
-                a.writer.buffer = new[0..new_capacity];
-                return;
-            }
-        }
-        const new_memory = (a.allocator.rawAlloc(new_capacity, alignment, @returnAddress()) orelse
-            return error.OutOfMemory)[0..new_capacity];
-        const saved = old_memory[0..a.writer.end];
-        @memcpy(new_memory[0..saved.len], saved);
-        if (old_memory.len != 0) a.allocator.rawFree(old_memory, alignment, @returnAddress());
-        a.writer.buffer = new_memory;
-    }
-
-    pub fn toOwnedSlice(a: *Allocating) Allocator.Error![]u8 {
-        const old_memory = a.writer.buffer;
-        const alignment = a.alignment;
-        const buffered_len = a.writer.end;
-
-        if (old_memory.len > 0) {
-            if (buffered_len == 0) {
-                a.allocator.rawFree(old_memory, alignment, @returnAddress());
-                a.writer.buffer = &.{};
-                a.writer.end = 0;
-                return old_memory[0..0];
-            } else if (a.allocator.rawRemap(old_memory, alignment, buffered_len, @returnAddress())) |new| {
-                a.writer.buffer = &.{};
-                a.writer.end = 0;
-                return new[0..buffered_len];
-            }
-        }
-
-        if (buffered_len == 0)
-            return a.writer.buffer[0..0];
-
-        const new_memory = (a.allocator.rawAlloc(buffered_len, alignment, @returnAddress()) orelse
-            return error.OutOfMemory)[0..buffered_len];
-        @memcpy(new_memory, old_memory[0..buffered_len]);
-        if (old_memory.len != 0) a.allocator.rawFree(old_memory, alignment, @returnAddress());
-        a.writer.buffer = &.{};
-        a.writer.end = 0;
-        return new_memory;
-    }
-
-    pub fn toOwnedSliceSentinel(a: *Allocating, comptime sentinel: u8) Allocator.Error![:sentinel]u8 {
-        // This addition can never overflow because `a.writer.buffer` can never occupy the whole address space.
-        try ensureTotalCapacityPrecise(a, a.writer.end + 1);
-        a.writer.buffer[a.writer.end] = sentinel;
-        a.writer.end += 1;
-        errdefer a.writer.end -= 1;
-        const result = try toOwnedSlice(a);
-        return result[0 .. result.len - 1 :sentinel];
-    }
-
-    pub fn written(a: *Allocating) []u8 {
-        return a.writer.buffered();
-    }
-
-    pub fn shrinkRetainingCapacity(a: *Allocating, new_len: usize) void {
-        a.writer.end = new_len;
-    }
-
-    pub fn clearRetainingCapacity(a: *Allocating) void {
-        a.shrinkRetainingCapacity(0);
-    }
-
-    fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
-        const a: *Allocating = @fieldParentPtr("writer", w);
-        const pattern = data[data.len - 1];
-        const splat_len = pattern.len * splat;
-        const start_len = a.writer.end;
-        assert(data.len != 0);
-        for (data) |bytes| {
-            a.ensureUnusedCapacity(bytes.len + splat_len + 1) catch return error.WriteFailed;
-            @memcpy(a.writer.buffer[a.writer.end..][0..bytes.len], bytes);
-            a.writer.end += bytes.len;
-        }
-        if (splat == 0) {
-            a.writer.end -= pattern.len;
-        } else switch (pattern.len) {
-            0 => {},
-            1 => {
-                @memset(a.writer.buffer[a.writer.end..][0 .. splat - 1], pattern[0]);
-                a.writer.end += splat - 1;
-            },
-            else => for (0..splat - 1) |_| {
-                @memcpy(a.writer.buffer[a.writer.end..][0..pattern.len], pattern);
-                a.writer.end += pattern.len;
-            },
-        }
-        return a.writer.end - start_len;
-    }
-
-    fn sendFile(w: *Writer, file_reader: *File.Reader, limit: Limit) FileError!usize {
-        if (File.Handle == void) return error.Unimplemented;
-        if (limit == .nothing) return 0;
-        const a: *Allocating = @fieldParentPtr("writer", w);
-        const pos = file_reader.logicalPos();
-        const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
-        if (additional == 0) return error.EndOfStream;
-        a.ensureUnusedCapacity(limit.minInt64(additional)) catch return error.WriteFailed;
-        const dest = limit.slice(a.writer.buffer[a.writer.end..]);
-        const n = try file_reader.interface.readSliceShort(dest);
-        if (n == 0) return error.EndOfStream;
-        a.writer.end += n;
-        return n;
-    }
-
-    fn growingRebase(w: *Writer, preserve: usize, minimum_len: usize) Error!void {
-        const a: *Allocating = @fieldParentPtr("writer", w);
-        const total = std.math.add(usize, preserve, minimum_len) catch return error.WriteFailed;
-        a.ensureTotalCapacity(total) catch return error.WriteFailed;
-        a.ensureUnusedCapacity(minimum_len) catch return error.WriteFailed;
-    }
-
-    fn testAllocating(comptime alignment: std.mem.Alignment) !void {
-        var a: Allocating = .initAligned(testing.allocator, alignment);
-        defer a.deinit();
-        const w = &a.writer;
-
-        const x: i32 = 42;
-        const y: i32 = 1234;
-        try w.print("x: {}\ny: {}\n", .{ x, y });
-        const expected = "x: 42\ny: 1234\n";
-        try testing.expectEqualSlices(u8, expected, a.written());
-
-        // exercise *Aligned methods
-        var l = a.toArrayListAligned(alignment);
-        defer l.deinit(testing.allocator);
-        try testing.expectEqualSlices(u8, expected, l.items);
-        a = .fromArrayListAligned(testing.allocator, alignment, &l);
-        try testing.expectEqualSlices(u8, expected, a.written());
-        const slice: []align(alignment.toByteUnits()) u8 = @alignCast(try a.toOwnedSlice());
-        try testing.expectEqualSlices(u8, expected, slice);
-        a = .initOwnedSliceAligned(testing.allocator, alignment, slice);
-        try testing.expectEqualSlices(u8, expected, a.writer.buffer);
-    }
-
-    test Allocating {
-        try testAllocating(.fromByteUnits(1));
-        try testAllocating(.fromByteUnits(4));
-        try testAllocating(.fromByteUnits(8));
-        try testAllocating(.fromByteUnits(16));
-        try testAllocating(.fromByteUnits(32));
-        try testAllocating(.fromByteUnits(64));
-    }
-};
+test AlignedAllocating {
+    try testAlignedAllocating(.fromByteUnits(1));
+    try testAlignedAllocating(.fromByteUnits(4));
+    try testAlignedAllocating(.fromByteUnits(8));
+    try testAlignedAllocating(.fromByteUnits(16));
+    try testAlignedAllocating(.fromByteUnits(32));
+    try testAlignedAllocating(.fromByteUnits(64));
+}
 
 test "discarding sendFile" {
     const io = testing.io;
