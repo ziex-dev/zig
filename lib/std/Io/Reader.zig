@@ -370,8 +370,8 @@ pub fn appendRemainingAligned(
     list: *std.array_list.Aligned(u8, alignment),
     limit: Limit,
 ) LimitedAllocError!void {
-    var a = std.Io.Writer.Allocating.fromArrayListAligned(gpa, alignment, list);
-    defer list.* = a.toArrayListAligned(alignment);
+    var a = std.Io.Writer.AlignedAllocating(alignment).fromArrayList(gpa, list);
+    defer list.* = a.toArrayList();
 
     var remaining = limit;
     while (remaining != .nothing) {
