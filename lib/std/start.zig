@@ -535,6 +535,11 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     const auxv: [*]elf.Auxv = @ptrCast(@alignCast(envp.ptr + envp_count + 1));
 
     var at_hwcap: usize = 0;
+    var at_secure: usize = 0;
+    var at_uid: usize = 0;
+    var at_euid: usize = 0;
+    var at_gid: usize = 0;
+    var at_egid: usize = 0;
     const phdrs = init: {
         var i: usize = 0;
         var at_phdr: usize = 0;
@@ -544,6 +549,11 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
                 elf.AT_PHNUM => at_phnum = auxv[i].a_un.a_val,
                 elf.AT_PHDR => at_phdr = auxv[i].a_un.a_val,
                 elf.AT_HWCAP => at_hwcap = auxv[i].a_un.a_val,
+                elf.AT_SECURE => at_secure = auxv[i].a_un.a_val,
+                elf.AT_UID => at_uid = auxv[i].a_un.a_val,
+                elf.AT_EUID => at_euid = auxv[i].a_un.a_val,
+                elf.AT_GID => at_gid = auxv[i].a_un.a_val,
+                elf.AT_EGID => at_egid = auxv[i].a_un.a_val,
                 else => continue,
             }
         }
@@ -579,6 +589,10 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
             std.os.linux.tls.initStatic(phdrs);
         }
 
+        if (at_secure != 0 or at_uid != at_euid or at_gid != at_egid) {
+            sanitizeStdioLinux();
+        }
+
         // The way Linux executables represent stack size is via the PT_GNU_STACK
         // program header. However the kernel does not recognize it; it always gives 8 MiB.
         // Here we look for the stack size in our program headers and use setrlimit
@@ -601,6 +615,37 @@ fn posixCallMainAndExit(argc_argv_ptr: [*]usize) callconv(.c) noreturn {
     }
 
     std.process.exit(callMainWithArgs(argc, argv, envp));
+}
+
+fn sanitizeStdioLinux() void {
+    @disableInstrumentation();
+
+    const linux = std.os.linux;
+
+    var pfds: [3]linux.pollfd = .{
+        .{ .fd = linux.STDIN_FILENO, .events = 0, .revents = 0 },
+        .{ .fd = linux.STDOUT_FILENO, .events = 0, .revents = 0 },
+        .{ .fd = linux.STDERR_FILENO, .events = 0, .revents = 0 },
+    };
+
+    if (linux.errno(linux.poll(&pfds, pfds.len, 0)) != .SUCCESS) {
+        @trap();
+    }
+
+    for (&pfds) |*pfd| {
+        if (pfd.revents & linux.POLL.NVAL != 0) {
+            switch (linux.errno(linux.fcntl(pfd.fd, linux.F.GETFD, 0))) {
+                .SUCCESS => continue,
+                .BADF => {},
+                else => @trap(),
+            }
+
+            const fd = linux.open("/dev/null", .{ .ACCMODE = .RDWR }, 0);
+            if (linux.errno(fd) != .SUCCESS) {
+                @trap();
+            }
+        }
+    }
 }
 
 fn expandStackSize(phdrs: []elf.Phdr) void {
