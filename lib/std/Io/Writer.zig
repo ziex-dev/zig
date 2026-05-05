@@ -2675,6 +2675,32 @@ pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
             a.shrinkRetainingCapacity(0);
         }
 
+        pub fn shrinkAndFree(a: *Self) Allocator.Error!void {
+            a.clearRetainingCapacity();
+            return a.shrinkAndFreePrecise(0);
+        }
+
+        pub fn shrinkToLen(a: *Self) Allocator.Error!void {
+            return a.shrinkAndFreePrecise(a.writer.end);
+        }
+
+        fn shrinkAndFreePrecise(self: *Self, new_len: usize) Allocator.Error!void {
+            assert(new_len <= self.writer.buffer.len);
+            assert(new_len >= self.writer.end);
+            const old_memory = self.writer.buffer;
+            if (self.allocator.rawRemap(old_memory, new_len)) |new_items| {
+                self.capacity = new_len;
+                self.items = new_items[0..new_len];
+                return;
+            }
+            const new_memory = (self.allocator.rawAlloc(new_len, alignment, @returnAddress()) orelse
+                return error.OutOfMemory)[0..new_len];
+            @memcpy(new_memory, self.items[0..new_len]);
+            self.allocator.free(old_memory);
+            self.items = new_memory;
+            self.capacity = new_memory.len;
+        }
+
         fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
             const a: *Self = @fieldParentPtr("writer", w);
             const pattern = data[data.len - 1];
