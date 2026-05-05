@@ -2533,7 +2533,6 @@ pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
                             return error.OutOfMemory)[0..capacity],
                     .vtable = &vtable,
                 },
-                .alignment = .of(u8),
             };
         }
 
@@ -2547,7 +2546,6 @@ pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
                     .buffer = slice,
                     .vtable = &vtable,
                 },
-                .alignment = alignment,
             };
         }
 
@@ -2564,7 +2562,6 @@ pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
                     .buffer = array_list.allocatedSlice(),
                     .end = array_list.items.len,
                 },
-                .alignment = alignment,
             };
         }
 
@@ -2577,7 +2574,7 @@ pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
 
         pub fn deinit(a: *Self) void {
             if (a.writer.buffer.len == 0) return;
-            a.allocator.rawFree(a.writer.buffer, a.alignment, @returnAddress());
+            a.allocator.rawFree(a.writer.buffer, alignment, @returnAddress());
             a.* = undefined;
         }
 
