@@ -2688,7 +2688,7 @@ pub fn ensureUnusedRelocCapacity(elf: *Elf, loc_si: Symbol.Index, len: usize) !v
         .NONE, .CORE, _ => unreachable,
         .REL => {
             const shndx = loc_si.shndx(elf);
-            const sh = shndx.get(elf);
+            var sh = shndx.get(elf);
             if (sh.rela_si == .null) {
                 var bfa_buf: [32]u8 = undefined;
                 var bfa: std.heap.BufferFirstAllocator = .init(&bfa_buf, gpa);
@@ -2698,7 +2698,7 @@ pub fn ensureUnusedRelocCapacity(elf: *Elf, loc_si: Symbol.Index, len: usize) !v
                     try std.fmt.allocPrint(allocator, ".rela{s}", .{elf.sectionName(sh.si)});
                 defer allocator.free(rela_name);
 
-                sh.rela_si = try elf.addSection(.none, .{
+                const rela_si = try elf.addSection(.none, .{
                     .name = rela_name,
                     .type = .RELA,
                     .link = @intFromEnum(elf.si.symtab.shndx(elf)),
@@ -2714,6 +2714,9 @@ pub fn ensureUnusedRelocCapacity(elf: *Elf, loc_si: Symbol.Index, len: usize) !v
                     },
                     .node_align = elf.mf.flags.block_size,
                 });
+                // elf.shdrs pointed to by sh may be relocated by addSection above
+                sh = shndx.get(elf);
+                sh.rela_si = rela_si;
             }
             break :rela .{ sh.rela_si, len };
         },
