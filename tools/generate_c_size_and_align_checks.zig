@@ -31,10 +31,10 @@ const usage =
     \\
 ;
 const command: std.cli.Command = .{
-    .name = "generate_c_size_and_align_checks",
+    .name = .generate_c_size_and_align_checks,
     .help = usage,
     .positional_args = &.{
-        .init("target_triple", [:0]const u8, .{}),
+        .init(.target_triple, [:0]const u8, .{}),
     },
 };
 

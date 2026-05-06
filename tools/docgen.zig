@@ -29,17 +29,17 @@ const usage =
     \\
 ;
 const command: std.cli.Command = .{
-    .name = "docgen",
+    .name = .docgen,
     .help = usage,
     .named_args = &.{
-        .init("code-dir", [:0]const u8, .{
+        .init(.@"code-dir", [:0]const u8, .{
             .count = .one,
             .help = "Path to directory containing code example outputs",
         }),
     },
     .positional_args = &.{
-        .init("input", [:0]const u8, .{ .count = .one }),
-        .init("output", [:0]const u8, .{ .count = .one }),
+        .init(.input, [:0]const u8, .{ .count = .one }),
+        .init(.output, [:0]const u8, .{ .count = .one }),
     },
 };
 
