@@ -580,7 +580,7 @@ pub fn deinit(ev: *Evented) void {
     ev.stderr_mutex.deinit();
     for (&ev.futexes) |*futex| futex.deinit();
     ev.exit_semaphore.as_object().release();
-    ev.backing_allocator.free(ev.main_loop_stack[0..main_loop_stack_size]);
+    ev.backing_allocator.destroy(ev.main_loop_stack[0..main_loop_stack_size]);
     ev.queue.as_object().release();
 }
 
