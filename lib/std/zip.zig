@@ -457,7 +457,7 @@ pub const Iterator = struct {
         uncompressed_size: u64,
         file_offset: u64,
 
-        pub fn get_filename(self: Entry, stream: *File.Reader, filename_buf: []u8, options: ExtractOptions) ![]u8 {
+        pub fn getFilename(self: Entry, stream: *File.Reader, filename_buf: []u8, options: ExtractOptions) ![]u8 {
             if (filename_buf.len < self.filename_len)
                 return error.ZipInsufficientBuffer;
             switch (self.compression_method) {
@@ -483,7 +483,7 @@ pub const Iterator = struct {
             return filename;
         }
 
-        pub fn extract_to(self: Entry, stream: *File.Reader, w: *Writer) !void {
+        pub fn extractTo(self: Entry, stream: *File.Reader, w: *Writer) !void {
             switch (self.compression_method) {
                 .store, .deflate => {},
                 else => return error.UnsupportedCompressionMethod,
@@ -589,7 +589,7 @@ pub const Iterator = struct {
         ) !void {
             const io = stream.io;
 
-            const filename = try self.get_filename(stream, filename_buf, options);
+            const filename = try self.getFilename(stream, filename_buf, options);
 
             // All entries that end in '/' are directories
             if (filename[filename.len - 1] == '/') {
@@ -612,7 +612,7 @@ pub const Iterator = struct {
             defer out_file.close(io);
             var out_file_buffer: [1024]u8 = undefined;
             var file_writer = out_file.writer(io, &out_file_buffer);
-            self.extract_to(stream, &file_writer.interface) catch |err| switch (err) {
+            self.extractTo(stream, &file_writer.interface) catch |err| switch (err) {
                 error.WriteFailed => return file_writer.err orelse err,
                 else => return err,
             };
