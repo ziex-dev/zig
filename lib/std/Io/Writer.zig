@@ -2553,7 +2553,7 @@ pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
         pub fn fromArrayList(
             allocator: Allocator,
             array_list: *std.array_list.Aligned(u8, alignment),
-        ) Allocating {
+        ) Self {
             defer array_list.* = .empty;
             return .{
                 .allocator = allocator,
@@ -2579,7 +2579,7 @@ pub fn AlignedAllocating(comptime alignment: std.mem.Alignment) type {
         }
 
         /// Returns an array list that takes ownership of the allocated memory.
-        /// Resets the `Allocating` to an empty state.
+        /// Resets to an empty state.
         pub fn toArrayList(a: *Self) std.array_list.Aligned(u8, alignment) {
             const w = &a.writer;
             const result: std.array_list.Aligned(u8, alignment) = .{
