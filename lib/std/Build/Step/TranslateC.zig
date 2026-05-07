@@ -171,6 +171,10 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
     try argv_list.append("translate-c");
     if (translate_c.link_libc) {
         try argv_list.append("-lc");
+        if (b.libc_file) |libc_file| {
+            try argv_list.append("--libc");
+            try argv_list.append(libc_file);
+        }
     }
 
     try argv_list.append("--cache-dir");
