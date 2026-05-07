@@ -12731,6 +12731,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                         .NOMEM => return error.SystemResources,
                         .NOTCONN => return error.SocketUnconnected,
                         .CONNRESET => return error.ConnectionResetByPeer,
+                        .TIMEDOUT => return error.PeerUnresponsive,
                         .NOTCAPABLE => return error.AccessDenied,
                         else => |err| return posix.unexpectedErrno(err),
                     }
@@ -12762,6 +12763,7 @@ fn netReadPosix(fd: net.Socket.Handle, data: [][]u8) net.Stream.Reader.Error!usi
                     .NOMEM => return error.SystemResources,
                     .NOTCONN => return error.SocketUnconnected,
                     .CONNRESET => return error.ConnectionResetByPeer,
+                    .TIMEDOUT => return error.PeerUnresponsive,
                     .PIPE => return error.SocketUnconnected,
                     .NETDOWN => return error.NetworkDown,
                     else => |err| return posix.unexpectedErrno(err),
@@ -13075,6 +13077,7 @@ fn netReceivePosix(
             .MSGSIZE => return syscall.fail(error.MessageOversize),
             .PIPE => return syscall.fail(error.SocketUnconnected),
             .CONNRESET => return syscall.fail(error.ConnectionResetByPeer),
+            .TIMEDOUT => return syscall.fail(error.PeerUnresponsive),
             .NETDOWN => return syscall.fail(error.NetworkDown),
             .AGAIN => return syscall.fail(error.WouldBlock),
             .BADF => |err| return syscall.errnoBug(err),

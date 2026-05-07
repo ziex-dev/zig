@@ -373,6 +373,9 @@ pub const Operation = union(enum) {
             /// the OS where it was queued up to be reported at the next call
             /// to send or receive on the bound socket.
             PortUnreachable,
+            /// The remote peer did not respond to ongoing communication, causing the
+            /// kernel to abort the connection.
+            PeerUnresponsive,
         } || Io.UnexpectedError;
 
         pub const Result = struct { ?net.Socket.ReceiveError, usize };
@@ -386,10 +389,12 @@ pub const Operation = union(enum) {
             SystemResources,
             ConnectionResetByPeer,
             SocketUnconnected,
-            /// The file descriptor does not hold the required rights to read
-            /// from it.
+            /// File descriptor does not hold the required rights to read from it.
             AccessDenied,
             NetworkDown,
+            /// The remote peer did not respond to ongoing communication, causing the
+            /// kernel to abort the connection.
+            PeerUnresponsive,
         } || Io.UnexpectedError;
 
         pub const Result = Error!usize;
