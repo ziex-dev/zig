@@ -161,12 +161,17 @@ fn printType(
     }
 
     switch (@typeInfo(T)) {
-        .array => {
+        .array => |a| {
+            try printInnerUserDefinedType(options, out, a.child, indent);
+
             if (name) |some| {
-                try out.print(gpa, "pub const {f}: {s} = ", .{ std.zig.fmtId(some), @typeName(T) });
+                try out.print(gpa, "pub const {f}: ", .{std.zig.fmtId(some)});
+                try printTypeFmtId(gpa, out, T);
+                try out.appendSlice(gpa, " = ");
             }
 
-            try out.print(gpa, "{s} {{\n", .{@typeName(T)});
+            try printTypeFmtId(gpa, out, T);
+            try out.appendSlice(gpa, " {\n");
             for (value) |item| {
                 try out.appendNTimes(gpa, ' ', indent + 4);
                 try printType(options, out, @TypeOf(item), item, indent + 4, null);
@@ -186,11 +191,17 @@ fn printType(
                 @compileError("Non-slice pointers are not yet supported in build options");
             }
 
+            try printInnerUserDefinedType(options, out, p.child, indent);
+
             if (name) |some| {
-                try out.print(gpa, "pub const {f}: {s} = ", .{ std.zig.fmtId(some), @typeName(T) });
+                try out.print(gpa, "pub const {f}: ", .{std.zig.fmtId(some)});
+                try printTypeFmtId(gpa, out, T);
+                try out.appendSlice(gpa, " = ");
             }
 
-            try out.print(gpa, "&[_]{s} {{\n", .{@typeName(p.child)});
+            try out.appendSlice(gpa, "&[_]");
+            try printTypeFmtId(gpa, out, p.child);
+            try out.appendSlice(gpa, " {\n");
             for (value) |item| {
                 try out.appendNTimes(gpa, ' ', indent + 4);
                 try printType(options, out, @TypeOf(item), item, indent + 4, null);
@@ -205,13 +216,21 @@ fn printType(
             }
             return;
         },
-        .optional => {
+        .optional => |o| {
+            try printInnerUserDefinedType(options, out, o.child, indent);
+
             if (name) |some| {
-                try out.print(gpa, "pub const {f}: {s} = ", .{ std.zig.fmtId(some), @typeName(T) });
+                try out.print(gpa, "pub const {f}: ", .{std.zig.fmtId(some)});
+                try printTypeFmtId(gpa, out, T);
+                try out.appendSlice(gpa, " = ");
             }
 
             if (value) |inner| {
-                try printType(options, out, @TypeOf(inner), inner, indent + 4, null);
+                const inner_info = @typeInfo(o.child);
+                switch (inner_info) {
+                    .@"struct" => |info| try printStructValue(options, out, info, inner, indent),
+                    else => try printType(options, out, o.child, inner, indent + 4, null),
+                }
                 // Pop the '\n' and ',' chars
                 _ = options.contents.pop();
                 _ = options.contents.pop();
@@ -250,6 +269,10 @@ fn printType(
                     std.zig.fmtId(@typeName(T)),
                     std.zig.fmtIdFlags(@tagName(value), .{ .allow_underscore = true, .allow_primitive = true }),
                 });
+            } else {
+                try out.print(gpa, ".{f},\n", .{
+                    std.zig.fmtIdFlags(@tagName(value), .{ .allow_underscore = true, .allow_primitive = true }),
+                });
             }
             return;
         },
@@ -261,11 +284,51 @@ fn printType(
                     std.zig.fmtId(some),
                     std.zig.fmtId(@typeName(T)),
                 });
-                try printStructValue(options, out, info, value, indent);
             }
+            try printStructValue(options, out, info, value, indent);
             return;
         },
         else => @compileError(std.fmt.comptimePrint("`{s}` are not yet supported as build options", .{@tagName(@typeInfo(T))})),
+    }
+}
+
+fn printTypeFmtId(gpa: std.mem.Allocator, out: *std.ArrayList(u8), comptime T: type) !void {
+    switch (@typeInfo(T)) {
+        .array => |a| {
+            try out.print(gpa, "[{}]", .{a.len});
+            return printTypeFmtId(gpa, out, a.child);
+        },
+        .pointer => |p| {
+            if (p.size != .slice) {
+                @compileError("Non-slice pointers are not yet supported in build options");
+            }
+            try out.appendSlice(gpa, "[]");
+            if (p.is_const) try out.appendSlice(gpa, "const ");
+            return printTypeFmtId(gpa, out, p.child);
+        },
+        .optional => |o| {
+            try out.append(gpa, '?');
+            return printTypeFmtId(gpa, out, o.child);
+        },
+        else => return out.print(gpa, "{f}", .{std.zig.fmtIdFlags(@typeName(T), .{ .allow_primitive = true })}),
+    }
+}
+
+fn printInnerUserDefinedType(options: *Options, out: *std.ArrayList(u8), comptime T: type, indent: u8) !void {
+    switch (@typeInfo(T)) {
+        .array => |a| {
+            return printInnerUserDefinedType(options, out, a.child, indent);
+        },
+        .pointer => |p| {
+            if (p.size != .slice) {
+                @compileError("Non-slice pointers are not yet supported in build options");
+            }
+            return printInnerUserDefinedType(options, out, p.child, indent);
+        },
+        .optional => |o| {
+            return printInnerUserDefinedType(options, out, o.child, indent);
+        },
+        else => return printUserDefinedType(options, out, T, indent),
     }
 }
 
@@ -576,6 +639,30 @@ test Options {
         normal_enum: NormalEnum = .foo,
     };
 
+    const optional_enums: []const ?NormalEnum = &[_]?NormalEnum{ null, NormalEnum.bar };
+
+    const optional_structs: []const ?NormalStruct = &[_]?NormalStruct{
+        NormalStruct{
+            .hello = "foo",
+            .world = false,
+        },
+        null,
+        NormalStruct{
+            .hello = null,
+            .world = true,
+        },
+    };
+
+    const nested_array_of_optional_structs = [2][1]?NormalStruct{
+        [1]?NormalStruct{null},
+        [1]?NormalStruct{
+            NormalStruct{
+                .hello = "bar",
+                .world = true,
+            },
+        },
+    };
+
     options.addOption(usize, "option1", 1);
     options.addOption(?usize, "option2", null);
     options.addOption(?usize, "option3", 3);
@@ -599,6 +686,16 @@ test Options {
     options.addOption(NestedStruct, "nested_struct", NestedStruct{
         .normal_struct = .{ .hello = "bar" },
     });
+    options.addOption(?NormalEnum, "optional_enum1", null);
+    options.addOption(?NormalEnum, "optional_enum2", NormalEnum.foo);
+    options.addOption([]const ?NormalEnum, "optional_enums", optional_enums);
+    options.addOption(?NormalStruct, "optional_struct1", null);
+    options.addOption(?NormalStruct, "optional_struct2", NormalStruct{
+        .hello = "foo",
+        .world = true,
+    });
+    options.addOption([]const ?NormalStruct, "optional_structs", optional_structs);
+    options.addOption([2][1]?NormalStruct, "nested_array_of_optional_structs", nested_array_of_optional_structs);
 
     try std.testing.expectEqualStrings(
         \\pub const option1: usize = 1;
@@ -667,6 +764,39 @@ test Options {
         \\        .world = true,
         \\    },
         \\    .normal_enum = .foo,
+        \\};
+        \\pub const optional_enum1: ?@"Build.Step.Options.decltest.Options.NormalEnum" = null;
+        \\pub const optional_enum2: ?@"Build.Step.Options.decltest.Options.NormalEnum" = .foo;
+        \\pub const optional_enums: []const ?@"Build.Step.Options.decltest.Options.NormalEnum" = &[_]?@"Build.Step.Options.decltest.Options.NormalEnum" {
+        \\    null,
+        \\    .bar,
+        \\};
+        \\pub const optional_struct1: ?@"Build.Step.Options.decltest.Options.NormalStruct" = null;
+        \\pub const optional_struct2: ?@"Build.Step.Options.decltest.Options.NormalStruct" = .{
+        \\    .hello = "foo",
+        \\    .world = true,
+        \\};
+        \\pub const optional_structs: []const ?@"Build.Step.Options.decltest.Options.NormalStruct" = &[_]?@"Build.Step.Options.decltest.Options.NormalStruct" {
+        \\    .{
+        \\        .hello = "foo",
+        \\        .world = false,
+        \\    },
+        \\    null,
+        \\    .{
+        \\        .hello = null,
+        \\        .world = true,
+        \\    },
+        \\};
+        \\pub const nested_array_of_optional_structs: [2][1]?@"Build.Step.Options.decltest.Options.NormalStruct" = [2][1]?@"Build.Step.Options.decltest.Options.NormalStruct" {
+        \\    [1]?@"Build.Step.Options.decltest.Options.NormalStruct" {
+        \\        null,
+        \\    },
+        \\    [1]?@"Build.Step.Options.decltest.Options.NormalStruct" {
+        \\        .{
+        \\            .hello = "bar",
+        \\            .world = true,
+        \\        },
+        \\    },
         \\};
         \\
     , options.contents.items);
