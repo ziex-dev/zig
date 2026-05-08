@@ -334,6 +334,7 @@ fn mainArgs(
             .depend_on_aro = true,
             .prepend_zig_lib_dir_path = true,
             .server = use_server,
+            .color = Color.settingFromEnvironment(environ_map),
         });
     } else if (mem.eql(u8, cmd, "fmt")) {
         dev.check(.fmt_command);
@@ -342,11 +343,13 @@ fn mainArgs(
         return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "objcopy",
             .root_src_path = "objcopy.zig",
+            .color = Color.settingFromEnvironment(environ_map),
         });
     } else if (mem.eql(u8, cmd, "objdump")) {
         return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "objdump",
             .root_src_path = "objdump.zig",
+            .color = Color.settingFromEnvironment(environ_map),
         });
     } else if (mem.eql(u8, cmd, "fetch")) {
         return cmdFetch(gpa, arena, io, cmd_args, environ_map);
@@ -355,6 +358,7 @@ fn mainArgs(
             .cmd_name = "libc",
             .root_src_path = "libc.zig",
             .prepend_zig_lib_dir_path = true,
+            .color = Color.settingFromEnvironment(environ_map),
         });
     } else if (mem.eql(u8, cmd, "std")) {
         return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
@@ -363,6 +367,7 @@ fn mainArgs(
             .prepend_zig_lib_dir_path = true,
             .prepend_zig_exe_path = true,
             .prepend_global_cache_path = true,
+            .color = Color.settingFromEnvironment(environ_map),
         });
     } else if (mem.eql(u8, cmd, "init")) {
         return cmdInit(gpa, arena, io, cmd_args);
@@ -394,6 +399,7 @@ fn mainArgs(
         return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
             .cmd_name = "reduce",
             .root_src_path = "reduce.zig",
+            .color = Color.settingFromEnvironment(environ_map),
         });
     } else if (mem.eql(u8, cmd, "zen")) {
         dev.check(.zen_command);
@@ -402,11 +408,11 @@ fn mainArgs(
         dev.check(.help_command);
         return Io.File.stdout().writeStreamingAll(io, usage);
     } else if (mem.eql(u8, cmd, "ast-check")) {
-        return cmdAstCheck(arena, io, cmd_args);
+        return cmdAstCheck(arena, io, cmd_args, environ_map);
     } else if (mem.eql(u8, cmd, "detect-cpu")) {
         return cmdDetectCpu(io, cmd_args);
     } else if (build_options.enable_debug_extensions and mem.eql(u8, cmd, "changelist")) {
-        return cmdChangelist(arena, io, cmd_args);
+        return cmdChangelist(arena, io, cmd_args, environ_map);
     } else if (build_options.enable_debug_extensions and mem.eql(u8, cmd, "dump-zir")) {
         return cmdDumpZir(arena, io, cmd_args);
     } else if (build_options.enable_debug_extensions and mem.eql(u8, cmd, "llvm-ints")) {
@@ -1035,16 +1041,7 @@ fn buildOutputType(
     };
     defer create_module.link_inputs.deinit(gpa);
 
-    // before arg parsing, check for the NO_COLOR and CLICOLOR_FORCE environment variables
-    // if set, default the color setting to .off or .on, respectively
-    // explicit --color arguments will still override this setting.
-    // Disable color on WASI per https://github.com/WebAssembly/WASI/issues/162
-    var color: Color = if (native_os == .wasi or EnvVar.NO_COLOR.isSet(environ_map))
-        .off
-    else if (EnvVar.CLICOLOR_FORCE.isSet(environ_map))
-        .on
-    else
-        .auto;
+    var color: Color = Color.settingFromEnvironment(environ_map);
     var n_jobs: ?u32 = null;
 
     switch (arg_mode) {
@@ -4749,7 +4746,7 @@ fn cmdTranslateC(
                 p.* = result;
                 return;
             } else {
-                const color: Color = .auto;
+                const color: Color = Color.settingFromEnvironment(environ_map);
                 result.errors.renderToStderr(io, .{}, color) catch {};
                 process.exit(1);
             }
@@ -4795,6 +4792,7 @@ pub fn translateC(
         .root_src_path = "translate-c/main.zig",
         .depend_on_aro = true,
         .capture = capture,
+        .color = Color.settingFromEnvironment(environ_map),
     });
 }
 
@@ -5017,7 +5015,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
     const results_tmp_file_nonce = std.fmt.hex(randInt(io, u64));
     try child_argv.append(arena, "-Z" ++ results_tmp_file_nonce);
 
-    var color: Color = .auto;
+    var color: Color = Color.settingFromEnvironment(environ_map);
     var n_jobs: ?u32 = null;
 
     {
@@ -6286,12 +6284,12 @@ const usage_ast_check =
     \\
 ;
 
-fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8) !void {
+fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8, environ_map: *const std.process.Environ.Map) !void {
     dev.check(.ast_check_command);
 
     const Zir = std.zig.Zir;
 
-    var color: Color = .auto;
+    var color: Color = Color.settingFromEnvironment(environ_map);
     var want_output_text = false;
     var force_zon = false;
     var zig_source_path: ?[]const u8 = null;
@@ -6674,10 +6672,10 @@ fn cmdDumpZir(arena: Allocator, io: Io, args: []const []const u8) !void {
 }
 
 /// This is only enabled for debug builds.
-fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8) !void {
+fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8, environ_map: *const std.process.Environ.Map) !void {
     dev.check(.changelist_command);
 
-    const color: Color = .auto;
+    const color: Color = Color.settingFromEnvironment(environ_map);
     const Zir = std.zig.Zir;
 
     const old_source_path = args[0];
@@ -7045,7 +7043,7 @@ fn cmdFetch(
 ) !void {
     dev.check(.fetch_command);
 
-    const color: Color = .auto;
+    const color: Color = Color.settingFromEnvironment(environ_map);
     var opt_path_or_url: ?[]const u8 = null;
     var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
     var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(environ_map);
