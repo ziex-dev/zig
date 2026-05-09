@@ -63,7 +63,6 @@ pub fn calcLimbLen(scalar: anytype) usize {
     }
 }
 
-/// Same as `calcToStringLimbsBufferLen`, without the useless base check.
 pub fn calcLog10LimbsBufferLen(a_len: usize) usize {
     return a_len + 2 + a_len + calcDivLimbsBufferLen(a_len, 1);
 }
@@ -71,11 +70,23 @@ pub fn calcLog10LimbsBufferLen(a_len: usize) usize {
 pub fn calcToStringLimbsBufferLen(a_len: usize, base: u8) usize {
     if (math.isPowerOfTwo(base))
         return 0;
-    return a_len + 2 + a_len + calcDivLimbsBufferLen(a_len, 1);
+    return a_len;
 }
 
 pub fn calcDivLimbsBufferLen(a_len: usize, b_len: usize) usize {
     return a_len + b_len + 4;
+}
+
+/// Computes the number of limbs required to store the quotient of the division `a` / `b`
+/// `a` and `b` must be normalized, and `b` must be non-zero
+pub fn calcDivQLenExact(a: []const Limb, b: []const Limb) usize {
+    assert(a.len >= b.len);
+    assert(b.len >= 1);
+    assert(!(b.len == 1 and b[0] == 0)); // b must be non-zero
+
+    const need_one_more = llcmp(a[a.len - b.len ..], b).compare(.gte);
+    const needed_len = a.len - b.len + @intFromBool(need_one_more);
+    return @max(needed_len, 1);
 }
 
 pub fn calcMulLimbsBufferLen(a_len: usize, b_len: usize, aliases: usize) usize {
@@ -1724,13 +1735,8 @@ pub const Mutable = struct {
         if (y.len - xy_trailing == 1) {
             const divisor = y.limbs[y.len - 1];
 
-            // Optimization for small divisor. By using a half limb we can avoid requiring DoubleLimb
-            // divisions in the hot code path. This may often require compiler_rt software-emulation.
-            if (divisor < maxInt(HalfLimb)) {
-                lldiv0p5(q.limbs, &r.limbs[0], x.limbs[xy_trailing..x.len], @as(HalfLimb, @intCast(divisor)));
-            } else {
-                lldiv1(q.limbs, &r.limbs[0], x.limbs[xy_trailing..x.len], divisor);
-            }
+            @memcpy(q.limbs[0 .. x.len - xy_trailing], x.limbs[xy_trailing..x.len]);
+            r.limbs[0] = divby1(q.limbs[0 .. x.len - xy_trailing], divisor);
 
             q.normalize(x.len - xy_trailing);
             q.positive = q_positive;
@@ -2461,58 +2467,13 @@ pub const Const = struct {
                 digits_len -= 1;
             }
         } else {
-            // Non power-of-two: batch divisions per word size.
-            // We use a HalfLimb here so the division uses the faster lldiv0p5 over lldiv1 codepath.
-            const digits_per_limb = math.log(HalfLimb, base, maxInt(HalfLimb));
-            var limb_base: Limb = 1;
-            var j: usize = 0;
-            while (j < digits_per_limb) : (j += 1) {
-                limb_base *= base;
-            }
-            const b: Const = .{ .limbs = &[_]Limb{limb_base}, .positive = true };
+            const buffer = limbs_buffer[0..self.limbs.len];
+            @memcpy(buffer, self.limbs);
 
-            var q: Mutable = .{
-                .limbs = limbs_buffer[0 .. self.limbs.len + 2],
-                .positive = true, // Make absolute by ignoring self.positive.
-                .len = self.limbs.len,
-            };
-            @memcpy(q.limbs[0..self.limbs.len], self.limbs);
+            digits_len = toStringBasecase(buffer, string, base);
 
-            var r: Mutable = .{
-                .limbs = limbs_buffer[q.limbs.len..][0..self.limbs.len],
-                .positive = true,
-                .len = 1,
-            };
-            r.limbs[0] = 0;
-
-            const rest_of_the_limbs_buf = limbs_buffer[q.limbs.len + r.limbs.len ..];
-
-            while (q.len >= 2) {
-                // Passing an allocator here would not be helpful since this division is destroying
-                // information, not creating it. [TODO citation needed]
-                q.divTrunc(&r, q.toConst(), b, rest_of_the_limbs_buf);
-
-                var r_word = r.limbs[0];
-                var i: usize = 0;
-                while (i < digits_per_limb) : (i += 1) {
-                    const ch = std.fmt.digitToChar(@as(u8, @intCast(r_word % base)), case);
-                    r_word /= base;
-                    string[digits_len] = ch;
-                    digits_len += 1;
-                }
-            }
-
-            {
-                assert(q.len == 1);
-
-                var r_word = q.limbs[0];
-                while (r_word != 0) {
-                    const ch = std.fmt.digitToChar(@as(u8, @intCast(r_word % base)), case);
-                    r_word /= base;
-                    string[digits_len] = ch;
-                    digits_len += 1;
-                }
-            }
+            for (0..digits_len) |k|
+                string[k] = std.fmt.digitToChar(string[k], case);
         }
 
         if (!self.positive) {
@@ -3700,12 +3661,12 @@ fn llmulaccKaratsuba(
     const j0_sign: i8 = switch (llcmp(a0x, a1)) {
         .lt => -1,
         .eq => 0,
-        .gt => 1
+        .gt => 1,
     };
     const j1_sign: i8 = switch (llcmp(b1, b0x)) {
         .lt => -1,
         .eq => 0,
-        .gt => 1
+        .gt => 1,
     };
     if (j0_sign * j1_sign == 0) {
         // p1 is zero, we don't need to do any computation at all.
@@ -3951,53 +3912,196 @@ fn lladd(r: []Limb, a: []const Limb, b: []const Limb) void {
     r[a.len] = lladdcarry(r, a, b);
 }
 
-/// Knuth 4.3.1, Exercise 16.
-fn lldiv1(quo: []Limb, rem: *Limb, a: []const Limb, b: Limb) void {
-    assert(a.len > 1 or a[0] >= b);
-    assert(quo.len >= a.len);
+/// Performs `a` / `b` in-place, and returns the remainder.
+///
+/// Does not require `b` to be normalized.
+fn divby1(a: []Limb, b: Limb) Limb {
+    const shiftl: Log2Limb = @intCast(@clz(b));
 
-    rem.* = 0;
-    for (a, 0..) |_, ri| {
-        const i = a.len - ri - 1;
-        const pdiv = ((@as(DoubleLimb, rem.*) << limb_bits) | a[i]);
+    var initial_r: Limb = 0;
+    var divisor: Limb = b;
 
-        if (pdiv == 0) {
-            quo[i] = 0;
-            rem.* = 0;
-        } else if (pdiv < b) {
-            quo[i] = 0;
-            rem.* = @as(Limb, @truncate(pdiv));
-        } else if (pdiv == b) {
-            quo[i] = 1;
-            rem.* = 0;
-        } else {
-            quo[i] = @as(Limb, @truncate(@divTrunc(pdiv, b)));
-            rem.* = @as(Limb, @truncate(pdiv - (quo[i] *% b)));
-        }
+    if (@clz(b) != 0) {
+        divisor = b << shiftl;
+        initial_r = a[a.len - 1] >> @intCast(limb_bits - @clz(b));
+
+        // clear the top most bits to not trigger asserts in llshl
+        a[a.len - 1] <<= shiftl;
+        a[a.len - 1] >>= shiftl;
+        _ = llshl(a, a, shiftl);
     }
+
+    const reciprocal = reciprocalWord(divisor);
+    const r = lldiv1(a, a, initial_r, divisor, reciprocal);
+
+    return r >> shiftl;
 }
 
-fn lldiv0p5(quo: []Limb, rem: *Limb, a: []const Limb, b: HalfLimb) void {
-    assert(a.len > 1 or a[0] >= b);
-    assert(quo.len >= a.len);
-
-    rem.* = 0;
-    for (a, 0..) |_, ri| {
-        const i = a.len - ri - 1;
-        const ai_high = a[i] >> half_limb_bits;
-        const ai_low = a[i] & ((1 << half_limb_bits) - 1);
-
-        // Split the division into two divisions acting on half a limb each. Carry remainder.
-        const ai_high_with_carry = (rem.* << half_limb_bits) | ai_high;
-        const ai_high_quo = ai_high_with_carry / b;
-        rem.* = ai_high_with_carry % b;
-
-        const ai_low_with_carry = (rem.* << half_limb_bits) | ai_low;
-        const ai_low_quo = ai_low_with_carry / b;
-        rem.* = ai_low_with_carry % b;
-
-        quo[i] = (ai_high_quo << half_limb_bits) | ai_low_quo;
+/// Algorithm 7 from "Improved division by invariant integers"
+/// by Niels Möller and Torbjörn Granlund
+///
+/// Performs `q` = <`initial_r`, `a`> / `b` rem `r`   with `b` a single word
+/// `r` is returned
+/// `q` may overlap `a`
+///
+/// This function does not normalize `a` (it does not remove leading zeros).
+///
+/// `initial_r` is used to add new, most significant limb to `a`.
+/// It is useful for `divby1`, to keep the division in place.
+///
+/// Requires:
+/// - b to be normalized (its most significant bit must be set)
+/// - `v` is the precomputed reciprocal of `b` (obtained with `reciprocalWord`)
+/// - the quotient must be able to fit in `q`
+/// - ``
+fn lldiv1(q: []Limb, a: []const Limb, initial_r: Limb, b: Limb, v: Limb) Limb {
+    if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+        assert(q.len >= calcDivQLenExact(a, &.{b}));
+        // If `initial_r` is non-zero, this check is required to ensure
+        // that the quotient fits in `q`
+        assert(initial_r < b);
+        // b must be normalized
+        assert(@clz(b) == 0);
+        assert(v == reciprocalWord(b));
+        assert(!slicesOverlap(q, a) or @intFromPtr(q.ptr) >= @intFromPtr(a.ptr));
     }
+
+    const n = a.len;
+
+    var r: Limb = initial_r;
+
+    // in the event where q has exactly the required len
+    // and the first iteration of the loop returns 0, q cannot fit that 0
+    // the first iteration of the loop is therefore done beforehand,
+    // with a bound check on q
+    {
+        const result = div2by1(r, a[n - 1], b, v);
+
+        // q has already been asserted to be large enough if result.q is non-zero
+        if (q.len >= a.len)
+            q[n - 1] = result.q;
+        r = result.r;
+    }
+
+    for (0..n - 1) |i| {
+        const j = n - 2 - i;
+        const result = div2by1(r, a[j], b, v);
+
+        q[j] = result.q;
+        r = result.r;
+    }
+    return r;
+}
+
+/// Algorithm 4 of "Improved division by invariant integers"
+/// by Niels Möller and Torbjörn Granlund
+///
+/// Performs `q` = <`U1`, `U0`> / `d` rem `r`
+/// (with <U1, U0> = (U1 << @bitSizeOf(T)) + U0)
+///
+/// `v` is the precomputed reciprocal of `d` (obtained with `reciprocalWord`)
+/// `q` must fit in a single word (therefore `U1` < `d`)
+fn div2by1(U1: Limb, U0: Limb, d: Limb, v: Limb) struct { q: Limb, r: Limb } {
+    if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
+        assert(U1 < d);
+        // d is must be normalized
+        assert(@clz(d) == 0);
+        assert(v == reciprocalWord(d));
+    }
+
+    var q1, var q0 = umul(v, U1);
+    q1, q0 = add2(q1, q0, U1, U0);
+
+    q1 +%= 1;
+    var r = U0 -% q1 *% d;
+
+    const cond: u1 = @intFromBool(r > q0);
+    q1 -%= cond;
+    r +%= d * cond;
+
+    if (r >= d) {
+        @branchHint(.unlikely);
+        q1 += 1;
+        r -= d;
+    }
+
+    return .{ .q = q1, .r = r };
+}
+
+// returns as big endian
+fn umul(a: Limb, b: Limb) [2]Limb {
+    const r = math.mulWide(Limb, a, b);
+    return [2]Limb{ @truncate(r >> @bitSizeOf(Limb)), @truncate(r) };
+}
+
+// returns as big endian
+fn add2(ahi: Limb, alo: Limb, bhi: Limb, blo: Limb) [2]Limb {
+    const rlo = @addWithOverflow(alo, blo);
+    const rhi = @addWithOverflow(ahi, rlo[1]);
+    return [2]Limb{ rhi[0] +% bhi, rlo[0] };
+}
+
+/// Computes (B^2 - 1) / d - B, with B = 2^@bitSizeOf(T)
+/// d must be normalized (most significant bit set)
+fn reciprocalWord(d: Limb) Limb {
+    assert(@clz(d) == 0);
+    // same as computing <B - 1 - d, B - 1> / d
+    // which is the same as <~d, B - 1> / d
+    if (@import("builtin").cpu.arch == .x86_64 and @sizeOf(Limb) == 8) {
+        var rem: Limb = undefined;
+        // we avoid calling __udivti3
+        return asm (
+            \\divq %[v]
+            : [_] "={rax}" (-> Limb),
+              [_] "={rdx}" (rem),
+            : [v] "r" (d),
+              [_] "{rax}" (maxInt(Limb)),
+              [_] "{rdx}" (~d),
+        );
+    }
+
+    return @truncate(((@as(DoubleLimb, ~d) << @bitSizeOf(Limb)) | maxInt(Limb)) / d);
+}
+
+/// O(n^2) in-place algorithm to convert a number to a string in a different base
+/// `string` must have enough space to store the number.
+///
+/// Returns the number of digits written.
+/// The digits are stored is reverse order (see `toString`)
+///
+/// Each element of string is the value of the digit rather than its character representation.
+/// Converting between the value and the character is handled by the caller.
+fn toStringBasecase(num: []Limb, string: []u8, base: u8) usize {
+    assert(base >= 2);
+    assert(base <= constants.big_bases.len);
+
+    const big_base = constants.big_bases[base];
+    const dig_per_limb = constants.digits_per_limb[base];
+
+    var string_len: usize = 0;
+    var a = num;
+
+    while (a.len > 1) {
+        var d = divby1(num, big_base);
+
+        for (0..dig_per_limb) |_| {
+            string[string_len] = @intCast(d % base);
+            d /= base;
+            string_len += 1;
+        }
+
+        // TODO: can this happen multiple times ?
+        while (a.len > 1 and a[a.len - 1] == 0)
+            a = a[0 .. a.len - 1];
+    }
+    var d = a[0];
+    while (d != 0) {
+        string[string_len] = @intCast(d % base);
+        d /= base;
+        string_len += 1;
+    }
+
+    return string_len;
 }
 
 /// Performs r = a << shift and returns the amount of limbs affected
@@ -4023,8 +4127,8 @@ fn llshl(r: []Limb, a: []const Limb, shift: usize) usize {
     }
 
     // shift is guaranteed to be < limb_bits
-    const bit_shift: Log2Limb = @truncate(shift);
-    const opposite_bit_shift: Log2Limb = @truncate(limb_bits - bit_shift);
+    const bit_shift: Log2Limb = @intCast(shift);
+    const opposite_bit_shift: Log2Limb = @intCast(limb_bits - bit_shift);
 
     // We only need the extra limb if the shift of the last element overflows.
     // This is useful for the implementation of `shiftLeftSat`.
