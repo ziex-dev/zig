@@ -173,10 +173,7 @@ const Error = error{ CodegenFail, OutOfMemory };
 fn containsLogicalIncompatible(zcu: *const Zcu, ty: Type) bool {
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(ty.toIntern())) {
-        .ptr_type => |p| switch (p.flags.size) {
-            .slice, .many, .c => true,
-            .one => containsLogicalIncompatible(zcu, .fromInterned(p.child)),
-        },
+        .ptr_type => true,
         .array_type => |a| containsLogicalIncompatible(zcu, .fromInterned(a.child)),
         .vector_type => |v| containsLogicalIncompatible(zcu, .fromInterned(v.child)),
         .opt_type => |child| containsLogicalIncompatible(zcu, .fromInterned(child)),
