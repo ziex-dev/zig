@@ -2578,27 +2578,7 @@ pub const Const = struct {
     /// Returns `math.Order.lt`, `math.Order.eq`, `math.Order.gt` if
     /// `|a| < |b|`, `|a| == |b|`, or `|a| > |b|` respectively.
     pub fn orderAbs(a: Const, b: Const) math.Order {
-        if (a.limbs.len < b.limbs.len) {
-            return .lt;
-        }
-        if (a.limbs.len > b.limbs.len) {
-            return .gt;
-        }
-
-        var i: usize = a.limbs.len - 1;
-        while (i != 0) : (i -= 1) {
-            if (a.limbs[i] != b.limbs[i]) {
-                break;
-            }
-        }
-
-        if (a.limbs[i] < b.limbs[i]) {
-            return .lt;
-        } else if (a.limbs[i] > b.limbs[i]) {
-            return .gt;
-        } else {
-            return .eq;
-        }
+        return llcmp(a.limbs, b.limbs);
     }
 
     /// Returns `math.Order.lt`, `math.Order.eq`, `math.Order.gt` if `a < b`, `a == b` or `a > b` respectively.
@@ -3716,9 +3696,17 @@ fn llmulaccKaratsuba(
     const a0x = a0[0..@min(a0.len, limbs_after_split)];
     const b0x = b0[0..@min(b0.len, limbs_after_split)];
 
-    const j0_sign = llcmp(a0x, a1);
-    const j1_sign = llcmp(b1, b0x);
-
+    // TODO: use @intFromEnum once #23387 is merged
+    const j0_sign: i8 = switch (llcmp(a0x, a1)) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1
+    };
+    const j1_sign: i8 = switch (llcmp(b1, b0x)) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1
+    };
     if (j0_sign * j1_sign == 0) {
         // p1 is zero, we don't need to do any computation at all.
         return;
@@ -3796,15 +3784,14 @@ fn llaccum(comptime op: AccOp, r: []Limb, a: []const Limb) void {
     }
 }
 
-/// Returns -1, 0, 1 if |a| < |b|, |a| == |b| or |a| > |b| respectively for limbs.
-pub fn llcmp(a: []const Limb, b: []const Limb) i8 {
+pub fn llcmp(a: []const Limb, b: []const Limb) math.Order {
     const a_len = llnormalize(a);
     const b_len = llnormalize(b);
     if (a_len < b_len) {
-        return -1;
+        return .lt;
     }
     if (a_len > b_len) {
-        return 1;
+        return .gt;
     }
 
     var i: usize = a_len - 1;
@@ -3815,11 +3802,11 @@ pub fn llcmp(a: []const Limb, b: []const Limb) i8 {
     }
 
     if (a[i] < b[i]) {
-        return -1;
+        return .lt;
     } else if (a[i] > b[i]) {
-        return 1;
+        return .gt;
     } else {
-        return 0;
+        return .eq;
     }
 }
 
