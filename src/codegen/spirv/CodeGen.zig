@@ -2690,9 +2690,9 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
             .ptr_add => try cg.airPtrAdd(inst),
             .ptr_sub => try cg.airPtrSub(inst),
 
-            .bit_and  => try cg.airBinOpSimple(inst, .OpBitwiseAnd),
-            .bit_or   => try cg.airBinOpSimple(inst, .OpBitwiseOr),
-            .xor      => try cg.airBinOpSimple(inst, .OpBitwiseXor),
+            .bit_and => try cg.airBitwiseOp(inst, .bit_and),
+            .bit_or  => try cg.airBitwiseOp(inst, .bit_or),
+            .xor     => try cg.airBitwiseOp(inst, .xor),
 
             .shl, .shl_exact => try cg.airShift(inst, .OpShiftLeftLogical, .OpShiftLeftLogical),
             .shr, .shr_exact => try cg.airShift(inst, .OpShiftRightLogical, .OpShiftRightArithmetic),
@@ -2813,6 +2813,34 @@ fn airBinOpSimple(cg: *CodeGen, inst: Air.Inst.Index, op: Opcode) !?Id {
     const rhs = try cg.temporary(bin_op.rhs);
 
     const result = try cg.buildBinary(op, lhs, rhs);
+    return try result.materialize(cg);
+}
+
+const BitwiseOp = enum { bit_and, bit_or, xor };
+
+fn airBitwiseOp(cg: *CodeGen, inst: Air.Inst.Index, op: BitwiseOp) !?Id {
+    const bin_op = cg.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
+    const lhs = try cg.temporary(bin_op.lhs);
+    const rhs = try cg.temporary(bin_op.rhs);
+    const info = cg.arithmeticTypeInfo(lhs.ty);
+
+    // SPIR-V requires logical opcodes for booleans, bitwise opcodes for integers
+    const opcode: Opcode = switch (info.class) {
+        .bool => switch (op) {
+            .bit_and => .OpLogicalAnd,
+            .bit_or => .OpLogicalOr,
+            .xor => .OpLogicalNotEqual,
+        },
+        .integer, .strange_integer => switch (op) {
+            .bit_and => .OpBitwiseAnd,
+            .bit_or => .OpBitwiseOr,
+            .xor => .OpBitwiseXor,
+        },
+        .float => unreachable, // Bitwise ops not valid on floats
+        .composite_integer => unreachable, // TODO
+    };
+
+    const result = try cg.buildBinary(opcode, lhs, rhs);
     return try result.materialize(cg);
 }
 
