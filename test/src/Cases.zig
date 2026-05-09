@@ -607,6 +607,15 @@ pub fn lowerToBuildSteps(
             .Error => |expected_msgs| {
                 assert(expected_msgs.len != 0);
                 artifact.expect_errors = .{ .exact = expected_msgs };
+                // Force codegen if emit_bin is true and target supports it,
+                // so backend-specific errors are triggered
+                const can_emit_bin = switch (case.target.result.cpu.arch) {
+                    .arc, .csky, .nvptx, .nvptx64, .xcore, .xtensa => false,
+                    else => true,
+                };
+                if (case.emit_bin and can_emit_bin) {
+                    _ = artifact.getEmittedBin();
+                }
                 parent_step.dependOn(&artifact.step);
             },
             .Execution => |expected_stdout| no_exec: {
