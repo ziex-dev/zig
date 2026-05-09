@@ -358,6 +358,7 @@ fn addFromDirInner(
 
         const backends = try manifest.getConfigForKeyAlloc(ctx.arena, "backend", Backend);
         const targets = try manifest.getConfigForKeyAlloc(ctx.arena, "target", std.Target.Query);
+        const cpu_features = try manifest.getConfigForKeyAssertSingle("cpu", ?[]const u8);
         const is_test = try manifest.getConfigForKeyAssertSingle("is_test", bool);
         const link_libc = try manifest.getConfigForKeyAssertSingle("link_libc", bool);
         const output_mode = try manifest.getConfigForKeyAssertSingle("output_mode", std.builtin.OutputMode);
@@ -371,7 +372,12 @@ fn addFromDirInner(
 
         // Cross-product to get all possible test combinations
         for (targets) |target_query| {
-            const resolved_target = b.resolveTargetQuery(target_query);
+            var adjusted_query = target_query;
+            // Apply CPU features from // cpu=+feature directive
+            if (cpu_features) |features| {
+                adjusted_query.cpu_features_add = parseCpuFeatures(adjusted_query.cpu_arch orelse builtin.cpu.arch, features);
+            }
+            const resolved_target = b.resolveTargetQuery(adjusted_query);
             const target = &resolved_target.result;
             for (backends) |backend| {
                 if (backend == .selfhosted and
@@ -699,6 +705,8 @@ const TestManifestConfigDefaults = struct {
             return "null";
         } else if (std.mem.eql(u8, key, "imports")) {
             return "";
+        } else if (std.mem.eql(u8, key, "cpu")) {
+            return "null";
         } else unreachable;
     }
 };
@@ -731,6 +739,7 @@ const TestManifest = struct {
         .{ "is_test", {} },
         .{ "output_mode", {} },
         .{ "target", {} },
+        .{ "cpu", {} },
         .{ "c_frontend", {} },
         .{ "link_libc", {} },
         .{ "backend", {} },
@@ -989,6 +998,35 @@ const TestManifest = struct {
         }
     }
 };
+
+/// Parse CPU features from string like "+feature1+feature2" or "+feature1-feature2"
+fn parseCpuFeatures(arch: std.Target.Cpu.Arch, features_str: []const u8) std.Target.Cpu.Feature.Set {
+    var set: std.Target.Cpu.Feature.Set = .empty;
+    const all_features = arch.allFeaturesList();
+
+    var it = std.mem.tokenizeAny(u8, features_str, "+-");
+    var i: usize = 0;
+    while (it.next()) |feature_name| : (i += 1) {
+        // Check if this is an add (+) or subtract (-)
+        // First feature starts at index 0, check character before token
+        const is_add = if (i == 0)
+            features_str[0] == '+'
+        else
+            features_str[it.index - feature_name.len - 1] == '+';
+
+        for (all_features, 0..) |feature, feature_index| {
+            if (std.mem.eql(u8, feature.name, feature_name)) {
+                if (is_add) {
+                    set.addFeature(@intCast(feature_index));
+                } else {
+                    set.removeFeature(@intCast(feature_index));
+                }
+                break;
+            }
+        }
+    }
+    return set;
+}
 
 fn knownFileExtension(filename: []const u8) bool {
     // List taken from `Compilation.classifyFileExt` in the compiler.

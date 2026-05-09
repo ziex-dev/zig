@@ -14,4 +14,5 @@ export fn a() void {
 // output_mode=Obj
 // backend=selfhosted
 // target=spirv64-vulkan
+// cpu=+variable_pointers
 // emit_bin=false

@@ -665,6 +665,13 @@ pub fn arrayType(module: *Module, len_id: Id, child_ty_id: Id) !Id {
 }
 
 pub fn ptrType(module: *Module, child_ty_id: Id, storage_class: spec.StorageClass) !Id {
+    const target = module.zcu.getTarget();
+    // StorageBuffer storage class is core in SPIR-V 1.3+, requires extension for < 1.3
+    if (storage_class == .storage_buffer and target.os.tag == .vulkan and
+        !target.cpu.has(.spirv, .v1_3))
+    {
+        try module.addExtension("SPV_KHR_storage_buffer_storage_class");
+    }
     const key = .{ child_ty_id, storage_class };
     const gop = try module.ptr_types.getOrPut(module.gpa, key);
     if (!gop.found_existing) {
