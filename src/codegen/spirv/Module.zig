@@ -57,9 +57,7 @@ cache: struct {
     int_types: std.AutoHashMapUnmanaged(std.lang.Type.Int, Id) = .empty,
     float_types: std.AutoHashMapUnmanaged(std.lang.Type.Float, Id) = .empty,
     vector_types: std.AutoHashMapUnmanaged(struct { Id, u32 }, Id) = .empty,
-    array_types: std.AutoHashMapUnmanaged(struct { Id, Id }, Id) = .empty,
-    /// Stride applied to the array only when it is referenced through a buffer-backed pointer.
-    array_strides: std.AutoHashMapUnmanaged(Id, u32) = .empty,
+    array_types: std.AutoHashMapUnmanaged(struct { Id, Id, ?u32 }, Id) = .empty,
     struct_types: std.ArrayHashMapUnmanaged(StructType, Id, StructType.HashContext, true) = .empty,
     fn_types: std.ArrayHashMapUnmanaged(FnType, Id, FnType.HashContext, true) = .empty,
 
@@ -229,7 +227,6 @@ pub fn deinit(module: *Module) void {
     module.cache.float_types.deinit(module.gpa);
     module.cache.vector_types.deinit(module.gpa);
     module.cache.array_types.deinit(module.gpa);
-    module.cache.array_strides.deinit(module.gpa);
     module.cache.struct_types.deinit(module.gpa);
     module.cache.fn_types.deinit(module.gpa);
     module.cache.capabilities.deinit(module.gpa);
@@ -654,7 +651,10 @@ pub fn vectorType(module: *Module, len: u32, child_ty_id: Id) !Id {
 }
 
 pub fn arrayType(module: *Module, len_id: Id, child_ty_id: Id, stride: ?u32) !Id {
-    const entry = try module.cache.array_types.getOrPut(module.gpa, .{ child_ty_id, len_id });
+    // Include stride in cache key so decorated and undecorated arrays are separate types.
+    // This avoids ArrayStride on function-local arrays when the same array type is also
+    // used in a buffer-backed context.
+    const entry = try module.cache.array_types.getOrPut(module.gpa, .{ child_ty_id, len_id, stride });
     if (!entry.found_existing) {
         const result_id = module.allocId();
         entry.value_ptr.* = result_id;
@@ -663,8 +663,10 @@ pub fn arrayType(module: *Module, len_id: Id, child_ty_id: Id, stride: ?u32) !Id
             .element_type = child_ty_id,
             .length = len_id,
         });
+        if (stride) |s| {
+            try module.decorate(result_id, .{ .array_stride = .{ .array_stride = s } });
+        }
     }
-    if (stride) |s| try module.cache.array_strides.put(module.gpa, entry.value_ptr.*, s);
     return entry.value_ptr.*;
 }
 
@@ -678,15 +680,6 @@ pub fn ptrType(module: *Module, child_ty_id: Id, storage_class: spec.StorageClas
             .storage_class = storage_class,
             .type = child_ty_id,
         });
-    }
-    // ArrayStride is only valid on buffer-backed storage classes in Vulkan.
-    switch (storage_class) {
-        .uniform, .push_constant, .storage_buffer => {
-            if (module.cache.array_strides.get(child_ty_id)) |s| {
-                try module.decorate(child_ty_id, .{ .array_stride = .{ .array_stride = s } });
-            }
-        },
-        else => {},
     }
     return gop.value_ptr.*;
 }

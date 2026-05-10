@@ -1381,11 +1381,9 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
                 return try cg.module.arrayType(len_id, elem_ty_id, null);
             } else {
                 const total_len_id = try cg.constInt(.u32, total_len);
-                const stride: ?u32 = switch (target.os.tag) {
-                    .vulkan, .opengl => @intCast(elem_ty.abiSize(zcu)),
-                    else => null,
-                };
-                return try cg.module.arrayType(total_len_id, elem_ty_id, stride);
+                // Don't add ArrayStride here - it's only valid for buffer-backed storage
+                // classes and will be added when creating those specific pointers.
+                return try cg.module.arrayType(total_len_id, elem_ty_id, null);
             }
         },
         .vector => {
