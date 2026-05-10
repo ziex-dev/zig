@@ -611,7 +611,15 @@ pub fn lowerToBuildSteps(
                 // so backend-specific errors are triggered
                 const can_emit_bin = switch (case.target.result.cpu.arch) {
                     .arc, .csky, .nvptx, .nvptx64, .xcore, .xtensa => false,
-                    else => true,
+                    .spirv32, .spirv64 => switch (case.target.result.os.tag) {
+                        .opencl, .opengl, .vulkan => true,
+                        else => false,
+                    },
+                    else => switch (case.target.result.ofmt) {
+                        // Selfhosted COFF linker is not fully implemented
+                        .coff => case.backend != .selfhosted,
+                        else => true,
+                    },
                 };
                 if (case.emit_bin and can_emit_bin) {
                     _ = artifact.getEmittedBin();
