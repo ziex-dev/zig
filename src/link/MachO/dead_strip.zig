@@ -23,6 +23,8 @@ fn collectRoots(roots: *std.array_list.Managed(*Atom), objects: []const File.Ind
             if (file.getIndex() != index) continue;
             if (sym.flags.no_dead_strip or (macho_file.base.isDynLib() and sym.visibility == .global))
                 try markSymbol(sym, roots, macho_file);
+            if (sym.flags.cgo_export)
+                try markSymbol(sym, roots, macho_file);
         }
 
         for (object.getAtoms()) |atom_index| {

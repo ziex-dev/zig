@@ -896,6 +896,7 @@ fn initSymbols(self: *Object, allocator: Allocator, macho_file: *MachO) !void {
     for (slice.items(.nlist), slice.items(.atom), 0..) |nlist, atom_index, i| {
         const index = self.addSymbolAssumeCapacity();
         const symbol = &self.symbols.items[index];
+        const name = self.getNStrx(nlist.n_strx);
         symbol.value = nlist.n_value;
         symbol.name = .{ .pos = nlist.n_strx, .len = @intCast(self.getNStrx(nlist.n_strx).len + 1) };
         symbol.nlist_idx = @intCast(i);
@@ -916,10 +917,18 @@ fn initSymbols(self: *Object, allocator: Allocator, macho_file: *MachO) !void {
         // TODO
         // symbol.flags.interposable = nlist.ext() and (nlist.n_type.bits.type == .sect or nlist.n_type.bits.type == .abs) and macho_file.base.isDynLib() and macho_file.options.namespace == .flat and !nlist.pext();
 
-        if (nlist.n_type.bits.type == .sect and
-            self.sections.items(.header)[nlist.n_sect - 1].type() == macho.S_THREAD_LOCAL_VARIABLES)
-        {
-            symbol.flags.tlv = true;
+        if (nlist.n_type.bits.type == .sect) {
+            const sect64 = self.sections.items(.header)[nlist.n_sect - 1];
+            if (sect64.type() == macho.S_THREAD_LOCAL_VARIABLES) {
+                symbol.flags.tlv = true;
+            }
+            const segname = sect64.segName();
+            const sectname = sect64.sectName();
+
+            if (std.mem.startsWith(u8, name, "_IMP") and mem.eql(u8, segname, "__TEXT") and mem.eql(u8, sectname, "__text")) {
+                symbol.flags.cgo_export = true;
+                symbol.flags.no_dead_strip = true;
+            }
         }
 
         if (nlist.n_type.bits.ext) {

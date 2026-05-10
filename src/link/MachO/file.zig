@@ -128,6 +128,13 @@ pub const File = union(enum) {
             const ref = file.getSymbolRef(@intCast(i), macho_file);
             if (ref.getFile(macho_file) == null) continue;
             const sym = ref.getSymbol(macho_file).?;
+            if (sym.flags.cgo_export) {
+                sym.visibility = .global;
+                sym.flags.@"export" = true;
+                sym.flags.output_symtab = true;
+                sym.flags.no_dead_strip = true;
+            }
+
             if (sym.visibility != .global) continue;
             if (sym.getFile(macho_file).? == .dylib and !sym.flags.abs) {
                 sym.flags.import = true;

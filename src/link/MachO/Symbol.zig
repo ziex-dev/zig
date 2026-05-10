@@ -383,6 +383,9 @@ pub const Flags = packed struct {
     /// ZigObject specific flags
     /// Whether the symbol has a trampoline
     trampoline: bool = false,
+
+    /// Whether the symbol should export cgo
+    cgo_export: bool = false,
 };
 
 pub const SectionFlags = packed struct(u8) {
