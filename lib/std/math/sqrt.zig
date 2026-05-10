@@ -55,7 +55,7 @@ fn sqrtInt(comptime T: type, value: T) Sqrt(T) {
     }
 }
 
-test sqrtInt {
+test {
     try expect(sqrtInt(u32, 3) == 1);
     try expect(sqrtInt(u32, 4) == 2);
     try expect(sqrtInt(u32, 5) == 2);
@@ -69,6 +69,8 @@ test sqrtInt {
     try expect(sqrtInt(u3, 4) == 2);
     try expect(sqrtInt(u4, 8) == 2);
     try expect(sqrtInt(u4, 9) == 3);
+
+    try expect(sqrt(1 << 128) == 1 << 64);
 }
 
 /// Returns the return type `sqrt` will return given an operand of type `T`.
