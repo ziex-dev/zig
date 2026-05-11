@@ -620,6 +620,15 @@ pub const io_uring_sqe = extern struct {
         sqe.splice_fd_in = @bitCast(options);
     }
 
+    pub fn prep_pipe(
+        sqe: *linux.io_uring_sqe,
+        fds: *[2]linux.fd_t,
+        flags: u32,
+    ) void {
+        sqe.prep_rw(.PIPE, 0, @intFromPtr(fds), 0, 0);
+        sqe.rw_flags = flags;
+    }
+
     pub fn prep_bind(
         sqe: *linux.io_uring_sqe,
         fd: linux.fd_t,

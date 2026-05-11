@@ -1141,6 +1141,33 @@ pub fn waitid(
     return sqe;
 }
 
+/// Prepares pipe creation request.
+/// Available since 6.16
+pub fn pipe(
+    self: *IoUring,
+    user_data: u64,
+    fds: *[2]linux.fd_t,
+    flags: u32,
+) !*linux.io_uring_sqe {
+    const sqe = try self.get_sqe();
+    sqe.prep_pipe(fds, flags);
+    sqe.user_data = user_data;
+    return sqe;
+}
+
+/// Prepares pipe creation request for direct (registered) file descriptors.
+/// Available since 6.16
+pub fn pipe_direct(
+    self: *IoUring,
+    user_data: u64,
+    fds: *[2]linux.fd_t,
+    flags: u32,
+) !*linux.io_uring_sqe {
+    const sqe = try self.pipe(user_data, fds, flags);
+    sqe.splice_fd_in = @bitCast(@as(u32, linux.IORING_FILE_INDEX_ALLOC));
+    return sqe;
+}
+
 /// Registers an array of file descriptors.
 /// Every time a file descriptor is put in an SQE and submitted to the kernel, the kernel must
 /// retrieve a reference to the file, and once I/O has completed the file reference must be

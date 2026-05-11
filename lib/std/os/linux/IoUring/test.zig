@@ -2518,6 +2518,34 @@ test "bind/listen/connect" {
     }
 }
 
+test "pipe/pipe_direct" {
+    var ring = IoUring.init(2, 0) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
+    defer ring.deinit();
+
+    const probe = ring.get_probe() catch return error.SkipZigTest;
+    if (!probe.is_supported(.PIPE)) return error.SkipZigTest;
+
+    var fds: [2]linux.fd_t = .{ -1, -1 };
+    _ = try ring.pipe(1, &fds, 0);
+    try testing.expectEqual(1, try ring.submit_and_wait(1));
+    try testing.expectEqual(linux.io_uring_cqe{ .user_data = 1, .res = 0, .flags = 0 }, try ring.copy_cqe());
+    try testing.expect(fds[0] > 0);
+    try testing.expect(fds[1] > 0);
+
+    // with direct file descriptors
+    fds = .{ -1, -1 };
+    try ring.register_files_sparse(4);
+    _ = try ring.pipe_direct(2, &fds, 0);
+    try testing.expectEqual(1, try ring.submit_and_wait(1));
+    try testing.expectEqual(linux.io_uring_cqe{ .user_data = 2, .res = 0, .flags = 0 }, try ring.copy_cqe());
+    try testing.expect(fds[0] >= 0);
+    try testing.expect(fds[1] > 0);
+}
+
 // Prepare, submit recv and get cqe using buffer group.
 fn buf_grp_recv_submit_get_cqe(
     ring: *IoUring,
