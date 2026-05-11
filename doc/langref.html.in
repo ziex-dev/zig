@@ -4487,8 +4487,9 @@ comptime {
       {#header_open|@mulAdd#}
       <pre>{#syntax#}@mulAdd(comptime T: type, a: T, b: T, c: T) T{#endsyntax#}</pre>
       <p>
-      Fused multiply-add, similar to {#syntax#}(a * b) + c{#endsyntax#}, except
-      only rounds once, and is thus more accurate.
+      Multiply-add, similar to {#syntax#}(a * b) + c{#endsyntax#} except that the operation can be
+      fused if this is supported and more efficient than the unfused variant on the target. Fused
+      multiply-add only rounds once, and is thus more accurate.
       </p>
       <p>
       Supports {#link|Floats#} and {#link|Vectors#} of floats.
