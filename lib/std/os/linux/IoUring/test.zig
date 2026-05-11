@@ -635,7 +635,7 @@ test "timeout (after a relative time)" {
 
     // Tests should not depend on timings: skip test if outside margin.
     const ms_elapsed = started.durationTo(stopped).toMilliseconds();
-    if (ms_elapsed > margin) return error.SkipZigTest;
+    if (!std.math.approxEqAbs(f64, ms, @floatFromInt(ms_elapsed), margin)) return error.SkipZigTest;
 }
 
 test "timeout (after a number of completions)" {
