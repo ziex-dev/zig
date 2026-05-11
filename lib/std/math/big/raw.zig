@@ -467,7 +467,7 @@ pub fn lladdcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
 
 /// Knuth 4.3.1, Exercise 16.
 pub fn lldiv1(quo: []Limb, rem: *Limb, a: []const Limb, b: Limb) void {
-    assert(a.len > 1 or a[0] >= b);
+    assert(a.len > 0);
     assert(quo.len >= a.len);
 
     rem.* = 0;
