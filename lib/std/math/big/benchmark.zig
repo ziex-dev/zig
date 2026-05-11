@@ -93,7 +93,7 @@ const Range = struct {
             .ty = .one,
             .min = value,
             .current = @floatFromInt(value),
-            .max = 0,
+            .max = value,
             .base = 0,
             .step = 1.0,
             .depends = false
@@ -212,7 +212,8 @@ const bench_list: []const Bench = &.{
     Bench {
         .name = .llmulLimb,
         .r = .log(0, 3, 50),
-        .value = .linear(0, std.math.maxInt(Limb), 100),
+        // the value does not matter anyway
+        .value = .one(100),//.linear(0, std.math.maxInt(Limb), 100),
         .ops = true,
         .iterations = 2000
     },
