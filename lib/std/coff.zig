@@ -1096,7 +1096,7 @@ pub const Coff = struct {
             else => unreachable, // We assume we have validated the header already
         };
         const offset = self.coff_header_offset + @sizeOf(Header) + size;
-        return @as([*]align(1) const ImageDataDirectory, @ptrCast(self.data[offset..]))[0..self.getNumberOfDataDirectories()];
+        return @ptrCast(self.data[offset..][0 .. self.getNumberOfDataDirectories() * @sizeOf(ImageDataDirectory)]);
     }
 
     pub fn getSymtab(self: *const Coff) ?Symtab {
@@ -1127,7 +1127,7 @@ pub const Coff = struct {
     pub fn getSectionHeaders(self: *const Coff) []align(1) const SectionHeader {
         const coff_header = self.getHeader();
         const offset = self.coff_header_offset + @sizeOf(Header) + coff_header.size_of_optional_header;
-        return @as([*]align(1) const SectionHeader, @ptrCast(self.data.ptr + offset))[0..coff_header.number_of_sections];
+        return @ptrCast(self.data[offset..][0 .. @sizeOf(SectionHeader) * coff_header.number_of_sections]);
     }
 
     pub fn getSectionHeadersAlloc(self: *const Coff, allocator: mem.Allocator) ![]SectionHeader {
