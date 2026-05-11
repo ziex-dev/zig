@@ -8,4 +8,4 @@ export fn needs_variable_pointers() void {
 // backend=selfhosted
 // target=spirv64-vulkan
 //
-// :2:8: error: storing 'global' pointer in function variable requires 'variable_pointers' target feature
+// :3:12: error: storing 'global' pointer in function variable requires 'variable_pointers' target feature

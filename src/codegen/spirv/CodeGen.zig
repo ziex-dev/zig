@@ -4785,20 +4785,6 @@ fn airAlloc(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     const target = zcu.getTarget();
     const ptr_ty = cg.typeOfIndex(inst);
     const child_ty = ptr_ty.childType(zcu);
-
-    // Storing a StorageBuffer pointer in a function variable requires VariablePointersStorageBuffer
-    if (child_ty.zigTypeTag(zcu) == .pointer) {
-        const child_ptr_as = child_ty.ptrAddressSpace(zcu);
-        if (cg.module.storageClass(child_ptr_as) == .storage_buffer and
-            !target.cpu.has(.spirv, .variable_pointers))
-        {
-            return cg.fail(
-                "storing '{s}' pointer in function variable requires 'variable_pointers' target feature",
-                .{@tagName(child_ptr_as)},
-            );
-        }
-    }
-
     const child_ty_id = try cg.resolveType(child_ty, .indirect);
     const ptr_align = ptr_ty.ptrAlignment(zcu);
     const result_id = try cg.alloc(child_ty_id, null);

@@ -3741,6 +3741,7 @@ fn zirAlloc(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.I
         return sema.fail(block, mut_src, "local variable in naked function", .{});
     }
     const target = zcu.getTarget();
+    try sema.checkPtrInFunctionVar(block, ty_src, var_ty, target);
     const ptr_type = try pt.ptrType(.{
         .child = var_ty.toIntern(),
         .flags = .{ .address_space = target_util.defaultAddressSpace(target, .local) },
@@ -3774,6 +3775,7 @@ fn zirAllocMut(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
     }
     try sema.validateVarType(block, ty_src, var_ty, false);
     const target = zcu.getTarget();
+    try sema.checkPtrInFunctionVar(block, ty_src, var_ty, target);
     const ptr_type = try pt.ptrType(.{
         .child = var_ty.toIntern(),
         .flags = .{ .address_space = target_util.defaultAddressSpace(target, .local) },
@@ -22073,6 +22075,27 @@ fn checkLogicalPtrOperation(sema: *Sema, block: *Block, src: LazySrcLoc, ty: Typ
                 break :msg msg;
             });
         }
+    }
+}
+
+fn checkPtrInFunctionVar(
+    sema: *Sema,
+    block: *Block,
+    src: LazySrcLoc,
+    var_ty: Type,
+    target: *const std.Target,
+) CompileError!void {
+    const zcu = sema.pt.zcu;
+    if (var_ty.zigTypeTag(zcu) != .pointer) return;
+
+    const as = var_ty.ptrAddressSpace(zcu);
+    if (target_util.shouldBlockPtrInFunctionVar(target, as)) {
+        return sema.fail(
+            block,
+            src,
+            "storing '{s}' pointer in function variable requires 'variable_pointers' target feature",
+            .{@tagName(as)},
+        );
     }
 }
 

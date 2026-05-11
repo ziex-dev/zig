@@ -629,6 +629,16 @@ pub fn shouldBlockPointerOps(target: *const std.Target, as: AddressSpace) bool {
     };
 }
 
+pub fn shouldBlockPtrInFunctionVar(target: *const std.Target, as: AddressSpace) bool {
+    if (target.os.tag != .vulkan) return false;
+
+    return switch (as) {
+        // .global maps to StorageBuffer storage class for Vulkan
+        .global, .storage_buffer => !target.cpu.features.isEnabled(@intFromEnum(std.Target.spirv.Feature.variable_pointers)),
+        else => false,
+    };
+}
+
 pub fn isDynamicAMDGCNFeature(target: *const std.Target, feature: std.Target.Cpu.Feature) bool {
     if (target.cpu.arch != .amdgcn) return false;
 
