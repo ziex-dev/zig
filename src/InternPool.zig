@@ -2163,6 +2163,10 @@ pub const Key = union(enum) {
         cc: std.lang.CallingConvention,
         is_var_args: bool,
         is_noinline: bool,
+        /// SPIR-V kernel local workgroup size. Only set for spirv_kernel calling convention.
+        spirv_local_size: ?SpirvLocalSize,
+
+        pub const SpirvLocalSize = struct { x: u32, y: u32, z: u32 };
 
         pub fn paramIsComptime(self: @This(), i: u5) bool {
             assert(i < self.param_types.len);
@@ -2181,7 +2185,8 @@ pub const Key = union(enum) {
                 a.noalias_bits == b.noalias_bits and
                 a.is_var_args == b.is_var_args and
                 a.is_noinline == b.is_noinline and
-                std.meta.eql(a.cc, b.cc);
+                std.meta.eql(a.cc, b.cc) and
+                std.meta.eql(a.spirv_local_size, b.spirv_local_size);
         }
 
         pub fn hash(self: FuncType, hasher: *Hash, ip: *const InternPool) void {
@@ -2194,6 +2199,7 @@ pub const Key = union(enum) {
             std.hash.autoHash(hasher, self.cc);
             std.hash.autoHash(hasher, self.is_var_args);
             std.hash.autoHash(hasher, self.is_noinline);
+            std.hash.autoHash(hasher, self.spirv_local_size);
         }
     };
 
@@ -5445,7 +5451,8 @@ pub const Tag = enum(u8) {
     /// Trailing:
     /// 0. comptime_bits: u32, // if has_comptime_bits
     /// 1. noalias_bits: u32, // if has_noalias_bits
-    /// 2. param_type: Index for each params_len
+    /// 2. spirv_local_size: [3]u32, // if has_spirv_local_size
+    /// 3. param_type: Index for each params_len
     pub const TypeFunction = struct {
         params_len: u32,
         return_type: Index,
@@ -5457,7 +5464,8 @@ pub const Tag = enum(u8) {
             has_comptime_bits: bool,
             has_noalias_bits: bool,
             is_noinline: bool,
-            _: u10 = 0,
+            has_spirv_local_size: bool,
+            _: u9 = 0,
         };
     };
 
@@ -6920,6 +6928,12 @@ fn extraFuncType(tid: Zcu.PerThread.Id, extra: Local.Extra, extra_index: u32) Ke
         trail_index += 1;
         break :b x;
     };
+    const spirv_local_size: ?Key.FuncType.SpirvLocalSize = if (!type_function.data.flags.has_spirv_local_size) null else b: {
+        const items = extra.view().items(.@"0");
+        const result: Key.FuncType.SpirvLocalSize = .{ .x = items[trail_index], .y = items[trail_index + 1], .z = items[trail_index + 2] };
+        trail_index += 3;
+        break :b result;
+    };
     return .{
         .param_types = .{
             .tid = tid,
@@ -6932,6 +6946,7 @@ fn extraFuncType(tid: Zcu.PerThread.Id, extra: Local.Extra, extra_index: u32) Ke
         .cc = type_function.data.flags.cc.unpack(),
         .is_var_args = type_function.data.flags.is_var_args,
         .is_noinline = type_function.data.flags.is_noinline,
+        .spirv_local_size = spirv_local_size,
     };
 }
 
@@ -8972,6 +8987,8 @@ pub const GetFuncTypeKey = struct {
     cc: ?std.lang.CallingConvention = .auto,
     is_var_args: bool = false,
     is_noinline: bool = false,
+    /// SPIR-V kernel local workgroup size. Only meaningful for spirv_kernel calling convention.
+    spirv_local_size: ?Key.FuncType.SpirvLocalSize = null,
 };
 
 pub fn getFuncType(
@@ -8996,9 +9013,11 @@ pub fn getFuncType(
     const prev_extra_len = extra.mutate.len;
     const params_len: u32 = @intCast(key.param_types.len);
 
+    const has_spirv_local_size = key.spirv_local_size != null;
     try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeFunction).@"struct".fields.len +
         @intFromBool(key.comptime_bits != 0) +
         @intFromBool(key.noalias_bits != 0) +
+        @as(u32, if (has_spirv_local_size) 3 else 0) +
         params_len);
 
     const func_type_extra_index = addExtraAssumeCapacity(extra, Tag.TypeFunction{
@@ -9010,11 +9029,17 @@ pub fn getFuncType(
             .has_comptime_bits = key.comptime_bits != 0,
             .has_noalias_bits = key.noalias_bits != 0,
             .is_noinline = key.is_noinline,
+            .has_spirv_local_size = has_spirv_local_size,
         },
     });
 
     if (key.comptime_bits != 0) extra.appendAssumeCapacity(.{key.comptime_bits});
     if (key.noalias_bits != 0) extra.appendAssumeCapacity(.{key.noalias_bits});
+    if (key.spirv_local_size) |local_size| {
+        extra.appendAssumeCapacity(.{local_size.x});
+        extra.appendAssumeCapacity(.{local_size.y});
+        extra.appendAssumeCapacity(.{local_size.z});
+    }
     extra.appendSliceAssumeCapacity(.{@ptrCast(key.param_types)});
     errdefer extra.mutate.len = prev_extra_len;
 
@@ -9279,6 +9304,7 @@ pub fn getFuncDeclIes(
             .has_comptime_bits = key.comptime_bits != 0,
             .has_noalias_bits = key.noalias_bits != 0,
             .is_noinline = key.is_noinline,
+            .has_spirv_local_size = false,
         },
     });
     if (key.comptime_bits != 0) extra.appendAssumeCapacity(.{key.comptime_bits});
@@ -9578,6 +9604,7 @@ fn getFuncInstanceIes(
             .has_comptime_bits = false,
             .has_noalias_bits = arg.noalias_bits != 0,
             .is_noinline = arg.is_noinline,
+            .has_spirv_local_size = false,
         },
     });
     // no comptime_bits because has_comptime_bits is false
@@ -12461,6 +12488,12 @@ const PackedCallingConvention = packed struct(u18) {
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = @intFromEnum(pl.save),
                 },
+                // SpirvKernelOptions.local_size is stored in TypeFunction trailing data, not here.
+                std.lang.CallingConvention.SpirvKernelOptions => .{
+                    .tag = tag,
+                    .incoming_stack_alignment = .none, // unused
+                    .extra = 0, // unused
+                },
                 else => comptime unreachable,
             },
         };
@@ -12504,6 +12537,9 @@ const PackedCallingConvention = packed struct(u18) {
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .save = @enumFromInt(cc.extra),
                     },
+                    // SpirvKernelOptions.local_size is stored in TypeFunction trailing data.
+                    // Return defaults here; actual values are combined in extraFuncType.
+                    std.lang.CallingConvention.SpirvKernelOptions => .{},
                     else => comptime unreachable,
                 },
             ),

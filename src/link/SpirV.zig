@@ -194,17 +194,24 @@ pub fn updateExports(
     if (ip.isFunctionType(nav_ty)) {
         const spv_decl_index = try linker.module.resolveNav(ip, nav_index);
         const cc = Type.fromInterned(nav_ty).fnCallingConvention(zcu);
-        const exec_model: spec.ExecutionModel = switch (target.os.tag) {
+        const exec_model: spec.ExecutionModel, const exec_mode: ?spec.ExecutionMode.Extended = switch (target.os.tag) {
             .vulkan, .opengl => switch (cc) {
-                .spirv_vertex => .vertex,
-                .spirv_fragment => .fragment,
-                .spirv_kernel => .gl_compute,
+                .spirv_vertex => .{ .vertex, null },
+                .spirv_fragment => .{ .fragment, null },
+                .spirv_kernel => |opts| .{
+                    .gl_compute,
+                    .{ .local_size = .{
+                        .x_size = opts.local_size_x,
+                        .y_size = opts.local_size_y,
+                        .z_size = opts.local_size_z,
+                    } },
+                },
                 // TODO: We should integrate with the Linkage capability and export this function
                 .spirv_device => return,
                 else => unreachable,
             },
             .opencl => switch (cc) {
-                .spirv_kernel => .kernel,
+                .spirv_kernel => .{ .kernel, null },
                 // TODO: We should integrate with the Linkage capability and export this function
                 .spirv_device => return,
                 else => unreachable,
@@ -218,7 +225,7 @@ pub fn updateExports(
                 spv_decl_index,
                 exp.opts.name.toSlice(ip),
                 exec_model,
-                null,
+                exec_mode,
             );
         }
     }

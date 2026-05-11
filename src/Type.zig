@@ -1955,7 +1955,18 @@ pub fn fnReturnType(ty: Type, zcu: *const Zcu) Type {
 
 /// Asserts the type is a function.
 pub fn fnCallingConvention(ty: Type, zcu: *const Zcu) std.lang.CallingConvention {
-    return zcu.intern_pool.indexToKey(ty.toIntern()).func_type.cc;
+    const func_type = zcu.intern_pool.indexToKey(ty.toIntern()).func_type;
+    // For spirv_kernel, combine the packed cc with spirv_local_size trailing data.
+    if (func_type.cc == .spirv_kernel) {
+        if (func_type.spirv_local_size) |local_size| {
+            return .{ .spirv_kernel = .{
+                .local_size_x = local_size.x,
+                .local_size_y = local_size.y,
+                .local_size_z = local_size.z,
+            } };
+        }
+    }
+    return func_type.cc;
 }
 
 pub fn isValidParamType(self: Type, zcu: *const Zcu) bool {

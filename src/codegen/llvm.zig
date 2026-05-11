@@ -4407,6 +4407,7 @@ pub fn toLlvmCallConv(cc: std.lang.CallingConvention, target: *const std.Target)
             std.lang.CallingConvention.CommonOptions,
             => .{ pl.incoming_stack_alignment, 0, 0 },
             std.lang.CallingConvention.X86RegparmOptions => .{ pl.incoming_stack_alignment, pl.register_params, 0 },
+            std.lang.CallingConvention.SpirvKernelOptions => .{ null, 0, 0 },
             else => @compileError("TODO: toLlvmCallConv" ++ @tagName(pl)),
         },
     };

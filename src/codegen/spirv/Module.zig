@@ -138,7 +138,7 @@ pub const EntryPoint = struct {
     name: []const u8,
     /// Calling Convention
     exec_model: spec.ExecutionModel,
-    exec_mode: ?spec.ExecutionMode = null,
+    exec_mode: ?spec.ExecutionMode.Extended = null,
 };
 
 const StructType = struct {
@@ -325,7 +325,12 @@ fn entryPoints(module: *Module) !Section {
             .interface = interface.items,
         });
 
-        if (entry_point.exec_mode == null and entry_point.exec_model == .fragment) {
+        if (entry_point.exec_mode) |mode| {
+            try module.sections.execution_modes.emit(module.gpa, .OpExecutionMode, .{
+                .entry_point = entry_point_id,
+                .mode = mode,
+            });
+        } else if (entry_point.exec_model == .fragment) {
             switch (target.os.tag) {
                 .vulkan, .opengl => |tag| {
                     try module.sections.execution_modes.emit(module.gpa, .OpExecutionMode, .{
@@ -872,7 +877,7 @@ pub fn declareEntryPoint(
     decl_index: Decl.Index,
     name: []const u8,
     exec_model: spec.ExecutionModel,
-    exec_mode: ?spec.ExecutionMode,
+    exec_mode: ?spec.ExecutionMode.Extended,
 ) !void {
     const gop = try module.entry_points.getOrPut(module.gpa, module.declPtr(decl_index).result_id);
     gop.value_ptr.decl_index = decl_index;

@@ -140,7 +140,7 @@ pub const CallingConvention = union(enum(u8)) {
     pub const kernel: CallingConvention = switch (builtin.target.cpu.arch) {
         .amdgcn => .amdgcn_kernel,
         .nvptx, .nvptx64 => .nvptx_kernel,
-        .spirv32, .spirv64 => .spirv_kernel,
+        .spirv32, .spirv64 => .{ .spirv_kernel = .{} },
         else => unreachable,
     };
 
@@ -337,7 +337,7 @@ pub const CallingConvention = union(enum(u8)) {
 
     // Calling conventions for kernels and shaders on the `spirv`, `spirv32`, and `spirv64` architectures.
     spirv_device,
-    spirv_kernel,
+    spirv_kernel: SpirvKernelOptions,
     spirv_fragment,
     spirv_vertex,
 
@@ -469,6 +469,16 @@ pub const CallingConvention = union(enum(u8)) {
             /// Save all registers using the CPU's fast register bank.
             bank,
         };
+    };
+
+    /// Options for the `spirv_kernel` calling convention.
+    pub const SpirvKernelOptions = struct {
+        /// Workgroup size in the X dimension. Defaults to 1.
+        local_size_x: u32 = 1,
+        /// Workgroup size in the Y dimension. Defaults to 1.
+        local_size_y: u32 = 1,
+        /// Workgroup size in the Z dimension. Defaults to 1.
+        local_size_z: u32 = 1,
     };
 
     /// Returns the array of `std.Target.Cpu.Arch` to which this `CallingConvention` applies.

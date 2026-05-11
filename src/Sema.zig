@@ -9009,6 +9009,10 @@ fn funcCommon(
         .cc = cc,
         .is_var_args = var_args,
         .is_noinline = is_noinline,
+        .spirv_local_size = switch (cc) {
+            .spirv_kernel => |opts| .{ .x = opts.local_size_x, .y = opts.local_size_y, .z = opts.local_size_z },
+            else => null,
+        },
     });
 
     if (has_body) {
@@ -19764,6 +19768,10 @@ fn zirReifyFn(
         .cc = fn_attrs.@"callconv",
         .is_var_args = fn_attrs.varargs,
         .is_noinline = false,
+        .spirv_local_size = switch (fn_attrs.@"callconv") {
+            .spirv_kernel => |opts| .{ .x = opts.local_size_x, .y = opts.local_size_y, .z = opts.local_size_z },
+            else => null,
+        },
     }));
 }
 
@@ -28654,14 +28662,14 @@ fn callconvCoerceAllowed(
     switch (src_cc) {
         inline else => |src_data, tag| {
             const dest_data = @field(dest_cc, @tagName(tag));
-            if (@TypeOf(src_data) != void) {
+            if (@TypeOf(src_data) != void and @TypeOf(src_data) != std.lang.CallingConvention.SpirvKernelOptions) {
                 const default_stack_align = target.stackAlignment();
                 const src_stack_align = src_data.incoming_stack_alignment orelse default_stack_align;
-                const dest_stack_align = src_data.incoming_stack_alignment orelse default_stack_align;
+                const dest_stack_align = dest_data.incoming_stack_alignment orelse default_stack_align;
                 if (dest_stack_align < src_stack_align) return false;
             }
             switch (@TypeOf(src_data)) {
-                void, std.lang.CallingConvention.CommonOptions => {},
+                void, std.lang.CallingConvention.CommonOptions, std.lang.CallingConvention.SpirvKernelOptions => {},
                 std.lang.CallingConvention.X86RegparmOptions => {
                     if (src_data.register_params != dest_data.register_params) return false;
                 },
