@@ -1,8 +1,11 @@
+// zig run -O ReleaseFast --zig-lib-dir lib lib/std/math/big/benchmark.zig -- -f 0.5
+// the argument "-f" is a multiplier for the number of iterations
+// allows to decrease / increase the number of iterations depending on the machine
+
 const std = @import("std");
 const math = std.math;
 const Limb = math.big.Limb;
 const raw = math.big.int.raw;
-// const raw = @import("raw.zig");
 const Random = std.Random.DefaultPrng;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
@@ -47,18 +50,41 @@ const Functions = enum {
             .llshl => llshl,
             .llshr => llshr,
             .llnot => llnot,
-            .llsignedor,
-            .llsignedand,
-            .llsignedxor,
-            .llcmp,
-            .llnormalize => @panic("TODO"),
+            .llsignedor => llsignedor,
+            .llsignedand => llsignedand,
+            .llsignedxor => llsignedxor,
+            .llcmp => llcmp,
+            .llnormalize => llnormalize,
             .lldiv1 => lldiv1,
             .lldiv0p5 => lldiv0p5,
 
-            .llmulacc,
-            .llmulaccLong,
-            .llsquareBasecase,
-            .llpow => @panic("TODO")
+            .llmulacc => @compileError("TODO"),
+            .llmulaccLong => llmulaccLong,
+            .llsquareBasecase => llsquareBasecase,
+            .llpow => @compileError("TODO"),
+        };
+    }
+
+    pub fn isLinear(self: Functions) bool {
+        return switch (self) {
+            .llaccum,
+            .lladdcarry,
+            .llsubcarry,
+            .llmulLimb,
+            .llshl,
+            .llshr,
+            .llnot,
+            .llsignedor,
+            .llsignedand,
+            .llsignedxor,
+            // these 2 are technically at most linear
+            .llcmp,
+            .llnormalize,
+            .lldiv1,
+            .lldiv0p5,
+            => true,
+
+            .llmulacc, .llmulaccLong, .llsquareBasecase, .llpow => false,
         };
     }
 };
@@ -68,13 +94,10 @@ const Range = struct {
     min: usize,
     max: usize,
     base: usize,
-    // TODO: variable step
     step: f64,
     current: f64,
-    // Whether the range is minimized by the previous range
-    depends: bool,
 
-    // TODO: decades (like log paper)
+    // TODO: decades (like log paper) ?
     const ScaleTy = enum { none, one, linear, logarithmic };
 
     pub const none: Range = .{
@@ -84,11 +107,9 @@ const Range = struct {
         .max = 0,
         .base = 0,
         .step = 0,
-        .depends = false
     };
 
     pub fn one(comptime value: usize) Range {
-        // assert(value > 0);
         return .{
             .ty = .one,
             .min = value,
@@ -96,25 +117,16 @@ const Range = struct {
             .max = value,
             .base = 0,
             .step = 1.0,
-            .depends = false
         };
     }
 
     pub fn linear(min: usize, max: usize, nb_pts: usize) Range {
         assert(max > min);
+
         const step: f64 = @as(f64, @floatFromInt(max - min)) / (nb_pts - 1);
-        // const minimum: f64 = if (min == 0) step else @floatFromInt(min);
         const minimum: f64 = @floatFromInt(min);
-        // assert(minimum > 0.0);
-        return .{
-            .ty = .linear,
-            .min = minimum,
-            .max = max,
-            .step = step,
-            .current = minimum,
-            .depends = false,//depends,
-            .base = 0
-        };
+
+        return .{ .ty = .linear, .min = minimum, .max = max, .step = step, .current = minimum, .base = 0 };
     }
 
     // Log scale between `10^min` and `10^max`
@@ -127,23 +139,14 @@ const Range = struct {
             .max = max,
             .base = 10,
             .step = @as(f64, @floatFromInt(max - min)) / (nb_pts - 1),
-            .depends = false,//depends,
-            .current = std.math.pow(f64, 10, @floatFromInt(min)),
+            .current = @floatFromInt(min),
         };
     }
 
     /// Duplicates the original range
-    /// if `self.depends` is set, the new range's start value is larger
-    /// than the `value` argument; otherwise, the argument is ignored
-    pub fn init(self: @This(), value: usize) @This() {
+    pub fn reinit(self: @This()) @This() {
         var new = self;
         new.current = @floatFromInt(new.min);
-        if (self.depends) {
-            while (new.peek()) |peeked| {
-                if(peeked >= value) break;
-                _ = new.next();
-            }
-        }
         return new;
     }
 
@@ -154,14 +157,14 @@ const Range = struct {
     pub fn peek(self: *@This()) ?usize {
         const current = self.current;
         const max: f64 = @floatFromInt(self.max);
-        
+
         const epsilon = 0.0001;
         if (current >= max + epsilon) return null;
 
         const next_value = switch (self.ty) {
             .one, .linear => current,
             .logarithmic => std.math.pow(f64, @floatFromInt(self.base), current),
-            .none => unreachable
+            .none => unreachable,
         };
         return @intFromFloat(@round(next_value));
     }
@@ -171,6 +174,14 @@ const Range = struct {
         self.current += self.step;
         return res;
     }
+
+    pub fn count(self: @This()) usize {
+        var new = self.reinit();
+        var n: usize = 0;
+        while (new.next()) |_|
+            n += 1;
+        return n;
+    }
 };
 
 const BenchFunction = fn (comptime op: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, value: usize) void;
@@ -178,15 +189,9 @@ const BenchFunction = fn (comptime op: raw.AccOp, r: []Limb, a: []const Limb, b:
 const Bench = struct {
     name: Functions,
     ops: bool = false,
-    r: Range,
 
-    /// Varies `a`
-    /// Currently unused
-    // a: Range,
-    /// Varies `b`
-    /// Currently unused
-    // b: Range,
-    /// Varies `value`
+    /// Number of limbs in `r`, `a` and `b`
+    n: Range,
     value: Range = .none,
 
     /// Numbers of iteration
@@ -194,66 +199,58 @@ const Bench = struct {
     iterations: usize = 100_000,
 };
 
-
+// TODO:
+// specific benches for llshl, llshr, llnormalize and llcmp
 const bench_list: []const Bench = &.{
-    Bench {
+    Bench{
         .name = .lladdcarry,
-        .r = .log(0, 4, 60),
+        .n = .log(0, 4, 60),
     },
-    Bench {
+    Bench{
         .name = .llsubcarry,
-        .r = .log(0, 4, 60),
+        .n = .log(0, 4, 60),
     },
-    Bench {
-        .name = .llaccum,
-        .r = .log(0, 4, 60),
-        .ops = true
-    },
-    Bench {
+    Bench{ .name = .llaccum, .n = .log(0, 4, 60), .ops = true },
+    Bench{
         .name = .llmulLimb,
-        .r = .log(0, 3, 50),
-        // the value does not matter anyway
-        .value = .one(100),//.linear(0, std.math.maxInt(Limb), 100),
+        .n = .log(0, 3, 60),
+        // the speed should not depend on the value
+        // also, we can't use too large of a number here,
+        // otherwise, the range break due to floats handling of large values
+        .value = .one(532762),
         .ops = true,
-        .iterations = 2000
+        .iterations = 100_000,
     },
-    // TODO: maybe more specific benches
-    // Bench {
-    //     .name = .llshl,
-    //     .r = .log(0, 4, 100),
-    //     .value = .linear(0, 500*64, 60)
-    // },
-    // Bench {
-    //     .name = .llshr,
-    //     .r = .log(0, 4, 100),
-    //     .value = .linear(0, 500*64, 60),
-    //     .iterations = 5000
-    // },
-    Bench {
+    Bench{
         .name = .llnot,
-        .r = .log(0, 4, 100),
-        .iterations = 5000
+        .n = .log(0, 4, 100),
     },
-    Bench {
+    Bench{
         .name = .lldiv1,
-        .r = .log(0, 4, 100),
-        .value = .linear(1, std.math.maxInt(Limb), 25),
-        .iterations = 1000
+        .n = .log(0, 4, 100),
+        // same as llmulLimb
+        .value = .one(std.math.maxInt(math.big.HalfLimb)),
+        .iterations = 10_000,
     },
-    Bench {
+    Bench{
         .name = .lldiv0p5,
-        .r = .log(0, 4, 100),
-        .value = .linear(1, std.math.maxInt(math.big.HalfLimb), 25),
-        .iterations = 1000
+        .n = .log(0, 4, 100),
+        // same as lldiv1
+        .value = .one(std.math.maxInt(math.big.HalfLimb) / 52),
+        .iterations = 10_000,
     },
+    Bench{ .name = .llsignedor, .n = .log(0, 4, 100), .iterations = 20_000, .value = .linear(0b00, 0b11, 4) },
+    Bench{ .name = .llsignedand, .n = .log(0, 4, 100), .iterations = 20_000, .value = .linear(0b00, 0b11, 4) },
+    Bench{ .name = .llsignedxor, .n = .log(0, 4, 100), .iterations = 20_000, .value = .linear(0b00, 0b11, 4) },
+    Bench{ .name = .llmulaccLong, .n = .log(0, 3, 100), .iterations = 500, .ops = true },
+    Bench{ .name = .llsquareBasecase, .n = .log(0, 3, 100), .iterations = 500 },
 };
-
-
-
 
 const seed = 0;
 const enable_warns = false;
+var iteration_factor: f64 = 1.0;
 var writer: ?*Io.Writer = null;
+
 pub fn main(init: std.process.Init) !void {
     const act = std.posix.Sigaction{
         .handler = .{ .handler = handle_sigint },
@@ -262,6 +259,31 @@ pub fn main(init: std.process.Init) !void {
     };
     std.posix.sigaction(std.posix.SIG.INT, &act, null);
 
+    var arg_it = init.minimal.args.iterate();
+    while (arg_it.next()) |arg| {
+        if (std.mem.startsWith(u8, arg, "--iteration-factor")) {
+            const next = arg["--iteration-factor".len..];
+            if (next.len > 0) {
+                if (next[0] != '=') std.debug.panic("Invalid argument: \"{s}\"\n", .{arg});
+                if (next.len == 1) std.debug.panic("Expected a value after '=' for argument \"{s}\"\n", .{arg});
+                const factor = std.fmt.parseFloat(f64, next[1..]) catch std.debug.panic("Invalid float for iteration factor: \"{s}\"\n", .{next[1..]});
+
+                iteration_factor = factor;
+            } else {
+                const next_arg = arg_it.next() orelse std.debug.panic("Expected a value after \"--iteration-factor\"\n", .{});
+                const factor = std.fmt.parseFloat(f64, next_arg) catch std.debug.panic("Invalid float for iteration factor: \"{s}\"\n", .{next_arg});
+
+                iteration_factor = factor;
+            }
+        } else if (std.mem.startsWith(u8, arg, "-f")) {
+            if (arg.len > 2) std.debug.panic("Argument iteration factor \"{s}\" too long\n", .{arg});
+
+            const next_arg = arg_it.next() orelse std.debug.panic("Expected a value after \"-f\"\n", .{});
+            const factor = std.fmt.parseFloat(f64, next_arg) catch std.debug.panic("Invalid float for iteration factor: \"{s}\"\n", .{next_arg});
+
+            iteration_factor = factor;
+        }
+    }
 
     const io = init.io;
     var arena: std.heap.ArenaAllocator = .init(init.gpa);
@@ -281,6 +303,7 @@ pub fn main(init: std.process.Init) !void {
     try logger.flush();
     writer = null;
 }
+
 fn handle_sigint(_: std.posix.SIG) callconv(.c) void {
     if (writer) |w| w.flush() catch @panic("Could not flush writer");
     std.process.exit(0);
@@ -296,19 +319,14 @@ fn normalize(a: []const Limb) usize {
 
 fn randomLimbs(allocator: Allocator, rand: *Random, n: usize) Allocator.Error![]Limb {
     assert(n > 0);
-	const bytes = try allocator.alignedAlloc(u8, .of(Limb), n * @sizeOf(Limb));
-	const limbs = std.mem.bytesAsSlice(Limb, bytes);
+    const bytes = try allocator.alignedAlloc(u8, .of(Limb), n * @sizeOf(Limb));
+    const limbs = std.mem.bytesAsSlice(Limb, bytes);
 
     rand.fill(bytes);
     while (normalize(limbs) == 0) rand.fill(bytes);
 
     return limbs[0..normalize(limbs)];
 }
-
-
-
-
-
 
 fn benchSimple(io: Io, arena: *std.heap.ArenaAllocator, rand: *Random, logger: *Io.Writer, comptime benches: []const Bench) !void {
     defer assert(arena.reset(.retain_capacity));
@@ -318,70 +336,116 @@ fn benchSimple(io: Io, arena: *std.heap.ArenaAllocator, rand: *Random, logger: *
 
     inline for (benches) |bench| {
         const function = bench.name.func();
+        const N: usize = @intFromFloat(@as(f64, @floatFromInt(bench.iterations)) * iteration_factor);
 
-        // const range_b_initial: Range = if(bench.b.isNone()) .one(1) else bench.b;
-        // const range_a_initial: Range = if(bench.a.isNone()) .one(1) else bench.a;
-        const range_r_initial: Range = if(bench.r.isNone()) .one(1) else bench.r;
+        const range_n_initial: Range = if (bench.n.isNone()) .one(1) else bench.n;
 
-        // var range_b = range_b_initial.init(0);
-        // while (range_b.next()) |b_len| {
+        const count = range_n_initial.count();
 
-        //     var range_a = range_a_initial.init(b_len);
-        //     while (range_a.next()) |a_len| {
-        //         std.debug.print("Doing {}, a_len={}, b_len={}\n", .{bench.name, a_len, b_len});
+        const ops = if (bench.ops) &.{ .add, .sub } else &.{.add};
+        inline for (ops) |op| {
+            var range_value: Range = if (bench.value.isNone()) .one(0) else bench.value;
+            while (range_value.next()) |value| {
+                const n_limbs = try allocator.alloc(usize, count);
+                const times = try allocator.alloc(f64, count);
+                defer allocator.free(n_limbs);
+                defer allocator.free(times);
+                var i: usize = 0;
 
-        // var range_r = range_r_initial.init(a_len);
-        var range_r = range_r_initial.init(0);
-        while (range_r.next()) |r_len| {
-            const a_len = r_len;
-            const b_len = r_len;
+                const bench_start = Io.Clock.now(.cpu_process, io);
 
-            std.debug.print("Doing {}, n={}\n", .{bench.name, r_len});
+                var range_n = range_n_initial.reinit();
+                while (range_n.next()) |n| : (i += 1) {
+                    const a_len = n;
+                    const b_len = n;
 
-            const ops = if(bench.ops) &.{ .add, .sub } else &.{ .add };
-            inline for (ops) |op| {
-
-                var range_value: Range = if (bench.value.isNone()) .one(0) else bench.value;
-                while (range_value.next()) |value| {
+                    const additional_limbs = switch (bench.name) {
+                        // these functions may require r.len >= a.len + 1
+                        .llsignedor, .llsignedxor, .llsignedand => 1,
+                        // not necessarily needed for llmulaccLong
+                        .llmulaccLong => n,
+                        .llsquareBasecase => n + 1,
+                        else => 0,
+                    };
 
                     const a = try randomLimbs(allocator, rand, a_len);
                     const b = try randomLimbs(allocator, rand, b_len);
-                    const r = try randomLimbs(allocator, rand, r_len);
+                    const r = try randomLimbs(allocator, rand, n + additional_limbs);
                     defer allocator.free(a);
                     defer allocator.free(b);
                     defer allocator.free(r);
 
-
                     // TODO: is it the best clock to use ?
                     const start = Io.Clock.now(.cpu_process, io);
-                    for (0..bench.iterations) |_| {
-                        @call(.never_inline, function, .{op, r, a, b, value});
+                    for (0..N) |_| {
+                        @call(.never_inline, function, .{ op, r, a, b, value });
                     }
                     const duration = start.untilNow(io, .cpu_process);
-                    if (enable_warns and duration.toMilliseconds() == 0) 
-                        // TODO: also add `value`
-                        std.log.warn(
-                            "Benchmark likely too short (less than 1ms of bench): {}, r={}, a={}, b={}, op={}, N={}",
-                            .{bench.name, r_len, a_len, b_len, op, bench.iterations}
-                        );
-                    try logResult(logger, bench.name, r_len, a_len, b_len, op, value, @intCast(duration.toNanoseconds()), bench.iterations);
+
+                    if (enable_warns and duration.toMilliseconds() == 0) {
+                        std.log.warn("Benchmark likely too short (less than 1ms of bench): {}, r={}, a={}, b={}, op={}, value={} N={}", .{ bench.name, n, a_len, b_len, op, value, N });
+                    }
+
+                    const average: f64 = @as(f64, @floatFromInt(duration.toNanoseconds())) / @as(f64, @floatFromInt(N));
+
+                    try logResult(logger, bench.name, n, a_len, b_len, op, value, average);
+                    n_limbs[i] = n;
+                    times[i] = average;
                 }
-                // std.debug.print("{}, r_len={} a_len={} b_len={}, d = {}, av = {}\n", .{bench.name, r_len, a_len, b_len, duration.toNanoseconds(), average});
+                const bench_duration = bench_start.untilNow(io, .cpu_process).toMilliseconds();
+
+                logProgress(bench.name, op, n_limbs, times, value, @intCast(bench_duration), N);
             }
         }
-        //    }
-        //}
+    }
+}
+
+fn logProgress(comptime name: Functions, comptime op: raw.AccOp, n_limbs: []const usize, times: []const f64, value: usize, bench_duration: u64, N: usize) void {
+    // in these format strings:
+    // 16 is the max tag length of `name`
+    // 20 is the max digits of a u64 in base 10
+    // 5 is a guess at the max digits of the limb rate
+    // 5 is a guess at the max digits of the duration time
+    // 6 is a guess at the max digits of the iteration count
+    if (name.isLinear()) {
+        const regression = linearRegression(n_limbs, times);
+        const ns_per_limb = regression[1];
+        const limb_per_us: usize = @intFromFloat(std.time.ns_per_us / ns_per_limb);
+
+        const fmt_str = "{s: <16}, op={}, value={: >20}, {: >5} limbs/µs (done in {: >5}ms, {: >6} iterations)\n";
+        std.debug.print(fmt_str, .{ @tagName(name), op, value, limb_per_us, bench_duration, N });
+    } else {
+        std.debug.print("{s: <16}, op={}, value={: >20}, {s: >14} (done in {: >5}ms, {: >6} iterations)\n", .{ @tagName(name), op, value, "", bench_duration, N });
     }
 }
 
 // average in ns
-fn logResult(logger: *Io.Writer, comptime name: Functions, r_len: usize, a_len: usize, b_len: usize, comptime op: raw.AccOp, value: usize, duration: u64, iterations: usize) Io.Writer.Error!void {
-    const average: f64 = @as(f64, @floatFromInt(duration)) / @as(f64, @floatFromInt(iterations));
-    try logger.print("\n{s},{s},{:.3},{},{},{},{s},{}", .{@tagName(name), @tagName(optMode), average, r_len, a_len, b_len, @tagName(op), value});
+fn logResult(logger: *Io.Writer, comptime name: Functions, r_len: usize, a_len: usize, b_len: usize, comptime op: raw.AccOp, value: usize, average: f64) Io.Writer.Error!void {
+    try logger.print("\n{s},{s},{:.3},{},{},{},{s},{}", .{ @tagName(name), @tagName(optMode), average, r_len, a_len, b_len, @tagName(op), value });
 }
 
+// Fits the data to the line y = a + b.x, and returns .{a, b}
+// https://en.wikipedia.org/wiki/Simple_linear_regression
+fn linearRegression(X: []const usize, Y: []const f64) struct { f64, f64 } {
+    assert(X.len == Y.len);
+    const n: f64 = @floatFromInt(X.len);
+    var x_sum: f64 = 0.0;
+    var x_sqr_sum: f64 = 0.0;
+    var y_sum: f64 = 0.0;
+    var xy_sum: f64 = 0.0;
+    for (X, Y) |x, y| {
+        x_sum += @floatFromInt(x);
+        y_sum += y;
+        x_sqr_sum += @floatFromInt(x * x);
+        xy_sum += y * @as(f64, @floatFromInt(x));
+    }
 
+    const denominator = (n * x_sqr_sum - x_sum * x_sum);
+    const a = (y_sum * x_sqr_sum - x_sum * xy_sum) / denominator;
+    const b = (n * xy_sum - x_sum * y_sum) / denominator;
 
+    return .{ a, b };
+}
 
 fn lladdcarry(comptime _: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, _: usize) void {
     const res = raw.lladdcarry(r, a, b);
@@ -426,31 +490,45 @@ fn lldiv0p5(comptime _: raw.AccOp, r: []Limb, a: []const Limb, _: []const Limb, 
     raw.lldiv0p5(r, &rem, a, std.math.cast(math.big.HalfLimb, value).?);
     std.mem.doNotOptimizeAway(rem);
 }
-// Bench methods
-// For 1 input array: varry its length
-// For 2 input arrays: varry both length separately (usually, a.len >= b.len)
 
-// at most linear:
-// llaccum(comptime op: AccOp, r: []Limb, a: []const Limb) void
-// lladdcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb
-// llsubcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb
-//
-// llmulLimb(comptime op: AccOp, acc: []Limb, y: []const Limb, xi: Limb) bool
-// llshl(r: []Limb, a: []const Limb, shift: usize) usize
-// llshr(r: []Limb, a: []const Limb, shift: usize) usize
-// llnot(r: []Limb) void
-// llsignedor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_positive: bool) bool
-// llsignedand(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_positive: bool) bool
-// llsignedxor(r: []Limb, a: []const Limb, a_positive: bool, b: []const Limb, b_positive: bool) bool
-// lldiv1(quo: []Limb, rem: *Limb, a: []const Limb, b: Limb) void
-// lldiv0p5(quo: []Limb, rem: *Limb, a: []const Limb, b: HalfLimb) void
-//
-// llcmp(a: []const Limb, b: []const Limb) i8
-// llnormalize(a: []const Limb) usize
-//
-//
-// at least quadratic:
-// llmulacc(comptime op: AccOp, opt_allocator: ?Allocator, r: []Limb, a: []const Limb, b: []const Limb) void
-// llmulaccLong(comptime op: AccOp, r: []Limb, a: []const Limb, b: []const Limb) void
-// llsquareBasecase(r: []Limb, x: []const Limb) void
-// llpow(r: []Limb, a: []const Limb, b: u32, tmp_limbs: []Limb) void
+fn llcmp(comptime _: raw.AccOp, _: []Limb, a: []const Limb, b: []const Limb, _: usize) void {
+    const res = raw.llcmp(a, b);
+    std.mem.doNotOptimizeAway(res);
+}
+
+fn llnormalize(comptime _: raw.AccOp, _: []Limb, a: []const Limb, _: []const Limb, _: usize) void {
+    const res = raw.llnormalize(a);
+    std.mem.doNotOptimizeAway(res);
+}
+
+fn llsignedor(comptime _: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, value: usize) void {
+    assert(value <= 0b11);
+    const a_positive = value & 0b01 != 0;
+    const b_positive = value & 0b10 != 0;
+    const res = raw.llsignedor(r, a, a_positive, b, b_positive);
+    std.mem.doNotOptimizeAway(res);
+}
+
+fn llsignedand(comptime _: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, value: usize) void {
+    assert(value <= 0b11);
+    const a_positive = value & 0b01 != 0;
+    const b_positive = value & 0b10 != 0;
+    const res = raw.llsignedand(r, a, a_positive, b, b_positive);
+    std.mem.doNotOptimizeAway(res);
+}
+
+fn llsignedxor(comptime _: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, value: usize) void {
+    assert(value <= 0b11);
+    const a_positive = value & 0b01 != 0;
+    const b_positive = value & 0b10 != 0;
+    const res = raw.llsignedxor(r, a, a_positive, b, b_positive);
+    std.mem.doNotOptimizeAway(res);
+}
+
+fn llmulaccLong(comptime op: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, _: usize) void {
+    raw.llmulaccLong(op, r, a, b);
+}
+
+fn llsquareBasecase(comptime _: raw.AccOp, r: []Limb, a: []const Limb, _: []const Limb, _: usize) void {
+    raw.llsquareBasecase(r, a);
+}

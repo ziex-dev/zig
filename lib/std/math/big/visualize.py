@@ -25,29 +25,42 @@ with open('stats.csv', 'r') as file:
 
 fig, axs = plt.subplots(3, 3, layout='constrained', dpi=50)
 
+merge_list = ['div1', 'carry']
+show_label_list = ['div', 'carry', 'accum']
 i = 0
 for function, data in stats.items():
     ax = axs[i // 3][i % 3]
 
+    if any([x in function for x in merge_list]):
+        i -= 1
+
     show_op = len(data['ops']) > 1
-    show_val = False #len(data['values']) > 1
+    show_val = len(data['values']) > 1
+    show_fn_label = any([x in function for x in show_label_list])
     for op in data['ops']:
         for value in data['values']:
             filtered = [entry for entry in data['times'] if entry[1] == op and entry[2] == value]
 
             X = np.array([entry[0] for entry in filtered])
-            times = np.array([entry[3] for entry in filtered])
+            times = np.array([entry[3] for entry in filtered]) / 1000
 
 
             label = 'op=' + op if show_op else ''
             label += ', ' if show_val and show_op else ''
-            label += 'value=' + str(value) if show_val else ''
+            if show_val and 'signed' in function:
+                label += 'a_positive=' + str(value & 1 != 0) + ', b_positive=' + str(value & 0b10 != 0)
+            else:
+                label += 'value=' + str(value) if show_val else ''
+
+            if show_fn_label:
+                label = ', ' + label if len(label) else ''
+                label = function + label
             ax.plot(X, times, label=label)
 
     ax.set_title(function)
     ax.set_xlabel('n limbs')
-    ax.set_ylabel('Avg time (ns)')
-    if show_op or show_val:
+    ax.set_ylabel('Avg time (µs)')
+    if show_op or show_val or show_fn_label:
         ax.legend(loc='best')
     i += 1
 

@@ -9,7 +9,6 @@ const Log2Limb = std.math.big.Log2Limb;
 const limb_bits = @typeInfo(Limb).int.bits;
 const half_limb_bits = @typeInfo(HalfLimb).int.bits;
 
-
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const maxInt = math.maxInt;
@@ -357,7 +356,6 @@ pub fn llmulLimb(comptime op: AccOp, acc: []Limb, y: []const Limb, xi: Limb) boo
     }
 }
 
-
 /// a + b * c + *carry, sets carry to the overflow bits
 pub fn addMulLimbWithCarry(a: Limb, b: Limb, c: Limb, carry: *Limb) Limb {
     // ov1[0] = a + *carry
@@ -394,7 +392,6 @@ pub fn subMulLimbWithBorrow(a: Limb, b: Limb, c: Limb, carry: *Limb) Limb {
 
     return ov2[0];
 }
-
 
 /// returns the min length the limb could be.
 pub fn llnormalize(a: []const Limb) usize {
@@ -1011,9 +1008,6 @@ pub fn llpow(r: []Limb, a: []const Limb, b: u32, tmp_limbs: []Limb) void {
         }
     }
 }
-
-
-
 
 test "llshl shift by whole number of limb" {
     const padding = maxInt(Limb);
