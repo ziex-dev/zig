@@ -1138,6 +1138,7 @@ pub const Duration = struct {
 };
 
 /// Declares under what conditions an operation should return `error.Timeout`.
+/// Note: `.none` will wait ~indefinitely, or at least as long as possible.
 pub const Timeout = union(enum) {
     none,
     duration: Clock.Duration,
