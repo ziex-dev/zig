@@ -1126,10 +1126,11 @@ fn initHeaders(
             defer phnum = 0;
             break :expected_nodes_len 5 + phnum;
         },
-        .EXEC, .DYN => break :expected_nodes_len 8 + phnum * 2 +
-            @intFromBool(maybe_interp != null) +
-            @as(usize, 4) * @intFromBool(have_dynamic_section) +
-            @intFromBool(comp.config.any_non_single_threaded),
+        .EXEC, .DYN => break :expected_nodes_len 7 + // file, ehdr, shdr, phdr, symtab, shstrtab, strtab
+            6 * 2 + // rodata, text, data, data_rel_ro, got, plt
+            @as(usize, @intFromBool(maybe_interp != null)) * 2 +
+            @as(usize, @intFromBool(have_dynamic_section)) * 6 +
+            @as(usize, @intFromBool(comp.config.any_non_single_threaded)) * 2,
     };
     try elf.nodes.ensureTotalCapacity(gpa, expected_nodes_len);
     try elf.shdrs.ensureTotalCapacity(gpa, shnum);
