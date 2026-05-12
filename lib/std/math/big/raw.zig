@@ -1,4 +1,5 @@
 const std = @import("../../std.zig");
+const builtin = @import("builtin");
 const math = std.math;
 const mem = std.mem;
 
@@ -312,72 +313,85 @@ pub fn llmulLimb(comptime op: AccOp, acc: []Limb, y: []const Limb, xi: Limb) boo
     var a_hi = acc[split..];
 
     var j: usize = 0;
-
     var carry: Limb = 0;
     var old_cc4: Limb = 0;
-    // temporary results
-    var r1: Limb = undefined;
-    var r2: Limb = undefined;
-    var r3: Limb = undefined;
-    var r4: Limb = undefined;
 
-    for (0..(split % 4)) |_| {
-        const p1_lo, const p1_hi = mulWide(y[j], xi);
-        const res, const cc = opWithCarry(op, acc[j], p1_lo, old_cc4);
-        acc[j], old_cc4 = opWithOverflow(op, res, carry);
-        carry, const cc2 = opWithOverflow(.add, p1_hi, cc);
-        assert(cc2 == 0);
+    const use_expanded_version = builtin.mode == .ReleaseFast and builtin.cpu.has(.x86, .bmi2);
 
-        j += 1;
-    }
+    if (!use_expanded_version) {
+        while (j < a_lo.len) : (j += 1) {
+            const p_lo, const p_hi = mulWide(y[j], xi);
+            const res, const cc = opWithCarry(op, acc[j], p_lo, old_cc4);
+            acc[j], old_cc4 = opWithOverflow(op, res, carry);
+            carry, const cc2 = opWithOverflow(.add, p_hi, cc);
+            assert(cc2 == 0);
+        }
+        carry += old_cc4;
+    } else {
+        // temporary results
+        var r1: Limb = undefined;
+        var r2: Limb = undefined;
+        var r3: Limb = undefined;
+        var r4: Limb = undefined;
 
-    if (split >= 4) {
-        {
-            const p1_lo, const p1_hi = mulWide(y[j + 0], xi);
-            const p2_lo, const p2_hi = mulWide(y[j + 1], xi);
-            const p3_lo, const p3_hi = mulWide(y[j + 2], xi);
+        for (0..(split % 4)) |_| {
+            const p1_lo, const p1_hi = mulWide(y[j], xi);
+            const res, const cc = opWithCarry(op, acc[j], p1_lo, old_cc4);
+            acc[j], old_cc4 = opWithOverflow(op, res, carry);
+            carry, const cc2 = opWithOverflow(.add, p1_hi, cc);
+            assert(cc2 == 0);
 
-            r1, const c1 = opWithCarry(.add, p1_lo, carry, old_cc4);
-            const p4_lo, const p4_hi = mulWide(y[j + 3], xi);
-
-            r2, const c2 = opWithCarry(.add, p1_hi, p2_lo, c1);
-            r3, const c3 = opWithCarry(.add, p2_hi, p3_lo, c2);
-            r4, const c4 = opWithCarry(.add, p3_hi, p4_lo, c3);
-
-            carry, const c5 = opWithCarry(.add, p4_hi, 0, c4);
-            assert(c5 == 0);
+            j += 1;
         }
 
-        // This implementation has been made to generate nearly the same
-        // assembly as one of gmp's implementation for `addmul_1`
-        // (see mpn/x86_64/zen/aorsmul_1.asm in gmp's sources)
-        while (j + 8 <= a_lo.len) : (j += 4) {
-            a_lo[j], const cc1 = opWithOverflow(op, a_lo[j], r1);
-            const p1_lo, const p1_hi = mulWide(y[j + 4], xi);
+        if (split >= 4) {
+            {
+                const p1_lo, const p1_hi = mulWide(y[j + 0], xi);
+                const p2_lo, const p2_hi = mulWide(y[j + 1], xi);
+                const p3_lo, const p3_hi = mulWide(y[j + 2], xi);
+
+                r1, const c1 = opWithCarry(.add, p1_lo, carry, old_cc4);
+                const p4_lo, const p4_hi = mulWide(y[j + 3], xi);
+
+                r2, const c2 = opWithCarry(.add, p1_hi, p2_lo, c1);
+                r3, const c3 = opWithCarry(.add, p2_hi, p3_lo, c2);
+                r4, const c4 = opWithCarry(.add, p3_hi, p4_lo, c3);
+
+                carry, const c5 = opWithCarry(.add, p4_hi, 0, c4);
+                assert(c5 == 0);
+            }
+
+            // This implementation has been made to generate nearly the same
+            // assembly as one of gmp's implementation for `addmul_1`
+            // (see mpn/x86_64/zen/aorsmul_1.asm in gmp's sources)
+            while (j + 8 <= a_lo.len) : (j += 4) {
+                a_lo[j], const cc1 = opWithOverflow(op, a_lo[j], r1);
+                const p1_lo, const p1_hi = mulWide(y[j + 4], xi);
+                a_lo[j + 1], const cc2 = opWithCarry(op, a_lo[j + 1], r2, cc1);
+                const p2_lo, const p2_hi = mulWide(y[j + 5], xi);
+                a_lo[j + 2], const cc3 = opWithCarry(op, a_lo[j + 2], r3, cc2);
+                const p3_lo, const p3_hi = mulWide(y[j + 6], xi);
+                a_lo[j + 3], const cc4 = opWithCarry(op, a_lo[j + 3], r4, cc3);
+
+                r1, const c1 = opWithCarry(.add, p1_lo, carry, cc4);
+                const p4_lo, const p4_hi = mulWide(y[j + 7], xi);
+
+                r2, const c2 = opWithCarry(.add, p1_hi, p2_lo, c1);
+                r3, const c3 = opWithCarry(.add, p2_hi, p3_lo, c2);
+                r4, const c4 = opWithCarry(.add, p3_hi, p4_lo, c3);
+
+                carry, const c5 = opWithCarry(.add, p4_hi, 0, c4);
+                assert(c5 == 0);
+            }
+            a_lo[j + 0], const cc1 = opWithOverflow(op, a_lo[j + 0], r1);
             a_lo[j + 1], const cc2 = opWithCarry(op, a_lo[j + 1], r2, cc1);
-            const p2_lo, const p2_hi = mulWide(y[j + 5], xi);
             a_lo[j + 2], const cc3 = opWithCarry(op, a_lo[j + 2], r3, cc2);
-            const p3_lo, const p3_hi = mulWide(y[j + 6], xi);
             a_lo[j + 3], const cc4 = opWithCarry(op, a_lo[j + 3], r4, cc3);
 
-            r1, const c1 = opWithCarry(.add, p1_lo, carry, cc4);
-            const p4_lo, const p4_hi = mulWide(y[j + 7], xi);
-
-            r2, const c2 = opWithCarry(.add, p1_hi, p2_lo, c1);
-            r3, const c3 = opWithCarry(.add, p2_hi, p3_lo, c2);
-            r4, const c4 = opWithCarry(.add, p3_hi, p4_lo, c3);
-
-            carry, const c5 = opWithCarry(.add, p4_hi, 0, c4);
-            assert(c5 == 0);
+            carry += cc4;
+        } else {
+            carry += old_cc4;
         }
-        a_lo[j + 0], const cc1 = opWithOverflow(op, a_lo[j + 0], r1);
-        a_lo[j + 1], const cc2 = opWithCarry(op, a_lo[j + 1], r2, cc1);
-        a_lo[j + 2], const cc3 = opWithCarry(op, a_lo[j + 2], r3, cc2);
-        a_lo[j + 3], const cc4 = opWithCarry(op, a_lo[j + 3], r4, cc3);
-
-        carry += cc4;
-    } else {
-        carry += old_cc4;
     }
 
     j = 0;
