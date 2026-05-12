@@ -653,7 +653,6 @@ pub fn io(k: *Kqueue) Io {
             .netClose = netClose,
             .netShutdown = netShutdown,
             .netRead = netRead,
-            .netWrite = netWrite,
             .netSend = netSend,
             .netReceive = netReceive,
             .netInterfaceNameResolve = netInterfaceNameResolve,
@@ -1268,16 +1267,6 @@ fn netRead(userdata: ?*anyopaque, fd: net.Socket.Handle, data: [][]u8) net.Strea
             else => |err| return posix.unexpectedErrno(err),
         }
     }
-}
-
-fn netWrite(userdata: ?*anyopaque, dest: net.Socket.Handle, header: []const u8, data: []const []const u8, splat: usize) net.Stream.Writer.Error!usize {
-    const k: *Kqueue = @ptrCast(@alignCast(userdata));
-    _ = k;
-    _ = dest;
-    _ = header;
-    _ = data;
-    _ = splat;
-    @panic("TODO");
 }
 
 fn netClose(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {

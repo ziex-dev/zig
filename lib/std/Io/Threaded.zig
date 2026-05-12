@@ -1943,10 +1943,6 @@ pub fn io(t: *Threaded) Io {
                 .windows => netShutdownWindows,
                 else => netShutdownPosix,
             },
-            .netWrite = switch (native_os) {
-                .windows => netWriteWindows,
-                else => netWritePosix,
-            },
             .netWriteFile = netWriteFile,
             .netSend = switch (native_os) {
                 .windows => netSendWindows,
@@ -2568,6 +2564,15 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 else => |e| e,
             },
         },
+        .net_write => |o| return .{
+            .net_write = (if (is_windows)
+                netWriteWindows(userdata, o.socket_handle, o.header, o.data, o.splat)
+            else
+                netWritePosix(userdata, o.socket_handle, o.header, o.data, o.splat)) catch |err| switch (err) {
+                error.Canceled => |e| return e,
+                else => |e| e,
+            },
+        },
     }
 }
 
@@ -2627,6 +2632,14 @@ fn batchAwaitAsync(userdata: ?*anyopaque, b: *Io.Batch) Io.Cancelable!void {
                         poll_buffer[poll_len] = .{
                             .fd = o.socket_handle,
                             .events = posix.POLL.IN | posix.POLL.ERR,
+                            .revents = 0,
+                        };
+                        poll_len += 1;
+                    },
+                    .net_write => |o| {
+                        poll_buffer[poll_len] = .{
+                            .fd = o.socket_handle,
+                            .events = posix.POLL.OUT | posix.POLL.ERR,
                             .revents = 0,
                         };
                         poll_len += 1;
@@ -2809,6 +2822,7 @@ fn batchAwaitConcurrent(userdata: ?*anyopaque, b: *Io.Batch, timeout: Io.Timeout
                     b.completed.tail = index;
                 },
                 .net_read => |o| try poll_storage.add(o.socket_handle, posix.POLL.IN | posix.POLL.ERR),
+                .net_write => |o| try poll_storage.add(o.socket_handle, posix.POLL.OUT | posix.POLL.ERR),
             }
             index = submission.node.next;
         }
@@ -3005,6 +3019,7 @@ fn batchApc(
                 .device_io_control => .{ .device_io_control = iosb.* },
                 .net_receive => unreachable,
                 .net_read => unreachable,
+                .net_write => unreachable,
             };
             storage.* = .{ .completion = .{ .node = .{ .next = .none }, .result = result } };
         },
@@ -3218,6 +3233,16 @@ fn batchDrainSubmittedWindows(t: *Threaded, b: *Io.Batch, concurrency: bool) (Io
                 if (concurrency) return error.ConcurrencyUnavailable;
                 batchCompleteBlockingWindows(b, operation_userdata, .{
                     .net_read = netRead(o.socket_handle, o.data) catch |err| switch (err) {
+                        error.Canceled => |e| return e,
+                        else => |e| e,
+                    },
+                });
+            },
+            .net_write => |*o| {
+                // TODO integrate with overlapped I/O or equivalent to avoid this error
+                if (concurrency) return error.ConcurrencyUnavailable;
+                batchCompleteBlockingWindows(b, operation_userdata, .{
+                    .net_write = netWriteWindows(@ptrCast(t), o.socket_handle, o.header, o.data, o.splat) catch |err| switch (err) {
                         error.Canceled => |e| return e,
                         else => |e| e,
                     },
