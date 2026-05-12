@@ -20,9 +20,8 @@ comptime {
 
 const Functions = enum {
     // at most linear
+    llopcarry,
     llaccum,
-    lladdcarry,
-    llsubcarry,
     llmulLimb,
     llshl,
     llshr,
@@ -43,9 +42,8 @@ const Functions = enum {
 
     pub fn func(comptime self: Functions) BenchFunction {
         return switch (self) {
+            .llopcarry => llopcarry,
             .llaccum => llaccum,
-            .lladdcarry => lladdcarry,
-            .llsubcarry => llsubcarry,
             .llmulLimb => llmulLimb,
             .llshl => llshl,
             .llshr => llshr,
@@ -67,9 +65,8 @@ const Functions = enum {
 
     pub fn isLinear(self: Functions) bool {
         return switch (self) {
+            .llopcarry,
             .llaccum,
-            .lladdcarry,
-            .llsubcarry,
             .llmulLimb,
             .llshl,
             .llshr,
@@ -203,12 +200,9 @@ const Bench = struct {
 // specific benches for llshl, llshr, llnormalize and llcmp
 const bench_list: []const Bench = &.{
     Bench{
-        .name = .lladdcarry,
+        .name = .llopcarry,
         .n = .log(0, 4, 60),
-    },
-    Bench{
-        .name = .llsubcarry,
-        .n = .log(0, 4, 60),
+        .ops = true,
     },
     Bench{ .name = .llaccum, .n = .log(0, 4, 60), .ops = true },
     Bench{
@@ -447,12 +441,8 @@ fn linearRegression(X: []const usize, Y: []const f64) struct { f64, f64 } {
     return .{ a, b };
 }
 
-fn lladdcarry(comptime _: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, _: usize) void {
-    const res = raw.lladdcarry(r, a, b);
-    std.mem.doNotOptimizeAway(res);
-}
-fn llsubcarry(comptime _: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, _: usize) void {
-    const res = raw.llsubcarry(r, a, b);
+fn llopcarry(comptime op: raw.AccOp, r: []Limb, a: []const Limb, b: []const Limb, _: usize) void {
+    const res = raw.llopcarry(op, r, a, b);
     std.mem.doNotOptimizeAway(res);
 }
 

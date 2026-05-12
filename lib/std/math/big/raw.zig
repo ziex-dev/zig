@@ -207,18 +207,18 @@ pub fn llmulaccKaratsuba(
     // Ensure that no subtraction overflows.
     if (j0_sign == 1) {
         // a0 > a1.
-        _ = llsubcarry(j0, a0x, a1);
+        _ = llopcarry(.sub, j0, a0x, a1);
     } else {
         // a0 < a1.
-        _ = llsubcarry(j0, a1, a0x);
+        _ = llopcarry(.sub, j0, a1, a0x);
     }
 
     if (j1_sign == 1) {
         // b1 > b0.
-        _ = llsubcarry(j1, b1, b0x);
+        _ = llopcarry(.sub, j1, b1, b0x);
     } else {
         // b1 > b0.
-        _ = llsubcarry(j1, b0x, b1);
+        _ = llopcarry(.sub, j1, b0x, b1);
     }
 
     if (j0_sign * j1_sign == 1) {
@@ -239,32 +239,9 @@ pub fn llmulaccKaratsuba(
 
 /// r = r (op) a.
 /// The result is computed modulo `r.len`.
-pub fn llaccum(comptime op: AccOp, r: []Limb, a: []const Limb) void {
+fn llaccum(comptime op: AccOp, r: []Limb, a: []const Limb) void {
     assert(!slicesOverlap(r, a) or @intFromPtr(r.ptr) <= @intFromPtr(a.ptr));
-    if (op == .sub) {
-        _ = llsubcarry(r, r, a);
-        return;
-    }
-
-    assert(r.len != 0 and a.len != 0);
-    assert(r.len >= a.len);
-
-    var i: usize = 0;
-    var carry: Limb = 0;
-
-    while (i < a.len) : (i += 1) {
-        const ov1 = @addWithOverflow(r[i], a[i]);
-        r[i] = ov1[0];
-        const ov2 = @addWithOverflow(r[i], carry);
-        r[i] = ov2[0];
-        carry = @as(Limb, ov1[1]) + ov2[1];
-    }
-
-    while ((carry != 0) and i < r.len) : (i += 1) {
-        const ov = @addWithOverflow(r[i], carry);
-        r[i] = ov[0];
-        carry = ov[1];
-    }
+    _ = llopcarry(op, r, r, a);
 }
 
 /// Returns -1, 0, 1 if |a| < |b|, |a| == |b| or |a| > |b| respectively for limbs.
@@ -406,36 +383,24 @@ pub fn llnormalize(a: []const Limb) usize {
     return if (j != 0) j else 1;
 }
 
-/// Knuth 4.3.1, Algorithm S.
-pub fn llsubcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
-    assert(a.len != 0 and b.len != 0);
-    assert(a.len >= b.len);
-    assert(r.len >= a.len);
-    assert(!slicesOverlap(r, a) or @intFromPtr(r.ptr) <= @intFromPtr(a.ptr));
-    assert(!slicesOverlap(r, b) or @intFromPtr(r.ptr) <= @intFromPtr(b.ptr));
-
-    var i: usize = 0;
-    var borrow: Limb = 0;
-
-    while (i < b.len) : (i += 1) {
-        const ov1 = @subWithOverflow(a[i], b[i]);
-        r[i] = ov1[0];
-        const ov2 = @subWithOverflow(r[i], borrow);
-        r[i] = ov2[0];
-        borrow = @as(Limb, ov1[1]) + ov2[1];
-    }
-
-    while (i < a.len) : (i += 1) {
-        const ov = @subWithOverflow(a[i], borrow);
-        r[i] = ov[0];
-        borrow = ov[1];
-    }
-
-    return borrow;
+// This function is a workaround around #17391
+// It allows llvm to produce better code (at least on x86_64),
+// by avoiding `u1` for the carry
+fn opWithOverflow(comptime op: AccOp, a: Limb, b: Limb) struct { Limb, Limb } {
+    const res = switch (op) {
+        .add => a +% b,
+        .sub => a -% b,
+    };
+    const cond = switch (op) {
+        // "res < a" does not produce good code, for some reason
+        .add => res < b,
+        .sub => a < b,
+    };
+    return .{ res, if (cond) 1 else 0 };
 }
 
-/// Knuth 4.3.1, Algorithm A.
-pub fn lladdcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
+/// Knuth 4.3.1, Algorithm A and S.
+pub fn llopcarry(comptime op: AccOp, r: []Limb, a: []const Limb, b: []const Limb) Limb {
     assert(a.len != 0 and b.len != 0);
     assert(a.len >= b.len);
     assert(r.len >= a.len);
@@ -446,17 +411,13 @@ pub fn lladdcarry(r: []Limb, a: []const Limb, b: []const Limb) Limb {
     var carry: Limb = 0;
 
     while (i < b.len) : (i += 1) {
-        const ov1 = @addWithOverflow(a[i], b[i]);
-        r[i] = ov1[0];
-        const ov2 = @addWithOverflow(r[i], carry);
-        r[i] = ov2[0];
-        carry = @as(Limb, ov1[1]) + ov2[1];
+        const res, const borrow1 = opWithOverflow(op, a[i], b[i]);
+        r[i], const borrow2 = opWithOverflow(op, res, carry);
+        carry = borrow1 | borrow2;
     }
 
     while (i < a.len) : (i += 1) {
-        const ov = @addWithOverflow(a[i], carry);
-        r[i] = ov[0];
-        carry = ov[1];
+        r[i], carry = opWithOverflow(op, a[i], carry);
     }
 
     return carry;

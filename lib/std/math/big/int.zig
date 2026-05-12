@@ -360,7 +360,7 @@ pub const Mutable = struct {
                 // r = a * b = a + a * (b - 1)
                 // we assert when self.limbs is not large enough to store the number
                 assert(!raw.llmulLimb(.add, self.limbs[0..len], self.limbs[0..len], constants.big_bases[base] - 1));
-                assert(raw.lladdcarry(self.limbs[0..len], self.limbs[0..len], &[1]Limb{limb}) == 0);
+                assert(raw.llopcarry(.add, self.limbs[0..len], self.limbs[0..len], &[1]Limb{limb}) == 0);
 
                 if (self.limbs.len > self.len and self.limbs[self.len] != 0)
                     self.len += 1;
@@ -372,7 +372,7 @@ pub const Mutable = struct {
             const len = @min(self.len + 1, self.limbs.len);
             // we assert when self.limbs is not large enough to store the number
             assert(!raw.llmulLimb(.add, self.limbs[0..len], self.limbs[0..len], math.pow(Limb, base, j) - 1));
-            assert(raw.lladdcarry(self.limbs[0..len], self.limbs[0..len], &[1]Limb{limb}) == 0);
+            assert(raw.llopcarry(.add, self.limbs[0..len], self.limbs[0..len], &[1]Limb{limb}) == 0);
 
             if (self.limbs.len > self.len and self.limbs[self.len] != 0)
                 self.len += 1;
@@ -555,11 +555,11 @@ pub const Mutable = struct {
         } else {
             r.positive = a.positive;
             if (a.limbs.len >= b.limbs.len) {
-                const c = raw.lladdcarry(r.limbs, a.limbs, b.limbs);
+                const c = raw.llopcarry(.add, r.limbs, a.limbs, b.limbs);
                 r.normalize(a.limbs.len);
                 return c != 0;
             } else {
-                const c = raw.lladdcarry(r.limbs, b.limbs, a.limbs);
+                const c = raw.llopcarry(.add, r.limbs, b.limbs, a.limbs);
                 r.normalize(b.limbs.len);
                 return c != 0;
             }
@@ -692,13 +692,13 @@ pub const Mutable = struct {
         } else if (a.positive) {
             if (a.order(b) != .lt) {
                 // (a) - (b) => a - b
-                const c = raw.llsubcarry(r.limbs, a.limbs, b.limbs);
+                const c = raw.llopcarry(.sub, r.limbs, a.limbs, b.limbs);
                 r.normalize(a.limbs.len);
                 r.positive = true;
                 return c != 0;
             } else {
                 // (a) - (b) => -b + a => -(b - a)
-                const c = raw.llsubcarry(r.limbs, b.limbs, a.limbs);
+                const c = raw.llopcarry(.sub, r.limbs, b.limbs, a.limbs);
                 r.normalize(b.limbs.len);
                 r.positive = false;
                 return c != 0;
@@ -706,13 +706,13 @@ pub const Mutable = struct {
         } else {
             if (a.order(b) == .lt) {
                 // (-a) - (-b) => -(a - b)
-                const c = raw.llsubcarry(r.limbs, a.limbs, b.limbs);
+                const c = raw.llopcarry(.sub, r.limbs, a.limbs, b.limbs);
                 r.normalize(a.limbs.len);
                 r.positive = false;
                 return c != 0;
             } else {
                 // (-a) - (-b) => --b + -a => b - a
-                const c = raw.llsubcarry(r.limbs, b.limbs, a.limbs);
+                const c = raw.llopcarry(.sub, r.limbs, b.limbs, a.limbs);
                 r.normalize(b.limbs.len);
                 r.positive = true;
                 return c != 0;
@@ -3512,7 +3512,6 @@ pub const Managed = struct {
         r.setMetadata(m.positive, m.len);
     }
 };
-
 
 // Storage must live for the lifetime of the returned value
 fn fixedIntFromSignedDoubleLimb(A: SignedDoubleLimb, storage: []Limb) Mutable {
