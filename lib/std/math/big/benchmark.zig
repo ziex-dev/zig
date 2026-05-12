@@ -284,18 +284,18 @@ pub fn main(init: std.process.Init) !void {
     defer arena.deinit();
     var rand: Random = .init(seed);
 
-    var buffer: [1024 * 1024]u8 = undefined;
-    var output_file = try Io.Dir.cwd().createFile(io, "stats.csv", .{ .exclusive = false });
-    defer output_file.close(io);
+    // var buffer: [1024 * 1024]u8 = undefined;
+    // var output_file = try Io.Dir.cwd().createFile(io, "stats.csv", .{ .exclusive = false });
+    // defer output_file.close(io);
 
-    var logger = output_file.writer(io, &buffer);
-    try logger.interface.writeAll("name,debug mode,average duration (ns),r_len,a_len,b_len,operation,value");
-    writer = &logger.interface;
+    // var logger = output_file.writer(io, &buffer);
+    // try logger.interface.writeAll("name,debug mode,average duration (ns),r_len,a_len,b_len,operation,value");
+    // writer = &logger.interface;
 
-    try benchSimple(io, &arena, &rand, &logger.interface, bench_list);
+    try benchSimple(io, &arena, &rand, undefined, bench_list);
 
-    try logger.flush();
-    writer = null;
+    // try logger.flush();
+    // writer = null;
 }
 
 fn handle_sigint(_: std.posix.SIG) callconv(.c) void {
@@ -323,6 +323,7 @@ fn randomLimbs(allocator: Allocator, rand: *Random, n: usize) Allocator.Error![]
 }
 
 fn benchSimple(io: Io, arena: *std.heap.ArenaAllocator, rand: *Random, logger: *Io.Writer, comptime benches: []const Bench) !void {
+    _ = logger;
     defer assert(arena.reset(.retain_capacity));
     const allocator = arena.allocator();
 
@@ -382,7 +383,7 @@ fn benchSimple(io: Io, arena: *std.heap.ArenaAllocator, rand: *Random, logger: *
 
                     const average: f64 = @as(f64, @floatFromInt(duration.toNanoseconds())) / @as(f64, @floatFromInt(N));
 
-                    try logResult(logger, bench.name, n, a_len, b_len, op, value, average);
+                    // try logResult(logger, bench.name, n, a_len, b_len, op, value, average);
                     n_limbs[i] = n;
                     times[i] = average;
                 }
