@@ -766,7 +766,7 @@ const Emit = union(enum) {
 };
 
 const ArgMode = union(enum) {
-    build: std.builtin.OutputMode,
+    build: std.lang.OutputMode,
     cc,
     cpp,
     translate_c,
@@ -935,13 +935,13 @@ fn buildOutputType(
     var minor_subsystem_version: ?u16 = null;
     var mingw_unicode_entry_point: bool = false;
     var enable_link_snapshots: bool = false;
-    var debug_compiler_runtime_libs: ?std.builtin.OptimizeMode = null;
+    var debug_compiler_runtime_libs: ?std.lang.OptimizeMode = null;
     var install_name: ?[]const u8 = null;
     var hash_style: link.File.Lld.Elf.HashStyle = .both;
     var entitlements: ?[]const u8 = null;
     var pagezero_size: ?u64 = null;
     var lib_search_strategy: link.UnresolvedInput.SearchStrategy = .paths_first;
-    var lib_preferred_mode: std.builtin.LinkMode = .dynamic;
+    var lib_preferred_mode: std.lang.LinkMode = .dynamic;
     var headerpad_size: ?u32 = null;
     var headerpad_max_install_names: bool = false;
     var dead_strip_dylibs: bool = false;
@@ -5752,7 +5752,7 @@ fn jitCmdInner(
     const self_exe_path = process.executablePathAlloc(io, arena) catch |err|
         fatal("unable to find self exe path: {t}", .{err});
 
-    const optimize_mode: std.builtin.OptimizeMode = if (EnvVar.ZIG_DEBUG_CMD.isSet(environ_map))
+    const optimize_mode: std.lang.OptimizeMode = if (EnvVar.ZIG_DEBUG_CMD.isSet(environ_map))
         .Debug
     else
         .ReleaseFast;
@@ -5969,7 +5969,7 @@ extern "c" fn ZigLlvmAr_main(argc: c_int, argv: [*:null]?[*:0]u8) c_int;
 fn argsCopyZ(alloc: Allocator, args: []const []const u8) ![:null]?[*:0]u8 {
     var argv = try alloc.allocSentinel(?[*:0]u8, args.len, null);
     for (args, 0..) |arg, i| {
-        argv[i] = try alloc.dupeZ(u8, arg); // TODO If there was an argsAllocZ we could avoid this allocation.
+        argv[i] = try alloc.dupeSentinel(u8, arg, 0); // TODO If there was an argsAllocZ we could avoid this allocation.
     }
     return argv;
 }
@@ -6263,8 +6263,8 @@ pub const ClangArgIterator = struct {
     }
 };
 
-fn parseCodeModel(arg: []const u8) std.builtin.CodeModel {
-    return std.meta.stringToEnum(std.builtin.CodeModel, arg) orelse
+fn parseCodeModel(arg: []const u8) std.lang.CodeModel {
+    return std.meta.stringToEnum(std.lang.CodeModel, arg) orelse
         fatal("unsupported machine code model: '{s}'", .{arg});
 }
 
@@ -6599,7 +6599,7 @@ fn cmdDumpLlvmInts(
     if (!build_options.have_llvm)
         fatal("compiler does not use LLVM; cannot dump LLVM integer sizes", .{});
 
-    const triple = try arena.dupeZ(u8, args[0]);
+    const triple = try arena.dupeSentinel(u8, args[0], 0);
 
     const llvm = @import("codegen/llvm/bindings.zig");
 
@@ -7667,13 +7667,13 @@ fn findTemplates(gpa: Allocator, arena: Allocator, io: Io) Templates {
     };
 }
 
-fn parseOptimizeMode(s: []const u8) std.builtin.OptimizeMode {
-    return std.meta.stringToEnum(std.builtin.OptimizeMode, s) orelse
+fn parseOptimizeMode(s: []const u8) std.lang.OptimizeMode {
+    return std.meta.stringToEnum(std.lang.OptimizeMode, s) orelse
         fatal("unrecognized optimization mode: '{s}'", .{s});
 }
 
-fn parseWasiExecModel(s: []const u8) std.builtin.WasiExecModel {
-    return std.meta.stringToEnum(std.builtin.WasiExecModel, s) orelse
+fn parseWasiExecModel(s: []const u8) std.lang.WasiExecModel {
+    return std.meta.stringToEnum(std.lang.WasiExecModel, s) orelse
         fatal("expected [command|reactor] for -mexec-mode=[value], found '{s}'", .{s});
 }
 

@@ -70,7 +70,7 @@ pub fn parse(allocator: Allocator, io: Io, libc_file: []const u8, target: *const
                 if (value.len == 0) {
                     @field(self, field.name) = null;
                 } else {
-                    found_keys[i].allocated = try allocator.dupeZ(u8, value);
+                    found_keys[i].allocated = try allocator.dupeSentinel(u8, value, 0);
                     @field(self, field.name) = found_keys[i].allocated;
                 }
                 break;
@@ -708,8 +708,8 @@ pub const CrtBasenames = struct {
     pub const GetArgs = struct {
         target: *const std.Target,
         link_libc: bool,
-        output_mode: std.builtin.OutputMode,
-        link_mode: std.builtin.LinkMode,
+        output_mode: std.lang.OutputMode,
+        link_mode: std.lang.LinkMode,
         pie: bool,
     };
 

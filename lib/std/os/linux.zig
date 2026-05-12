@@ -1256,21 +1256,23 @@ pub fn munlockall() usize {
 }
 
 pub fn poll(fds: [*]pollfd, n: nfds_t, timeout: i32) usize {
-    return if (@hasField(SYS, "poll"))
-        return syscall3(.poll, @intFromPtr(fds), n, @as(u32, @bitCast(timeout)))
-    else
-        ppoll(
+    if (@hasField(SYS, "poll")) {
+        return syscall3(.poll, @intFromPtr(fds), n, @as(u32, @bitCast(timeout)));
+    } else {
+        var ts: timespec = if (timeout >= 0)
+            .{
+                .sec = @divTrunc(timeout, 1000),
+                .nsec = @rem(timeout, 1000) * 1000000,
+            }
+        else
+            undefined;
+        return ppoll(
             fds,
             n,
-            if (timeout >= 0)
-                @constCast(&timespec{
-                    .sec = @divTrunc(timeout, 1000),
-                    .nsec = @rem(timeout, 1000) * 1000000,
-                })
-            else
-                null,
+            if (timeout >= 0) &ts else null,
             null,
         );
+    }
 }
 
 pub fn ppoll(fds: [*]pollfd, n: nfds_t, timeout: ?*timespec, sigmask: ?*const sigset_t) usize {
@@ -6291,7 +6293,7 @@ pub const dl_phdr_info = extern struct {
 
 pub const CPU_SETSIZE = 128;
 pub const cpu_set_t = [CPU_SETSIZE / @sizeOf(usize)]usize;
-pub const cpu_count_t = std.meta.Int(.unsigned, std.math.log2(CPU_SETSIZE * 8));
+pub const cpu_count_t = @Int(.unsigned, std.math.log2(CPU_SETSIZE * 8));
 
 pub fn CPU_COUNT(set: cpu_set_t) cpu_count_t {
     var sum: cpu_count_t = 0;

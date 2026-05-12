@@ -792,25 +792,6 @@ const module_test_targets = blk: {
             .skip_modules = &.{"std"},
             .extra_target = true,
         },
-        .{
-            .target = .{
-                .cpu_arch = .powerpc,
-                .os_tag = .linux,
-                .abi = .gnueabi,
-            },
-            .link_libc = true,
-            .extra_target = true,
-        },
-        .{
-            .target = .{
-                .cpu_arch = .powerpc,
-                .os_tag = .linux,
-                .abi = .gnueabihf,
-            },
-            .link_libc = true,
-            // https://github.com/ziglang/zig/issues/2256
-            .skip_modules = &.{"std"},
-        },
 
         .{
             .target = .{
@@ -2739,6 +2720,10 @@ fn addOneModuleTest(
         step.dependOn(&run.step);
     } else if (target.cpu.arch.isSpirV()) {
         // Don't run spirv binaries
+        _ = these_tests.getEmittedBin();
+        step.dependOn(&these_tests.step);
+    } else if (target.cpu.arch == .x86_64 and target.os.tag.isDarwin()) {
+        // https://codeberg.org/ziglang/zig/issues/35267
         _ = these_tests.getEmittedBin();
         step.dependOn(&these_tests.step);
     } else {

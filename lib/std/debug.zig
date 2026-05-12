@@ -258,6 +258,9 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
     .bpfeb,
     => false,
 
+    // https://codeberg.org/ziglang/zig/issues/31127
+    .avr => false,
+
     else => true,
 };
 
@@ -517,7 +520,7 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
 
             if (uefi.system_table.boot_services) |bs| {
                 // ExitData buffer must be allocated using boot_services.allocatePool (spec: page 220)
-                const exit_data = uefi.raw_pool_allocator.dupeZ(u16, exit_msg) catch @trap();
+                const exit_data = uefi.raw_pool_allocator.dupeSentinel(u16, exit_msg, 0) catch @trap();
                 bs.exit(uefi.handle, .aborted, exit_data) catch {};
             }
             @trap();
