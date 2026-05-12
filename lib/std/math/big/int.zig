@@ -127,7 +127,6 @@ pub fn calcTwosCompLimbCount(bit_count: usize) usize {
     return @max(std.math.divCeil(usize, bit_count, @bitSizeOf(Limb)) catch unreachable, 1);
 }
 
-
 /// Used to indicate either limit of a 2s-complement integer.
 pub const TwosCompIntLimit = enum {
     // The low limit, either 0x00 (unsigned) or (-)0x80 (signed) for an 8-bit integer.
@@ -1990,7 +1989,7 @@ pub const Mutable = struct {
         }
 
         // Copy all complete limbs
-        var carry: u1 = 1;
+        var carry: Limb = 1;
         var limb_index: usize = 0;
         var bit_index: usize = 0;
         while (limb_index < bit_count / @bitSizeOf(Limb)) : (limb_index += 1) {
@@ -2000,7 +1999,7 @@ pub const Mutable = struct {
 
             // 2's complement (bitwise not, then add carry bit)
             if (!positive) {
-                const ov = @addWithOverflow(~limb, carry);
+                const ov = raw.opWithOverflow(.add, ~limb, carry);
                 limb = ov[0];
                 carry = ov[1];
             }
@@ -2021,7 +2020,7 @@ pub const Mutable = struct {
 
             // 2's complement (bitwise not, then add carry bit)
             if (!positive) {
-                const ov = @addWithOverflow(~limb, carry);
+                const ov = raw.opWithOverflow(.add, ~limb, carry);
                 assert(ov[1] == 0);
                 limb = ov[0];
             }
@@ -2184,12 +2183,12 @@ pub const Const = struct {
             assert(self.limbs[self.limbs.len - 1] != 0);
 
             var remaining_bits = bit_count;
-            var carry: u1 = 1;
+            var carry: Limb = 1;
             var add_res: Limb = undefined;
 
             // All but the most significant limb.
             for (self.limbs[0 .. self.limbs.len - 1]) |limb| {
-                const ov = @addWithOverflow(~limb, carry);
+                const ov = raw.opWithOverflow(.add, ~limb, carry);
                 add_res = ov[0];
                 carry = ov[1];
                 sum += @popCount(add_res);
@@ -2511,7 +2510,7 @@ pub const Const = struct {
         assert(x.fitsInTwosComp(if (x.positive) .unsigned else .signed, bit_count));
 
         // Copy all complete limbs
-        var carry: u1 = 1;
+        var carry: Limb = 1;
         var limb_index: usize = 0;
         var bit_index: usize = 0;
         while (limb_index < bit_count / @bitSizeOf(Limb)) : (limb_index += 1) {
@@ -2519,7 +2518,7 @@ pub const Const = struct {
 
             // 2's complement (bitwise not, then add carry bit)
             if (!x.positive) {
-                const ov = @addWithOverflow(~limb, carry);
+                const ov = raw.opWithOverflow(.add, ~limb, carry);
                 limb = ov[0];
                 carry = ov[1];
             }
