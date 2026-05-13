@@ -46,6 +46,7 @@ comptime {
         symbol(&copysignl, "copysignl");
         symbol(&fdiml, "fdiml");
         symbol(&nanl, "nanl");
+        symbol(&nearbyintl, "nearbyintl");
     }
 
     if ((builtin.target.isMinGW() and builtin.cpu.arch == .x86) or builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
@@ -87,6 +88,8 @@ comptime {
         symbol(&copysignf, "copysignf");
         symbol(&rint, "rint");
         symbol(&rintf, "rintf");
+        symbol(&nearbyint, "nearbyint");
+        symbol(&nearbyintf, "nearbyintf");
     }
 }
 
@@ -391,6 +394,29 @@ fn rintl(x: c_longdouble) callconv(.c) c_longdouble {
     if (y == 0)
         return 0 * x;
     return y;
+}
+
+fn nearbyintGeneric(comptime T: type, func: fn (T) callconv(.c) T, x: T) T {
+    const e = std.c.fetestexcept(std.c.FE_INEXACT);
+    const result = @trunc(func(x));
+    if (e == 0) {
+        _ = std.c.feclearexcept(std.c.FE_INEXACT);
+    }
+    return result;
+}
+
+fn nearbyint(x: f64) callconv(.c) f64 {
+    return nearbyintGeneric(f64, rint, x);
+}
+
+fn nearbyintf(x: f32) callconv(.c) f32 {
+    return nearbyintGeneric(f32, rintf, x);
+}
+
+fn nearbyintl(x: c_longdouble) callconv(.c) c_longdouble {
+    if (@typeInfo(c_longdouble).float.bits == 64)
+        return nearbyint(x);
+    return nearbyintGeneric(c_longdouble, rintl, x);
 }
 
 fn tanh(x: f64) callconv(.c) f64 {

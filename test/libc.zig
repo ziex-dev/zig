@@ -272,9 +272,9 @@ pub fn addCases(cases: *tests.LibcContext) void {
     cases.addLibcTestCase("math/modf.c", true, .{});
     cases.addLibcTestCase("math/modff.c", true, .{});
     cases.addLibcTestCase("math/modfl.c", true, .{});
-    // cases.addLibcTestCase("math/nearbyint.c", true, .{});
+    cases.addLibcTestCase("math/nearbyint.c", true, .{});
     cases.addLibcTestCase("math/nearbyintf.c", true, .{});
-    // cases.addLibcTestCase("math/nearbyintl.c", true, .{});
+    cases.addLibcTestCase("math/nearbyintl.c", true, .{});
     cases.addLibcTestCase("math/nextafter.c", true, .{});
     cases.addLibcTestCase("math/nextafterf.c", true, .{});
     cases.addLibcTestCase("math/nextafterl.c", true, .{});

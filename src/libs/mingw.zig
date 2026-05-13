@@ -875,7 +875,6 @@ const mingw32_x86_src = [_][]const u8{
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "log2l.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "logbl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "logl.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "nearbyintl.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "powl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "remainderl.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "remquol.S",
