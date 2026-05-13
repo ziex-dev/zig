@@ -2550,6 +2550,97 @@ test "pipe/pipe_direct" {
     try testing.expect(fds[1] > 0);
 }
 
+test "resize" {
+    try skipKernelLessThan(.{ .major = 6, .minor = 13, .patch = 0 });
+    var ring = try IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN);
+    defer ring.deinit();
+
+    // original sizes
+    try testing.expectEqual(4, ring.sq.sqes.len);
+    try testing.expectEqual(8, ring.cq.cqes.len);
+
+    // create 1 entry in cqe and 2 entries in sqe
+    _ = try ring.nop(42);
+    try testing.expectEqual(1, try ring.submit_and_wait(1));
+    _ = try ring.nop(43);
+    _ = try ring.nop(44);
+    try testing.expectEqual(1, ring.cq_ready());
+    try testing.expectEqual(2, ring.sq_ready());
+
+    // check pointers
+    try testing.expectEqual(1, ring.sq.sqe_head);
+    try testing.expectEqual(3, ring.sq.sqe_tail);
+    try testing.expectEqual(1, ring.sq.head.*);
+    try testing.expectEqual(1, ring.sq.tail.*);
+
+    try ring.resize(8, 0);
+
+    // new sizes
+    try testing.expectEqual(8, ring.sq.sqes.len);
+    try testing.expectEqual(16, ring.cq.cqes.len);
+
+    // entries are copied to the new queues
+    try testing.expectEqual(1, ring.cq_ready());
+    try testing.expectEqual(2, ring.sq_ready());
+
+    // check pointers (flush is called in resize)
+    try testing.expectEqual(1, ring.sq.head.*);
+    try testing.expectEqual(3, ring.sq.tail.*);
+    try testing.expectEqual(3, ring.sq.sqe_head);
+    try testing.expectEqual(3, ring.sq.sqe_tail);
+
+    // submit 2 copied seqs
+    try testing.expectEqual(2, try ring.submit_and_wait(2));
+    try testing.expectEqual(3, ring.cq_ready());
+    try testing.expectEqual(0, ring.sq_ready());
+
+    // check all 3 cqes
+    var cqe = try ring.copy_cqe();
+    try testing.expectEqual(42, cqe.user_data);
+    cqe = try ring.copy_cqe();
+    try testing.expectEqual(43, cqe.user_data);
+    cqe = try ring.copy_cqe();
+    try testing.expectEqual(44, cqe.user_data);
+
+    // normal use of the ring
+    _ = try ring.nop(45);
+    _ = try ring.nop(46);
+    try testing.expectEqual(2, try ring.submit());
+    cqe = try ring.copy_cqe();
+    try testing.expectEqual(45, cqe.user_data);
+    cqe = try ring.copy_cqe();
+    try testing.expectEqual(46, cqe.user_data);
+}
+
+test "resize with wrong flags" {
+    var ring = try IoUring.init(4, 0);
+    defer ring.deinit();
+    try testing.expectError(error.ArgumentsInvalid, ring.resize(8, 0));
+}
+
+test "resize overflow" {
+    try skipKernelLessThan(.{ .major = 6, .minor = 13, .patch = 0 });
+    var ring = try IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN);
+    defer ring.deinit();
+    for (0..3) |i| {
+        _ = try ring.nop(i);
+    }
+    // can't shrink sq to 2 with 3 sqe's
+    try testing.expectError(error.Overflow, ring.resize(2, 0));
+}
+
+test "resize with clamp" {
+    try skipKernelLessThan(.{ .major = 6, .minor = 13, .patch = 0 });
+    var ring = try IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN);
+    defer ring.deinit();
+    const entries = 1 << 31;
+    try ring.resize(entries, entries);
+
+    // sq and cq ring entries are clamped to the maximum allowable size
+    try testing.expect(ring.sq.sqes.len < entries); // 32k
+    try testing.expect(ring.cq.cqes.len < entries); // 64k
+}
+
 // Prepare, submit recv and get cqe using buffer group.
 fn buf_grp_recv_submit_get_cqe(
     ring: *IoUring,

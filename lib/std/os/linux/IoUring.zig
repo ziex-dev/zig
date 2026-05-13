@@ -1528,6 +1528,67 @@ pub fn getsockopt(
     );
 }
 
+/// Performs resizes of the SQ and CQ rings. Any pending SQ or CQ entries are
+/// copied along the way. Resizing is only supported on rings initialized with
+/// IORING_SETUP_DEFER_TASKRUN (which also requires IORING_SETUP_SINGLE_ISSUER).
+/// If `cq_entries` is 0 CQ ring size will be set to default (like in init),
+/// which is 2 times the SQ size. Max rings size is clamped to 32K for SQ, 64K
+/// for CQ.
+/// Available since kernel 6.13.
+pub fn resize(self: *IoUring, sq_entries: u32, cq_entries: u32) !void {
+    if (sq_entries == 0) return error.EntriesZero;
+    if (!std.math.isPowerOfTwo(sq_entries)) return error.EntriesNotPowerOfTwo;
+    var flags: u32 = linux.IORING_SETUP_CLAMP;
+    if (cq_entries > 0) {
+        if (!std.math.isPowerOfTwo(cq_entries)) return error.EntriesNotPowerOfTwo;
+        flags |= linux.IORING_SETUP_CQSIZE;
+    }
+    var p = std.mem.zeroInit(linux.io_uring_params, .{
+        .sq_entries = sq_entries,
+        .cq_entries = cq_entries,
+        .flags = flags,
+    });
+    try resize_params(self, &p);
+}
+
+/// Matches the interface of io_uring_resize_rings() in liburing.
+fn resize_params(self: *IoUring, p: *linux.io_uring_params) !void {
+    // Need to sync internal state before resize
+    _ = self.flush_sq();
+    // Register rings resize
+    p.features |= linux.IORING_FEAT_SINGLE_MMAP; // asserted in SubmissionQueue.init
+    const res = linux.io_uring_register(self.fd, .REGISTER_RESIZE_RINGS, p, 1);
+    switch (linux.errno(res)) {
+        .SUCCESS => {},
+        // Attempting to resize a ring setup with IORING_SETUP_SINGLE_ISSUER and
+        // the resizing task is different from the one that created/enabled the
+        // ring.
+        .EXIST => return error.InvalidThread,
+        // Copying of p was unsuccessful.
+        .FAULT => return error.Fault,
+        // Invalid flags were specified for the operation or attempt to resize a
+        // ring not setup with IORING_SETUP_DEFER_TASKRUN.
+        .INVAL => return error.ArgumentsInvalid,
+        // The values specified for SQ or CQ entries would cause an overflow.
+        .OVERFLOW => return error.Overflow,
+        .NOSYS => return error.SystemOutdated,
+        else => |ern| return posix.unexpectedErrno(ern),
+    }
+    // Create new submission and completion queues
+    var sq = try linux.IoUring.SubmissionQueue.init(self.fd, p.*);
+    errdefer sq.deinit();
+    var cq = try linux.IoUring.CompletionQueue.init(self.fd, p.*, sq);
+    errdefer cq.deinit();
+    // Copy pointers from previous submission queue
+    sq.sqe_head = self.sq.sqe_head;
+    sq.sqe_tail = self.sq.sqe_tail;
+    // Replace queues in the ring
+    self.sq.deinit();
+    self.sq = sq;
+    self.cq.deinit();
+    self.cq = cq;
+}
+
 pub const SubmissionQueue = struct {
     head: *u32,
     tail: *u32,
