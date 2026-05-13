@@ -860,6 +860,13 @@ pub inline fn writeInt(w: *Writer, comptime T: type, value: T, endian: std.built
 
 /// The function is inline to avoid the dead code in case `endian` is
 /// comptime-known and matches host endianness.
+pub inline fn writeEnum(w: *Writer, value: anytype, endian: std.builtin.Endian) Error!void {
+    const info = @typeInfo(@TypeOf(value)).@"enum";
+    return writeInt(w, info.tag_type, @intFromEnum(value), endian);
+}
+
+/// The function is inline to avoid the dead code in case `endian` is
+/// comptime-known and matches host endianness.
 pub inline fn writeStruct(w: *Writer, value: anytype, endian: std.builtin.Endian) Error!void {
     switch (@typeInfo(@TypeOf(value))) {
         .@"struct" => |info| switch (info.layout) {
@@ -2846,6 +2853,26 @@ test sendFileReading {
     var w_buffer: [1]u8 = undefined;
     var discarding: Writer.Discarding = .init(&w_buffer);
     try testing.expectEqual(4, discarding.writer.sendFileReadingAll(&file_reader, .unlimited));
+}
+
+test writeEnum {
+    var buffer: [4]u8 = undefined;
+    const E = enum(u16) {
+        first = 0x1234,
+        second = 0x5678,
+    };
+    {
+        var w: Writer = .fixed(&buffer);
+        try w.writeEnum(E.first, .little);
+        try w.writeEnum(E.second, .little);
+        try testing.expectEqualSlices(u8, &.{ 0x34, 0x12, 0x78, 0x56 }, &buffer);
+    }
+    {
+        var w: Writer = .fixed(&buffer);
+        try w.writeEnum(E.first, .big);
+        try w.writeEnum(E.second, .big);
+        try testing.expectEqualSlices(u8, &.{ 0x12, 0x34, 0x56, 0x78 }, &buffer);
+    }
 }
 
 test writeStruct {
