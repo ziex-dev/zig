@@ -25,10 +25,17 @@ features: u32,
 /// Matches the interface of io_uring_queue_init() in liburing.
 pub fn init(entries: u16, flags: u32) !IoUring {
     var params = std.mem.zeroInit(linux.io_uring_params, .{
-        .flags = flags,
+        .flags = flags | linux.IORING_SETUP_NO_SQARRAY, // default to no sq array
         .sq_thread_idle = 1000,
     });
-    return try IoUring.init_params(entries, &params);
+    return IoUring.init_params(entries, &params) catch |err| {
+        if (flags & linux.IORING_SETUP_NO_SQARRAY == 0 and err == error.ArgumentsInvalid) {
+            // fallback with sq array
+            params.flags = flags;
+            return try IoUring.init_params(entries, &params);
+        }
+        return err;
+    };
 }
 
 /// A powerful way to setup an io_uring, if you want to tweak linux.io_uring_params such as submission
@@ -99,7 +106,7 @@ pub fn init_params(entries: u16, p: *linux.io_uring_params) !IoUring {
     assert(sq.mask == p.sq_entries - 1);
     // Allow flags.* to be non-zero, since the kernel may set IORING_SQ_NEED_WAKEUP at any time.
     assert(sq.dropped.* == 0);
-    assert(sq.array.len == p.sq_entries);
+    assert(sq.array.len == p.sq_entries or sq.array.len == 0);
     assert(sq.sqes.len == p.sq_entries);
     assert(sq.sqe_head == 0);
     assert(sq.sqe_tail == 0);
@@ -219,15 +226,8 @@ pub fn enter(self: *IoUring, to_submit: u32, min_complete: u32, flags: u32) !u32
 /// Matches the implementation of __io_uring_flush_sq() in liburing.
 pub fn flush_sq(self: *IoUring) u32 {
     if (self.sq.sqe_head != self.sq.sqe_tail) {
-        // Fill in SQEs that we have queued up, adding them to the kernel ring.
-        const to_submit = self.sq.sqe_tail -% self.sq.sqe_head;
-        var tail = self.sq.tail.*;
-        var i: usize = 0;
-        while (i < to_submit) : (i += 1) {
-            self.sq.array[tail & self.sq.mask] = self.sq.sqe_head & self.sq.mask;
-            tail +%= 1;
-            self.sq.sqe_head +%= 1;
-        }
+        const tail = self.sq.sqe_tail;
+        self.sq.sqe_head = tail;
         // Ensure that the kernel can actually see the SQE updates when it sees the tail update.
         @atomicStore(u32, self.sq.tail, tail, .release);
     }
@@ -1578,7 +1578,15 @@ pub const SubmissionQueue = struct {
         errdefer posix.munmap(mmap_sqes);
         assert(mmap_sqes.len == size_sqes);
 
-        const array: [*]u32 = @ptrCast(@alignCast(&mmap[p.sq_off.array]));
+        const c_array: [*]u32 = @ptrCast(@alignCast(&mmap[p.sq_off.array]));
+        const array = if (p.flags & linux.IORING_SETUP_NO_SQARRAY != 0)
+            c_array[0..0]
+        else
+            c_array[0..p.sq_entries];
+        for (0..array.len) |i| {
+            array[i] = @intCast(i);
+        }
+
         const sqes: [*]linux.io_uring_sqe = @ptrCast(@alignCast(&mmap_sqes[0]));
         // We expect the kernel copies p.sq_entries to the u32 pointed to by p.sq_off.ring_entries,
         // see https://github.com/torvalds/linux/blob/v5.8/fs/io_uring.c#L7843-L7844.
@@ -1589,7 +1597,7 @@ pub const SubmissionQueue = struct {
             .mask = @as(*u32, @ptrCast(@alignCast(&mmap[p.sq_off.ring_mask]))).*,
             .flags = @ptrCast(@alignCast(&mmap[p.sq_off.flags])),
             .dropped = @ptrCast(@alignCast(&mmap[p.sq_off.dropped])),
-            .array = array[0..p.sq_entries],
+            .array = array,
             .sqes = sqes[0..p.sq_entries],
             .mmap = mmap,
             .mmap_sqes = mmap_sqes,
