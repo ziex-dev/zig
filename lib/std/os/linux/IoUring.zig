@@ -11,7 +11,6 @@ const posix = std.posix;
 const linux = std.os.linux;
 const testing = std.testing;
 const page_size_min = std.heap.page_size_min;
-const createSocketTestHarness = @import("IoUring/test.zig").createSocketTestHarness;
 
 fd: linux.fd_t = -1,
 sq: SubmissionQueue,
@@ -1883,8 +1882,12 @@ pub fn buf_ring_advance(br: *linux.io_uring_buf_ring, count: u16) void {
 }
 
 test BufferGroup {
+    const createSocketTestHarness = @import("IoUring/test.zig").createSocketTestHarness;
+    const skipKernelLessThan = @import("IoUring/test.zig").skipKernelLessThan;
+
     if (builtin.target.cpu.arch.isPowerPC()) return; // https://codeberg.org/ziglang/zig/issues/31562
     if (!is_linux) return error.SkipZigTest;
+    try skipKernelLessThan(.{ .major = 6, .minor = 0, .patch = 0 });
 
     const io = testing.io;
     _ = io;

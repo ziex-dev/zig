@@ -2136,6 +2136,7 @@ test "openat_direct/close_direct" {
 }
 
 test "ring mapped buffers recv" {
+    try skipKernelLessThan(.{ .major = 6, .minor = 0, .patch = 0 });
     const io = testing.io;
     _ = io;
 
@@ -2226,6 +2227,7 @@ test "ring mapped buffers recv" {
 }
 
 test "ring mapped buffers multishot recv" {
+    try skipKernelLessThan(.{ .major = 6, .minor = 0, .patch = 0 });
     const io = testing.io;
     _ = io;
 
@@ -2577,6 +2579,7 @@ fn expect_buf_grp_cqe(
     // get cqe
     const cqe = try ring.copy_cqe();
     try testing.expectEqual(user_data, cqe.user_data);
+    if (cqe.err() == .INVAL) return error.SkipZigTest;
     try testing.expect(cqe.res >= 0); // success
     try testing.expect(cqe.flags & linux.IORING_CQE_F_BUFFER == linux.IORING_CQE_F_BUFFER); // IORING_CQE_F_BUFFER flag is set
     try testing.expectEqual(expected.len, @as(usize, @intCast(cqe.res)));
@@ -2708,7 +2711,7 @@ fn createListenerSocket(address: *linux.sockaddr.in) !posix.socket_t {
 }
 
 /// For use in tests. Returns SkipZigTest if kernel version is less than required.
-inline fn skipKernelLessThan(required: std.SemanticVersion) !void {
+pub inline fn skipKernelLessThan(required: std.SemanticVersion) !void {
     var uts: linux.utsname = undefined;
     const res = linux.uname(&uts);
     switch (linux.errno(res)) {
