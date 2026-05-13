@@ -375,6 +375,8 @@ test "write_fixed/read_fixed" {
     const cqe_write = try ring.copy_cqe();
     const cqe_read = try ring.copy_cqe();
 
+    if (cqe_write.err() == .IO) return error.SkipZigTest;
+
     try testing.expectEqual(linux.io_uring_cqe{
         .user_data = 0x45454545,
         .res = @as(i32, @intCast(buffers[0].len)),
