@@ -6182,3 +6182,30 @@ test "x86 vectorcall calling convention" {
     };
     static.c_vectorcall_check(1, 2.0, 3.0, @ptrFromInt(4), 5.0, 6.0, 7.0, 8.0, 9.0, 10);
 }
+
+test "x86_64 preserve_none calling convention" {
+    if (builtin.cpu.arch != .x86_64) return error.SkipZigTest;
+    const static = struct {
+        extern fn c_preserve_none_x86_64(x: i32) callconv(.{ .x86_64_preserve_none = .{} }) i32;
+        extern fn c_preserve_none_x86_64_check() void;
+        export fn zig_preserve_none_x86_64(x: i32) callconv(.{ .x86_64_preserve_none = .{} }) i32 {
+            return x + 1;
+        }
+    };
+    try expect(static.c_preserve_none_x86_64(41) == 42);
+    static.c_preserve_none_x86_64_check();
+}
+
+test "aarch64 preserve_none calling convention" {
+    if (builtin.cpu.arch != .aarch64) return error.SkipZigTest;
+    const static = struct {
+        extern fn c_preserve_none_aarch64(x: i32) callconv(.{ .aarch64_preserve_none = .{} }) i32;
+        extern fn c_preserve_none_aarch64_check() void;
+        export fn zig_preserve_none_aarch64(x: i32) callconv(.{ .aarch64_preserve_none = .{} }) i32 {
+            return x + 1;
+        }
+    };
+    try expect(static.c_preserve_none_aarch64(41) == 42);
+    static.c_preserve_none_aarch64_check();
+}
+

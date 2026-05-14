@@ -5876,6 +5876,24 @@ struct ByRef __attribute__((sysv_abi)) c_explict_sys_v(struct ByRef in) {
 }
 #endif
 
+#if defined __x86_64__
+int __attribute__((preserve_none)) c_preserve_none_x86_64(int x) {
+    return x + 1;
+}
+int __attribute__((preserve_none)) zig_preserve_none_x86_64(int);
+void c_preserve_none_x86_64_check(void) {
+    assert_or_panic(zig_preserve_none_x86_64(41) == 42);
+}
+#endif
+#if defined __aarch64__
+int __attribute__((preserve_none)) c_preserve_none_aarch64(int x) {
+    return x + 1;
+}
+int __attribute__((preserve_none)) zig_preserve_none_aarch64(int);
+void c_preserve_none_aarch64_check(void) {
+    assert_or_panic(zig_preserve_none_aarch64(41) == 42);
+}
+#endif
 
 struct byval_tail_callsite_attr_Point {
     double x;

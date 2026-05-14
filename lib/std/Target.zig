@@ -1804,6 +1804,7 @@ pub const Cpu = struct {
                 .x86_64_regcall_v4_win,
                 .x86_64_vectorcall,
                 .x86_64_interrupt,
+                .x86_64_preserve_none,
                 => &.{.x86_64},
 
                 .x86_sysv,
@@ -1829,6 +1830,7 @@ pub const Cpu = struct {
                 .aarch64_aapcs_win,
                 .aarch64_vfabi,
                 .aarch64_vfabi_sve,
+                .aarch64_preserve_none,
                 => &.{ .aarch64, .aarch64_be },
 
                 .alpha_osf,

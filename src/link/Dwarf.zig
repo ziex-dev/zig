@@ -4177,6 +4177,7 @@ fn updateConstInner(dwarf: *Dwarf, pt: Zcu.PerThread, debug_const_index: link.Co
                     .x86_64_regcall_v3_sysv => .LLVM_X86RegCall,
                     .x86_64_regcall_v4_win => .LLVM_X86RegCall,
                     .x86_64_vectorcall => .LLVM_vectorcall,
+                    .x86_64_preserve_none => .LLVM_PreserveNone,
                     .x86_sysv => .normal,
                     .x86_win => .normal,
                     .x86_stdcall => .BORLAND_stdcall,
