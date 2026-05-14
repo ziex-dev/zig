@@ -4176,12 +4176,6 @@ fn createModule(
             error.NewLinkerIncompatibleObjectFormat => fatal("using the new linker to link {s} files is unsupported", .{@tagName(target.ofmt)}),
             error.NewLinkerIncompatibleWithLld => fatal("using the new linker is incompatible with using lld", .{}),
         };
-        if (create_module.opts.any_sanitize_thread and
-            create_module.opts.use_llvm == null and
-            create_module.resolved_options.use_llvm)
-        {
-            warn("-fsanitize-thread is not yet supported by the self-hosted backend; the LLVM backend has been enabled implicitly", .{});
-        }
     }
 
     const root: Compilation.Path = try .fromUnresolved(arena, create_module.dirs, &.{cli_mod.root_path});
