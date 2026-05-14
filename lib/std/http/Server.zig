@@ -689,7 +689,6 @@ pub const WebSocket = struct {
         ConnectionClose,
         UnexpectedOpCode,
         MessageOversize,
-        MissingMaskBit,
         ReadFailed,
         EndOfStream,
     };
@@ -718,7 +717,6 @@ pub const WebSocket = struct {
             }
 
             if (!h0.fin) return error.MessageOversize;
-            if (!h1.mask) return error.MissingMaskBit;
 
             const len: usize = switch (h1.payload_len) {
                 .len16 => try in.takeInt(u16, .big),
@@ -726,19 +724,21 @@ pub const WebSocket = struct {
                 else => @intFromEnum(h1.payload_len),
             };
             if (len > in.buffer.len) return error.MessageOversize;
-            const mask: u32 = @bitCast((try in.takeArray(4)).*);
+            const masking_key: ?u32 = if (h1.mask) @bitCast((try in.takeArray(4)).*) else null;
             const payload = try in.take(len);
 
             // Skip pongs.
             if (h0.opcode == .pong) continue;
 
-            // The last item may contain a partial word of unused data.
-            const floored_len = (payload.len / 4) * 4;
-            const u32_payload: []align(1) u32 = @ptrCast(payload[0..floored_len]);
-            for (u32_payload) |*elem| elem.* ^= mask;
-            const mask_bytes: []const u8 = @ptrCast(&mask);
-            for (payload[floored_len..], mask_bytes[0 .. payload.len - floored_len]) |*leftover, m|
-                leftover.* ^= m;
+            if (masking_key) |mask| {
+                // The last item may contain a partial word of unused data.
+                const floored_len = (payload.len / 4) * 4;
+                const u32_payload: []align(1) u32 = @ptrCast(payload[0..floored_len]);
+                for (u32_payload) |*elem| elem.* ^= mask;
+                const mask_bytes: []const u8 = @ptrCast(&mask);
+                for (payload[floored_len..], mask_bytes[0 .. payload.len - floored_len]) |*leftover, m|
+                    leftover.* ^= m;
+            }
 
             return .{
                 .opcode = h0.opcode,
