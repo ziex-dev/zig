@@ -4941,6 +4941,35 @@ test sanitizeExampleName {
     try std.testing.expectEqualStrings("test_project", try sanitizeExampleName(arena, "test project"));
 }
 
+fn checkLongOption(option: []const u8, args: []const []const u8, i: *usize) ?[]const u8 {
+    const arg = args[i.*];
+    if (!mem.startsWith(u8, arg, option)) return null;
+    if (arg.len == option.len) {
+        if (i.* + 1 >= args.len) {
+            if (builtin.is_test) return null;
+            fatal("expected argument after '{s}'", .{arg});
+        }
+        i.* += 1;
+        return args[i.*];
+    } else if (arg[option.len] == '=') {
+        return arg[option.len + 1 ..];
+    } else return null;
+}
+
+test checkLongOption {
+    var idx: usize = 0;
+
+    // first run tests that do not update index
+    try std.testing.expectEqual(null, checkLongOption("--xyz", &.{ "--name", "/abc" }, &idx));
+    try std.testing.expectEqual(null, checkLongOption("--abcdefghijklm", &.{"--name=abc"}, &idx));
+    try std.testing.expectEqualStrings("/abc", checkLongOption("--name", &.{"--name=/abc"}, &idx).?);
+    try std.testing.expectEqualStrings("", checkLongOption("--name", &.{"--name="}, &idx).?);
+    try std.testing.expectEqual(null, checkLongOption("--name", &.{"--name"}, &idx));
+    try std.testing.expectEqual(idx, 0);
+    try std.testing.expectEqualStrings("/abc", checkLongOption("--name", &.{ "--name", "/abc" }, &idx).?);
+    try std.testing.expectEqual(idx, 1);
+}
+
 fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, environ_map: *process.Environ.Map) !void {
     dev.check(.build_command);
 
@@ -5059,7 +5088,7 @@ fn cmdBuild(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8, 
                         fatal("expected [needed|all] after '--fetch=', found '{s}'", .{
                             sub_arg,
                         });
-                } else if (mem.cutPrefix(u8, arg, "--fork=")) |sub_arg| {
+                } else if (checkLongOption("--fork", args, &i)) |sub_arg| {
                     try forks.append(arena, .{
                         .manifest_ast = undefined,
                         .manifest = undefined,
