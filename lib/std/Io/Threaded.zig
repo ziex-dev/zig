@@ -5314,6 +5314,7 @@ fn dirOpenDirPosix(
             .NOENT => return syscall.fail(error.FileNotFound),
             .NOMEM => return syscall.fail(error.SystemResources),
             .NOTDIR => return syscall.fail(error.NotDir),
+            .IO => return syscall.fail(error.InputOutput),
             .PERM => return syscall.fail(error.PermissionDenied),
             .NXIO => return syscall.fail(error.NoDevice),
             .ILSEQ => return syscall.fail(error.BadPathName),
