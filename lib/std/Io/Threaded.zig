@@ -4890,6 +4890,7 @@ fn dirOpenFilePosix(
                         .NOMEM => return error.SystemResources,
                         .NOSPC => return error.NoSpaceLeft,
                         .NOTDIR => return error.NotDir,
+                        .IO => return error.InputOutput,
                         .PERM => return error.PermissionDenied,
                         .EXIST => return error.PathAlreadyExists,
                         .BUSY => return error.DeviceBusy,
