@@ -815,6 +815,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.AccessDenied => return error.GLibCNotFound,
         error.PermissionDenied => return error.GLibCNotFound,
         error.NoDevice => return error.GLibCNotFound,
+        error.InputOutput => return error.GLibCNotFound,
 
         error.ProcessFdQuotaExceeded => |e| return e,
         error.SystemFdQuotaExceeded => |e| return e,
@@ -848,6 +849,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.NoDevice => return error.Unexpected, // not asking for a special device
         error.FileTooBig => return error.Unexpected,
         error.WouldBlock => return error.Unexpected, // not opened in non-blocking
+        error.InputOutput => return error.Unexpected,
 
         error.AccessDenied => return error.GLibCNotFound,
         error.PermissionDenied => return error.GLibCNotFound,

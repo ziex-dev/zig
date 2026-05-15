@@ -452,6 +452,7 @@ const Module = struct {
                 error.FileLocksUnsupported,
                 error.FileBusy,
                 error.ReadOnlyFileSystem,
+                error.InputOutput,
                 => return error.ReadFailed,
             };
             errdefer coff_file.close(io);

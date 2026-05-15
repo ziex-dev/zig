@@ -207,6 +207,8 @@ pub const OpenError = error{
     FileBusy,
     /// Non-blocking was requested and the operation cannot return immediately.
     WouldBlock,
+    /// IO Error from underlying device or filesystem
+    InputOutput,
 } || Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub fn close(file: File, io: Io) void {

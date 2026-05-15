@@ -456,6 +456,7 @@ pub const OpenError = error{
     SystemResources,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
+    InputOutput,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub const OpenOptions = struct {
@@ -1387,6 +1388,7 @@ pub const DeleteTreeError = error{
     NotDir,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
+    InputOutput,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Whether `sub_path` describes a symlink, file, or directory, this function
@@ -1453,6 +1455,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             error.BadPathName,
                             error.NetworkNotFound,
                             error.Canceled,
+                            error.InputOutput,
                             => |e| return e,
                         };
                         stack.appendAssumeCapacity(.{
@@ -1547,6 +1550,7 @@ pub fn deleteTree(dir: Dir, io: Io, sub_path: []const u8) DeleteTreeError!void {
                             error.BadPathName,
                             error.NetworkNotFound,
                             error.Canceled,
+                            error.InputOutput,
                             => |e| return e,
                         };
                     } else {
@@ -1651,6 +1655,7 @@ fn deleteTreeMinStackSizeWithKindHint(parent: Dir, io: Io, sub_path: []const u8,
                             error.BadPathName,
                             error.NetworkNotFound,
                             error.Canceled,
+                            error.InputOutput,
                             => |e| return e,
                         };
                         if (cleanup_dir_parent) |*d| d.close(io);
@@ -1748,6 +1753,7 @@ fn deleteTreeOpenInitialSubpath(dir: Dir, io: Io, sub_path: []const u8, kind_hin
                     error.BadPathName,
                     error.NetworkNotFound,
                     error.Canceled,
+                    error.InputOutput,
                     => |e| return e,
                 };
             } else {
@@ -1910,6 +1916,8 @@ pub const CreateFileAtomicError = error{
     ReadOnlyFileSystem,
     /// The file attempted to be created is a running executable.
     FileBusy,
+    /// IO Error from underlying device or filesystem
+    InputOutput,
 } || Io.Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 /// Create an unnamed ephemeral file that can eventually be atomically

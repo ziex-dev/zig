@@ -4890,6 +4890,7 @@ fn dirOpenFilePosix(
                         .NOMEM => return error.SystemResources,
                         .NOSPC => return error.NoSpaceLeft,
                         .NOTDIR => return error.NotDir,
+                        .IO => return error.InputOutput,
                         .PERM => return error.PermissionDenied,
                         .EXIST => return error.PathAlreadyExists,
                         .BUSY => return error.DeviceBusy,
@@ -5314,6 +5315,7 @@ fn dirOpenDirPosix(
             .NOENT => return syscall.fail(error.FileNotFound),
             .NOMEM => return syscall.fail(error.SystemResources),
             .NOTDIR => return syscall.fail(error.NotDir),
+            .IO => return syscall.fail(error.InputOutput),
             .PERM => return syscall.fail(error.PermissionDenied),
             .NXIO => return syscall.fail(error.NoDevice),
             .ILSEQ => return syscall.fail(error.BadPathName),
@@ -16171,6 +16173,7 @@ fn windowsCreateProcessPathExt(
             error.NetworkNotFound,
             error.NameTooLong,
             error.BadPathName,
+            error.InputOutput,
             => return error.FileNotFound,
         };
     };
