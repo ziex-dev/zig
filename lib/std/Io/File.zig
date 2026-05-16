@@ -207,6 +207,10 @@ pub const OpenError = error{
     FileBusy,
     /// Non-blocking was requested and the operation cannot return immediately.
     WouldBlock,
+    /// Generally indicates an error from the underlying block device or
+    /// filesystem. This could be something like a disconnected remote filesystem
+    /// (NFS, SMB, ...) or a disk-read failure or corrupt metadata. Nonspecific.
+    InputOutput,
 } || Dir.PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub fn close(file: File, io: Io) void {
