@@ -2159,6 +2159,7 @@ test "ring mapped buffers recv" {
         group_id,
         buffer_size,
         buffers_count,
+        .{},
     ) catch |err| switch (err) {
         // kernel older than 5.19
         error.ArgumentsInvalid => return error.SkipZigTest,
@@ -2190,12 +2191,12 @@ test "ring mapped buffers recv" {
 
         // read first chunk
         const cqe1 = try buf_grp_recv_submit_get_cqe(&ring, &buf_grp, fds.server, rnd.int(u64));
-        var buf = try buf_grp.get(cqe1);
+        var buf, _ = try buf_grp.get(cqe1);
         try testing.expectEqualSlices(u8, data[pos..][0..buf.len], buf);
         pos += buf.len;
         // second chunk
         const cqe2 = try buf_grp_recv_submit_get_cqe(&ring, &buf_grp, fds.server, rnd.int(u64));
-        buf = try buf_grp.get(cqe2);
+        buf, _ = try buf_grp.get(cqe2);
         try testing.expectEqualSlices(u8, data[pos..][0..buf.len], buf);
         pos += buf.len;
 
@@ -2220,7 +2221,7 @@ test "ring mapped buffers recv" {
         // read remaining data
         while (pos < data.len) {
             const cqe = try buf_grp_recv_submit_get_cqe(&ring, &buf_grp, fds.server, rnd.int(u64));
-            buf = try buf_grp.get(cqe);
+            buf, _ = try buf_grp.get(cqe);
             try testing.expectEqualSlices(u8, data[pos..][0..buf.len], buf);
             pos += buf.len;
             try buf_grp.put(cqe);
@@ -2250,6 +2251,7 @@ test "ring mapped buffers multishot recv" {
         group_id,
         buffer_size,
         buffers_count,
+        .{},
     ) catch |err| switch (err) {
         // kernel older than 5.19
         error.ArgumentsInvalid => return error.SkipZigTest,
@@ -2679,9 +2681,7 @@ fn expect_buf_grp_cqe(
     try testing.expectEqual(posix.E.SUCCESS, cqe.err());
 
     // get buffer from pool
-    const buffer_id = try cqe.buffer_id();
-    const len = @as(usize, @intCast(cqe.res));
-    const buf = buf_grp.get_by_id(buffer_id)[0..len];
+    const buf, _ = try buf_grp.get(cqe);
     try testing.expectEqualSlices(u8, expected, buf);
 
     return cqe;
