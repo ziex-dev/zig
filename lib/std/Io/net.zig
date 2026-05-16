@@ -1267,8 +1267,9 @@ pub const Stream = struct {
         interface: Io.Reader,
         stream: Stream,
         err: ?Error,
+        timeout: Io.Timeout = .none,
 
-        pub const Error = Io.Operation.NetRead.Error || Io.Cancelable;
+        pub const Error = Io.Operation.NetRead.Error || Io.Cancelable || Io.Timeout.Error || Io.ConcurrentError;
 
         pub fn init(stream: Stream, io: Io, buffer: []u8) Reader {
             return .{
@@ -1302,7 +1303,14 @@ pub const Stream = struct {
             const dest_n, const data_size = try io_r.writableVector(&iovecs_buffer, data);
             const dest = iovecs_buffer[0..dest_n];
             assert(dest[0].len > 0);
-            const n = r.stream.read(io, dest) catch |err| {
+            const result = io.operateTimeout(.{ .net_read = .{
+                .socket_handle = r.stream.socket.handle,
+                .data = dest,
+            } }, r.timeout) catch |err| {
+                r.err = err;
+                return error.ReadFailed;
+            };
+            const n = result.net_read catch |err| {
                 r.err = err;
                 return error.ReadFailed;
             };
@@ -1323,8 +1331,9 @@ pub const Stream = struct {
         stream: Stream,
         err: ?Error = null,
         write_file_err: ?WriteFileError = null,
+        timeout: Io.Timeout = .none,
 
-        pub const Error = Io.Operation.NetWrite.Error || Io.Cancelable;
+        pub const Error = Io.Operation.NetWrite.Error || Io.Cancelable || Io.Timeout.Error || Io.ConcurrentError;
 
         pub const WriteFileError = error{
             NetworkDown,
@@ -1349,12 +1358,12 @@ pub const Stream = struct {
             const io = w.io;
             const buffered = io_w.buffered();
             const handle = w.stream.socket.handle;
-            const result = io.operate(.{ .net_write = .{
+            const result = io.operateTimeout(.{ .net_write = .{
                 .socket_handle = handle,
                 .header = buffered,
                 .data = data,
                 .splat = splat,
-            } }) catch |err| {
+            } }, w.timeout) catch |err| {
                 w.err = err;
                 return error.WriteFailed;
             };
