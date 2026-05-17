@@ -456,6 +456,7 @@ pub const OpenError = error{
     SystemResources,
     /// On Windows, `\\server` or `\\server\share` was not found.
     NetworkNotFound,
+    InputOutput,
 } || PathNameError || Io.Cancelable || Io.UnexpectedError;
 
 pub const OpenOptions = struct {
