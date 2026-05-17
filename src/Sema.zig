@@ -4620,19 +4620,21 @@ fn zirValidateDeref(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileErr
     const operand = sema.resolveInst(inst_data.operand);
     const operand_ty = sema.typeOf(operand);
 
-    if (operand_ty.zigTypeTag(zcu) != .pointer) {
+    const is_slice = if (operand_ty.zigTypeTag(zcu) != .pointer) {
         return sema.fail(block, src, "cannot dereference non-pointer type '{f}'", .{operand_ty.fmt(pt)});
     } else switch (operand_ty.ptrSize(zcu)) {
-        .one, .c => {},
+        .one, .c => false,
+        .slice => true,
         .many => return sema.fail(block, src, "index syntax required for unknown-length pointer type '{f}'", .{operand_ty.fmt(pt)}),
-        .slice => return sema.fail(block, src, "index syntax required for slice type '{f}'", .{operand_ty.fmt(pt)}),
-    }
+    };
 
     if (sema.resolveValue(operand)) |val| {
         // Error for deref of undef pointer, unless the pointee is OPV in which case it's legal.
         if (val.isUndef(zcu) and operand_ty.childType(zcu).classify(zcu) != .one_possible_value) {
             return sema.fail(block, src, "cannot dereference undefined value", .{});
         }
+    } else if (is_slice) {
+        return sema.fail(block, src, "index syntax required to access runtime-known slice", .{});
     }
 }
 
@@ -13540,14 +13542,14 @@ fn zirArrayCat(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
             const lhs_sub_val = if (lhs_ty.isSinglePointer(zcu))
                 try sema.pointerDeref(block, lhs_src, lhs_val, lhs_ty) orelse break :rs lhs_src
             else if (lhs_ty.isSlice(zcu))
-                try sema.maybeDerefSliceAsArray(block, lhs_src, lhs_val) orelse break :rs lhs_src
+                try sema.maybeDerefSliceAsArray(block, lhs_src, lhs_val, lhs_ty) orelse break :rs lhs_src
             else
                 lhs_val;
 
             const rhs_sub_val = if (rhs_ty.isSinglePointer(zcu))
                 try sema.pointerDeref(block, rhs_src, rhs_val, rhs_ty) orelse break :rs rhs_src
             else if (rhs_ty.isSlice(zcu))
-                try sema.maybeDerefSliceAsArray(block, rhs_src, rhs_val) orelse break :rs rhs_src
+                try sema.maybeDerefSliceAsArray(block, rhs_src, rhs_val, rhs_ty) orelse break :rs rhs_src
             else
                 rhs_val;
 
@@ -30070,7 +30072,10 @@ fn analyzeLoad(
     };
 
     if (try sema.resolveDefinedValue(block, ptr_src, ptr)) |ptr_val| {
-        if (try sema.pointerDeref(block, src, ptr_val, ptr_ty)) |elem_val| {
+        if (switch (ptr_ty.ptrSize(zcu)) {
+            .slice => try sema.maybeDerefSliceAsArray(block, src, ptr_val, ptr_ty),
+            .one, .many, .c => try sema.pointerDeref(block, src, ptr_val, ptr_ty),
+        }) |elem_val| {
             return Air.internedToRef(elem_val.toIntern());
         }
     }
@@ -33685,7 +33690,7 @@ fn anyUndef(sema: *Sema, block: *Block, src: LazySrcLoc, val: Value) !bool {
         .slice => {
             // If the slice contents are runtime-known, reification will fail later on with a
             // specific error message.
-            const arr = try sema.maybeDerefSliceAsArray(block, src, val) orelse return false;
+            const arr = try sema.maybeDerefSliceAsArray(block, src, val, val.typeOf(zcu)) orelse return false;
             return sema.anyUndef(block, src, arr);
         },
         .aggregate => |aggregate| for (0..aggregate.storage.values().len) |i| {
@@ -33726,7 +33731,7 @@ fn derefSliceAsArray(
     /// being comptime-resolved is that the block is being comptime-evaluated.
     reason: ?ComptimeReason,
 ) CompileError!Value {
-    return try sema.maybeDerefSliceAsArray(block, src, slice_val) orelse {
+    return try sema.maybeDerefSliceAsArray(block, src, slice_val, slice_val.typeOf(sema.pt.zcu)) orelse {
         return sema.failWithNeededComptime(block, src, reason);
     };
 }
@@ -33739,12 +33744,11 @@ fn maybeDerefSliceAsArray(
     block: *Block,
     src: LazySrcLoc,
     slice_val: Value,
+    slice_ty: Type,
 ) CompileError!?Value {
     const pt = sema.pt;
     const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
-    const slice_ty = slice_val.typeOf(zcu);
-    assert(slice_ty.zigTypeTag(zcu) == .pointer);
     switch (slice_ty.ptrInfo(zcu).flags.size) {
         .slice => {},
         .one => return sema.pointerDeref(block, src, slice_val, slice_ty),

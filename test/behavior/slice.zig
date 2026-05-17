@@ -1075,3 +1075,13 @@ test "conditionally return second argument slice" {
     try expectEqualStrings("", S.foo(false, "false"));
     try expectEqualStrings("true", S.foo(true, "true"));
 }
+
+test "directly deref slice with comptime-known length" {
+    const slice: []const u16 = &.{ 1, 2, 3 };
+    const array: [slice.len]u16 = slice.*;
+
+    comptime assert(array.len == 3);
+    comptime assert(array[0] == 1);
+    comptime assert(array[1] == 2);
+    comptime assert(array[2] == 3);
+}
