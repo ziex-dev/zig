@@ -7378,11 +7378,8 @@ fn isRewritable(source: []const u8, tokens: std.zig.Ast.TokenList.Slice) !bool {
             maybe_rewritable = true;
         },
         else => {},
-        // #23754
-        .container_doc_comment,
-        => if (std.mem.endsWith(Token.Tag, tokens.items(.tag)[0..i], &.{.l_brace})) {
-            return error.SkipZigTest; // Can cause I.B.
-        },
+        // #23754. `unreachable` since `AstSmith.skip_container_doc_comments` is set
+        .container_doc_comment => unreachable,
         // #24507
         .keyword_inline,
         .keyword_for,
@@ -7507,6 +7504,7 @@ fn fuzzRender(_: void, smith: *std.testing.Smith) !void {
     @disableInstrumentation();
 
     var ast_smith: std.zig.AstSmith = .init(smith);
+    ast_smith.skip_container_doc_comments = true;
     try ast_smith.generateSource();
     var fba_ctx = std.heap.FixedBufferAllocator.init(&fixed_buffer_mem);
     var opt_rendered: ?[]const u8 = null;

@@ -48,6 +48,9 @@ prev_ids_buf: [256]struct { start: u16, len: u16 },
 ///   @min(x, prev_ids) = length
 prev_ids_len: usize,
 
+/// Used for tests affected by #23754
+skip_container_doc_comments: bool = false,
+
 /// `generate` must be called on the returned value before any other methods
 pub fn init(smith: *Smith) AstSmith {
     return .{
@@ -295,7 +298,7 @@ fn pegRoot(a: *AstSmith) SourceError!void {
 /// ContainerMembers <- container_doc_comment? ContainerDeclaration* (ContainerField COMMA)*
 ///                     (ContainerField / ContainerDeclaration*)
 fn pegContainerMembers(a: *AstSmith) SourceError!void {
-    if (a.smith.boolWeighted(63, 1)) {
+    if (!a.skip_container_doc_comments and a.smith.boolWeighted(63, 1)) {
         try a.pegContainerDocComment();
     }
     while (!a.smithListItemEos()) {

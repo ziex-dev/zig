@@ -1248,6 +1248,7 @@ pub fn allocPrintCmd(gpa: Allocator, argv: []const []const u8, options: AllocPri
 
 test {
     _ = Ast;
+    _ = AstGen;
     _ = AstRlAnnotate;
     _ = AstSmith;
     _ = BuiltinFn;

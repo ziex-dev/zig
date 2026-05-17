@@ -830,9 +830,9 @@ pub const Wip = struct {
         defer bundle.deinit(std.testing.allocator);
 
         var bundle_buf: Writer.Allocating = .init(std.testing.allocator);
-        const bundle_bw = &bundle_buf.interface;
+        const bundle_bw = &bundle_buf.writer;
         defer bundle_buf.deinit();
-        try bundle.renderToWriter(bundle_bw);
+        try bundle.renderToWriter(.{}, bundle_bw);
 
         var copy = copy: {
             var wip: ErrorBundle.Wip = undefined;
@@ -846,10 +846,14 @@ pub const Wip = struct {
         defer copy.deinit(std.testing.allocator);
 
         var copy_buf: Writer.Allocating = .init(std.testing.allocator);
-        const copy_bw = &copy_buf.interface;
+        const copy_bw = &copy_buf.writer;
         defer copy_buf.deinit();
-        try copy.renderToWriter(copy_bw);
+        try copy.renderToWriter(.{}, copy_bw);
 
-        try std.testing.expectEqualStrings(bundle_bw.written(), copy_bw.written());
+        try std.testing.expectEqualStrings(bundle_buf.written(), copy_buf.written());
     }
 };
+
+test {
+    _ = Wip;
+}

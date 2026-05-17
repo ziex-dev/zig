@@ -132,6 +132,11 @@ pub const Span = struct {
 
 pub fn deinit(tree: *Ast, gpa: Allocator) void {
     tree.tokens.deinit(gpa);
+    tree.deinitExternalTokens(gpa);
+}
+
+/// If parsed with `parseTokens`, this should be called instead.
+pub fn deinitExternalTokens(tree: *Ast, gpa: Allocator) void {
     tree.nodes.deinit(gpa);
     gpa.free(tree.extra_data);
     gpa.free(tree.errors);

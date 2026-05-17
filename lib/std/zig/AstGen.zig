@@ -1,7 +1,7 @@
 //! Ingests an AST and produces ZIR code.
 const AstGen = @This();
 
-const std = @import("std");
+const std = @import("../std.zig");
 const Ast = std.zig.Ast;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
@@ -13539,6 +13539,44 @@ fn fetchRemoveRefEntries(astgen: *AstGen, param_insts: []const Zir.Inst.Index) !
     return refs.items;
 }
 
-test {
-    _ = &generate;
+test generate {
+    const fba_mem = try std.testing.allocator.alloc(u8, 1 << 18);
+    defer std.testing.allocator.free(fba_mem);
+    try std.testing.fuzz(fba_mem, fuzzGenerate, .{});
+}
+
+fn fuzzGenerate(fba_mem: []u8, smith: *std.testing.Smith) !void {
+    var fba_ctx: std.heap.FixedBufferAllocator = .init(fba_mem);
+    const fba = fba_ctx.allocator();
+
+    return fuzzGenerateInner(fba, smith) catch |e| switch (e) {
+        error.OutOfMemory => error.SkipZigTest,
+        else => e,
+    };
+}
+
+fn fuzzGenerateInner(gpa: std.mem.Allocator, smith: *std.testing.Smith) !void {
+    var ast_smith: std.zig.AstSmith = .init(smith);
+    ast_smith.skip_container_doc_comments = true;
+    var ast = try ast_smith.generate(gpa);
+    defer ast.deinitExternalTokens(gpa);
+
+    var zir = try generate(gpa, ast);
+    defer zir.deinit(gpa);
+
+    var buf: [256]u8 = undefined;
+    var dw: std.Io.Writer.Discarding = .init(&buf);
+    if (!zir.hasCompileErrors()) {
+        try Zir.print.renderAsText(gpa, ast, zir, &dw.writer);
+    } else {
+        var wip_errors: std.zig.ErrorBundle.Wip = undefined;
+        try wip_errors.init(gpa);
+        defer wip_errors.deinit();
+
+        try wip_errors.addZirErrorMessages(zir, ast, ast.source, "<test case>");
+
+        var error_bundle = try wip_errors.toOwnedBundle("");
+        defer error_bundle.deinit(gpa);
+        try error_bundle.renderToWriter(.{}, &dw.writer);
+    }
 }
