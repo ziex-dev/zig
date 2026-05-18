@@ -11195,6 +11195,23 @@ pub extern "c" fn rintf(x: f32) f32;
 pub extern "c" fn rint(x: f64) f64;
 pub extern "c" fn rintl(x: c_longdouble) c_longdouble;
 
+// fenv.h - floating point environment
+pub extern "c" fn feclearexcept(excepts: c_int) c_int;
+pub extern "c" fn fetestexcept(excepts: c_int) c_int;
+pub const FE_INEXACT = switch (builtin.cpu.arch) {
+    .x86_64, .x86, .sparc, .sparc64 => 0x20,
+    .aarch64, .hexagon, .arm, .armeb, .arc, .csky => 0x10,
+    .m68k, .s390x => 0x08,
+    .mips, .mips64 => 0x04,
+    .riscv32, .riscv64 => 0x01,
+    .riscv32be => 0x100000,
+    .riscv64be => 0x1000000,
+    .aarch64_be, .loongarch32, .loongarch64, .arceb => 0x010000,
+    .powerpc, .powerpc64, .powerpcle, .powerpc64le => 0x02000000,
+    .alpha => 0x0, // Not supported
+    else => 0x0,
+};
+
 // OS-specific bits. These are protected from being used on the wrong OS by
 // comptime assertions inside each OS-specific file.
 
