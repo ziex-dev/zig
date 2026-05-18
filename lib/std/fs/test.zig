@@ -1089,7 +1089,7 @@ test "Dir.renamePreserve onto existing" {
 
             (try ctx.dir.createFile(io, test_file_path, .{})).close(io);
             (try ctx.dir.createFile(io, target_file_path, .{})).close(io);
-            var target_dir = try ctx.dir.createDirPathOpen(io, test_dir_path, .default_dir);
+            var target_dir = try ctx.dir.createDirPathOpen(io, test_dir_path, .{});
             try ctx.dir.createDir(io, target_dir_path, .default_dir);
 
             // file -> file
