@@ -1074,6 +1074,91 @@ test "Dir.rename file <-> dir" {
     }.impl);
 }
 
+test "Dir.renamePreserve file onto existing file" {
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
+            const test_file_path = try ctx.transformPath("test_file");
+            const target_file_path = try ctx.transformPath("target_file");
+
+            var file = try ctx.dir.createFile(io, test_file_path, .{});
+            file.close(io);
+            file = try ctx.dir.createFile(io, target_file_path, .{});
+            file.close(io);
+
+            // Rename to existing directory fails
+            try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_file_path, ctx.dir, target_file_path, io));
+
+            // Ensure the file was not renamed
+            file = try ctx.dir.openFile(io, test_file_path, .{});
+            file.close(io);
+        }
+    }.impl);
+}
+
+test "Dir.renamePreserve directory onto empty dir" {
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+
+            const test_dir_path = try ctx.transformPath("test_dir");
+            const target_dir_path = try ctx.transformPath("target_dir");
+
+            try ctx.dir.createDir(io, test_dir_path, .default_dir);
+            try ctx.dir.createDir(io, target_dir_path, .default_dir);
+
+            // Rename to existing directory fails
+            try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_dir_path, io));
+
+            // Ensure the directory was not renamed
+            var dir = try ctx.dir.openDir(io, test_dir_path, .{});
+            dir.close(io);
+        }
+    }.impl);
+}
+
+test "Dir.renamePreserve directory onto non-empty dir" {
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+            const test_dir_path = try ctx.transformPath("test_dir");
+            const target_dir_path = try ctx.transformPath("target_dir");
+
+            try ctx.dir.createDir(io, test_dir_path, .default_dir);
+
+            var target_dir = try ctx.dir.createDirPathOpen(io, target_dir_path, .{});
+            var file = try target_dir.createFile(io, "test_file", .{ .read = true });
+            file.close(io);
+            target_dir.close(io);
+
+            // Rename to existing directory fails
+            try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_dir_path, io));
+
+            // Ensure the directory was not renamed
+            var dir = try ctx.dir.openDir(io, test_dir_path, .{});
+            dir.close(io);
+        }
+    }.impl);
+}
+
+test "Dir.renamePreserve file <-> dir" {
+    try testWithAllSupportedPathTypes(struct {
+        fn impl(ctx: *TestContext) !void {
+            const io = ctx.io;
+            const test_file_path = try ctx.transformPath("test_file");
+            const test_dir_path = try ctx.transformPath("test_dir");
+
+            var file = try ctx.dir.createFile(io, test_file_path, .{ .read = true });
+            file.close(io);
+            try ctx.dir.createDir(io, test_dir_path, .default_dir);
+            try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_file_path, ctx.dir, test_dir_path, io));
+            // TODO: currently this returns `error.PermissionDenied`; should this also be `error.PathAlreadyExists`?
+            // try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, test_file_path, io));
+        }
+    }.impl);
+}
+
 test "rename" {
     const io = testing.io;
 
