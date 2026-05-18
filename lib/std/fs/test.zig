@@ -1087,9 +1087,9 @@ test "Dir.renamePreserve onto existing" {
             const test_dir_path = try ctx.transformPath("test_dir");
             const target_dir_path = try ctx.transformPath("target_dir");
 
-            (try ctx.dir.createFile(io, test_file_path, .{})).close(io);
-            (try ctx.dir.createFile(io, target_file_path, .{})).close(io);
-            var target_dir = try ctx.dir.createDirPathOpen(io, test_dir_path, .{});
+            try ctx.dir.writeFile(io, .{ .sub_path = test_file_path, .data = "" });
+            try ctx.dir.writeFile(io, .{ .sub_path = target_file_path, .data = "" });
+            try ctx.dir.createDir(io, test_dir_path, .default_dir);
             try ctx.dir.createDir(io, target_dir_path, .default_dir);
 
             // file -> file
@@ -1102,9 +1102,12 @@ test "Dir.renamePreserve onto existing" {
             try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_dir_path, io));
 
             // dir -> non-empty dir
-            (try target_dir.createFile(io, "test_file", .{})).close(io);
-            target_dir.close(io);
-            try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_dir_path, io));
+            {
+                const target_dir = try ctx.dir.openDir(io, target_dir_path, .{});
+                defer target_dir.close(io);
+                try target_dir.writeFile(io, .{ .sub_path = "test_file", .data = "" });
+                try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_dir_path, io));
+            }
         }
     }.impl);
 }
