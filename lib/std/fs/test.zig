@@ -1075,9 +1075,6 @@ test "Dir.rename file <-> dir" {
 }
 
 test "Dir.renamePreserve onto existing" {
-    // TODO: fix on non-Linux, non-Windows systems, see https://codeberg.org/ziglang/zig/issues/35340
-    if (native_os != .windows and native_os != .linux) return error.SkipZigTest;
-
     try testWithAllSupportedPathTypes(struct {
         fn impl(ctx: *TestContext) !void {
             const io = ctx.io;
@@ -1096,6 +1093,10 @@ test "Dir.renamePreserve onto existing" {
             try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_file_path, ctx.dir, target_file_path, io));
             // file -> dir
             try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_file_path, ctx.dir, target_dir_path, io));
+
+            // TODO: fix dir renaming on non-Linux, non-Windows systems, see https://codeberg.org/ziglang/zig/issues/35340
+            if (native_os != .windows and native_os != .linux) return;
+
             // dir -> file
             try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_file_path, io));
             // dir -> dir
