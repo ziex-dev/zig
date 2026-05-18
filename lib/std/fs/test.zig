@@ -1107,8 +1107,8 @@ test "Dir.renamePreserve onto existing" {
                 const target_dir = try ctx.dir.openDir(io, target_dir_path, .{});
                 defer target_dir.close(io);
                 try target_dir.writeFile(io, .{ .sub_path = "test_file", .data = "" });
-                try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_dir_path, io));
             }
+            try expectError(error.PathAlreadyExists, ctx.dir.renamePreserve(test_dir_path, ctx.dir, target_dir_path, io));
         }
     }.impl);
 }
