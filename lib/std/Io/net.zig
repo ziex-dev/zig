@@ -286,6 +286,9 @@ pub const IpAddress = union(enum) {
         /// When not enabled any attempt to send datagrams to a broadcast address
         /// will fail with `error.AccessDenied`
         allow_broadcast: bool = false,
+        /// Sets SO_REUSEADDR and SO_REUSEPORT on POSIX.
+        /// Sets SO_REUSEADDR on Windows, which is roughly equivalent.
+        reuse_address: bool = false,
         mode: Socket.Mode,
         protocol: ?Protocol = null,
     };

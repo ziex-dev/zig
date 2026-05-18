@@ -12338,6 +12338,11 @@ fn netBindIpPosix(
     const family = posixAddressFamily(address);
     const socket_fd = try openSocketPosix(family, options);
     errdefer closeFd(socket_fd);
+    if (options.reuse_address) {
+        try setSocketOptionPosix(socket_fd, posix.SOL.SOCKET, posix.SO.REUSEADDR, 1);
+        if (@hasDecl(posix.SO, "REUSEPORT"))
+            try setSocketOptionPosix(socket_fd, posix.SOL.SOCKET, posix.SO.REUSEPORT, 1);
+    }
     var storage: PosixAddress = undefined;
     var addr_len = addressToPosix(address, &storage);
     try posixBind(socket_fd, &storage.any, addr_len);
@@ -12357,6 +12362,7 @@ fn netBindIpWindows(
     const family = posixAddressFamily(address);
     const socket_handle = try openSocketAfd(family, options);
     errdefer windows.CloseHandle(socket_handle);
+    if (options.reuse_address) try setSocketOptionAfd(socket_handle, ws2_32.SOL.SOCKET, ws2_32.SO.REUSEADDR, true);
     const bound_address = try bindSocketIpAfd(socket_handle, address, .Active);
     if (options.allow_broadcast) try setSocketOptionAfd(socket_handle, ws2_32.SOL.SOCKET, ws2_32.SO.BROADCAST, true);
     return .{ .handle = socket_handle, .address = bound_address };
