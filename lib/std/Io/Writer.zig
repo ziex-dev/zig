@@ -1549,18 +1549,10 @@ pub fn printIntAny(
         }
     }
 
-    if (value_info.signedness == .signed) {
-        if (value < 0) {
-            // Negative integer
-            index -= 1;
-            buf[index] = '-';
-        } else if (options.width == null or options.width.? == 0) {
-            // Positive integer, omit the plus sign
-        } else {
-            // Positive integer
-            index -= 1;
-            buf[index] = '+';
-        }
+    if (value_info.signedness == .signed and value < 0) {
+        // Negative integer
+        index -= 1;
+        buf[index] = '-';
     }
 
     return w.alignBufferOptions(buf[index..], options);
@@ -2086,7 +2078,7 @@ test printInt {
     try testPrintIntCase("  1234", @as(u32, 0x1234), 16, .lower, .{ .width = 6 });
     try testPrintIntCase("1234", @as(u32, 0x1234), 16, .lower, .{ .width = 1 });
 
-    try testPrintIntCase("+42", @as(i32, 42), 10, .lower, .{ .width = 3 });
+    try testPrintIntCase(" 42", @as(i32, 42), 10, .lower, .{ .width = 3 });
     try testPrintIntCase("-42", @as(i32, -42), 10, .lower, .{ .width = 3 });
 
     try testPrintIntCase("123456789123456789", @as(comptime_int, 123456789123456789), 10, .lower, .{});

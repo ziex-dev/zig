@@ -769,9 +769,9 @@ test "int.padded" {
     try expectFmt("i8: '  -1'", "i8: '{:>4}'", .{@as(i8, -1)});
     try expectFmt("i8: ' -1 '", "i8: '{:^4}'", .{@as(i8, -1)});
     try expectFmt("i16: '-1234'", "i16: '{:4}'", .{@as(i16, -1234)});
-    try expectFmt("i16: '+1234'", "i16: '{:4}'", .{@as(i16, 1234)});
+    try expectFmt("i16: '1234'", "i16: '{:4}'", .{@as(i16, 1234)});
     try expectFmt("i16: '-12345'", "i16: '{:4}'", .{@as(i16, -12345)});
-    try expectFmt("i16: '+12345'", "i16: '{:4}'", .{@as(i16, 12345)});
+    try expectFmt("i16: '12345'", "i16: '{:4}'", .{@as(i16, 12345)});
     try expectFmt("u16: '12345'", "u16: '{:4}'", .{@as(u16, 12345)});
 }
 
@@ -1225,7 +1225,7 @@ test "vector" {
 
     try expectFmt("{ true, false, true, false }", "{}", .{vbool});
     try expectFmt("{ -2, -1, 0, 1 }", "{}", .{vi64});
-    try expectFmt("{    -2,    -1,    +0,    +1 }", "{d:5}", .{vi64});
+    try expectFmt("{    -2,    -1,     0,     1 }", "{d:5}", .{vi64});
     try expectFmt("{ 1000, 2000, 3000, 4000 }", "{}", .{vu64});
     try expectFmt("{ 3e8, 7d0, bb8, fa0 }", "{x}", .{vu64});
 
