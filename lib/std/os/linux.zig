@@ -7304,9 +7304,9 @@ pub const IORING_OP = enum(u8) {
     LISTEN,
     RECV_ZC,
     EPOLL_WAIT,
-	READV_FIXED,
-	WRITEV_FIXED,
-	PIPE,
+    READV_FIXED,
+    WRITEV_FIXED,
+    PIPE,
 
     _,
 };
