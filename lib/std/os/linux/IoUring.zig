@@ -2009,11 +2009,11 @@ pub fn buf_ring_advance(br: *linux.io_uring_buf_ring, count: u16) void {
 }
 
 test BufferGroup {
-    const createSocketTestHarness = @import("IoUring/test.zig").createSocketTestHarness;
-    const skipKernelLessThan = @import("IoUring/test.zig").skipKernelLessThan;
-
     if (builtin.target.cpu.arch.isPowerPC()) return; // https://codeberg.org/ziglang/zig/issues/31562
     if (!is_linux) return error.SkipZigTest;
+
+    const createSocketTestHarness = @import("IoUring/test.zig").createSocketTestHarness;
+    const skipKernelLessThan = @import("IoUring/test.zig").skipKernelLessThan;
     try skipKernelLessThan(.{ .major = 6, .minor = 0, .patch = 0 });
 
     var ring = IoUring.init(16, 0) catch |err| switch (err) {
