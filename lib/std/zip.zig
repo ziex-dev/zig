@@ -562,8 +562,8 @@ pub const Iterator = struct {
             switch (self.compression_method) {
                 .store => {
                     stream.interface.streamExact64(w, self.uncompressed_size) catch |err| switch (err) {
-                        error.ReadFailed => return stream.err.?,
-                        error.WriteFailed => return err,
+                        error.ReadFailed => |e| return stream.err orelse e,
+                        error.WriteFailed => |e| return e,
                         error.EndOfStream => return error.ZipDecompressTruncated,
                     };
                 },
@@ -571,8 +571,8 @@ pub const Iterator = struct {
                     var flate_buffer: [flate.max_window_len]u8 = undefined;
                     var decompress: flate.Decompress = .init(&stream.interface, .raw, &flate_buffer);
                     decompress.reader.streamExact64(w, self.uncompressed_size) catch |err| switch (err) {
-                        error.ReadFailed => return stream.err.?,
-                        error.WriteFailed => return err,
+                        error.ReadFailed => |e| return decompress.err orelse stream.err orelse e,
+                        error.WriteFailed => |e| return e,
                         error.EndOfStream => return error.ZipDecompressTruncated,
                     };
                 },
@@ -613,7 +613,7 @@ pub const Iterator = struct {
             var out_file_buffer: [1024]u8 = undefined;
             var file_writer = out_file.writer(io, &out_file_buffer);
             self.extractTo(stream, &file_writer.interface) catch |err| switch (err) {
-                error.WriteFailed => return file_writer.err orelse err,
+                error.WriteFailed => |e| return file_writer.err orelse e,
                 else => return err,
             };
             try file_writer.end();
