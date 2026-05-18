@@ -2016,7 +2016,11 @@ test BufferGroup {
     if (!is_linux) return error.SkipZigTest;
     try skipKernelLessThan(.{ .major = 6, .minor = 0, .patch = 0 });
 
-    var ring = try IoUring.init(16, 0);
+    var ring = IoUring.init(16, 0) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
     defer ring.deinit();
 
     const opts: []const BufferGroup.Options = &.{

@@ -2554,7 +2554,11 @@ test "pipe/pipe_direct" {
 
 test "resize" {
     try skipKernelLessThan(.{ .major = 6, .minor = 13, .patch = 0 });
-    var ring = try IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN);
+    var ring = IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
     defer ring.deinit();
 
     // original sizes
@@ -2615,14 +2619,22 @@ test "resize" {
 }
 
 test "resize with wrong flags" {
-    var ring = try IoUring.init(4, 0);
+    var ring = IoUring.init(4, 0) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
     defer ring.deinit();
     try testing.expectError(error.ArgumentsInvalid, ring.resize(8, 0));
 }
 
 test "resize overflow" {
     try skipKernelLessThan(.{ .major = 6, .minor = 13, .patch = 0 });
-    var ring = try IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN);
+    var ring = IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
     defer ring.deinit();
     for (0..3) |i| {
         _ = try ring.nop(i);
@@ -2633,7 +2645,11 @@ test "resize overflow" {
 
 test "resize with clamp" {
     try skipKernelLessThan(.{ .major = 6, .minor = 13, .patch = 0 });
-    var ring = try IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN);
+    var ring = IoUring.init(4, linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
     defer ring.deinit();
     const entries = 1 << 31;
     try ring.resize(entries, entries);
