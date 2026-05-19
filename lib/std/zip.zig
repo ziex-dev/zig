@@ -571,7 +571,7 @@ pub const Iterator = struct {
                     var flate_buffer: [flate.max_window_len]u8 = undefined;
                     var decompress: flate.Decompress = .init(&stream.interface, .raw, &flate_buffer);
                     decompress.reader.streamExact64(w, self.uncompressed_size) catch |err| switch (err) {
-                        error.ReadFailed => |e| return decompress.err orelse stream.err orelse e,
+                        error.ReadFailed => |e| return decompress.err orelse (stream.err orelse e),
                         error.WriteFailed => |e| return e,
                         error.EndOfStream => return error.ZipDecompressTruncated,
                     };
