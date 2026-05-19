@@ -295,13 +295,18 @@ pub const Connection = struct {
         client: std.crypto.tls.Client,
         connection: Connection,
 
+        pub const CreateError = std.mem.Allocator.Error ||
+            std.Io.net.Stream.Writer.Error ||
+            std.Io.net.Stream.Reader.Error ||
+            std.crypto.tls.Client.InitError;
+
         /// Asserts that `client.now` is non-null.
         fn create(
             client: *Client,
             remote_host: HostName,
             port: u16,
             stream: Io.net.Stream,
-        ) !*Tls {
+        ) CreateError!*Tls {
             const io = client.io;
             const gpa = client.allocator;
             const alloc_len = allocLen(client, remote_host.bytes.len);
@@ -1412,8 +1417,8 @@ pub const basic_authorization = struct {
 };
 
 pub const ConnectTcpError = error{
-    TlsInitializationFailed,
-} || Allocator.Error || HostName.ConnectError || Io.Cancelable;
+    TlsSupportDisabled,
+} || Connection.Tls.CreateError || Allocator.Error || HostName.ConnectError || Io.Cancelable;
 
 /// Reuses a `Connection` if one matching `host` and `port` is already open.
 ///
@@ -1457,13 +1462,8 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
 
     switch (protocol) {
         .tls => {
-            if (disable_tls) return error.TlsInitializationFailed;
-            const tc = Connection.Tls.create(client, proxied_host, proxied_port, stream) catch |err| switch (err) {
-                error.OutOfMemory => |e| return e,
-                error.Unexpected => |e| return e,
-                error.Canceled => |e| return e,
-                else => return error.TlsInitializationFailed,
-            };
+            if (disable_tls) return ConnectTcpError.TlsSupportDisabled;
+            const tc = try Connection.Tls.create(client, proxied_host, proxied_port, stream);
             errdefer tc.destroy();
             try client.connection_pool.addUsed(io, &tc.connection);
             return &tc.connection;
