@@ -1573,8 +1573,8 @@ unwrapped == 1234{#endsyntax#}</pre>
             </ul>
           </td>
           <td>
-            Equivalent to:
-            <pre>{#syntax#}a orelse unreachable{#endsyntax#}</pre>
+            Equivalent to eagerly evaluating {#syntax#}a orelse unreachable{#endsyntax#}.
+            For values which are comptime-known to be {#syntax#}null{#endsyntax#} this will raise a compile error.
           </td>
           <td>
             <pre>{#syntax#}const value: ?u32 = 5678;
