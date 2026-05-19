@@ -6,14 +6,13 @@ pub const DwarfSection = enum {
 };
 
 pub fn main() void {
-    const section = inline for (@typeInfo(DwarfSection).@"enum".fields) |section| {
-        if (std.mem.eql(u8, section.name, "eh_frame")) break section;
+    const section = inline for (@typeInfo(DwarfSection).@"enum".fields, 0..) |section, i| {
+        if (std.mem.eql(u8, section.name, "eh_frame")) break i;
     };
 
     _ = section;
 }
 
 // error
-// target=x86_64-linux
 //
-// :9:28: error: incompatible types: 'lang.Type.EnumField' and 'void'
+// :9:28: error: incompatible types: 'usize' and 'void'

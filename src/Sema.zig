@@ -31546,6 +31546,7 @@ const PeerResolveResult = union(enum) {
         candidate_srcs: PeerTypeCandidateSrc,
     ) !*Zcu.ErrorMsg {
         const pt = sema.pt;
+        const zcu = pt.zcu;
 
         var opt_msg: ?*Zcu.ErrorMsg = null;
         errdefer if (opt_msg) |msg| msg.destroy(sema.gpa);
@@ -31616,7 +31617,9 @@ const PeerResolveResult = union(enum) {
             };
 
             if (conflict_srcs[0]) |src_loc| try sema.errNote(src_loc, msg, "type '{f}' here", .{conflict_tys[0].fmt(pt)});
+            if (conflict_tys[0].srcLocOrNull(zcu)) |src_loc| try sema.errNote(src_loc, msg, "declared here", .{});
             if (conflict_srcs[1]) |src_loc| try sema.errNote(src_loc, msg, "type '{f}' here", .{conflict_tys[1].fmt(pt)});
+            if (conflict_tys[1].srcLocOrNull(zcu)) |src_loc| try sema.errNote(src_loc, msg, "declared here", .{});
 
             // No child error
             break;

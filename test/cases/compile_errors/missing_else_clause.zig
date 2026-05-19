@@ -40,3 +40,4 @@ export fn entry() void {
 // :22:13: error: incompatible types: 'void' and 'tmp.k.T'
 // :22:25: note: type 'void' here
 // :24:13: note: type 'tmp.k.T' here
+// :21:15: note: declared here
