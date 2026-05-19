@@ -701,7 +701,7 @@ fn dllNotification(
     switch (reason) {
         .LOADED => {},
         .UNLOADED => {
-            const io = std.Options.debug_io;
+            const io = std.Options.debug_io.*;
             si.lock.lockUncancelable(io);
             defer si.lock.unlock(io);
             for (si.modules.items, 0..) |*mod, mod_index| {

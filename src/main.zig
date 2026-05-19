@@ -51,6 +51,7 @@ pub const std_options: std.Options = .{
     },
 };
 pub const std_options_cwd = if (native_os == .wasi) wasi_cwd else null;
+pub var std_options_debug_io: Io = undefined;
 
 pub const panic = crash_report.panic;
 pub const debug = crash_report.debug;
@@ -205,6 +206,7 @@ pub fn main(init: std.process.Init.Minimal) anyerror!void {
     defer io_impl.deinit();
     io_impl_ptr = &io_impl;
     const io = io_impl.io();
+    std_options_debug_io = io;
     const gpa = switch (build_options.io_mode) {
         .threaded => root_gpa,
         .evented => io_impl.allocator(),

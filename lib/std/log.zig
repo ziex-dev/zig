@@ -99,7 +99,7 @@ pub fn defaultLog(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const io = std.Options.debug_io;
+    const io = std.Options.debug_io.*;
     const prev = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(prev);
     var buffer: [64]u8 = undefined;

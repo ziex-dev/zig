@@ -283,7 +283,7 @@ pub const sys_can_stack_trace = switch (builtin.cpu.arch) {
 /// Alternatively, use the higher-level `Io.lockStderr` to integrate with the
 /// application's chosen `Io` implementation.
 pub fn lockStderr(buffer: []u8) Io.LockedStderr {
-    const io = std.Options.debug_io;
+    const io = std.Options.debug_io.*;
     const prev = io.swapCancelProtection(.blocked);
     defer _ = io.swapCancelProtection(prev);
     return io.lockStderr(buffer, null) catch |err| switch (err) {
@@ -292,7 +292,7 @@ pub fn lockStderr(buffer: []u8) Io.LockedStderr {
 }
 
 pub fn unlockStderr() void {
-    const io = std.Options.debug_io;
+    const io = std.Options.debug_io.*;
     io.unlockStderr();
 }
 
@@ -661,7 +661,7 @@ pub noinline fn captureCurrentStackTrace(options: StackUnwindOptions, addr_buf: 
     defer it.deinit();
     if (!it.stratOk(options.allow_unsafe_unwind)) return empty_trace;
 
-    const io = std.Options.debug_io;
+    const io = std.Options.debug_io.*;
 
     var total_frames: usize = 0;
     var index: usize = 0;
@@ -726,7 +726,7 @@ pub noinline fn writeCurrentStackTrace(options: StackUnwindOptions, t: Io.Termin
     var total_frames: usize = 0;
     var wait_for = options.first_address;
     var printed_any_frame = false;
-    const io = std.Options.debug_io;
+    const io = std.Options.debug_io.*;
     while (true) switch (it.next(io)) {
         .switch_to_fp => |unwind_error| {
             switch (StackIterator.fp_usability) {
@@ -854,7 +854,7 @@ fn writeTrace(
             return;
         },
     };
-    const io = std.Options.debug_io;
+    const io = std.Options.debug_io.*;
     for (addresses) |addr| {
         // `addr` is the return address, which is *after* the function call.
         // Subtract 1 to get an address *in* the function call for a better source location.
