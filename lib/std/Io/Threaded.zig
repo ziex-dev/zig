@@ -7725,26 +7725,26 @@ fn dirRenamePreserveDarwin(
                 try syscall.checkCancel();
                 continue;
             },
-            .INVAL => |err| return errnoBug(err), // TODO
-            .IO => |err| return errnoBug(err), // TODO
-            .DEADLK => |err| return errnoBug(err), // TODO
-            .FAULT => |err| return errnoBug(err),
-            .BADF => |err| return errnoBug(err),
-            .ISDIR => |err| return errnoBug(err),
-            .NOTEMPTY => |err| return errnoBug(err),
-            .OPNOTSUPP => return error.OperationUnsupported,
-            .ACCES => return error.AccessDenied,
-            .DQUOT => return error.DiskQuota,
-            .EXIST => return error.PathAlreadyExists,
-            .LOOP => return error.LinkQuotaExceeded,
-            .NAMETOOLONG => return error.NameTooLong,
-            .NOENT => return error.FileNotFound,
-            .NOSPC => return error.NoSpaceLeft,
-            .NOTDIR => return error.NotDir,
-            .PERM => return error.PermissionDenied,
-            .ROFS => return error.ReadOnlyFileSystem,
-            .XDEV => return error.CrossDevice,
-            else => |err| return posix.unexpectedErrno(err),
+            .INVAL => |err| return syscall.errnoBug(err),
+            .FAULT => |err| return syscall.errnoBug(err),
+            .BADF => |err| return syscall.errnoBug(err),
+            .ISDIR => |err| return syscall.errnoBug(err),
+            .NOTEMPTY => |err| return syscall.errnoBug(err),
+            .OPNOTSUPP => return syscall.finish(error.OperationUnsupported),
+            .IO => return syscall.fail(error.HardwareFailure),
+            .DEADLK => return syscall.fail(error.AccessDenied),
+            .ACCES => return syscall.fail(error.AccessDenied),
+            .DQUOT => return syscall.fail(error.DiskQuota),
+            .EXIST => return syscall.fail(error.PathAlreadyExists),
+            .LOOP => return syscall.fail(error.LinkQuotaExceeded),
+            .NAMETOOLONG => return syscall.fail(error.NameTooLong),
+            .NOENT => return syscall.fail(error.FileNotFound),
+            .NOSPC => return syscall.fail(error.NoSpaceLeft),
+            .NOTDIR => return syscall.fail(error.NotDir),
+            .PERM => return syscall.fail(error.PermissionDenied),
+            .ROFS => return syscall.fail(error.ReadOnlyFileSystem),
+            .XDEV => return syscall.fail(error.CrossDevice),
+            else => |err| return syscall.unexpectedErrno(err),
         }
     }
 }
