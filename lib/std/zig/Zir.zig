@@ -5640,3 +5640,5 @@ pub const UnwrappedOpaqueDecl = struct {
     capture_names: []const NullTerminatedString,
     decls: []const Inst.Index,
 };
+
+pub const print = @import("Zir/print.zig");

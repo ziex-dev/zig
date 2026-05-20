@@ -1,13 +1,9 @@
-const std = @import("std");
+const std = @import("../../std.zig");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 const Ast = std.zig.Ast;
-const InternPool = @import("InternPool.zig");
-
 const Zir = std.zig.Zir;
-const Zcu = @import("Zcu.zig");
-const LazySrcLoc = Zcu.LazySrcLoc;
 
 /// Write human-readable, debug formatted ZIR code.
 pub fn renderAsText(gpa: Allocator, tree: ?Ast, zir: Zir, bw: *std.Io.Writer) !void {
@@ -50,66 +46,7 @@ pub fn renderAsText(gpa: Allocator, tree: ?Ast, zir: Zir, bw: *std.Io.Writer) !v
     }
 }
 
-pub fn renderInstructionContext(
-    gpa: Allocator,
-    block: []const Zir.Inst.Index,
-    block_index: usize,
-    scope_file: *Zcu.File,
-    parent_decl_node: Ast.Node.Index,
-    indent: u32,
-    bw: *std.Io.Writer,
-) !void {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-
-    var writer: Writer = .{
-        .gpa = gpa,
-        .arena = arena.allocator(),
-        .tree = scope_file.tree,
-        .code = scope_file.zir.?,
-        .indent = if (indent < 2) 2 else indent,
-        .parent_decl_node = parent_decl_node,
-        .recurse_decls = false,
-        .recurse_blocks = true,
-    };
-
-    try writer.writeBody(bw, block[0..block_index]);
-    try bw.splatByteAll(' ', writer.indent - 2);
-    try bw.print("> %{d} ", .{@intFromEnum(block[block_index])});
-    try writer.writeInstToStream(bw, block[block_index]);
-    try bw.writeByte('\n');
-    if (block_index + 1 < block.len) {
-        try writer.writeBody(bw, block[block_index + 1 ..]);
-    }
-}
-
-pub fn renderSingleInstruction(
-    gpa: Allocator,
-    inst: Zir.Inst.Index,
-    scope_file: *Zcu.File,
-    parent_decl_node: Ast.Node.Index,
-    indent: u32,
-    bw: *std.Io.Writer,
-) !void {
-    var arena = std.heap.ArenaAllocator.init(gpa);
-    defer arena.deinit();
-
-    var writer: Writer = .{
-        .gpa = gpa,
-        .arena = arena.allocator(),
-        .tree = scope_file.tree,
-        .code = scope_file.zir.?,
-        .indent = indent,
-        .parent_decl_node = parent_decl_node,
-        .recurse_decls = false,
-        .recurse_blocks = false,
-    };
-
-    try bw.print("%{d} ", .{@intFromEnum(inst)});
-    try writer.writeInstToStream(bw, inst);
-}
-
-const Writer = struct {
+pub const Writer = struct {
     gpa: Allocator,
     arena: Allocator,
     tree: ?Ast,
@@ -178,7 +115,7 @@ const Writer = struct {
 
     const Error = std.Io.Writer.Error || Allocator.Error;
 
-    fn writeInstToStream(
+    pub fn writeInstToStream(
         self: *Writer,
         stream: *std.Io.Writer,
         inst: Zir.Inst.Index,
@@ -2251,8 +2188,7 @@ const Writer = struct {
         } else if (ref.toIndex()) |i| {
             return self.writeInstIndex(stream, i);
         } else {
-            const val: InternPool.Index = @enumFromInt(@intFromEnum(ref));
-            return stream.print("@{s}", .{@tagName(val)});
+            return stream.print("@{s}", .{@tagName(ref)});
         }
     }
 
@@ -2407,7 +2343,7 @@ const Writer = struct {
         }
     }
 
-    fn writeBody(self: *Writer, stream: *std.Io.Writer, body: []const Zir.Inst.Index) !void {
+    pub fn writeBody(self: *Writer, stream: *std.Io.Writer, body: []const Zir.Inst.Index) !void {
         for (body) |inst| {
             try stream.splatByteAll(' ', self.indent);
             try stream.print("%{d} ", .{@intFromEnum(inst)});
