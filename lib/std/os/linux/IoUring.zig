@@ -46,6 +46,12 @@ pub fn init_params(entries: u16, p: *linux.io_uring_params) !IoUring {
     if (entries == 0) return error.EntriesZero;
     if (!std.math.isPowerOfTwo(entries)) return error.EntriesNotPowerOfTwo;
 
+    const unsupported_flags = linux.IORING_SETUP_CQE32 |
+        linux.IORING_SETUP_SQE128 |
+        linux.IORING_SETUP_NO_MMAP |
+        linux.IORING_SETUP_REGISTERED_FD_ONLY;
+    if (p.flags & unsupported_flags > 0) return error.UnsupportedFlags;
+
     assert(p.sq_entries == 0);
     assert(p.cq_entries == 0 or p.flags & linux.IORING_SETUP_CQSIZE != 0);
     assert(p.features == 0);
