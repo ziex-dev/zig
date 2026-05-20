@@ -384,9 +384,10 @@ pub const RENAME = packed struct(u32) {
     SECLUDE: bool = false,
     SWAP: bool = false,
     EXCL: bool = false,
+    RESERVED1: bool = false,
     NOFOLLOW_ANY: bool = false,
     RESOLVE_BENEATH: bool = false,
-    _: u27 = 0,
+    _: u26 = 0,
 };
 
 pub extern "c" fn renameatx_np(fromfd: c_int, from: [*:0]const u8, tofd: c_int, to: [*:0]const u8, flags: RENAME) c_int;
