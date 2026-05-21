@@ -1,0 +1,19 @@
+.{
+    .name = .compdb_merged,
+    .fingerprint = 0xf61dd854c2fbb5c4,
+    .version = "0.0.0",
+    .dependencies = .{
+        .dep = .{
+            .path = "dep",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+        "obj_or_lib.zig",
+        "foo.c",
+        "bar.c",
+        "baz.c",
+    },
+}

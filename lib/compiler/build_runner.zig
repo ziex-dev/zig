@@ -399,6 +399,10 @@ pub fn main(init: process.Init.Minimal) !void {
                 builder.enable_rosetta = true;
             } else if (mem.eql(u8, arg, "-fno-rosetta")) {
                 builder.enable_rosetta = false;
+            } else if (mem.eql(u8, arg, "-fcompdb")) {
+                builder.enable_compdb = true;
+            } else if (mem.eql(u8, arg, "-fno-compdb")) {
+                builder.enable_compdb = false;
             } else if (mem.eql(u8, arg, "-fdarling")) {
                 builder.enable_darling = true;
             } else if (mem.eql(u8, arg, "-fno-darling")) {
@@ -1577,6 +1581,7 @@ fn printUsage(b: *std.Build, w: *Writer) !void {
         \\  -fsys=[name]                 Enable a system integration
         \\  -fno-sys=[name]              Disable a system integration
         \\
+        \\  -fcompdb,   -fno-compdb      Generate a compile_commands.json file (default: no)
         \\  -fdarling,  -fno-darling     Integration with system-installed Darling to
         \\                               execute macOS programs on Linux hosts
         \\                               (default: no)

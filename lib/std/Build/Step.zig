@@ -160,6 +160,7 @@ pub const Id = enum {
     config_header,
     objcopy,
     options,
+    compile_commands,
     custom,
 
     pub fn Type(comptime id: Id) type {
@@ -179,6 +180,7 @@ pub const Id = enum {
             .config_header => ConfigHeader,
             .objcopy => ObjCopy,
             .options => Options,
+            .compile_commands => CompileCommands,
             .custom => @compileError("no type available for custom step"),
         };
     }
@@ -198,6 +200,7 @@ pub const Run = @import("Step/Run.zig");
 pub const TranslateC = @import("Step/TranslateC.zig");
 pub const WriteFile = @import("Step/WriteFile.zig");
 pub const UpdateSourceFiles = @import("Step/UpdateSourceFiles.zig");
+pub const CompileCommands = @import("Step/CompileCommands.zig");
 
 pub const Inputs = struct {
     table: Table,

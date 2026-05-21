@@ -1,0 +1,12 @@
+.{
+    .name = .dep,
+    .version = "0.0.0",
+    .fingerprint = 0xf81054304cb50328,
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "dep1.c",
+        "dep2.c",
+    },
+}

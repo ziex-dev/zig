@@ -8,6 +8,7 @@ const fs = std.fs;
 const assert = std.debug.assert;
 const panic = std.debug.panic;
 const StringHashMap = std.StringHashMap;
+const CityHash64 = std.hash.CityHash64;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 const Allocator = std.mem.Allocator;
 const Step = std.Build.Step;
@@ -253,6 +254,16 @@ zig_process: ?*Step.ZigProcess,
 /// builtin fuzzer, see the `fuzz` flag in `Module`.
 sanitize_coverage_trace_pc_guard: ?bool = null,
 
+/// Used to generate compile_commands.json, see Options.enable_compdb
+compdb: ?CompDb = null,
+
+pub const CompDb = struct {
+    /// Directory to place compile_commands.json fragements generated with -MJ during C file compilation
+    fragments_dir: *Step.WriteFile,
+    /// Step to merge all compile_commands.json fragments into output file
+    merge_step: *Step.CompileCommands,
+};
+
 pub const ExpectedCompileErrors = union(enum) {
     contains: []const u8,
     exact: []const []const u8,
@@ -292,6 +303,9 @@ pub const Options = struct {
     win32_manifest: ?LazyPath = null,
     /// Win32 module definition file.
     win32_module_definition: ?LazyPath = null,
+    /// Whether or not during the make phase this compile step should genereate
+    /// compile_commands.json from fragements created using the flag -MJ
+    enable_compdb: bool = false,
 };
 
 pub const Kind = enum {
@@ -456,6 +470,21 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
         .zig_process = null,
     };
 
+    if (options.enable_compdb) {
+        // Compile step depends on temporary directory to exist so fragements can be written there
+        const dir_wf: *Step.WriteFile = owner.addTempFiles();
+        compile.step.dependOn(&dir_wf.step);
+
+        // compile_commands.json generation step depends on compile step to ensure fragments have been created
+        const merge_step: *Step.CompileCommands = .create(owner);
+        merge_step.step.dependOn(&compile.step);
+        merge_step.addFragmentDir(owner, dir_wf.getDirectory());
+        compile.compdb = .{
+            .fragments_dir = dir_wf,
+            .merge_step = merge_step,
+        };
+    }
+
     if (options.zig_lib_dir) |lp| {
         compile.zig_lib_dir = lp.dupe(compile.step.owner);
         lp.addStepDependencies(&compile.step);
@@ -515,6 +544,16 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
     }
 
     return compile;
+}
+
+/// Returns a LazyPath to the compile_commands.json file for this Compile step if it was enabled
+/// with Options.compdb during creation.
+/// Returns null otherwise.
+pub fn getCompileCommandsJson(cs: *Compile) ?LazyPath {
+    return if (cs.compdb) |cdb|
+        cdb.merge_step.getMergedJson()
+    else
+        null;
 }
 
 /// Marks the specified header for installation alongside this artifact.
@@ -1214,14 +1253,27 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
                         .c_source_file => |c_source_file| l: {
                             if (!my_responsibility) break :l;
 
+                            const c_source_file_path = c_source_file.file.getPath2(mod.owner, step);
+                            const c_source_file_compdb_entry_path: ?[]const u8 = compile.generateCSourceFileCompdbEntryPath(b, c_source_file_path);
+
                             if (prev_has_cflags or c_source_file.flags.len != 0) {
                                 try zig_args.append("-cflags");
+                                if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                                    try zig_args.append(b.fmt("-MJ{s}", .{compdb_entry_path}));
+                                }
                                 for (c_source_file.flags) |arg| {
                                     try zig_args.append(arg);
                                 }
                                 try zig_args.append("--");
+                            } else if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                                try zig_args.append("-cflags");
+                                try zig_args.append(b.fmt("-MJ{s}", .{compdb_entry_path}));
+                                try zig_args.append("--");
                             }
-                            prev_has_cflags = (c_source_file.flags.len != 0);
+                            prev_has_cflags = if (c_source_file_compdb_entry_path) |_|
+                                true
+                            else
+                                (c_source_file.flags.len != 0);
 
                             if (c_source_file.language) |lang| {
                                 try zig_args.append("-x");
@@ -1239,31 +1291,48 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
 
                         .c_source_files => |c_source_files| l: {
                             if (!my_responsibility) break :l;
-
-                            if (prev_has_cflags or c_source_files.flags.len != 0) {
-                                try zig_args.append("-cflags");
-                                for (c_source_files.flags) |arg| {
-                                    try zig_args.append(arg);
-                                }
-                                try zig_args.append("--");
-                            }
-                            prev_has_cflags = (c_source_files.flags.len != 0);
-
-                            if (c_source_files.language) |lang| {
-                                try zig_args.append("-x");
-                                try zig_args.append(lang.internalIdentifier());
-                            }
-
                             const root_path = c_source_files.root.getPath2(mod.owner, step);
+                            // TODO: Iterating over each file is a workaround to an issue where passing -MJ as a flag
+                            //       for multiple files doesn't correctly generate multiple compdb entries, see:
+                            //       https://github.com/ziglang/zig/issues/9323
+                            //       Otherwise, it would be more correct to apply all the flags to the group of files
+                            //       rather than appending them per file.
                             for (c_source_files.files) |file| {
+                                const c_source_file_path = b.pathJoin(&.{ root_path, file });
+                                const c_source_file_compdb_entry_path: ?[]const u8 = compile.generateCSourceFileCompdbEntryPath(b, c_source_file_path);
+
+                                if (prev_has_cflags or c_source_files.flags.len != 0) {
+                                    try zig_args.append("-cflags");
+                                    if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                                        try zig_args.append(b.fmt("-MJ{s}", .{compdb_entry_path}));
+                                    }
+                                    for (c_source_files.flags) |arg| {
+                                        try zig_args.append(arg);
+                                    }
+                                    try zig_args.append("--");
+                                } else if (c_source_file_compdb_entry_path) |compdb_entry_path| {
+                                    try zig_args.append("-cflags");
+                                    try zig_args.append(b.fmt("-MJ{s}", .{compdb_entry_path}));
+                                    try zig_args.append("--");
+                                }
+
+                                prev_has_cflags = if (c_source_file_compdb_entry_path) |_|
+                                    true
+                                else
+                                    (c_source_files.flags.len != 0);
+
+                                if (c_source_files.language) |lang| {
+                                    try zig_args.append("-x");
+                                    try zig_args.append(lang.internalIdentifier());
+                                }
+
                                 try zig_args.append(b.pathJoin(&.{ root_path, file }));
-                            }
 
-                            if (c_source_files.language != null) {
-                                try zig_args.append("-x");
-                                try zig_args.append("none");
+                                if (c_source_files.language != null) {
+                                    try zig_args.append("-x");
+                                    try zig_args.append("none");
+                                }
                             }
-
                             total_linker_objects += c_source_files.files.len;
                         },
 
@@ -1831,6 +1900,22 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         );
     }
 }
+
+/// Joins the temporary directory for compile_commands.json fragments with a hashed version of a C file's path to
+/// prevent collisions in projects that have identically named .c files in different paths (path1/foo.c, path2/foo.c)
+fn generateCSourceFileCompdbEntryPath(
+    compile: *Compile,
+    owner: *std.Build,
+    c_source_file_path: []const u8,
+) ?[]const u8 {
+    if (compile.compdb) |cdb| {
+        const dir = cdb.fragments_dir.getDirectory().getPath2(owner, &compile.step);
+        const basename = fs.path.basename(c_source_file_path);
+        const hash = std.fmt.hex(CityHash64.hash(c_source_file_path));
+        return owner.pathJoin(&.{ dir, owner.fmt("{s}-{s}", .{ basename, hash }) });
+    } else return null;
+}
+
 fn outputPath(c: *Compile, out_dir: std.Build.Cache.Path, ea: std.zig.EmitArtifact) []const u8 {
     const arena = c.step.owner.graph.arena;
     const name = ea.cacheName(arena, .{

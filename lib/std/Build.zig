@@ -66,6 +66,12 @@ debug_pkg_config: bool = false,
 /// Set to 0 to disable stack collection.
 debug_stack_frames_count: u8 = 8,
 
+/// Experimental. Use -MJ flag when compiling C files to generate compile_commands.json file.
+/// This ensures ALL C sources within the build graph are reflected in a single compile_commands.json that
+/// can be accessed as a LazyPath using Build.getMergedCompileCommandsJson.
+/// For per Compile step compile_commands.json, use the option "compdb" in:
+///     Build.add[Executable, Library, Object, Test]
+enable_compdb: bool = false,
 /// Experimental. Use system Darling installation to run cross compiled macOS build artifacts.
 enable_darling: bool = false,
 /// Use system QEMU installation to run cross compiled foreign architecture build artifacts.
@@ -93,6 +99,9 @@ named_lazy_paths: std.array_hash_map.String(LazyPath),
 pkg_hash: []const u8,
 /// A mapping from dependency names to package hashes.
 available_deps: AvailableDeps,
+
+/// Optional top level step for merging ALL Step.Compile's fragments into a single compile_commands.json
+compdb_step: ?*Step.CompileCommands = null,
 
 release_mode: ReleaseMode,
 
@@ -407,6 +416,8 @@ fn createChildOnly(
         .named_lazy_paths = .empty,
         .pkg_hash = pkg_hash,
         .available_deps = pkg_deps,
+        .enable_compdb = parent.enable_compdb,
+        .compdb_step = parent.compdb_step,
         .release_mode = parent.release_mode,
     };
     try child.top_level_steps.put(allocator, child.install_tls.step.name, &child.install_tls);
@@ -764,6 +775,15 @@ pub fn addOptions(b: *Build) *Step.Options {
     return Step.Options.create(b);
 }
 
+fn getOrCreateCompileCommandsStep(b: *Build) *Step.CompileCommands {
+    if (b.compdb_step) |cdb| {
+        return cdb;
+    } else {
+        b.compdb_step = .create(b);
+        return b.compdb_step.?;
+    }
+}
+
 pub const ExecutableOptions = struct {
     name: []const u8,
     root_module: *Module,
@@ -779,10 +799,14 @@ pub const ExecutableOptions = struct {
     /// Can be set regardless of target. The `.manifest` file will be ignored
     /// if the target object format does not support embedded manifests.
     win32_manifest: ?LazyPath = null,
+
+    /// Generate a compile_commands.json file for compiled C sources
+    /// If not set, defaults to Build.enable_compdb
+    enable_compdb: ?bool = null,
 };
 
 pub fn addExecutable(b: *Build, options: ExecutableOptions) *Step.Compile {
-    return .create(b, .{
+    const ret: *Step.Compile = .create(b, .{
         .name = options.name,
         .root_module = options.root_module,
         .version = options.version,
@@ -793,7 +817,14 @@ pub fn addExecutable(b: *Build, options: ExecutableOptions) *Step.Compile {
         .use_lld = options.use_lld,
         .zig_lib_dir = options.zig_lib_dir,
         .win32_manifest = options.win32_manifest,
+        .enable_compdb = options.enable_compdb orelse b.enable_compdb,
     });
+    if (ret.compdb) |cdb| {
+        const merge_step = b.getOrCreateCompileCommandsStep();
+        merge_step.step.dependOn(&ret.step);
+        merge_step.addFragmentDir(b, cdb.fragments_dir.getDirectory());
+    }
+    return ret;
 }
 
 pub const ObjectOptions = struct {
@@ -803,10 +834,13 @@ pub const ObjectOptions = struct {
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
     zig_lib_dir: ?LazyPath = null,
+    /// Generate a compile_commands.json file for compiled C sources
+    /// If not set, defaults to Build.enable_compdb
+    enable_compdb: ?bool = null,
 };
 
 pub fn addObject(b: *Build, options: ObjectOptions) *Step.Compile {
-    return .create(b, .{
+    const ret: *Step.Compile = .create(b, .{
         .name = options.name,
         .root_module = options.root_module,
         .kind = .obj,
@@ -814,7 +848,14 @@ pub fn addObject(b: *Build, options: ObjectOptions) *Step.Compile {
         .use_llvm = options.use_llvm,
         .use_lld = options.use_lld,
         .zig_lib_dir = options.zig_lib_dir,
+        .enable_compdb = options.enable_compdb orelse b.enable_compdb,
     });
+    if (ret.compdb) |cdb| {
+        const merge_step = b.getOrCreateCompileCommandsStep();
+        merge_step.step.dependOn(&ret.step);
+        merge_step.addFragmentDir(b, cdb.fragments_dir.getDirectory());
+    }
+    return ret;
 }
 
 pub const LibraryOptions = struct {
@@ -834,10 +875,13 @@ pub const LibraryOptions = struct {
     win32_manifest: ?LazyPath = null,
     /// Win32 module definition file (.def).
     win32_module_definition: ?LazyPath = null,
+    /// Generate a compile_commands.json file for compiled C sources
+    /// If not set, defaults to Build.enable_compdb
+    enable_compdb: ?bool = null,
 };
 
 pub fn addLibrary(b: *Build, options: LibraryOptions) *Step.Compile {
-    return .create(b, .{
+    const ret: *Step.Compile = .create(b, .{
         .name = options.name,
         .root_module = options.root_module,
         .kind = .lib,
@@ -849,7 +893,14 @@ pub fn addLibrary(b: *Build, options: LibraryOptions) *Step.Compile {
         .zig_lib_dir = options.zig_lib_dir,
         .win32_manifest = options.win32_manifest,
         .win32_module_definition = options.win32_module_definition,
+        .enable_compdb = options.enable_compdb orelse b.enable_compdb,
     });
+    if (ret.compdb) |cdb| {
+        const merge_step = b.getOrCreateCompileCommandsStep();
+        merge_step.step.dependOn(&ret.step);
+        merge_step.addFragmentDir(b, cdb.fragments_dir.getDirectory());
+    }
+    return ret;
 }
 
 pub const TestOptions = struct {
@@ -865,6 +916,9 @@ pub const TestOptions = struct {
     /// The object must be linked separately.
     /// Usually used in conjunction with a custom `test_runner`.
     emit_object: bool = false,
+    /// Generate a compile_commands.json file for compiled C sources
+    /// If not set, defaults to Build.enable_compdb
+    enable_compdb: ?bool = null,
 };
 
 /// Creates an executable containing unit tests.
@@ -876,7 +930,7 @@ pub const TestOptions = struct {
 /// two steps are separated because they are independently configured and
 /// cached.
 pub fn addTest(b: *Build, options: TestOptions) *Step.Compile {
-    return .create(b, .{
+    const ret: *Step.Compile = .create(b, .{
         .name = options.name,
         .kind = if (options.emit_object) .test_obj else .@"test",
         .root_module = options.root_module,
@@ -886,7 +940,15 @@ pub fn addTest(b: *Build, options: TestOptions) *Step.Compile {
         .use_llvm = options.use_llvm,
         .use_lld = options.use_lld,
         .zig_lib_dir = options.zig_lib_dir,
+        .enable_compdb = options.enable_compdb orelse b.enable_compdb,
     });
+
+    if (ret.compdb) |cdb| {
+        const merge_step = b.getOrCreateCompileCommandsStep();
+        merge_step.step.dependOn(&ret.step);
+        merge_step.addFragmentDir(b, cdb.fragments_dir.getDirectory());
+    }
+    return ret;
 }
 
 pub const AssemblyOptions = struct {
@@ -1119,6 +1181,18 @@ pub fn getInstallStep(b: *Build) *Step {
 
 pub fn getUninstallStep(b: *Build) *Step {
     return &b.uninstall_tls.step;
+}
+
+/// Returns a LazyPath to the merged compile_commands.json file for ALL
+/// Compile steps with compile_commands export enabled via:
+/// - Per Compile step with Options.compdb
+/// - Whole build graph with Build.enable_compdb
+/// Returns null otherwise.
+pub fn getMergedCompileCommandsJson(b: *Build) ?LazyPath {
+    return if (b.compdb_step) |cdb|
+        cdb.getMergedJson()
+    else
+        null;
 }
 
 fn makeUninstall(uninstall_step: *Step, options: Step.MakeOptions) anyerror!void {
