@@ -312,7 +312,8 @@ pub const ParseIntError = error{
 ///  * A prefix of "0x" implies base=16,
 ///  * Otherwise base=10 is assumed.
 ///
-/// Ignores '_' character in `buf`.
+/// `_` can be used as a digit separator.
+///
 /// See also `parseUnsigned`.
 pub fn parseInt(comptime T: type, buf: []const u8, base: u8) ParseIntError!T {
     return parseIntWithGenericCharacter(T, u8, buf, base);
@@ -339,6 +340,7 @@ test parseInt {
     try std.testing.expectError(error.InvalidCharacter, parseInt(u32, " 10", 10));
     try std.testing.expectError(error.InvalidCharacter, parseInt(u32, "10 ", 10));
     try std.testing.expectError(error.InvalidCharacter, parseInt(u32, "_10_", 10));
+    try std.testing.expectError(error.InvalidCharacter, parseInt(u32, "1__0", 10));
     try std.testing.expectError(error.InvalidCharacter, parseInt(u32, "0x_10_", 10));
     try std.testing.expectError(error.InvalidCharacter, parseInt(u32, "0x10_", 10));
     try std.testing.expectError(error.InvalidCharacter, parseInt(u32, "0x_10", 10));
@@ -438,8 +440,12 @@ fn parseIntWithSign(
 
     if (buf_start[0] == '_' or buf_start[buf_start.len - 1] == '_') return error.InvalidCharacter;
 
-    for (buf_start) |c| {
-        if (c == '_') continue;
+    for (buf_start, 0..) |c, i| {
+        if (c == '_') {
+            // Consecutive underscores.
+            if (buf_start[i + 1] == '_') return error.InvalidCharacter;
+            continue;
+        }
         const digit = try charToDigit(math.cast(u8, c) orelse return error.InvalidCharacter, buf_base);
         if (accumulate != 0) {
             accumulate = try math.mul(Accumulate, accumulate, math.cast(Accumulate, buf_base) orelse return error.Overflow);
@@ -468,7 +474,8 @@ fn parseIntWithSign(
 ///  * A prefix of "0x" implies base=16,
 ///  * Otherwise base=10 is assumed.
 ///
-/// Ignores '_' character in `buf`.
+/// `_` can be used as a digit separator.
+///
 /// See also `parseInt`.
 pub fn parseUnsigned(comptime T: type, buf: []const u8, base: u8) ParseIntError!T {
     return parseIntWithSign(T, u8, buf, base, .pos);
@@ -479,6 +486,7 @@ test parseUnsigned {
     try std.testing.expectEqual(65535, try parseUnsigned(u16, "65535", 10));
     try std.testing.expectEqual(65535, try parseUnsigned(u16, "65_535", 10));
     try std.testing.expectError(error.Overflow, parseUnsigned(u16, "65536", 10));
+    try std.testing.expectError(error.InvalidCharacter, parseUnsigned(u16, "65__535", 10));
 
     try std.testing.expectEqual(0xffffffffffffffff, try parseUnsigned(u64, "0ffffffffffffffff", 16));
     try std.testing.expectEqual(0xffffffffffffffff, try parseUnsigned(u64, "0f_fff_fff_fff_fff_fff", 16));
