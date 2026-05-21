@@ -184,6 +184,25 @@ test "legacy setLength" {
     try expectEqual(0, try reader.interface.readSliceShort(&buffer));
 }
 
+test "Dir.setLength" {
+    const io = testing.io;
+
+    var tmp = tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_file_name = "temp_test_file.txt";
+    var file = try tmp.dir.createFile(io, tmp_file_name, .{});
+    file.close(io);
+
+    try expect((try tmp.dir.statFile(io, tmp_file_name, .{})).size == 0);
+    try tmp.dir.setLength(io, tmp_file_name, 8192);
+    try expect((try tmp.dir.statFile(io, tmp_file_name, .{})).size == 8192);
+    try tmp.dir.setLength(io, tmp_file_name, 4096);
+    try expect((try tmp.dir.statFile(io, tmp_file_name, .{})).size == 4096);
+    try tmp.dir.setLength(io, tmp_file_name, 0);
+    try expect((try tmp.dir.statFile(io, tmp_file_name, .{})).size == 0);
+}
+
 test "setTimestamps" {
     const io = testing.io;
 

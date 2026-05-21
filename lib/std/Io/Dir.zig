@@ -2036,6 +2036,19 @@ pub fn setTimestampsNow(
     });
 }
 
+pub const SetLengthError = File.OpenError || File.SetLengthError;
+
+pub fn setLength(
+    dir: Dir,
+    io: Io,
+    sub_path: []const u8,
+    length: u64,
+) SetLengthError!void {
+    const file = try io.vtable.dirOpenFile(io.userdata, dir, sub_path, .{ .mode = .write_only });
+    defer file.close(io);
+    return io.vtable.fileSetLength(io.userdata, file, length);
+}
+
 test {
     _ = &setFileOwner;
     _ = &setTimestampsNow;
