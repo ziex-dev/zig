@@ -1164,7 +1164,7 @@ fn pegContainerDecl(a: *AstSmith) SourceError!void {
     switch (a.smith.value(enum { auto, @"extern", @"packed" })) {
         .auto => {},
         .@"extern" => try a.pegToken(.keyword_extern),
-        .@"packed" => try a.pegToken(.keyword_packed),
+        .@"packed" => try a.pegToken(.keyword_bitpack),
     }
     try a.pegContainerDeclAuto();
 }

@@ -1433,7 +1433,7 @@ const Writer = struct {
 
         if (struct_decl.backing_int_type_body) |backing_int_type_body| {
             assert(struct_decl.layout == .@"bitpack");
-            try stream.writeAll("packed(");
+            try stream.writeAll("bitpack(");
             try self.writeBracedDecl(stream, backing_int_type_body);
             try stream.writeAll("), ");
         } else {

@@ -137,7 +137,6 @@ pub fn fileSourceHtml(
             .keyword_opaque,
             .keyword_or,
             .keyword_orelse,
-            .keyword_packed,
             .keyword_anyframe,
             .keyword_pub,
             .keyword_resume,

@@ -663,7 +663,6 @@ fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
             .keyword_opaque,
             .keyword_or,
             .keyword_orelse,
-            .keyword_packed,
             .keyword_anyframe,
             .keyword_pub,
             .keyword_resume,

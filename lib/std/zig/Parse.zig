@@ -2438,9 +2438,8 @@ fn parsePrimaryTypeExpr(p: *Parse) !?Node.Index {
         .keyword_if => return try p.parseIf(expectTypeExpr),
         .keyword_switch => return try p.expectSwitchExpr(false),
 
-        .keyword_extern,
         .keyword_bitpack,
-        .keyword_packed,
+        .keyword_extern,
         => {
             p.tok_i += 1;
             return try p.parseContainerDeclAuto();
