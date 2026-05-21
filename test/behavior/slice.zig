@@ -1085,3 +1085,13 @@ test "directly deref slice with comptime-known length" {
     comptime assert(array[1] == 2);
     comptime assert(array[2] == 3);
 }
+
+test "coerce slice with comptime-known length to array pointer" {
+    const slice: []const u16 = &.{ 1, 2, 3 };
+    const array_ptr: *const [slice.len]u16 = slice;
+
+    comptime assert(array_ptr.len == 3);
+    comptime assert(array_ptr[0] == 1);
+    comptime assert(array_ptr[1] == 2);
+    comptime assert(array_ptr[2] == 3);
+}

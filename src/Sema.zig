@@ -2365,6 +2365,10 @@ pub fn failWithUseOfUndef(sema: *Sema, block: *Block, src: LazySrcLoc, vector_in
     });
 }
 
+pub fn failWithUndefSliceLen(sema: *Sema, block: *Block, src: LazySrcLoc) CompileError {
+    return sema.fail(block, src, "use of slice with undefined length here causes illegal behavior", .{});
+}
+
 pub fn failWithDivideByZero(sema: *Sema, block: *Block, src: LazySrcLoc) CompileError {
     return sema.fail(block, src, "division by zero here causes illegal behavior", .{});
 }
@@ -27309,6 +27313,59 @@ fn coerceExtra(
                 return sema.coerceCompatiblePtrs(block, dest_ty, inst, inst_src);
             }
 
+            // []T to *[n]T
+            slice_to_array: {
+                if (dest_info.flags.size != .one) break :slice_to_array;
+                if (!inst_ty.isSlice(zcu)) break :slice_to_array;
+                if (!sema.checkPtrAttributes(dest_ty, inst_ty, &in_memory_result)) break :pointer;
+                const array_ty: Type = .fromInterned(dest_info.child);
+                if (array_ty.zigTypeTag(zcu) != .array) break :slice_to_array;
+                const inst_val = maybe_inst_val orelse {
+                    if (!opts.report_err) return error.NotCoercible;
+                    return sema.fail(
+                        block,
+                        inst_src,
+                        "coercion from slice to array pointer type '{f}' requires length to be known at compile-time",
+                        .{dest_ty.fmt(pt)},
+                    );
+                };
+                const slice: InternPool.Key.Slice = slice: {
+                    switch (ip.indexToKey(inst_val.toIntern())) {
+                        .undef => {},
+                        .slice => |slice| if (slice.len != .undef_usize) break :slice slice,
+                        else => unreachable,
+                    }
+                    if (!opts.report_err) return error.NotCoercible;
+                    return sema.failWithOwnedErrorMsg(block, msg: {
+                        const msg = try sema.errMsg(inst_src, "slice with undefined length cannot cast into array pointer type '{f}'", .{
+                            dest_ty.fmt(pt),
+                        });
+                        errdefer msg.destroy(gpa);
+                        try sema.errNote(inst_src, msg, "length of slice must be defined and match length of array type", .{});
+                        break :msg msg;
+                    });
+                };
+                const slice_len = Value.fromInterned(slice.len).toUnsignedInt(zcu);
+                if (array_ty.arrayLen(zcu) != slice_len) {
+                    if (!opts.report_err) return error.NotCoercible;
+                    return sema.failWithOwnedErrorMsg(block, msg: {
+                        const msg = try sema.errMsg(inst_src, "slice of length {d} cannot cast into array pointer type '{f}'", .{
+                            slice_len, dest_ty.fmt(pt),
+                        });
+                        errdefer msg.destroy(gpa);
+                        try sema.errNote(inst_src, msg, "length of slice must match length of array type", .{});
+                        break :msg msg;
+                    });
+                }
+                const dest_is_mut = !dest_info.flags.is_const;
+                switch (try sema.coerceInMemoryAllowed(block, array_ty.childType(zcu), inst_ty.childType(zcu), dest_is_mut, target, dest_ty_src, inst_src, null)) {
+                    .ok => {},
+                    else => break :slice_to_array,
+                }
+                const array_ptr = try pt.sliceToArrayPtr(slice);
+                return sema.coerceCompatiblePtrs(block, dest_ty, .fromValue(array_ptr), inst_src);
+            }
+
             // Coercions where the source is a single pointer to an array.
             src_array_ptr: {
                 if (!inst_ty.isSinglePointer(zcu)) break :src_array_ptr;
@@ -27473,6 +27530,7 @@ fn coerceExtra(
                 .one => {},
                 .slice => to_slice: {
                     if (inst_ty.zigTypeTag(zcu) == .array) {
+                        if (!opts.report_err) return error.NotCoercible;
                         return sema.fail(
                             block,
                             inst_src,
@@ -27500,6 +27558,7 @@ fn coerceExtra(
 
                     // pointer to tuple to slice
                     if (!dest_info.flags.is_const) {
+                        if (!opts.report_err) return error.NotCoercible;
                         const err_msg = err_msg: {
                             const err_msg = try sema.errMsg(inst_src, "cannot cast pointer to tuple to '{f}'", .{dest_ty.fmt(pt)});
                             errdefer err_msg.destroy(sema.gpa);
@@ -27595,6 +27654,7 @@ fn coerceExtra(
                 if (maybe_inst_val) |val| {
                     const result_val = try val.floatCast(dest_ty, pt);
                     if (!val.eql(try result_val.floatCast(inst_ty, pt), inst_ty, zcu)) {
+                        if (!opts.report_err) return error.NotCoercible;
                         return sema.fail(
                             block,
                             inst_src,
@@ -27652,12 +27712,15 @@ fn coerceExtra(
                         break :fits result_big_int.toConst().eql(operand_big_int);
                     },
                 };
-                if (!fits) return sema.fail(
-                    block,
-                    inst_src,
-                    "type '{f}' cannot represent integer value '{f}'",
-                    .{ dest_ty.fmt(pt), val.fmtValue(pt) },
-                );
+                if (!fits) {
+                    if (!opts.report_err) return error.NotCoercible;
+                    return sema.fail(
+                        block,
+                        inst_src,
+                        "type '{f}' cannot represent integer value '{f}'",
+                        .{ dest_ty.fmt(pt), val.fmtValue(pt) },
+                    );
+                }
                 return .fromValue(result_val);
             },
             else => {},
@@ -27668,6 +27731,7 @@ fn coerceExtra(
                 const val = sema.resolveValue(inst).?;
                 const string = zcu.intern_pool.indexToKey(val.toIntern()).enum_literal;
                 const field_index = dest_ty.enumFieldIndex(string, zcu) orelse {
+                    if (!opts.report_err) return error.NotCoercible;
                     return sema.fail(block, inst_src, "no field named '{f}' in enum '{f}'", .{
                         string.fmt(&zcu.intern_pool), dest_ty.fmt(pt),
                     });
@@ -33748,32 +33812,19 @@ fn maybeDerefSliceAsArray(
 ) CompileError!?Value {
     const pt = sema.pt;
     const zcu = pt.zcu;
-    const ip = &zcu.intern_pool;
     switch (slice_ty.ptrInfo(zcu).flags.size) {
         .slice => {},
         .one => return sema.pointerDeref(block, src, slice_val, slice_ty),
         .many, .c => unreachable,
     }
-    const slice = switch (ip.indexToKey(slice_val.toIntern())) {
+    const slice = switch (zcu.intern_pool.indexToKey(slice_val.toIntern())) {
         .undef => return sema.failWithUseOfUndef(block, src, null),
         .slice => |slice| slice,
         else => unreachable,
     };
-    const elem_ty = Type.fromInterned(slice.ty).childType(zcu);
-    const len = Value.fromInterned(slice.len).toUnsignedInt(zcu);
-    const array_ty = try pt.arrayType(.{
-        .child = elem_ty.toIntern(),
-        .len = len,
-    });
-    const ptr_ty = try pt.ptrType(p: {
-        var p = Type.fromInterned(slice.ty).ptrInfo(zcu);
-        p.flags.size = .one;
-        p.child = array_ty.toIntern();
-        p.sentinel = .none;
-        break :p p;
-    });
-    const casted_ptr = try pt.getCoerced(Value.fromInterned(slice.ptr), ptr_ty);
-    return sema.pointerDeref(block, src, casted_ptr, ptr_ty);
+    if (slice.len == .undef_usize) return sema.failWithUndefSliceLen(block, src);
+    const casted_ptr = try pt.sliceToArrayPtr(slice);
+    return sema.pointerDeref(block, src, casted_ptr, casted_ptr.typeOf(zcu));
 }
 
 fn analyzeUnreachable(sema: *Sema, block: *Block, src: LazySrcLoc, safety_check: bool) !void {
