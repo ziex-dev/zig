@@ -419,7 +419,7 @@ pub fn rehashTrackedInsts(
 
 /// Analysis Unit. Represents a single entity which undergoes semantic analysis.
 /// This is the "source" of an incremental dependency edge.
-pub const AnalUnit = packed struct(u64) {
+pub const AnalUnit = bitpack struct(u64) {
     kind: Kind,
     id: u32,
 
@@ -676,7 +676,7 @@ pub const Nav = struct {
         @"linksection": OptionalNullTerminatedString,
         bits: Bits,
 
-        const Bits = packed struct(u16) {
+        const Bits = bitpack struct(u16) {
             @"align": Alignment,
             @"addrspace": std.lang.AddressSpace,
             @"const": bool,
@@ -1488,7 +1488,7 @@ const Shard = struct {
                     comptime assert(tid == .main);
                     return .main;
                 }
-            } else packed struct(u8) {
+            } else bitpack struct(u8) {
                 non_null: bool,
                 value: Zcu.PerThread.Id,
                 const @"null": OptionalTid = .{ .non_null = false, .value = .main };
@@ -1922,7 +1922,7 @@ pub const OptionalNullTerminatedString = enum(u32) {
 /// * comptime-known value (where we store the value)
 /// * `Nav` val (so that we can analyze the value lazily)
 /// * `Nav` ref (so that we can analyze the reference lazily)
-pub const CaptureValue = packed struct(u32) {
+pub const CaptureValue = bitpack struct(u32) {
     tag: enum(u2) { @"comptime", runtime, nav_val, nav_ref },
     idx: u30,
 
@@ -2018,7 +2018,7 @@ pub const Key = union(enum) {
     aggregate: Aggregate,
     /// An instance of a union.
     un: Union,
-    /// An instance of a `packed struct` or `packed union`.
+    /// An instance of a `bitpack struct` or `bitpack union`.
     @"bitpack": Bitpack,
 
     /// A comptime function call with a memoized result.
@@ -2064,7 +2064,7 @@ pub const Key = union(enum) {
             _,
         };
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             size: Size = .one,
             /// `none` indicates the ABI alignment of the pointee_type. In this
             /// case, this field *must* be set to `none`, otherwise the
@@ -2080,7 +2080,7 @@ pub const Key = union(enum) {
             vector_index: VectorIndex = .none,
         };
 
-        pub const PackedOffset = packed struct(u32) {
+        pub const PackedOffset = bitpack struct(u32) {
             /// If this is non-zero it means the pointer points to a sub-byte
             /// range of data, which is backed by a "host integer" with this
             /// number of bytes.
@@ -2535,7 +2535,7 @@ pub const Key = union(enum) {
     pub const Union = extern struct {
         /// This is the union type; not the field type.
         ty: Index,
-        /// Indicates the active field. This could be `none`, which indicates the tag is not known. `none` is only a valid value for extern and packed unions.
+        /// Indicates the active field. This could be `none`, which indicates the tag is not known. `none` is only a valid value for extern and bitpack unions.
         /// In those cases, the type of `val` is:
         ///   extern: a u8 array of the same byte length as the union
         ///   packed: an unsigned integer with the same bit size as the union
@@ -2565,7 +2565,7 @@ pub const Key = union(enum) {
 
     /// As well as a key, this type doubles as the payload in `extra` for `Tag.bitpack`.
     pub const Bitpack = struct {
-        /// The `packed struct` or `packed union` type.
+        /// The `bitpack struct` or `bitpack union` type.
         ty: Index,
         /// The contents of the bitpack, represented as the backing integer value. The type of this
         /// value is the same as the backing integer type of `ty`.
@@ -3504,7 +3504,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
     const extra_list = unwrapped_index.getExtra(ip);
     const extra_items = extra_list.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
-    // Exiting this `switch` means this is a `packed struct`.
+    // Exiting this `switch` means this is a `bitpack struct`.
     const backing_mode: BackingTypeMode, const any_defaults: bool = switch (item.tag) {
         .type_struct_packed_auto => .{ .auto, false },
         .type_struct_packed_explicit => .{ .explicit, false },
@@ -3668,7 +3668,7 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
     const extra_list = unwrapped_index.getExtra(ip);
     const extra_items = extra_list.view().items(.@"0");
     const item = unwrapped_index.getItem(ip);
-    // Exiting this `switch` means this is a `packed union`.
+    // Exiting this `switch` means this is a `bitpack union`.
     const backing_mode: BackingTypeMode = switch (item.tag) {
         .type_union_packed_auto => .auto,
         .type_union_packed_explicit => .explicit,
@@ -4794,26 +4794,26 @@ pub const Tag = enum(u8) {
     /// A non-packed struct type.
     /// data is extra index of `TypeStruct`.
     type_struct,
-    /// `packed struct { ... }` with no default field values.
+    /// `bitpack struct { ... }` with no default field values.
     /// data is extra index of `TypeStructPacked`.
     type_struct_packed_auto,
-    /// `packed struct(T) { ... }` with no default field values.
+    /// `bitpack struct(T) { ... }` with no default field values.
     /// data is extra index of `TypeStructPacked`.
     type_struct_packed_explicit,
-    /// `packed struct { ... }` with one or more default field values.
+    /// `bitpack struct { ... }` with one or more default field values.
     /// data is extra index of `TypeStructPacked`.
     type_struct_packed_auto_defaults,
-    /// `packed struct(T) { ... }` with one or more default field values.
+    /// `bitpack struct(T) { ... }` with one or more default field values.
     /// data is extra index of `TypeStructPacked`.
     type_struct_packed_explicit_defaults,
 
     /// A non-packed union type.
     /// data is extra index of `TypeUnion`.
     type_union,
-    /// `packed union { ... }`.
+    /// `bitpack union { ... }`.
     /// data is extra index of `TypeUnionPacked`.
     type_union_packed_auto,
-    /// `packed union(T) { ... }`.
+    /// `bitpack union(T) { ... }`.
     /// data is extra index of `TypeUnionPacked`.
     type_union_packed_explicit,
 
@@ -5010,7 +5010,7 @@ pub const Tag = enum(u8) {
     /// An instance of an array or vector with every element being the same value.
     /// data is extra index to `Repeated`.
     repeated,
-    /// An instance of a `packed struct` or `packed union`.
+    /// An instance of a `bitpack struct` or `bitpack union`.
     /// data is extra index to `Key.Bitpack`.
     @"bitpack",
 
@@ -5367,7 +5367,7 @@ pub const Tag = enum(u8) {
         location_or_descriptor_set: u32,
         descriptor_binding: u32,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             linkage: std.lang.GlobalLinkage,
             visibility: std.lang.SymbolVisibility,
             is_dll_import: bool,
@@ -5451,7 +5451,7 @@ pub const Tag = enum(u8) {
         return_type: Index,
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             cc: PackedCallingConvention,
             is_var_args: bool,
             has_comptime_bits: bool,
@@ -5501,10 +5501,10 @@ pub const Tag = enum(u8) {
 
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             any_captures: enum(u2) { true, false, reified },
 
-            /// `packed` layout is represented separately by `TypeStructPacked`.
+            /// `bitpack` layout is represented separately by `TypeStructPacked`.
             layout: enum(u1) { auto, @"extern" },
 
             any_comptime_fields: bool,
@@ -5541,7 +5541,7 @@ pub const Tag = enum(u8) {
         fields_len: u32,
         field_name_map: MapIndex,
 
-        const Bits = packed struct(u32) {
+        const Bits = bitpack struct(u32) {
             captures_len: enum(u31) {
                 reified = std.math.maxInt(u31),
                 _,
@@ -5583,7 +5583,7 @@ pub const Tag = enum(u8) {
 
         flags: Flags,
 
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             any_captures: enum(u2) { true, false, reified },
 
             /// Whether `enum_tag_type` was explicitly specified with `union(E)` syntax.
@@ -5592,7 +5592,7 @@ pub const Tag = enum(u8) {
             /// considered to have an explicitly specified integer tag type.
             enum_tag_mode: BackingTypeMode,
 
-            /// `packed` layout is represented separately by `TypeStructPacked`.
+            /// `bitpack` layout is represented separately by `TypeStructPacked`.
             layout: enum(u1) { auto, @"extern" },
 
             any_field_aligns: bool,
@@ -5639,7 +5639,7 @@ pub const Tag = enum(u8) {
         /// work on unresolved types.
         fields_len: u32,
 
-        const Bits = packed struct(u32) {
+        const Bits = bitpack struct(u32) {
             captures_len: enum(u31) {
                 reified = std.math.maxInt(u31),
                 _,
@@ -5670,7 +5670,7 @@ pub const Tag = enum(u8) {
         fields_len: u32,
         field_name_map: MapIndex,
 
-        const Bits = packed struct(u32) {
+        const Bits = bitpack struct(u32) {
             captures_len: enum(u31) {
                 reified = std.math.maxInt(u31),
                 generated_union_tag = std.math.maxInt(u31) - 1,
@@ -5697,8 +5697,8 @@ pub const BackingTypeMode = enum(u1) {
     /// The backing type was explicitly provided by the user. For instance:
     ///   union(T)
     ///   enum(T)
-    ///   packed struct(T)
-    ///   packed union(T)
+    ///   bitpack struct(T)
+    ///   bitpack union(T)
     /// Type layout resolution will evaluate the user-provided expression and validate that type.
     explicit,
     /// No backing type was explicitly provided by the user. Type layout resolution will populate
@@ -5709,7 +5709,7 @@ pub const BackingTypeMode = enum(u1) {
 /// State that is mutable during semantic analysis. This data is not used for
 /// equality or hashing, except for `inferred_error_set` which is considered
 /// to be part of the type of the function.
-pub const FuncAnalysis = packed struct(u32) {
+pub const FuncAnalysis = bitpack struct(u32) {
     want_runtime_analysis: bool,
     branch_hint: std.lang.BranchHint,
     is_noinline: bool,
@@ -5985,7 +5985,7 @@ pub const Array = struct {
     }
 };
 
-pub const PackedU64 = packed struct(u64) {
+pub const PackedU64 = bitpack struct(u64) {
     a: u32,
     b: u32,
 
@@ -6155,7 +6155,7 @@ pub const PtrSlice = struct {
 };
 
 /// Trailing: Limb for every limbs_len
-pub const Int = packed struct {
+pub const Int = bitpack struct {
     ty: Index,
     limbs_len: u32,
 
@@ -12406,7 +12406,7 @@ pub fn getErrorValueIfExists(ip: *const InternPool, name: NullTerminatedString) 
     return @intFromEnum(ip.global_error_set.getErrorValueIfExists(name) orelse return null);
 }
 
-const PackedCallingConvention = packed struct(u18) {
+const PackedCallingConvention = bitpack struct(u18) {
     tag: std.lang.CallingConvention.Tag,
     /// May be ignored depending on `tag`.
     incoming_stack_alignment: Alignment,
@@ -12575,7 +12575,7 @@ pub fn resolveUnionLayout(
     flags.alignment = alignment;
 }
 
-/// Asserts that `struct_type` is a packed struct type.
+/// Asserts that `struct_type` is a bitpack struct type.
 pub fn resolvePackedStructLayout(
     ip: *InternPool,
     io: Io,
@@ -12602,7 +12602,7 @@ pub fn resolvePackedStructLayout(
     extra_items[item.data + std.meta.fieldIndex(Tag.TypeStructPacked, "backing_int_type").?] = @intFromEnum(backing_int_type);
 }
 
-/// Asserts that `union_type` is a packed union type.
+/// Asserts that `union_type` is a bitpack union type.
 pub fn resolvePackedUnionLayout(
     ip: *InternPool,
     io: Io,

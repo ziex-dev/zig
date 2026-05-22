@@ -698,7 +698,7 @@ pub const Type = union(enum) {
     /// therefore must be kept in sync with the compiler implementation.
     pub const Struct = struct {
         layout: ContainerLayout,
-        /// Only valid if layout is .@"packed"
+        /// Only valid if layout is .@"bitpack"
         backing_integer: ?type = null,
         fields: []const StructField,
         decls: []const Declaration,

@@ -254,7 +254,7 @@ test "struct field init with catch" {
     try comptime S.doTheTest();
 }
 
-const blah: packed struct {
+const blah: bitpack struct {
     a: u3,
     b: u3,
     c: u2,
@@ -370,7 +370,7 @@ fn alloc(comptime T: type) []T {
     return &[_]T{};
 }
 
-const APackedStruct = packed struct {
+const APackedStruct = bitpack struct {
     x: u8,
     y: u8,
 };
@@ -390,10 +390,10 @@ test "packed struct" {
     try expect(four == 4);
 }
 
-const Foo24Bits = packed struct {
+const Foo24Bits = bitpack struct {
     field: u24,
 };
-const Foo96Bits = packed struct {
+const Foo96Bits = bitpack struct {
     a: u24,
     b: u24,
     c: u24,
@@ -468,12 +468,12 @@ test "runtime struct initialization of bitfield" {
 var x1 = @as(u4, 1);
 var x2 = @as(u8, 2);
 
-const Nibbles = packed struct {
+const Nibbles = bitpack struct {
     x: u4,
     y: u4,
 };
 
-const Bitfields = packed struct {
+const Bitfields = bitpack struct {
     f1: u16,
     f2: u16,
     f3: u8,
@@ -510,7 +510,7 @@ test "implicit cast packed struct field to const ptr" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
-    const LevelUpMove = packed struct {
+    const LevelUpMove = bitpack struct {
         move_id: u9,
         level: u7,
 
@@ -528,7 +528,7 @@ test "implicit cast packed struct field to const ptr" {
 test "zero-bit field in packed struct" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
-    const S = packed struct {
+    const S = bitpack struct {
         x: u10,
         y: void,
     };
@@ -544,7 +544,7 @@ test "packed struct with non-ABI-aligned field" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    const S = packed struct {
+    const S = bitpack struct {
         x: u9,
         y: u183,
     };
@@ -555,7 +555,7 @@ test "packed struct with non-ABI-aligned field" {
     try expect(s.y == 42);
 }
 
-const BitField1 = packed struct {
+const BitField1 = bitpack struct {
     a: u3,
     b: u3,
     c: u2,
@@ -669,24 +669,24 @@ test "packed array 24bits" {
     try expect(bytes[bytes.len - 1] == 0xbb);
 }
 
-const Foo32Bits = packed struct {
+const Foo32Bits = bitpack struct {
     field: u24,
     pad: u8,
 };
 
-const FooArray24Bits = packed struct {
+const FooArray24Bits = bitpack struct {
     a: u16,
     b0: Foo32Bits,
     b1: Foo32Bits,
     c: u16,
 };
 
-const FooStructAligned = packed struct {
+const FooStructAligned = bitpack struct {
     a: u8,
     b: u8,
 };
 
-const FooArrayOfAligned = packed struct {
+const FooArrayOfAligned = bitpack struct {
     a: [2]FooStructAligned,
 };
 
@@ -697,7 +697,7 @@ test "pointer to packed struct member in a stack variable" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
-    const S = packed struct {
+    const S = bitpack struct {
         a: u2,
         b: u2,
     };
@@ -712,7 +712,7 @@ test "pointer to packed struct member in a stack variable" {
 test "packed struct with u0 field access" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
-    const S = packed struct {
+    const S = bitpack struct {
         f0: u0,
     };
     var s = S{ .f0 = 0 };
@@ -748,7 +748,7 @@ test "packed struct with fp fields" {
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
 
-    const S = packed struct {
+    const S = bitpack struct {
         data0: f32,
         data1: f32,
         data2: f32,
@@ -827,7 +827,7 @@ test "packed struct field passed to generic function" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const S = struct {
-        const P = packed struct {
+        const P = bitpack struct {
             b: u5,
             g: u5,
             r: u5,
@@ -996,7 +996,7 @@ test "packed struct with undefined initializers" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
     const S = struct {
-        const P = packed struct {
+        const P = bitpack struct {
             a: u3,
             _a: u3 = undefined,
             b: u3,
@@ -1195,7 +1195,7 @@ test "packed struct aggregate init" {
             return @as(u8, @bitCast(P{ .a = a, .b = b }));
         }
 
-        const P = packed struct {
+        const P = bitpack struct {
             a: i2,
             b: i6,
         };
@@ -1212,7 +1212,7 @@ test "packed struct field access via pointer" {
 
     const S = struct {
         fn doTheTest() !void {
-            const S = packed struct { a: u30 };
+            const S = bitpack struct { a: u30 };
             var s1: S = .{ .a = 1 };
             const s2 = &s1;
             try expect(s2.a == 1);
@@ -1356,10 +1356,10 @@ test "struct has only one reference" {
             return error.Foo;
         }
 
-        fn pointerPackedStruct(_: *packed struct { x: u8 }) void {}
-        fn nestedPointerPackedStruct(_: struct { x: *packed struct { x: u8 } }) void {}
-        fn pointerNestedPackedStruct(_: *struct { x: packed struct { x: u8 } }) void {}
-        fn pointerNestedPointerPackedStruct(_: *struct { x: *packed struct { x: u8 } }) void {}
+        fn pointerPackedStruct(_: *bitpack struct { x: u8 }) void {}
+        fn nestedPointerPackedStruct(_: struct { x: *bitpack struct { x: u8 } }) void {}
+        fn pointerNestedPackedStruct(_: *struct { x: bitpack struct { x: u8 } }) void {}
+        fn pointerNestedPointerPackedStruct(_: *struct { x: *bitpack struct { x: u8 } }) void {}
 
         fn optionalComptimeIntParam(comptime x: ?comptime_int) comptime_int {
             return x.?;
@@ -1620,7 +1620,7 @@ test "extern struct field pointer has correct alignment" {
 }
 
 test "packed struct field in anonymous struct" {
-    const T = packed struct {
+    const T = bitpack struct {
         f1: bool = false,
     };
 
@@ -1924,7 +1924,7 @@ test "struct field default value is a call" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
 
-    const Z = packed struct {
+    const Z = bitpack struct {
         a: u32,
     };
     const Y = struct {

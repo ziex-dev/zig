@@ -1,4 +1,4 @@
-const S = packed struct {
+const S = bitpack struct {
     x: @Int(.unsigned, @sizeOf(S)),
 };
 comptime {

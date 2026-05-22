@@ -1,5 +1,5 @@
 export fn entry1() void {
-    const U = packed union {
+    const U = bitpack union {
         a: u1,
         b: u2,
     };

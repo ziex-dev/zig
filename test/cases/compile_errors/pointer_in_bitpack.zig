@@ -1,11 +1,11 @@
-const S = packed struct {
+const S = bitpack struct {
     ptr: *u32,
 };
 export fn foo() void {
     _ = @as(S, undefined);
 }
 
-const U = packed union {
+const U = bitpack union {
     ptr: *u32,
 };
 export fn bar() void {

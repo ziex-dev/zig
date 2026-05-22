@@ -1,4 +1,4 @@
-const Foo = packed struct(u32) {
+const Foo = bitpack struct(u32) {
     x: u1,
 };
 fn bar(_: Foo) callconv(.c) void {}

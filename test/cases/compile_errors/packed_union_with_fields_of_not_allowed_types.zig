@@ -1,12 +1,12 @@
 const S = struct { a: u32 };
 export fn entry0() void {
-    _ = @sizeOf(packed union {
+    _ = @sizeOf(bitpack union {
         foo: S,
         bar: bool,
     });
 }
 export fn entry1() void {
-    _ = @sizeOf(packed union {
+    _ = @sizeOf(bitpack union {
         x: *const u32,
     });
 }

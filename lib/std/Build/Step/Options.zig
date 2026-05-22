@@ -321,7 +321,7 @@ fn printStruct(options: *Options, out: *std.ArrayList(u8), comptime T: type, com
 
     switch (val.layout) {
         .@"extern" => try out.appendSlice(gpa, "extern struct"),
-        .@"packed" => try out.appendSlice(gpa, "packed struct"),
+        .@"packed" => try out.appendSlice(gpa, "bitpack struct"),
         else => try out.appendSlice(gpa, "struct"),
     }
 

@@ -214,7 +214,7 @@ test "@intCast > 128 bits" {
     try testIntCast(u128, maxInt(u128), i255, maxInt(u128));
 }
 
-const Piece = packed struct {
+const Piece = bitpack struct {
     color: Color,
     type: Type,
 
@@ -275,7 +275,7 @@ test "load non byte-sized value in struct" {
     try expect(struct0.p.type == .PAWN);
     try expect(struct0.p.color == .BLACK);
 
-    var struct1: packed struct {
+    var struct1: bitpack struct {
         p0: Piece,
         p1: Piece,
         pad: u1,
@@ -302,8 +302,8 @@ test "load non byte-sized value in union" {
     // note: this bug is triggered by the == operator, expectEqual will hide it
     // using ptrCast not to depend on unitialised memory state
 
-    var union0: packed union {
-        p: packed struct(u8) {
+    var union0: bitpack union {
+        p: bitpack struct(u8) {
             a: Piece,
             b: u4,
         },
@@ -314,7 +314,7 @@ test "load non byte-sized value in union" {
     try expect(union0.p.a.color == .BLACK);
 
     var union1: union {
-        p: packed struct(u8) {
+        p: bitpack struct(u8) {
             a: Piece,
             b: u4,
         },

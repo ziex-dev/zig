@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-pub const Version = packed struct(Word) {
+pub const Version = bitpack struct(Word) {
     padding: u8 = 0,
     minor: u8,
     major: u8,
@@ -3580,7 +3580,7 @@ pub const OpenClOpcode = enum(u16) {
 pub const Zig = enum(u16) {
     InvocationGlobal = 0,
 };
-pub const ImageOperands = packed struct {
+pub const ImageOperands = bitpack struct {
     bias: bool = false,
     lod: bool = false,
     grad: bool = false,
@@ -3649,7 +3649,7 @@ pub const ImageOperands = packed struct {
         _reserved_bit_31: bool = false,
     };
 };
-pub const FPFastMathMode = packed struct {
+pub const FPFastMathMode = bitpack struct {
     not_na_n: bool = false,
     not_inf: bool = false,
     nsz: bool = false,
@@ -3683,7 +3683,7 @@ pub const FPFastMathMode = packed struct {
     _reserved_bit_30: bool = false,
     _reserved_bit_31: bool = false,
 };
-pub const SelectionControl = packed struct {
+pub const SelectionControl = bitpack struct {
     flatten: bool = false,
     dont_flatten: bool = false,
     _reserved_bit_2: bool = false,
@@ -3717,7 +3717,7 @@ pub const SelectionControl = packed struct {
     _reserved_bit_30: bool = false,
     _reserved_bit_31: bool = false,
 };
-pub const LoopControl = packed struct {
+pub const LoopControl = bitpack struct {
     unroll: bool = false,
     dont_unroll: bool = false,
     dependency_infinite: bool = false,
@@ -3786,7 +3786,7 @@ pub const LoopControl = packed struct {
         _reserved_bit_31: bool = false,
     };
 };
-pub const FunctionControl = packed struct {
+pub const FunctionControl = bitpack struct {
     @"inline": bool = false,
     dont_inline: bool = false,
     pure: bool = false,
@@ -3820,7 +3820,7 @@ pub const FunctionControl = packed struct {
     _reserved_bit_30: bool = false,
     _reserved_bit_31: bool = false,
 };
-pub const MemorySemantics = packed struct {
+pub const MemorySemantics = bitpack struct {
     _reserved_bit_0: bool = false,
     acquire: bool = false,
     release: bool = false,
@@ -3854,7 +3854,7 @@ pub const MemorySemantics = packed struct {
     _reserved_bit_30: bool = false,
     _reserved_bit_31: bool = false,
 };
-pub const MemoryAccess = packed struct {
+pub const MemoryAccess = bitpack struct {
     @"volatile": bool = false,
     aligned: bool = false,
     nontemporal: bool = false,
@@ -3923,7 +3923,7 @@ pub const MemoryAccess = packed struct {
         _reserved_bit_31: bool = false,
     };
 };
-pub const KernelProfilingInfo = packed struct {
+pub const KernelProfilingInfo = bitpack struct {
     cmd_exec_time: bool = false,
     _reserved_bit_1: bool = false,
     _reserved_bit_2: bool = false,
@@ -3957,7 +3957,7 @@ pub const KernelProfilingInfo = packed struct {
     _reserved_bit_30: bool = false,
     _reserved_bit_31: bool = false,
 };
-pub const RayFlags = packed struct {
+pub const RayFlags = bitpack struct {
     opaque_khr: bool = false,
     no_opaque_khr: bool = false,
     terminate_on_first_hit_khr: bool = false,
@@ -3991,7 +3991,7 @@ pub const RayFlags = packed struct {
     _reserved_bit_30: bool = false,
     _reserved_bit_31: bool = false,
 };
-pub const FragmentShadingRate = packed struct {
+pub const FragmentShadingRate = bitpack struct {
     vertical2pixels: bool = false,
     vertical4pixels: bool = false,
     horizontal2pixels: bool = false,
@@ -4025,7 +4025,7 @@ pub const FragmentShadingRate = packed struct {
     _reserved_bit_30: bool = false,
     _reserved_bit_31: bool = false,
 };
-pub const RawAccessChainOperands = packed struct {
+pub const RawAccessChainOperands = bitpack struct {
     robustness_per_component_nv: bool = false,
     robustness_per_element_nv: bool = false,
     _reserved_bit_2: bool = false,
@@ -5235,7 +5235,7 @@ pub const RayQueryCandidateIntersectionType = enum(u32) {
 pub const PackedVectorFormat = enum(u32) {
     packed_vector_format4x8bit = 0,
 };
-pub const CooperativeMatrixOperands = packed struct {
+pub const CooperativeMatrixOperands = bitpack struct {
     matrix_a_signed_components_khr: bool = false,
     matrix_b_signed_components_khr: bool = false,
     matrix_c_signed_components_khr: bool = false,
@@ -5280,7 +5280,7 @@ pub const CooperativeMatrixUse = enum(u32) {
     matrix_bkhr = 1,
     matrix_accumulator_khr = 2,
 };
-pub const CooperativeMatrixReduce = packed struct {
+pub const CooperativeMatrixReduce = bitpack struct {
     row: bool = false,
     column: bool = false,
     @"2x2": bool = false,
@@ -5321,7 +5321,7 @@ pub const TensorClampMode = enum(u32) {
     repeat = 3,
     repeat_mirrored = 4,
 };
-pub const TensorAddressingOperands = packed struct {
+pub const TensorAddressingOperands = bitpack struct {
     tensor_view: bool = false,
     decode_func: bool = false,
     _reserved_bit_2: bool = false,
@@ -5410,7 +5410,7 @@ pub const StoreCacheControl = enum(u32) {
 pub const NamedMaximumNumberOfRegisters = enum(u32) {
     auto_intel = 0,
 };
-pub const MatrixMultiplyAccumulateOperands = packed struct {
+pub const MatrixMultiplyAccumulateOperands = bitpack struct {
     matrix_a_signed_components_intel: bool = false,
     matrix_b_signed_components_intel: bool = false,
     matrix_cb_float16intel: bool = false,
@@ -5472,7 +5472,7 @@ pub const ComponentType = enum(u32) {
     float_e4m3nv = 1000491002,
     float_e5m2nv = 1000491003,
 };
-pub const TensorOperands = packed struct {
+pub const TensorOperands = bitpack struct {
     nontemporal_arm: bool = false,
     out_of_bounds_value_arm: bool = false,
     make_element_available_arm: bool = false,

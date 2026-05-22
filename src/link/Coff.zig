@@ -1403,7 +1403,7 @@ fn addSection(coff: *Coff, name: []const u8, flags: std.coff.SectionHeader.Flags
     return si;
 }
 
-const ObjectSectionAttributes = packed struct {
+const ObjectSectionAttributes = bitpack struct {
     read: bool = false,
     write: bool = false,
     execute: bool = false,

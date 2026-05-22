@@ -124,8 +124,8 @@ pub const Tag = struct {
         _ = try writer.write(writer2.buffered());
     }
 
-    const FirstTag = packed struct(u8) { number: u5, constructed: bool, class: Tag.Class };
-    const NextTag = packed struct(u8) { number: u7, continues: bool };
+    const FirstTag = bitpack struct(u8) { number: u5, constructed: bool, class: Tag.Class };
+    const NextTag = bitpack struct(u8) { number: u7, continues: bool };
 
     pub fn toExpected(self: Tag) ExpectedTag {
         return ExpectedTag{

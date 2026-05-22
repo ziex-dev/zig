@@ -2284,7 +2284,7 @@ fn pegFloat(a: *AstSmith) SourceError!void {
     try a.addTokenTag(.number_literal);
 
     const hex = a.smith.value(bool);
-    const exp = a.smith.value(packed struct(u3) {
+    const exp = a.smith.value(bitpack struct(u3) {
         kind: enum(u2) { none, no_sign, minus, plus },
         upper: bool,
     });

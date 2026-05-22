@@ -1,5 +1,5 @@
-const PackedStruct = packed struct { x: u32 };
-const PackedUnion = packed union { x: u32 };
+const PackedStruct = bitpack struct { x: u32 };
+const PackedUnion = bitpack union { x: u32 };
 
 /// This enum has 256 fields, so `u8` will be its inferred tag type.
 const Enum = enum {

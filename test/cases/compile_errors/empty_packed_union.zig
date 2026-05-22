@@ -1,5 +1,5 @@
 export fn foo() void {
-    const U = packed union {};
+    const U = bitpack union {};
     _ = @as(U, undefined);
 }
 

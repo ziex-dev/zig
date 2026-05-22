@@ -96,7 +96,7 @@ fn addCaseTarget(
     const link_libc_vals: []const ?bool = if (both_libc) &.{ true, false } else &.{null};
     const strip_debug_vals: []const bool = &.{ true, false };
 
-    const UnwindInfo = packed struct(u2) {
+    const UnwindInfo = bitpack struct(u2) {
         tables: bool,
         fp: bool,
         const none: @This() = .{ .tables = false, .fp = false };

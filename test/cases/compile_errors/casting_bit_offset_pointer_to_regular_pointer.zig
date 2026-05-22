@@ -1,4 +1,4 @@
-const BitField = packed struct {
+const BitField = bitpack struct {
     a: u3,
     b: u3,
     c: u2,

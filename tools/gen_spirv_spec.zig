@@ -199,7 +199,7 @@ fn render(
         \\
         \\const std = @import("std");
         \\
-        \\pub const Version = packed struct(Word) {
+        \\pub const Version = bitpack struct(Word) {
         \\    padding: u8 = 0,
         \\    minor: u8,
         \\    major: u8,
@@ -730,7 +730,7 @@ fn renderBitEnum(
     enumeration: OperandKind,
     extended_structs: ExtendedStructSet,
 ) !void {
-    try writer.print("pub const {f} = packed struct {{\n", .{std.zig.fmtId(enumeration.kind)});
+    try writer.print("pub const {f} = bitpack struct {{\n", .{std.zig.fmtId(enumeration.kind)});
 
     var flags_by_bitpos: [32]?usize = @splat(null);
     const enumerants = enumeration.enumerants orelse return error.InvalidRegistry;

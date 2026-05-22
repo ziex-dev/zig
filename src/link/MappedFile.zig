@@ -11,7 +11,7 @@ const linux = std.os.linux;
 const windows = std.os.windows;
 
 io: Io,
-flags: packed struct {
+flags: bitpack struct {
     block_size: std.mem.Alignment,
     copy_file_range_unsupported: bool,
     fallocate_punch_hole_unsupported: bool,
@@ -91,7 +91,7 @@ pub const Node = extern struct {
     flags: Flags,
     location_payload: Location.Payload,
 
-    pub const Flags = packed struct(u32) {
+    pub const Flags = bitpack struct(u32) {
         location_tag: Location.Tag,
         alignment: std.mem.Alignment,
         /// Whether this node can be moved.

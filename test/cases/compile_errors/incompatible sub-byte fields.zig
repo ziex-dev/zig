@@ -1,8 +1,8 @@
-const A = packed struct {
+const A = bitpack struct {
     a: u2,
     b: u6,
 };
-const B = packed struct {
+const B = bitpack struct {
     q: u8,
     a: u2,
     b: u6,

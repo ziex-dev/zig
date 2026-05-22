@@ -1,5 +1,5 @@
 pub export fn entry() void {
-    const T = packed struct {
+    const T = bitpack struct {
         a: u65535,
         b: u65535,
     };

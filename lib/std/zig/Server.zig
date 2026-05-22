@@ -105,7 +105,7 @@ pub const Message = struct {
         index: u32,
         flags: Flags align(4),
 
-        pub const Flags = packed struct(u64) {
+        pub const Flags = bitpack struct(u64) {
             status: Status,
             fuzz: bool,
             log_err_count: u30,
@@ -122,7 +122,7 @@ pub const Message = struct {
         files_len: u32,
         decls_len: u32,
         flags: Flags,
-        pub const Flags = packed struct(u32) {
+        pub const Flags = bitpack struct(u32) {
             use_llvm: bool,
             _: u31 = 0,
         };
@@ -133,7 +133,7 @@ pub const Message = struct {
     pub const EmitDigest = extern struct {
         flags: Flags,
 
-        pub const Flags = packed struct(u8) {
+        pub const Flags = bitpack struct(u8) {
             cache_hit: bool,
             reserved: u7 = 0,
         };

@@ -24,7 +24,7 @@ pub const Strip = enum {
     debug_and_symbols,
 };
 
-pub const SectionFlags = packed struct {
+pub const SectionFlags = bitpack struct {
     /// add SHF_ALLOC
     alloc: bool = false,
 

@@ -2045,7 +2045,7 @@ pub const DeclGen = struct {
     }
 };
 
-const CQualifiers = packed struct {
+const CQualifiers = bitpack struct {
     @"const": bool = false,
     @"volatile": bool = false,
     restrict: bool = false,

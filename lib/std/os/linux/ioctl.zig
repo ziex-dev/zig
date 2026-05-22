@@ -17,7 +17,7 @@ const bits = switch (@import("builtin").cpu.arch) {
 
 const Direction = @Int(.unsigned, bits.dir);
 
-pub const Request = packed struct {
+pub const Request = bitpack struct {
     nr: u8,
     io_type: u8,
     size: @Int(.unsigned, bits.size),

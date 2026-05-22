@@ -104,7 +104,7 @@ pub const OBJECT = struct {
         SecurityQualityOfService: ?*anyopaque = null,
 
         // Valid values for the Attributes field
-        pub const Flags = packed struct(ULONG) {
+        pub const Flags = bitpack struct(ULONG) {
             Reserved0: u1 = 0,
             INHERIT: bool = false,
             Reserved2: u2 = 0,
@@ -168,7 +168,7 @@ pub const FILE = struct {
         FileName: [1]WCHAR,
     };
 
-    pub const DISPOSITION = packed struct(ULONG) {
+    pub const DISPOSITION = bitpack struct(ULONG) {
         DELETE: bool = false,
         POSIX_SEMANTICS: bool = false,
         FORCE_IMAGE_SECTION_CHECK: bool = false,
@@ -201,7 +201,7 @@ pub const FILE = struct {
 
     // ref: km/ntifs.h
 
-    pub const NAME_FLAGS = packed struct(UCHAR) {
+    pub const NAME_FLAGS = bitpack struct(UCHAR) {
         NTFS: bool = false,
         DOS: bool = false,
         Reserved2: u5 = 0,
@@ -209,7 +209,7 @@ pub const FILE = struct {
     };
 
     pub const NOTIFY = struct {
-        pub const CHANGE = packed struct(ULONG) {
+        pub const CHANGE = bitpack struct(ULONG) {
             FILE_NAME: bool = false,
             DIR_NAME: bool = false,
             ATTRIBUTES: bool = false,
@@ -291,7 +291,7 @@ pub const FILE = struct {
 
     pub const PIPE = struct {
         /// Define the `NamedPipeType` flags for `NtCreateNamedPipeFile`
-        pub const TYPE = packed struct(ULONG) {
+        pub const TYPE = bitpack struct(ULONG) {
             TYPE: enum(u1) {
                 BYTE_STREAM = 0b0,
                 MESSAGE = 0b1,
@@ -309,7 +309,7 @@ pub const FILE = struct {
         };
 
         /// Define the `CompletionMode` flags for `NtCreateNamedPipeFile`
-        pub const COMPLETION_MODE = packed struct(ULONG) {
+        pub const COMPLETION_MODE = bitpack struct(ULONG) {
             OPERATION: enum(u1) {
                 QUEUE = 0b0,
                 COMPLETE = 0b1,
@@ -318,7 +318,7 @@ pub const FILE = struct {
         };
 
         /// Define the `ReadMode` flags for `NtCreateNamedPipeFile`
-        pub const READ_MODE = packed struct(ULONG) {
+        pub const READ_MODE = bitpack struct(ULONG) {
             MODE: enum(u1) {
                 BYTE_STREAM = 0b0,
                 MESSAGE = 0b1,
@@ -452,7 +452,7 @@ pub const FILE = struct {
             return fri;
         }
 
-        pub const FLAGS = packed struct(ULONG) {
+        pub const FLAGS = bitpack struct(ULONG) {
             REPLACE_IF_EXISTS: bool = false,
             POSIX_SEMANTICS: bool = false,
             SUPPRESS_PIN_STATE_INHERITANCE: bool = false,
@@ -622,7 +622,7 @@ pub const FILE = struct {
 
     // ref: um/winnt.h
 
-    pub const SHARE = packed struct(ULONG) {
+    pub const SHARE = bitpack struct(ULONG) {
         /// The file can be opened for read access by other threads.
         READ: bool = false,
         /// The file can be opened for write access by other threads.
@@ -638,7 +638,7 @@ pub const FILE = struct {
         };
     };
 
-    pub const ATTRIBUTE = packed struct(ULONG) {
+    pub const ATTRIBUTE = bitpack struct(ULONG) {
         /// The file is read only. Applications can read the file, but cannot write to or delete it.
         READONLY: bool = false,
         /// The file is hidden. Do not include it in an ordinary directory listing.
@@ -704,7 +704,7 @@ pub const FILE = struct {
     };
 
     /// Define the create/open option flags
-    pub const MODE = packed struct(ULONG) {
+    pub const MODE = bitpack struct(ULONG) {
         /// The file being created or opened is a directory file. With this
         /// flag, the CreateDisposition parameter must be set to `.CREATE`,
         /// `.FILE_OPEN`, or `.OPEN_IF`. With this flag, other compatible
@@ -1114,7 +1114,7 @@ pub const CONSOLE = struct {
     };
 };
 
-pub const AFD = packed struct(ULONG) {
+pub const AFD = bitpack struct(ULONG) {
     NO_FAST_IO: bool = false,
     OVERLAPPED: bool = false,
     Reserved0: u30 = 0,
@@ -1138,7 +1138,7 @@ pub const AFD = packed struct(ULONG) {
         _,
     };
     pub const DEVICE_NAME: []const u16 = &.{ '\\', 'D', 'e', 'v', 'i', 'c', 'e', '\\', 'A', 'f', 'd' };
-    pub const ENDPOINT_TYPE = packed struct(ULONG) {
+    pub const ENDPOINT_TYPE = bitpack struct(ULONG) {
         CONNECTIONLESS: bool = false,
         Reserved1: u3 = 0,
         MESSAGEMODE: bool = false,
@@ -1211,7 +1211,7 @@ pub const AFD = packed struct(ULONG) {
         DisconnectMode: MODE,
         Timeout: LARGE_INTEGER,
 
-        pub const MODE = packed struct(ULONG) {
+        pub const MODE = bitpack struct(ULONG) {
             SEND: bool = false,
             RECEIVE: bool = false,
             ABORTIVE: bool = false,
@@ -1260,7 +1260,7 @@ pub const AFD = packed struct(ULONG) {
         TailLength: ULONG,
         Flags: FLAGS,
 
-        pub const FLAGS = packed struct(ULONG) {
+        pub const FLAGS = bitpack struct(ULONG) {
             DISCONNECT: bool = false,
             REUSE_SOCKET: bool = false,
             WRITE_BEHIND: bool = false,
@@ -1456,7 +1456,7 @@ pub const TDI = struct {
             SendDatagramInformation: *CONNECTION.INFORMATION,
         };
     };
-    pub const RECEIVE = packed struct(ULONG) {
+    pub const RECEIVE = bitpack struct(ULONG) {
         Reserved0: u2 = 0,
         BROADCAST: bool = false,
         MULTICAST: bool = false,
@@ -1473,7 +1473,7 @@ pub const TDI = struct {
         NO_PUSH: bool = false,
         Reserved12: u17 = 0,
     };
-    pub const SEND = packed struct(ULONG) {
+    pub const SEND = bitpack struct(ULONG) {
         Reserved0: u5 = 0,
         EXPEDITED: bool = false,
         PARTIAL: bool = false,
@@ -1485,7 +1485,7 @@ pub const TDI = struct {
 };
 
 pub const NET = struct {
-    pub const LUID = packed struct(ULONG64) { Reserved: u24 = 0, Index: u24, IfType: u16 };
+    pub const LUID = bitpack struct(ULONG64) { Reserved: u24 = 0, Index: u24, IfType: u16 };
     pub const IFINDEX = enum(ULONG) { _ };
 };
 
@@ -1536,7 +1536,7 @@ pub const DNS = struct {
         MaxSa: [ADDR_MAX_SOCKADDR_LENGTH]CHAR,
 
         pub const TYPE = enum(DWORD) { UDP = 0x1, DOH = 0x2, DOT = 0x3, _ };
-        pub const FLAGS = packed struct(ULONG64) {
+        pub const FLAGS = bitpack struct(ULONG64) {
             UDP_FALLBACK: bool = false,
             UPGRADE_FROM_WELL_KNOWN_SERVERS: bool = false,
             Reserved2: u62 = 0,
@@ -1615,7 +1615,7 @@ pub const DNS = struct {
         pub const ANY: TYPE = .ALL;
     };
 
-    pub const QUERY = packed struct(ULONG64) {
+    pub const QUERY = bitpack struct(ULONG64) {
         pub const STANDARD: QUERY = .{};
         ACCEPT_TRUNCATED_RESPONSE: bool = false,
         USE_TCP_ONLY: bool = false,
@@ -1688,7 +1688,7 @@ pub const DNS = struct {
         dwReserved: DWORD,
         Data: extern union { A: [4]u8, AAAA: [16]u8 },
 
-        pub const FLAGS = packed struct(DWORD) {
+        pub const FLAGS = bitpack struct(DWORD) {
             Section: SECTION,
             Delete: u1,
             CharSet: u2,
@@ -1912,7 +1912,7 @@ pub const THREAD = struct {
         BasePriority: KPRIORITY,
     };
 
-    pub const CREATE_FLAGS = packed struct(ULONG) {
+    pub const CREATE_FLAGS = bitpack struct(ULONG) {
         CREATE_SUSPENDED: bool = false,
         SKIP_THREAD_ATTACH: bool = false,
         HIDE_FROM_DEBUGGER: bool = false,
@@ -1947,7 +1947,7 @@ pub const MEMORY = struct {
 // ref: km/ntifs.h
 
 pub const HEAP = opaque {
-    pub const FLAGS = packed struct(u8) {
+    pub const FLAGS = bitpack struct(u8) {
         /// Serialized access is not used when the heap functions access this heap. This option
         /// applies to all subsequent heap function calls. Alternatively, you can specify this
         /// option on individual heap function calls.
@@ -1997,7 +1997,7 @@ pub const HEAP = opaque {
             pub const MASK: CLASS = @enumFromInt(maxInt(@typeInfo(CLASS).@"enum".tag_type));
         };
 
-        pub const CREATE = packed struct(ULONG) {
+        pub const CREATE = bitpack struct(ULONG) {
             COMMON: FLAGS = .{},
             SEGMENT_HEAP: bool = false,
             /// Only applies to segment heap.  Applies pointer obfuscation which is
@@ -2044,11 +2044,11 @@ pub const HEAP = opaque {
             };
         };
 
-        pub const ALLOCATION = packed struct(ULONG) {
+        pub const ALLOCATION = bitpack struct(ULONG) {
             COMMON: FLAGS = .{},
-            SETTABLE_USER: packed struct(u4) {
+            SETTABLE_USER: bitpack struct(u4) {
                 VALUE: u1 = 0,
-                FLAGS: packed struct(u3) {
+                FLAGS: bitpack struct(u3) {
                     FLAG1: bool = false,
                     FLAG2: bool = false,
                     FLAG3: bool = false,
@@ -2092,7 +2092,7 @@ pub const HEAP = opaque {
                 _,
             };
 
-            pub const FLG = packed struct(ULONG) {
+            pub const FLG = bitpack struct(ULONG) {
                 USE_PAGE_HEAP: bool = false,
                 NO_LFH: bool = false,
                 Reserved2: u30 = 0,
@@ -2169,7 +2169,7 @@ pub const HEAP = opaque {
     };
 };
 
-pub const CTL_CODE = packed struct(ULONG) {
+pub const CTL_CODE = bitpack struct(ULONG) {
     Method: METHOD,
     Function: u12,
     Access: FILE_ACCESS,
@@ -2182,7 +2182,7 @@ pub const CTL_CODE = packed struct(ULONG) {
         NEITHER = 3,
     };
 
-    pub const FILE_ACCESS = packed struct(u2) {
+    pub const FILE_ACCESS = bitpack struct(u2) {
         READ: bool = false,
         WRITE: bool = false,
 
@@ -2317,7 +2317,7 @@ pub const CTL_CODE = packed struct(ULONG) {
 
 pub const IOCTL = struct {
     pub const AFD = struct {
-        const CONTROL_CODE = packed struct {
+        const CONTROL_CODE = bitpack struct {
             Method: CTL_CODE.METHOD,
             Function: u10,
             DeviceType: CTL_CODE.FILE_DEVICE,
@@ -2405,7 +2405,7 @@ pub const IOCTL = struct {
 
 pub const MAXIMUM_REPARSE_DATA_BUFFER_SIZE: ULONG = 16 * 1024;
 
-pub const IO_REPARSE_TAG = packed struct(ULONG) {
+pub const IO_REPARSE_TAG = bitpack struct(ULONG) {
     Value: u12,
     Index: u4 = 0,
     ReservedBits: u12 = 0,
@@ -2465,7 +2465,7 @@ pub const IO_REPARSE_TAG = packed struct(ULONG) {
 
 // ref: km/wdm.h
 
-pub const ACCESS_MASK = packed struct(DWORD) {
+pub const ACCESS_MASK = bitpack struct(DWORD) {
     SPECIFIC: Specific = .{ .bits = 0 },
     STANDARD: Standard = .{},
     Reserved21: u3 = 0,
@@ -2474,7 +2474,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
     Reserved26: u2 = 0,
     GENERIC: Generic = .{},
 
-    pub const Specific = packed union {
+    pub const Specific = bitpack union {
         bits: u16,
 
         // ref: km/wdm.h
@@ -2530,7 +2530,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
         /// I/O Completion Specific Access Rights.
         IO_COMPLETION: IoCompletion,
 
-        pub const File = packed struct(u16) {
+        pub const File = bitpack struct(u16) {
             READ_DATA: bool = false,
             WRITE_DATA: bool = false,
             APPEND_DATA: bool = false,
@@ -2596,7 +2596,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                 } },
             };
 
-            pub const Directory = packed struct(u16) {
+            pub const Directory = bitpack struct(u16) {
                 LIST: bool = false,
                 ADD_FILE: bool = false,
                 ADD_SUBDIRECTORY: bool = false,
@@ -2609,7 +2609,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
                 Reserved9: u7 = 0,
             };
 
-            pub const Pipe = packed struct(u16) {
+            pub const Pipe = bitpack struct(u16) {
                 READ_DATA: bool = false,
                 WRITE_DATA: bool = false,
                 CREATE_PIPE_INSTANCE: bool = false,
@@ -2620,7 +2620,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Key = packed struct(u16) {
+        pub const Key = bitpack struct(u16) {
             /// Required to query the values of a registry key.
             QUERY_VALUE: bool = false,
             /// Required to create, delete, or set a registry value.
@@ -2693,7 +2693,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const ObjectType = packed struct(u16) {
+        pub const ObjectType = bitpack struct(u16) {
             CREATE: bool = false,
             Reserved1: u15 = 0,
 
@@ -2705,7 +2705,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Directory = packed struct(u16) {
+        pub const Directory = bitpack struct(u16) {
             QUERY: bool = false,
             TRAVERSE: bool = false,
             CREATE_OBJECT: bool = false,
@@ -2723,7 +2723,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const SymbolicLink = packed struct(u16) {
+        pub const SymbolicLink = bitpack struct(u16) {
             QUERY: bool = false,
             SET: bool = false,
             Reserved2: u14 = 0,
@@ -2745,7 +2745,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Section = packed struct(u16) {
+        pub const Section = bitpack struct(u16) {
             QUERY: bool = false,
             MAP_WRITE: bool = false,
             MAP_READ: bool = false,
@@ -2767,7 +2767,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Session = packed struct(u16) {
+        pub const Session = bitpack struct(u16) {
             QUERY_ACCESS: bool = false,
             MODIFY_ACCESS: bool = false,
             Reserved2: u14 = 0,
@@ -2781,7 +2781,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Process = packed struct(u16) {
+        pub const Process = bitpack struct(u16) {
             TERMINATE: bool = false,
             CREATE_THREAD: bool = false,
             SET_SESSIONID: bool = false,
@@ -2823,7 +2823,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Thread = packed struct(u16) {
+        pub const Thread = bitpack struct(u16) {
             TERMINATE: bool = false,
             SUSPEND_RESUME: bool = false,
             ALERT: bool = false,
@@ -2863,7 +2863,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const MemoryPartition = packed struct(u16) {
+        pub const MemoryPartition = bitpack struct(u16) {
             QUERY_ACCESS: bool = false,
             MODIFY_ACCESS: bool = false,
             Required2: u14 = 0,
@@ -2880,7 +2880,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const TransactionManager = packed struct(u16) {
+        pub const TransactionManager = bitpack struct(u16) {
             QUERY_INFORMATION: bool = false,
             SET_INFORMATION: bool = false,
             RECOVER: bool = false,
@@ -2925,7 +2925,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Transaction = packed struct(u16) {
+        pub const Transaction = bitpack struct(u16) {
             QUERY_INFORMATION: bool = false,
             SET_INFORMATION: bool = false,
             ENLIST: bool = false,
@@ -3002,7 +3002,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const ResourceManager = packed struct(u16) {
+        pub const ResourceManager = bitpack struct(u16) {
             QUERY_INFORMATION: bool = false,
             SET_INFORMATION: bool = false,
             RECOVER: bool = false,
@@ -3067,7 +3067,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Enlistment = packed struct(u16) {
+        pub const Enlistment = bitpack struct(u16) {
             QUERY_INFORMATION: bool = false,
             SET_INFORMATION: bool = false,
             RECOVER: bool = false,
@@ -3113,7 +3113,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Event = packed struct(u16) {
+        pub const Event = bitpack struct(u16) {
             QUERY_STATE: bool = false,
             MODIFY_STATE: bool = false,
             Reserved2: u14 = 0,
@@ -3130,7 +3130,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Semaphore = packed struct(u16) {
+        pub const Semaphore = bitpack struct(u16) {
             QUERY_STATE: bool = false,
             MODIFY_STATE: bool = false,
             Reserved2: u14 = 0,
@@ -3147,7 +3147,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Token = packed struct(u16) {
+        pub const Token = bitpack struct(u16) {
             ASSIGN_PRIMARY: bool = false,
             DUPLICATE: bool = false,
             IMPERSONATE: bool = false,
@@ -3228,7 +3228,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const JobObject = packed struct(u16) {
+        pub const JobObject = bitpack struct(u16) {
             ASSIGN_PROCESS: bool = false,
             SET_ATTRIBUTES: bool = false,
             QUERY: bool = false,
@@ -3253,7 +3253,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Mutant = packed struct(u16) {
+        pub const Mutant = bitpack struct(u16) {
             QUERY_STATE: bool = false,
             Reserved1: u15 = 0,
 
@@ -3268,7 +3268,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const Timer = packed struct(u16) {
+        pub const Timer = bitpack struct(u16) {
             QUERY_STATE: bool = false,
             MODIFY_STATE: bool = false,
             Reserved2: u14 = 0,
@@ -3285,7 +3285,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             };
         };
 
-        pub const IoCompletion = packed struct(u16) {
+        pub const IoCompletion = bitpack struct(u16) {
             Reserved0: u1 = 0,
             MODIFY_STATE: bool = false,
             Reserved2: u14 = 0,
@@ -3302,7 +3302,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
         pub const RIGHTS_ALL: Specific = .{ .bits = maxInt(@FieldType(Specific, "bits")) };
     };
 
-    pub const Standard = packed struct(u5) {
+    pub const Standard = bitpack struct(u5) {
         RIGHTS: Rights = .{},
         SYNCHRONIZE: bool = false,
 
@@ -3311,7 +3311,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
             .SYNCHRONIZE = true,
         };
 
-        pub const Rights = packed struct(u4) {
+        pub const Rights = bitpack struct(u4) {
             DELETE: bool = false,
             READ_CONTROL: bool = false,
             WRITE_DAC: bool = false,
@@ -3338,7 +3338,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
         };
     };
 
-    pub const Generic = packed struct(u4) {
+    pub const Generic = bitpack struct(u4) {
         ALL: bool = false,
         EXECUTE: bool = false,
         WRITE: bool = false,
@@ -3346,7 +3346,7 @@ pub const ACCESS_MASK = packed struct(DWORD) {
     };
 };
 
-pub const DEVICE_TYPE = packed struct(ULONG) {
+pub const DEVICE_TYPE = bitpack struct(ULONG) {
     FileDevice: CTL_CODE.FILE_DEVICE,
     Reserved16: u16 = 0,
 };
@@ -3377,7 +3377,7 @@ pub const SECTION_INHERIT = enum(c_int) {
     Unmap = 2,
 };
 
-pub const PAGE = packed struct(ULONG) {
+pub const PAGE = bitpack struct(ULONG) {
     NOACCESS: bool = false,
     READONLY: bool = false,
     READWRITE: bool = false,
@@ -3421,7 +3421,7 @@ pub const PAGE = packed struct(ULONG) {
 };
 
 pub const MEM = struct {
-    pub const ALLOCATE = packed struct(ULONG) {
+    pub const ALLOCATE = bitpack struct(ULONG) {
         Reserved0: u12 = 0,
         COMMIT: bool = false,
         RESERVE: bool = false,
@@ -3445,7 +3445,7 @@ pub const MEM = struct {
         };
     };
 
-    pub const FREE = packed struct(ULONG) {
+    pub const FREE = bitpack struct(ULONG) {
         COALESCE_PLACEHOLDERS: bool = false,
         PRESERVE_PLACEHOLDER: bool = false,
         Reserved2: u12 = 0,
@@ -3455,7 +3455,7 @@ pub const MEM = struct {
         Reserved17: u15 = 0,
     };
 
-    pub const MAP = packed struct(ULONG) {
+    pub const MAP = bitpack struct(ULONG) {
         Reserved0: u13 = 0,
         RESERVE: bool = false,
         REPLACE_PLACEHOLDER: bool = false,
@@ -3464,14 +3464,14 @@ pub const MEM = struct {
         Reserved30: u2 = 0,
     };
 
-    pub const UNMAP = packed struct(ULONG) {
+    pub const UNMAP = bitpack struct(ULONG) {
         WITH_TRANSIENT_BOOST: bool = false,
         PRESERVE_PLACEHOLDER: bool = false,
         Reserved2: u30 = 0,
     };
 
     pub const EXTENDED_PARAMETER = extern struct {
-        s: packed struct(ULONG64) {
+        s: bitpack struct(ULONG64) {
             Type: TYPE,
             Reserved: u56,
         },
@@ -3498,7 +3498,7 @@ pub const MEM = struct {
     };
 };
 
-pub const SEC = packed struct(ULONG) {
+pub const SEC = bitpack struct(ULONG) {
     Reserved0: u17 = 0,
     HUGE_PAGES: bool = false,
     PARTITION_OWNER_HANDLE: bool = false,
@@ -3591,7 +3591,7 @@ pub const CreateProcessError = error{
     Unexpected,
 };
 
-pub const CreateProcessFlags = packed struct(u32) {
+pub const CreateProcessFlags = bitpack struct(u32) {
     debug_process: bool = false,
     debug_only_this_process: bool = false,
     create_suspended: bool = false,
@@ -4405,7 +4405,7 @@ pub const REG = struct {
     };
 
     /// Used with NtOpenKeyEx, maybe others
-    pub const OpenOptions = packed struct(ULONG) {
+    pub const OpenOptions = bitpack struct(ULONG) {
         Reserved0: u2 = 0,
         /// Open for backup or restore
         /// special access rules privilege required
@@ -4416,7 +4416,7 @@ pub const REG = struct {
     };
 
     /// Used with NtLoadKeyEx, maybe others
-    pub const LoadOptions = packed struct(ULONG) {
+    pub const LoadOptions = bitpack struct(ULONG) {
         /// Restore whole hive volatile
         WHOLE_HIVE_VOLATILE: bool = false,
         /// Unwind changes to last flush
@@ -4876,7 +4876,7 @@ pub const RUNTIME_FUNCTION = switch (native_arch) {
         BeginAddress: DWORD,
         DUMMYUNIONNAME: extern union {
             UnwindData: DWORD,
-            DUMMYSTRUCTNAME: packed struct(u32) {
+            DUMMYSTRUCTNAME: bitpack struct(u32) {
                 Flag: u2,
                 FunctionLength: u11,
                 Ret: u2,
@@ -4893,7 +4893,7 @@ pub const RUNTIME_FUNCTION = switch (native_arch) {
         BeginAddress: DWORD,
         DUMMYUNIONNAME: extern union {
             UnwindData: DWORD,
-            DUMMYSTRUCTNAME: packed struct(u32) {
+            DUMMYSTRUCTNAME: bitpack struct(u32) {
                 Flag: u2,
                 FunctionLength: u11,
                 RegF: u3,
@@ -5320,23 +5320,23 @@ pub const LDR = struct {
             Context: ?PVOID,
         ) callconv(.winapi) void;
 
-        pub const REGISTER = packed struct(ULONG) {
+        pub const REGISTER = bitpack struct(ULONG) {
             Reserved0: u32 = 0,
         };
     };
 
-    pub const GET_DLL_HANDLE_EX = packed struct(ULONG) {
+    pub const GET_DLL_HANDLE_EX = bitpack struct(ULONG) {
         UNCHANGED_REFCOUNT: bool = false,
         PIN: bool = false,
         Reserved2: u30 = 0,
     };
 
-    pub const GET_PROCEDURE_ADDRESS = packed struct(ULONG) {
+    pub const GET_PROCEDURE_ADDRESS = bitpack struct(ULONG) {
         DONT_RECORD_FORWARDER: bool = false,
         Reserved1: u31 = 0,
     };
 
-    pub const LOAD = packed struct(ULONG) {
+    pub const LOAD = bitpack struct(ULONG) {
         DONT_RESOLVE_DLL_REFERENCES: bool = false,
         LIBRARY_AS_DATAFILE: bool = false,
         PACKAGED_LIBRARY: bool = false,
@@ -5868,7 +5868,7 @@ pub const KUSER_SHARED_DATA = extern struct {
     KdDebuggerEnabled: BOOLEAN,
     DummyUnion1: extern union {
         MitigationPolicies: UCHAR,
-        Alt: packed struct(u8) {
+        Alt: bitpack struct(u8) {
             NXSupportPolicy: u2,
             SEHValidationPolicy: u2,
             CurDirDevicesSkippedForDlls: u2,
@@ -5884,7 +5884,7 @@ pub const KUSER_SHARED_DATA = extern struct {
     SafeBootMode: BOOLEAN,
     DummyUnion2: extern union {
         VirtualizationFlags: UCHAR,
-        Alt: packed struct(u8) {
+        Alt: bitpack struct(u8) {
             ArchStartedInEl2: u1,
             QcSlIsSupported: u1,
             SpareBits: u6,
@@ -5893,7 +5893,7 @@ pub const KUSER_SHARED_DATA = extern struct {
     Reserved12: [2]UCHAR,
     DummyUnion3: extern union {
         SharedDataFlags: ULONG,
-        Alt: packed struct(u32) {
+        Alt: bitpack struct(u32) {
             DbgErrorPortPresent: u1,
             DbgElevationEnabled: u1,
             DbgVirtEnabled: u1,

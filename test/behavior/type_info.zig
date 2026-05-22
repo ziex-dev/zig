@@ -322,7 +322,7 @@ fn testPackedStruct() !void {
     try expect(struct_info.@"struct".decls.len == 1);
 }
 
-const TestPackedStruct = packed struct {
+const TestPackedStruct = bitpack struct {
     fieldA: u64,
     fieldB: void,
     fieldC: f32,

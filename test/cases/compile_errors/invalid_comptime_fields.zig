@@ -4,7 +4,7 @@ const U = union {
 const E = enum {
     comptime a = 1,
 };
-const P = packed struct {
+const P = bitpack struct {
     comptime a: u32 = 1,
 };
 const X = extern struct {

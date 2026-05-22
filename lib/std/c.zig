@@ -1636,7 +1636,7 @@ pub const MCL = switch (native_os) {
     // https://github.com/NetBSD/src/blob/fd2741deca927c18e3ba15acdf78b8b14b2abe36/sys/sys/mman.h#L179
     // https://github.com/openbsd/src/blob/39404228f6d36c0ca4be5f04ab5385568ebd6aa3/sys/sys/mman.h#L129
     // https://github.com/illumos/illumos-gate/blob/5280477614f83fea20fc938729df6adb3e44340d/usr/src/uts/common/sys/mman.h#L343
-    .freebsd, .dragonfly, .netbsd, .openbsd, .illumos => packed struct(u32) {
+    .freebsd, .dragonfly, .netbsd, .openbsd, .illumos => bitpack struct(u32) {
         CURRENT: bool = false,
         FUTURE: bool = false,
         _: u30 = 0,
@@ -1851,7 +1851,7 @@ pub const PROT = switch (native_os) {
     .linux => linux.PROT,
     .emscripten => emscripten.PROT,
     // https://github.com/SerenityOS/serenity/blob/6d59d4d3d9e76e39112842ec487840828f1c9bfe/Kernel/API/POSIX/sys/mman.h#L28-L31
-    .openbsd, .haiku, .dragonfly, .netbsd, .illumos, .freebsd, .windows, .serenity => packed struct(u32) {
+    .openbsd, .haiku, .dragonfly, .netbsd, .illumos, .freebsd, .windows, .serenity => bitpack struct(u32) {
         READ: bool = false,
         WRITE: bool = false,
         EXEC: bool = false,
@@ -7106,7 +7106,7 @@ pub const _errno = switch (native_os) {
 };
 
 pub const RTLD = switch (native_os) {
-    .linux, .emscripten => packed struct(u32) {
+    .linux, .emscripten => bitpack struct(u32) {
         LAZY: bool = false,
         NOW: bool = false,
         NOLOAD: bool = false,
@@ -7117,7 +7117,7 @@ pub const RTLD = switch (native_os) {
         NODELETE: bool = false,
         _: u19 = 0,
     },
-    .dragonfly, .freebsd => packed struct(u32) {
+    .dragonfly, .freebsd => bitpack struct(u32) {
         LAZY: bool = false,
         NOW: bool = false,
         _2: u6 = 0,
@@ -7128,12 +7128,12 @@ pub const RTLD = switch (native_os) {
         NOLOAD: bool = false,
         _: u18 = 0,
     },
-    .haiku => packed struct(u32) {
+    .haiku => bitpack struct(u32) {
         NOW: bool = false,
         GLOBAL: bool = false,
         _: u30 = 0,
     },
-    .netbsd => packed struct(u32) {
+    .netbsd => bitpack struct(u32) {
         LAZY: bool = false,
         NOW: bool = false,
         _2: u6 = 0,
@@ -7144,7 +7144,7 @@ pub const RTLD = switch (native_os) {
         NOLOAD: bool = false,
         _: u18 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         LAZY: bool = false,
         NOW: bool = false,
         NOLOAD: bool = false,
@@ -7159,7 +7159,7 @@ pub const RTLD = switch (native_os) {
         CONFGEN: bool = false,
         _: u15 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         LAZY: bool = false,
         NOW: bool = false,
         _2: u6 = 0,
@@ -7167,7 +7167,7 @@ pub const RTLD = switch (native_os) {
         TRACE: bool = false,
         _: u22 = 0,
     },
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u32) {
         LAZY: bool = false,
         NOW: bool = false,
         LOCAL: bool = false,
@@ -7179,7 +7179,7 @@ pub const RTLD = switch (native_os) {
         _: u23 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/36a26d7fa80bc9c72b19442912d8967f448368ff/Userland/Libraries/LibC/dlfcn.h#L13-L17
-    .serenity => packed struct(c_int) {
+    .serenity => bitpack struct(c_int) {
         DEFAULT: bool = false,
         _1: u1,
         LAZY: bool = false,
@@ -7289,7 +7289,7 @@ pub const dirent64 = switch (native_os) {
     else => void,
 };
 
-pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
+pub const AI = if (builtin.abi.isAndroid()) bitpack struct(u32) {
     PASSIVE: bool = false,
     CANONNAME: bool = false,
     NUMERICHOST: bool = false,
@@ -7302,7 +7302,7 @@ pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
     _: u20 = 0,
 } else switch (native_os) {
     .linux, .emscripten => linux.AI,
-    .dragonfly, .haiku, .freebsd => packed struct(u32) {
+    .dragonfly, .haiku, .freebsd => bitpack struct(u32) {
         PASSIVE: bool = false,
         CANONNAME: bool = false,
         NUMERICHOST: bool = false,
@@ -7314,7 +7314,7 @@ pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
         V4MAPPED: bool = false,
         _: u20 = 0,
     },
-    .netbsd => packed struct(u32) {
+    .netbsd => bitpack struct(u32) {
         PASSIVE: bool = false,
         CANONNAME: bool = false,
         NUMERICHOST: bool = false,
@@ -7324,7 +7324,7 @@ pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
         SRV: bool = false,
         _: u20 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         V4MAPPED: bool = false,
         ALL: bool = false,
         ADDRCONFIG: bool = false,
@@ -7334,7 +7334,7 @@ pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
         NUMERICSERV: bool = false,
         _: u25 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         PASSIVE: bool = false,
         CANONNAME: bool = false,
         NUMERICHOST: bool = false,
@@ -7344,7 +7344,7 @@ pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
         ADDRCONFIG: bool = false,
         _: u25 = 0,
     },
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u32) {
         PASSIVE: bool = false,
         CANONNAME: bool = false,
         NUMERICHOST: bool = false,
@@ -7358,7 +7358,7 @@ pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
     },
     .windows => ws2_32.AI,
     // https://github.com/SerenityOS/serenity/blob/d510d2aeb2facbd8f6c383d70fd1b033e1fee5dd/Userland/Libraries/LibC/netdb.h#L90-L96
-    .serenity => packed struct(c_int) {
+    .serenity => bitpack struct(c_int) {
         PASSIVE: bool = false,
         CANONNAME: bool = false,
         NUMERICHOST: bool = false,
@@ -7372,7 +7372,7 @@ pub const AI = if (builtin.abi.isAndroid()) packed struct(u32) {
 };
 
 pub const NI = switch (native_os) {
-    .linux, .emscripten => packed struct(u32) {
+    .linux, .emscripten => bitpack struct(u32) {
         NUMERICHOST: bool = false,
         NUMERICSERV: bool = false,
         NOFQDN: bool = false,
@@ -7382,7 +7382,7 @@ pub const NI = switch (native_os) {
         NUMERICSCOPE: bool = false,
         _: u23 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         NOFQDN: bool = false,
         NUMERICHOST: bool = false,
         NAMEREQD: bool = false,
@@ -7393,7 +7393,7 @@ pub const NI = switch (native_os) {
         _: u25 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/d510d2aeb2facbd8f6c383d70fd1b033e1fee5dd/Userland/Libraries/LibC/netdb.h#L101-L105
-    .serenity => packed struct(c_int) {
+    .serenity => bitpack struct(c_int) {
         NUMERICHOST: bool = false,
         NUMERICSERV: bool = false,
         NAMEREQD: bool = false,
@@ -7401,7 +7401,7 @@ pub const NI = switch (native_os) {
         DGRAM: bool = false,
         _: @Int(.unsigned, @bitSizeOf(c_int) - 5) = 0,
     },
-    .freebsd, .haiku => packed struct(u32) {
+    .freebsd, .haiku => bitpack struct(u32) {
         NOFQDN: bool = false,
         NUMERICHOST: bool = false,
         NAMEREQD: bool = false,
@@ -7410,7 +7410,7 @@ pub const NI = switch (native_os) {
         NUMERICSCOPE: bool = false,
         _: u26 = 0,
     },
-    .dragonfly, .netbsd => packed struct(u32) {
+    .dragonfly, .netbsd => bitpack struct(u32) {
         NOFQDN: bool = false,
         NUMERICHOST: bool = false,
         NAMEREQD: bool = false,
@@ -7420,7 +7420,7 @@ pub const NI = switch (native_os) {
         NUMERICSCOPE: bool = false,
         _: u25 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         NUMERICHOST: bool = false,
         NUMERICSERV: bool = false,
         NOFQDN: bool = false,
@@ -7428,7 +7428,7 @@ pub const NI = switch (native_os) {
         DGRAM: bool = false,
         _: u27 = 0,
     },
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u32) {
         NOFQDN: bool = false,
         NUMERICHOST: bool = false,
         NAMEREQD: bool = false,
@@ -8404,7 +8404,7 @@ pub const AT = switch (native_os) {
 
 pub const O = switch (native_os) {
     .linux => linux.O,
-    .emscripten => packed struct(u32) {
+    .emscripten => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         _2: u4 = 0,
         CREAT: bool = false,
@@ -8427,7 +8427,7 @@ pub const O = switch (native_os) {
         TMPFILE: bool = false,
         _: u9 = 0,
     },
-    .wasi => packed struct(u32) {
+    .wasi => bitpack struct(u32) {
         // Match `O_*` bits from lib/libc/include/wasm-wasi-musl/__header_fcntl.h
         APPEND: bool = false,
         DSYNC: bool = false,
@@ -8449,7 +8449,7 @@ pub const O = switch (native_os) {
         // ignored in C code.  Thus no mapping in Zig.
         _: u3 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         NDELAY: bool = false,
         APPEND: bool = false,
@@ -8476,7 +8476,7 @@ pub const O = switch (native_os) {
         DIRECT: bool = false,
         _: u6 = 0,
     },
-    .netbsd => packed struct(u32) {
+    .netbsd => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         NONBLOCK: bool = false,
         APPEND: bool = false,
@@ -8500,7 +8500,7 @@ pub const O = switch (native_os) {
         SEARCH: bool = false,
         _: u8 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         NONBLOCK: bool = false,
         APPEND: bool = false,
@@ -8518,7 +8518,7 @@ pub const O = switch (native_os) {
         DIRECTORY: bool = false,
         _: u14 = 0,
     },
-    .haiku => packed struct(u32) {
+    .haiku => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         _2: u4 = 0,
         CLOEXEC: bool = false,
@@ -8538,7 +8538,7 @@ pub const O = switch (native_os) {
         DIRECTORY: bool = false,
         _: u10 = 0,
     },
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         NONBLOCK: bool = false,
         APPEND: bool = false,
@@ -8566,7 +8566,7 @@ pub const O = switch (native_os) {
         _30: u1 = 0,
         POPUP: bool = false,
     },
-    .dragonfly => packed struct(u32) {
+    .dragonfly => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         NONBLOCK: bool = false,
         APPEND: bool = false,
@@ -8592,7 +8592,7 @@ pub const O = switch (native_os) {
         DIRECTORY: bool = false,
         _: u4 = 0,
     },
-    .freebsd => packed struct(u32) {
+    .freebsd => bitpack struct(u32) {
         ACCMODE: std.posix.ACCMODE = .RDONLY,
         NONBLOCK: bool = false,
         APPEND: bool = false,
@@ -8621,7 +8621,7 @@ pub const O = switch (native_os) {
         _28: u4 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/2808b0376406a40e31293bb3bcb9170374e90506/Kernel/API/POSIX/fcntl.h#L28-L43
-    .serenity => packed struct(c_int) {
+    .serenity => bitpack struct(c_int) {
         ACCMODE: std.posix.ACCMODE = .NONE,
         EXEC: bool = false,
         CREAT: bool = false,
@@ -8642,7 +8642,7 @@ pub const O = switch (native_os) {
 
 pub const MAP = switch (native_os) {
     .linux => linux.MAP,
-    .emscripten => packed struct(u32) {
+    .emscripten => bitpack struct(u32) {
         TYPE: enum(u4) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8665,7 +8665,7 @@ pub const MAP = switch (native_os) {
         FIXED_NOREPLACE: bool = false,
         _: u11 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         TYPE: enum(u4) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8680,7 +8680,7 @@ pub const MAP = switch (native_os) {
         INITDATA: bool = false,
         _: u20 = 0,
     },
-    .netbsd => packed struct(u32) {
+    .netbsd => bitpack struct(u32) {
         TYPE: enum(u2) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8699,7 +8699,7 @@ pub const MAP = switch (native_os) {
         STACK: bool = false,
         _: u18 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         TYPE: enum(u4) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8712,7 +8712,7 @@ pub const MAP = switch (native_os) {
         CONCEAL: bool = false,
         _: u16 = 0,
     },
-    .haiku => packed struct(u32) {
+    .haiku => bitpack struct(u32) {
         TYPE: enum(u2) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8722,7 +8722,7 @@ pub const MAP = switch (native_os) {
         NORESERVE: bool = false,
         _: u27 = 0,
     },
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u32) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u32) {
         TYPE: enum(u4) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8737,7 +8737,7 @@ pub const MAP = switch (native_os) {
         ANONYMOUS: bool = false,
         _: u19 = 0,
     },
-    .dragonfly => packed struct(u32) {
+    .dragonfly => bitpack struct(u32) {
         TYPE: enum(u4) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8758,7 +8758,7 @@ pub const MAP = switch (native_os) {
         SIZEALIGN: bool = false,
         _: u13 = 0,
     },
-    .freebsd => packed struct(u32) {
+    .freebsd => bitpack struct(u32) {
         TYPE: enum(u4) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8777,7 +8777,7 @@ pub const MAP = switch (native_os) {
         _: u12 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/6d59d4d3d9e76e39112842ec487840828f1c9bfe/Kernel/API/POSIX/sys/mman.h#L16-L26
-    .serenity => packed struct(c_int) {
+    .serenity => bitpack struct(c_int) {
         TYPE: enum(u4) {
             SHARED = 0x01,
             PRIVATE = 0x02,
@@ -8988,7 +8988,7 @@ pub const termios = switch (native_os) {
 
 pub const tc_iflag_t = switch (native_os) {
     .linux => linux.tc_iflag_t,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u64) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u64) {
         IGNBRK: bool = false,
         BRKINT: bool = false,
         IGNPAR: bool = false,
@@ -9006,7 +9006,7 @@ pub const tc_iflag_t = switch (native_os) {
         IUTF8: bool = false,
         _: u49 = 0,
     },
-    .netbsd, .freebsd, .dragonfly => packed struct(u32) {
+    .netbsd, .freebsd, .dragonfly => bitpack struct(u32) {
         IGNBRK: bool = false,
         BRKINT: bool = false,
         IGNPAR: bool = false,
@@ -9023,7 +9023,7 @@ pub const tc_iflag_t = switch (native_os) {
         IMAXBEL: bool = false,
         _: u18 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         IGNBRK: bool = false,
         BRKINT: bool = false,
         IGNPAR: bool = false,
@@ -9040,7 +9040,7 @@ pub const tc_iflag_t = switch (native_os) {
         IMAXBEL: bool = false,
         _: u18 = 0,
     },
-    .haiku => packed struct(u32) {
+    .haiku => bitpack struct(u32) {
         IGNBRK: bool = false,
         BRKINT: bool = false,
         IGNPAR: bool = false,
@@ -9056,7 +9056,7 @@ pub const tc_iflag_t = switch (native_os) {
         IXOFF: bool = false,
         _: u19 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         IGNBRK: bool = false,
         BRKINT: bool = false,
         IGNPAR: bool = false,
@@ -9076,7 +9076,7 @@ pub const tc_iflag_t = switch (native_os) {
         _: u16 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/d277cdfd4c7ed21d5248a83217ae03b9f890c3c8/Kernel/API/POSIX/termios.h#L52-L66
-    .emscripten, .wasi, .serenity => packed struct(u32) {
+    .emscripten, .wasi, .serenity => bitpack struct(u32) {
         IGNBRK: bool = false,
         BRKINT: bool = false,
         IGNPAR: bool = false,
@@ -9099,7 +9099,7 @@ pub const tc_iflag_t = switch (native_os) {
 
 pub const tc_oflag_t = switch (native_os) {
     .linux => linux.tc_oflag_t,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u64) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u64) {
         OPOST: bool = false,
         ONLCR: bool = false,
         OXTABS: bool = false,
@@ -9117,7 +9117,7 @@ pub const tc_oflag_t = switch (native_os) {
         OFDEL: bool = false,
         _: u46 = 0,
     },
-    .netbsd => packed struct(u32) {
+    .netbsd => bitpack struct(u32) {
         OPOST: bool = false,
         ONLCR: bool = false,
         OXTABS: bool = false,
@@ -9128,7 +9128,7 @@ pub const tc_oflag_t = switch (native_os) {
         ONLRET: bool = false,
         _: u24 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         OPOST: bool = false,
         ONLCR: bool = false,
         OXTABS: bool = false,
@@ -9139,7 +9139,7 @@ pub const tc_oflag_t = switch (native_os) {
         ONLRET: bool = false,
         _: u24 = 0,
     },
-    .freebsd, .dragonfly => packed struct(u32) {
+    .freebsd, .dragonfly => bitpack struct(u32) {
         OPOST: bool = false,
         ONLCR: bool = false,
         _2: u1 = 0,
@@ -9149,7 +9149,7 @@ pub const tc_oflag_t = switch (native_os) {
         ONLRET: bool = false,
         _: u25 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         OPOST: bool = false,
         OLCUC: bool = false,
         ONLCR: bool = false,
@@ -9169,7 +9169,7 @@ pub const tc_oflag_t = switch (native_os) {
         _: u14 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/d277cdfd4c7ed21d5248a83217ae03b9f890c3c8/Kernel/API/POSIX/termios.h#L69-L97
-    .haiku, .wasi, .emscripten, .serenity => packed struct(u32) {
+    .haiku, .wasi, .emscripten, .serenity => bitpack struct(u32) {
         OPOST: bool = false,
         OLCUC: bool = false,
         ONLCR: bool = false,
@@ -9197,7 +9197,7 @@ pub const CSIZE = switch (native_os) {
 
 pub const tc_cflag_t = switch (native_os) {
     .linux => linux.tc_cflag_t,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u64) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u64) {
         CIGNORE: bool = false,
         _1: u5 = 0,
         CSTOPB: bool = false,
@@ -9216,7 +9216,7 @@ pub const tc_cflag_t = switch (native_os) {
         CCAR_OFLOW: bool = false,
         _: u43 = 0,
     },
-    .freebsd => packed struct(u32) {
+    .freebsd => bitpack struct(u32) {
         CIGNORE: bool = false,
         _1: u7 = 0,
         CSIZE: CSIZE = .CS5,
@@ -9234,7 +9234,7 @@ pub const tc_cflag_t = switch (native_os) {
         CNO_RTSDTR: bool = false,
         _: u10 = 0,
     },
-    .netbsd => packed struct(u32) {
+    .netbsd => bitpack struct(u32) {
         CIGNORE: bool = false,
         _1: u7 = 0,
         CSIZE: CSIZE = .CS5,
@@ -9250,7 +9250,7 @@ pub const tc_cflag_t = switch (native_os) {
         MDMBUF: bool = false,
         _: u11 = 0,
     },
-    .dragonfly => packed struct(u32) {
+    .dragonfly => bitpack struct(u32) {
         CIGNORE: bool = false,
         _1: u7 = 0,
         CSIZE: CSIZE = .CS5,
@@ -9267,7 +9267,7 @@ pub const tc_cflag_t = switch (native_os) {
         CCAR_OFLOW: bool = false,
         _: u11 = 0,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         CIGNORE: bool = false,
         _1: u7 = 0,
         CSIZE: CSIZE = .CS5,
@@ -9282,7 +9282,7 @@ pub const tc_cflag_t = switch (native_os) {
         MDMBUF: bool = false,
         _: u11 = 0,
     },
-    .haiku => packed struct(u32) {
+    .haiku => bitpack struct(u32) {
         _0: u5 = 0,
         CSIZE: CSIZE = .CS7,
         CSTOPB: bool = false,
@@ -9296,7 +9296,7 @@ pub const tc_cflag_t = switch (native_os) {
         RTSFLOW: bool = false,
         _: u17 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         _0: u4 = 0,
         CSIZE: CSIZE = .CS5,
         CSTOPB: bool = false,
@@ -9317,7 +9317,7 @@ pub const tc_cflag_t = switch (native_os) {
         CRTSXOFF: bool = false,
         CRTSCTS: bool = false,
     },
-    .wasi, .emscripten => packed struct(u32) {
+    .wasi, .emscripten => bitpack struct(u32) {
         _0: u4 = 0,
         CSIZE: CSIZE = .CS5,
         CSTOPB: bool = false,
@@ -9329,7 +9329,7 @@ pub const tc_cflag_t = switch (native_os) {
         _: u20 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/d277cdfd4c7ed21d5248a83217ae03b9f890c3c8/Kernel/API/POSIX/termios.h#L131-L141
-    .serenity => packed struct(u32) {
+    .serenity => bitpack struct(u32) {
         _0: u4 = 0,
         CSIZE: CSIZE = .CS5,
         CSTOPB: bool = false,
@@ -9346,7 +9346,7 @@ pub const tc_cflag_t = switch (native_os) {
 
 pub const tc_lflag_t = switch (native_os) {
     .linux => linux.tc_lflag_t,
-    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => packed struct(u64) {
+    .driverkit, .ios, .maccatalyst, .macos, .tvos, .visionos, .watchos => bitpack struct(u64) {
         ECHOKE: bool = false,
         ECHOE: bool = false,
         ECHOK: bool = false,
@@ -9370,7 +9370,7 @@ pub const tc_lflag_t = switch (native_os) {
         NOFLSH: bool = false,
         _: u32 = 0,
     },
-    .netbsd, .freebsd, .dragonfly => packed struct(u32) {
+    .netbsd, .freebsd, .dragonfly => bitpack struct(u32) {
         ECHOKE: bool = false,
         ECHOE: bool = false,
         ECHOK: bool = false,
@@ -9393,7 +9393,7 @@ pub const tc_lflag_t = switch (native_os) {
         _30: u1 = 0,
         NOFLSH: bool = false,
     },
-    .openbsd => packed struct(u32) {
+    .openbsd => bitpack struct(u32) {
         ECHOKE: bool = false,
         ECHOE: bool = false,
         ECHOK: bool = false,
@@ -9416,7 +9416,7 @@ pub const tc_lflag_t = switch (native_os) {
         _30: u1 = 0,
         NOFLSH: bool = false,
     },
-    .haiku => packed struct(u32) {
+    .haiku => bitpack struct(u32) {
         ISIG: bool = false,
         ICANON: bool = false,
         XCASE: bool = false,
@@ -9434,7 +9434,7 @@ pub const tc_lflag_t = switch (native_os) {
         PENDIN: bool = false,
         _: u17 = 0,
     },
-    .illumos => packed struct(u32) {
+    .illumos => bitpack struct(u32) {
         ISIG: bool = false,
         ICANON: bool = false,
         XCASE: bool = false,
@@ -9453,7 +9453,7 @@ pub const tc_lflag_t = switch (native_os) {
         IEXTEN: bool = false,
         _: u16 = 0,
     },
-    .wasi, .emscripten => packed struct(u32) {
+    .wasi, .emscripten => bitpack struct(u32) {
         ISIG: bool = false,
         ICANON: bool = false,
         _2: u1 = 0,
@@ -9468,7 +9468,7 @@ pub const tc_lflag_t = switch (native_os) {
         _: u16 = 0,
     },
     // https://github.com/SerenityOS/serenity/blob/d277cdfd4c7ed21d5248a83217ae03b9f890c3c8/Kernel/API/POSIX/termios.h#L168-L189
-    .serenity => packed struct(u32) {
+    .serenity => bitpack struct(u32) {
         ISIG: bool = false,
         ICANON: bool = false,
         XCASE: bool = false,
@@ -11113,7 +11113,7 @@ pub extern "c" fn pthread_get_name_np(thread: pthread_t, name: [*:0]u8, len: usi
 
 pub const TIMER = switch (native_os) {
     .linux, .emscripten => std.os.linux.TIMER,
-    .openbsd, .netbsd, .wasi, .windows, .freebsd, .serenity => packed struct(u32) {
+    .openbsd, .netbsd, .wasi, .windows, .freebsd, .serenity => bitpack struct(u32) {
         ABSTIME: bool,
         _: u31 = 0,
     },

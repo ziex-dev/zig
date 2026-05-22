@@ -268,7 +268,7 @@ pub const File = extern struct {
     }
 
     pub const OpenMode = enum(u64) {
-        pub const Bits = packed struct(u64) {
+        pub const Bits = bitpack struct(u64) {
             // 0x0000000000000001
             read: bool = false,
             // 0x0000000000000002
@@ -283,7 +283,7 @@ pub const File = extern struct {
         read_write_create = @bitCast(Bits{ .read = true, .write = true, .create = true }),
     };
 
-    pub const Attributes = packed struct(u64) {
+    pub const Attributes = bitpack struct(u64) {
         // 0x0000000000000001
         read_only: bool = false,
         // 0x0000000000000002

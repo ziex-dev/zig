@@ -16,7 +16,7 @@ export fn d() void {
     _ = x <= y;
 }
 
-const Foo = packed struct {
+const Foo = bitpack struct {
     a: u4 = 10,
     b: u4 = 5,
 };

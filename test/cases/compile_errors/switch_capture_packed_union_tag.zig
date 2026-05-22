@@ -1,4 +1,4 @@
-const P = packed union(u8) {
+const P = bitpack union(u8) {
     a: u8,
     b: i8,
 };

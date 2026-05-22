@@ -1878,7 +1878,7 @@ pub fn readVarPackedInt(
 }
 
 test readVarPackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     const b_field = readVarPackedInt(u64, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, builtin.cpu.arch.endian(), .unsigned);
     try std.testing.expectEqual(st.b, b_field);
@@ -1978,7 +1978,7 @@ pub fn readPackedInt(comptime T: type, bytes: []const u8, bit_offset: usize, end
 }
 
 test readPackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     const b_field = readPackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), builtin.cpu.arch.endian());
     try std.testing.expectEqual(st.b, b_field);
@@ -2121,7 +2121,7 @@ pub fn writePackedInt(comptime T: type, bytes: []u8, bit_offset: usize, value: T
 }
 
 test writePackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     writePackedInt(u7, std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 0x7f, builtin.cpu.arch.endian());
     try std.testing.expectEqual(T{ .a = 1, .b = 0x7f, .c = 4 }, st);
@@ -2184,7 +2184,7 @@ pub fn writeVarPackedInt(bytes: []u8, bit_offset: usize, bit_count: usize, value
 }
 
 test writeVarPackedInt {
-    const T = packed struct(u16) { a: u3, b: u7, c: u6 };
+    const T = bitpack struct(u16) { a: u3, b: u7, c: u6 };
     var st = T{ .a = 1, .b = 2, .c = 4 };
     const value: u64 = 0x7f;
     writeVarPackedInt(std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, value, builtin.cpu.arch.endian());
@@ -2263,7 +2263,7 @@ test byteSwapAllFields {
         f4: bool,
         f5: f32,
     };
-    const P = packed struct(u32) {
+    const P = bitpack struct(u32) {
         f0: u1,
         f1: u7,
         f2: u4,
@@ -4342,7 +4342,7 @@ test asBytes {
         b.* = 0;
     try testing.expect(codeface == 0);
 
-    const S = packed struct {
+    const S = bitpack struct {
         a: u8,
         b: u8,
         c: u8,
@@ -4431,7 +4431,7 @@ test bytesAsValue {
     for (codeface_bytes) |b|
         try testing.expect(b == 0);
 
-    const S = packed struct {
+    const S = bitpack struct {
         a: u8,
         b: u8,
         c: u8,
@@ -4535,7 +4535,7 @@ test "bytesAsSlice keeps pointer alignment" {
 }
 
 test "bytesAsSlice on a packed struct" {
-    const F = packed struct {
+    const F = bitpack struct {
         a: u8,
     };
 
@@ -4625,7 +4625,7 @@ test "sliceAsBytes with zero-bit element type" {
 }
 
 test "sliceAsBytes packed struct at runtime and comptime" {
-    const Foo = packed struct {
+    const Foo = bitpack struct {
         a: u4,
         b: u4,
     };
