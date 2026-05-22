@@ -7730,7 +7730,7 @@ fn dirRenamePreserveDarwin(
             .BADF => |err| return syscall.errnoBug(err),
             .ISDIR => |err| return syscall.errnoBug(err),
             .NOTEMPTY => |err| return syscall.errnoBug(err),
-            .OPNOTSUPP => return syscall.finish(error.OperationUnsupported),
+            .OPNOTSUPP => return syscall.fail(error.OperationUnsupported),
             .IO => return syscall.fail(error.HardwareFailure),
             .DEADLK => return syscall.fail(error.AccessDenied),
             .ACCES => return syscall.fail(error.AccessDenied),
