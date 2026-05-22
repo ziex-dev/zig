@@ -11,6 +11,8 @@ nodes: Ast.NodeList,
 extra_data: std.ArrayList(u32),
 scratch: std.ArrayList(Node.Index),
 
+packed_autofix: bool,
+
 fn tokenTag(p: *const Parse, token_index: TokenIndex) Token.Tag {
     return p.tokens.items(.tag)[token_index];
 }
@@ -2469,43 +2471,58 @@ fn parsePrimaryTypeExpr(p: *Parse) !?Node.Index {
                 } },
             });
         },
-        .identifier => switch (p.tokenTag(p.tok_i + 1)) {
-            .colon => switch (p.tokenTag(p.tok_i + 2)) {
-                .keyword_inline => {
-                    p.tok_i += 3;
-                    switch (p.tokenTag(p.tok_i)) {
-                        .keyword_for => return try p.parseFor(expectTypeExpr),
-                        .keyword_while => return try p.parseWhileTypeExpr(),
-                        else => return p.fail(.expected_inlinable),
-                    }
-                },
-                .keyword_for => {
-                    p.tok_i += 2;
-                    return try p.parseFor(expectTypeExpr);
-                },
-                .keyword_while => {
-                    p.tok_i += 2;
-                    return try p.parseWhileTypeExpr();
-                },
-                .keyword_switch => {
-                    p.tok_i += 2;
-                    return try p.expectSwitchExpr(true);
-                },
-                .l_brace => {
-                    p.tok_i += 2;
-                    return try p.parseBlock();
+        .identifier => {
+            // packed -> bitpack autofix
+            // Remove the following block after 0.17.0 is tagged
+            if (p.packed_autofix) {
+                switch (p.tokenTag(p.tok_i + 1)) {
+                    .keyword_struct, .keyword_union => {
+                        p.tokens.items(.tag)[p.tok_i] = .keyword_bitpack;
+                        p.tok_i += 1;
+                        return try p.parseContainerDeclAuto();
+                    },
+                    else => {},
+                }
+            }
+
+            switch (p.tokenTag(p.tok_i + 1)) {
+                .colon => switch (p.tokenTag(p.tok_i + 2)) {
+                    .keyword_inline => {
+                        p.tok_i += 3;
+                        switch (p.tokenTag(p.tok_i)) {
+                            .keyword_for => return try p.parseFor(expectTypeExpr),
+                            .keyword_while => return try p.parseWhileTypeExpr(),
+                            else => return p.fail(.expected_inlinable),
+                        }
+                    },
+                    .keyword_for => {
+                        p.tok_i += 2;
+                        return try p.parseFor(expectTypeExpr);
+                    },
+                    .keyword_while => {
+                        p.tok_i += 2;
+                        return try p.parseWhileTypeExpr();
+                    },
+                    .keyword_switch => {
+                        p.tok_i += 2;
+                        return try p.expectSwitchExpr(true);
+                    },
+                    .l_brace => {
+                        p.tok_i += 2;
+                        return try p.parseBlock();
+                    },
+                    else => return try p.addNode(.{
+                        .tag = .identifier,
+                        .main_token = p.nextToken(),
+                        .data = undefined,
+                    }),
                 },
                 else => return try p.addNode(.{
                     .tag = .identifier,
                     .main_token = p.nextToken(),
                     .data = undefined,
                 }),
-            },
-            else => return try p.addNode(.{
-                .tag = .identifier,
-                .main_token = p.nextToken(),
-                .data = undefined,
-            }),
+            }
         },
         .keyword_inline => {
             p.tok_i += 1;

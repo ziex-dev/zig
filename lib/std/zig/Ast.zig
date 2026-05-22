@@ -143,6 +143,12 @@ pub const Mode = enum { zig, zon };
 /// Result should be freed with tree.deinit() when there are
 /// no more references to any of the tokens or nodes.
 pub fn parse(gpa: Allocator, source: [:0]const u8, mode: Mode) Allocator.Error!Ast {
+    return parsePackedAutofix(gpa, source, mode, false);
+}
+
+/// Result should be freed with tree.deinit() when there are
+/// no more references to any of the tokens or nodes.
+pub fn parsePackedAutofix(gpa: Allocator, source: [:0]const u8, mode: Mode, packed_autofix: bool) Allocator.Error!Ast {
     var tokens = Ast.TokenList{};
     defer tokens.deinit(gpa);
 
@@ -162,7 +168,7 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, mode: Mode) Allocator.Error!A
 
     var tokens_slice = tokens.toOwnedSlice();
     errdefer tokens_slice.deinit(gpa);
-    return parseTokens(gpa, source, tokens_slice, mode);
+    return parseTokensPackedAutofix(gpa, source, tokens_slice, mode, packed_autofix);
 }
 
 pub fn parseTokens(
@@ -170,6 +176,16 @@ pub fn parseTokens(
     source: [:0]const u8,
     tokens: Ast.TokenList.Slice,
     mode: Mode,
+) Allocator.Error!Ast {
+    parseTokensPackedAutofix(gpa, source, tokens, mode, false);
+}
+
+pub fn parseTokensPackedAutofix(
+    gpa: Allocator,
+    source: [:0]const u8,
+    tokens: Ast.TokenList.Slice,
+    mode: Mode,
+    packed_autofix: bool,
 ) Allocator.Error!Ast {
     var parser: Parse = .{
         .source = source,
@@ -180,6 +196,7 @@ pub fn parseTokens(
         .extra_data = .empty,
         .scratch = .empty,
         .tok_i = 0,
+        .packed_autofix = packed_autofix,
     };
     defer parser.errors.deinit(gpa);
     defer parser.nodes.deinit(gpa);
