@@ -337,11 +337,22 @@ pub fn clone() callconv(.naked) u64 {
     );
 }
 
-pub const restore = restore_rt;
+pub fn restore() noreturn {
+    asm volatile (
+    // v0 = $0, a0 = $16, sp = $30
+        \\ mov $30, $16
+        \\ ldi $0, 103 # SIGRETURN
+        \\ callsys
+    );
+}
 
 pub fn restore_rt() noreturn {
-    // TODO implement signal unwinding for alpha
-    unreachable;
+    asm volatile (
+    // v0 = $0, a0 = $16, sp = $30
+        \\ mov $30, $16
+        \\ ldi $0, 351 # RT_SIGRETURN
+        \\ callsys
+    );
 }
 
 pub const VDSO = void;
