@@ -252,7 +252,7 @@ pub fn classify(start_ty: Type, zcu: *const Zcu) Class {
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,
@@ -687,7 +687,7 @@ pub fn print(ty: Type, writer: *std.Io.Writer, pt: Zcu.PerThread, ctx: ?*Compari
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,
@@ -825,7 +825,7 @@ pub fn hasWellDefinedLayout(ty: Type, zcu: *const Zcu) bool {
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,
@@ -1056,7 +1056,7 @@ pub fn abiAlignment(ty: Type, zcu: *const Zcu) Alignment {
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,
@@ -1201,7 +1201,7 @@ pub fn abiSize(ty: Type, zcu: *const Zcu) u64 {
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,
@@ -1327,7 +1327,7 @@ pub fn bitSize(ty: Type, zcu: *const Zcu) u64 {
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,
@@ -1882,7 +1882,7 @@ pub fn intInfo(starting_ty: Type, zcu: *const Zcu) InternPool.Key.IntType {
             .opt,
             .aggregate,
             .un,
-            .bitpack,
+            .@"bitpack",
             // memoization, not types
             .memoized_call,
             => unreachable,
@@ -2176,7 +2176,7 @@ pub fn onePossibleValue(ty: Type, pt: Zcu.PerThread) !?Value {
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,
@@ -3299,7 +3299,7 @@ pub fn assertHasLayout(ty: Type, zcu: *const Zcu) void {
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         .undef,
         // memoization, not types
         .memoized_call,
@@ -3376,7 +3376,7 @@ fn collectSubtypes(ty: Type, pt: Zcu.PerThread, visited: *std.AutoArrayHashMapUn
         .opt,
         .aggregate,
         .un,
-        .bitpack,
+        .@"bitpack",
         // memoization, not types
         .memoized_call,
         => unreachable,

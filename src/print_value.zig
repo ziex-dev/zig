@@ -168,11 +168,11 @@ pub fn print(
                 try writer.writeAll(" }");
             }
         },
-        .bitpack => |bitpack| {
+        .@"bitpack" => |@"bitpack"| {
             if (level == 0) {
                 return writer.writeAll(".{ ... }");
             }
-            const ty: Type = .fromInterned(bitpack.ty);
+            const ty: Type = .fromInterned(@"bitpack".ty);
             switch (ty.zigTypeTag(zcu)) {
                 .@"struct" => {
                     if (ty.structFieldCount(zcu) == 0) {
@@ -191,7 +191,7 @@ pub fn print(
                 },
                 .@"union" => {
                     try writer.print("@bitCast(@as({f}, ", .{ty.bitpackBackingInt(zcu).fmt(pt)});
-                    try print(.fromInterned(bitpack.backing_int_val), writer, level - 1, pt, opt_sema);
+                    try print(.fromInterned(@"bitpack".backing_int_val), writer, level - 1, pt, opt_sema);
                     try writer.writeAll("))");
                 },
                 else => unreachable,
