@@ -305,6 +305,7 @@ pub fn targetTriple(allocator: Allocator, target: *const std.Target) ![]const u8
         .itanium => "itanium",
         .simulator => "simulator",
         .ohos, .ohoseabi => "ohos",
+        .call0 => "unknown",
     };
     try llvm_triple.appendSlice(llvm_abi);
 
