@@ -768,6 +768,15 @@ test "array concat of slices gives ptr to array" {
     }
 }
 
+test "array concat slices of types" {
+    const S = struct {};
+    const a = &[_]type{ S, S };
+    const a_slice = a[0..1];
+    const b = &[_]type{S};
+    const result = a_slice ++ b;
+    try expect(result.len == a_slice.len + b.len);
+}
+
 test "slice bounds in comptime concatenation" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
