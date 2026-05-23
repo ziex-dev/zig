@@ -651,7 +651,7 @@ test "result location initialization of optional with OPV payload" {
 
     var c: ?S = .{ .x = 0 };
     _ = &c;
-    try expectEqual(0, (c orelse return error.TestFailed).x);
+    try expect(0 == (c orelse return error.TestFailed).x);
 }
 
 test "global comptime only optional" {

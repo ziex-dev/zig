@@ -1066,7 +1066,7 @@ test "result location initialization of error union with OPV payload" {
 
     var c: anyerror!S = .{ .x = 0 };
     _ = &c;
-    try expectEqual(0, (c catch return error.TestFailed).x);
+    try expect(0 == (c catch return error.TestFailed).x);
 }
 
 test "return error union with i65" {

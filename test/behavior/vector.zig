@@ -1528,18 +1528,18 @@ test "vector pointer is indexable" {
 
     const x: V = .{ 123, 456 };
     comptime assert(@TypeOf(&(&x)[0]) == *const u32); // validate constness
-    try expectEqual(@as(u32, 123), (&x)[0]);
-    try expectEqual(@as(u32, 456), (&x)[1]);
+    try expect(@as(u32, 123) == (&x)[0]);
+    try expect(@as(u32, 456) == (&x)[1]);
 
     var y: V = .{ 123, 456 };
     comptime assert(@TypeOf(&(&y)[0]) == *u32); // validate constness
-    try expectEqual(@as(u32, 123), (&y)[0]);
-    try expectEqual(@as(u32, 456), (&y)[1]);
+    try expect(@as(u32, 123) == (&y)[0]);
+    try expect(@as(u32, 456) == (&y)[1]);
 
     (&y)[0] = 100;
     (&y)[1] = 200;
-    try expectEqual(@as(u32, 100), (&y)[0]);
-    try expectEqual(@as(u32, 200), (&y)[1]);
+    try expect(@as(u32, 100) == (&y)[0]);
+    try expect(@as(u32, 200) == (&y)[1]);
 }
 
 test "boolean vector with 2 or more booleans" {

@@ -562,7 +562,7 @@ test "call generic function that uses capture from function declaration's scope"
 
     const S = StructCapture(f64);
     const s = S.foo(123);
-    try expectEqual(123.0, s[0]);
+    try expect(123.0 == s[0]);
 }
 
 comptime {

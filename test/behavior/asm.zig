@@ -172,7 +172,7 @@ test "asm modifiers (AArch64)" {
         : [ret] "=r" (-> u32),
         : [in] "r" (x),
     );
-    try expectEqual(2 * x, double);
+    try expect(2 * x == double);
 }
 
 test "packed output types (x86_64)" {

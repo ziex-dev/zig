@@ -179,7 +179,7 @@ test "function pointer field call on global extern struct, conditional on global
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     if (callbacks_loaded) {
-        try std.testing.expectEqual(42, callbacks.key_callback(42));
+        try std.testing.expect(42 == callbacks.key_callback(42));
     }
 }
 
@@ -194,5 +194,5 @@ test "function pointer field call on global extern struct" {
     };
 
     callbacks = Callbacks{ .key_callback = S.keyCallback };
-    try std.testing.expectEqual(42, callbacks.key_callback(42));
+    try std.testing.expect(42 == callbacks.key_callback(42));
 }

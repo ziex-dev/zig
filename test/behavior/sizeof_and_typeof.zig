@@ -288,7 +288,7 @@ test "@bitSizeOf on array of structs" {
         foo: u64,
     };
 
-    try expectEqual(128, @bitSizeOf([2]S));
+    try expect(128 == @bitSizeOf([2]S));
 }
 
 test "lazy abi size used in comparison" {

@@ -855,12 +855,12 @@ test "slice field ptr const" {
     const const_slice: []const u8 = "string";
 
     const const_ptr_const_slice = &const_slice;
-    try expectEqual(*const []const u8, @TypeOf(&const_ptr_const_slice.*));
-    try expectEqual(*const [*]const u8, @TypeOf(&const_ptr_const_slice.ptr));
+    try expect(*const []const u8 == @TypeOf(&const_ptr_const_slice.*));
+    try expect(*const [*]const u8 == @TypeOf(&const_ptr_const_slice.ptr));
 
     var var_ptr_const_slice = &const_slice;
-    try expectEqual(*const []const u8, @TypeOf(&var_ptr_const_slice.*));
-    try expectEqual(*const [*]const u8, @TypeOf(&var_ptr_const_slice.ptr));
+    try expect(*const []const u8 == @TypeOf(&var_ptr_const_slice.*));
+    try expect(*const [*]const u8 == @TypeOf(&var_ptr_const_slice.ptr));
 }
 
 test "slice field ptr var" {
@@ -869,12 +869,12 @@ test "slice field ptr var" {
     var var_slice: []const u8 = "string";
 
     var var_ptr_var_slice = &var_slice;
-    try expectEqual(*[]const u8, @TypeOf(&var_ptr_var_slice.*));
-    try expectEqual(*[*]const u8, @TypeOf(&var_ptr_var_slice.ptr));
+    try expect(*[]const u8 == @TypeOf(&var_ptr_var_slice.*));
+    try expect(*[*]const u8 == @TypeOf(&var_ptr_var_slice.ptr));
 
     const const_ptr_var_slice = &var_slice;
-    try expectEqual(*[]const u8, @TypeOf(&const_ptr_var_slice.*));
-    try expectEqual(*[*]const u8, @TypeOf(&const_ptr_var_slice.ptr));
+    try expect(*[]const u8 == @TypeOf(&const_ptr_var_slice.*));
+    try expect(*[*]const u8 == @TypeOf(&const_ptr_var_slice.ptr));
 }
 
 test "global slice field access" {

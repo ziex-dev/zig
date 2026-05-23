@@ -469,12 +469,12 @@ test "ref counter that starts at zero" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
 
     for ([_]usize{ 0, 1, 2 }, 0..) |i, j| {
-        try expectEqual(i, j);
-        try expectEqual((&i).*, (&j).*);
+        try expect(i == j);
+        try expect((&i).* == (&j).*);
     }
     inline for (.{ 0, 1, 2 }, 0..) |i, j| {
-        try expectEqual(i, j);
-        try expectEqual((&i).*, (&j).*);
+        try expect(i == j);
+        try expect((&i).* == (&j).*);
     }
 }
 

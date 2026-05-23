@@ -309,16 +309,16 @@ test "rounding builtins with anytype and context propagation" {
     const S = struct {
         const x: i32 = 10;
         fn check(expected: anytype, actual: anytype) !void {
-            try expectEqual(expected, actual);
+            try expect(expected == actual);
         }
     };
-    try expectEqual(@as(f32, 1.0), @round(@as(f32, 1.4)));
+    try expect(@as(f32, 1.0) == @round(@as(f32, 1.4)));
     try S.check(@as(f32, 1.0), @round(@as(f32, 1.4)));
 
     const y: f64 = @floor(@floatFromInt(S.x));
     try expect(y == 10.0);
 
-    try expectEqual(1.0, @round(1.4));
+    try expect(1.0 == @round(1.4));
     try S.check(1.0, @round(1.4));
 }
 
@@ -2048,8 +2048,8 @@ test "peer type resolution: float and comptime-known fixed-width integer" {
 
     const T = @TypeOf(r1);
 
-    try expectEqual(@as(T, 100.0), r1);
-    try expectEqual(@as(T, 1.234), r2);
+    try expect(@as(T, 100.0) == r1);
+    try expect(@as(T, 1.234) == r2);
 }
 
 test "peer type resolution: float and runtime-known fixed-width integer" {
@@ -2070,8 +2070,8 @@ test "peer type resolution: float and runtime-known fixed-width integer" {
             const r1 = if (t) i else f;
             const r2 = if (t) f else i;
 
-            try expectEqual(@as(Float, 100.0), r1);
-            try expectEqual(@as(Float, 1.234), r2);
+            try expect(@as(Float, 100.0) == r1);
+            try expect(@as(Float, 1.234) == r2);
         }
     };
 
@@ -2227,8 +2227,8 @@ test "peer type resolution: C pointer and @TypeOf(null)" {
 
     const T = @TypeOf(r1);
 
-    try expectEqual(@as(T, 0x1000), r1);
-    try expectEqual(@as(T, null), r2);
+    try expect(@as(T, 0x1000) == r1);
+    try expect(@as(T, null) == r2);
 }
 
 test "peer type resolution: three-way resolution combines error set and optional" {
@@ -2314,8 +2314,8 @@ test "peer type resolution: optional fixed-width int and comptime_int" {
 
     const T = @TypeOf(r1);
 
-    try expectEqual(@as(T, 42), r1);
-    try expectEqual(@as(T, 50), r2);
+    try expect(@as(T, 42) == r1);
+    try expect(@as(T, 50) == r2);
 }
 
 test "peer type resolution: array and tuple" {
@@ -2562,11 +2562,11 @@ test "peer type resolution: tuples with comptime fields" {
     const r1 = if (t) a else b;
     const r2 = if (t) b else a;
 
-    try expectEqual(@as(u32, 1), r1[0]);
-    try expectEqual(@as(i16, 2), r1[1]);
+    try expect(@as(u32, 1) == r1[0]);
+    try expect(@as(i16, 2) == r1[1]);
 
-    try expectEqual(@as(u32, 3), r2[0]);
-    try expectEqual(@as(i16, 4), r2[1]);
+    try expect(@as(u32, 3) == r2[0]);
+    try expect(@as(i16, 4) == r2[1]);
 }
 
 test "peer type resolution: C pointer and many pointer" {
@@ -2588,8 +2588,8 @@ test "peer type resolution: C pointer and many pointer" {
     const r1 = if (t) a else b;
     const r2 = if (t) b else a;
 
-    try expectEqual(r1, a);
-    try expectEqual(r2, b);
+    try expect(r1 == a);
+    try expect(r2 == b);
 }
 
 test "peer type resolution: pointer attributes are combined correctly" {
@@ -2958,7 +2958,7 @@ test "numeric coercions with undefined" {
     var to: f32 = from;
     to = @floatFromInt(from);
     to = 42.0;
-    try expectEqual(@as(f32, 42.0), to);
+    try expect(@as(f32, 42.0) == to);
 }
 
 test "15-bit int to float" {
@@ -3039,7 +3039,7 @@ test "bitcast vector" {
 
     const zerox32: u8x32 = @splat(0);
     const bigsum: u32x8 = @bitCast(zerox32);
-    try std.testing.expectEqual(0, @reduce(.Add, bigsum));
+    try std.testing.expect(0 == @reduce(.Add, bigsum));
 }
 
 test "peer type resolution: slice of sentinel-terminated array" {

@@ -12,5 +12,5 @@ test "return address" {
 
     _ = retAddr();
     // TODO: #14938
-    try testing.expectEqual(0, comptime retAddr());
+    try testing.expect(0 == comptime retAddr());
 }

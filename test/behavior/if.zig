@@ -187,7 +187,7 @@ test "if value shouldn't be load-elided if used later (structs)" {
     a.x = 2;
     b.x = 3;
 
-    try std.testing.expectEqual(c.x, 1);
+    try std.testing.expect(c.x == 1);
 }
 
 test "if value shouldn't be load-elided if used later (optionals)" {
@@ -201,7 +201,7 @@ test "if value shouldn't be load-elided if used later (optionals)" {
     a = 2;
     b = 3;
 
-    try std.testing.expectEqual(c, 1);
+    try std.testing.expect(c == 1);
 }
 
 test "variable type inferred from if expression" {

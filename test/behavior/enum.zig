@@ -1340,20 +1340,20 @@ test "auto-numbered enum with signed tag type" {
 
     const E = enum(i32) { a, b };
 
-    try std.testing.expectEqual(@as(i32, 0), @intFromEnum(E.a));
-    try std.testing.expectEqual(@as(i32, 1), @intFromEnum(E.b));
-    try std.testing.expectEqual(E.a, @as(E, @enumFromInt(0)));
-    try std.testing.expectEqual(E.b, @as(E, @enumFromInt(1)));
-    try std.testing.expectEqual(E.a, @as(E, @enumFromInt(@as(i32, 0))));
-    try std.testing.expectEqual(E.b, @as(E, @enumFromInt(@as(i32, 1))));
-    try std.testing.expectEqual(E.a, @as(E, @enumFromInt(@as(u32, 0))));
-    try std.testing.expectEqual(E.b, @as(E, @enumFromInt(@as(u32, 1))));
+    try std.testing.expect(@as(i32, 0) == @intFromEnum(E.a));
+    try std.testing.expect(@as(i32, 1) == @intFromEnum(E.b));
+    try std.testing.expect(E.a == @as(E, @enumFromInt(0)));
+    try std.testing.expect(E.b == @as(E, @enumFromInt(1)));
+    try std.testing.expect(E.a == @as(E, @enumFromInt(@as(i32, 0))));
+    try std.testing.expect(E.b == @as(E, @enumFromInt(@as(i32, 1))));
+    try std.testing.expect(E.a == @as(E, @enumFromInt(@as(u32, 0))));
+    try std.testing.expect(E.b == @as(E, @enumFromInt(@as(u32, 1))));
     try std.testing.expectEqualStrings("a", @tagName(E.a));
     try std.testing.expectEqualStrings("b", @tagName(E.b));
 }
 
 test "lazy initialized field" {
-    try std.testing.expectEqual(@as(u8, @alignOf(struct {})), getLazyInitialized(.a));
+    try std.testing.expect(@as(u8, @alignOf(struct {})) == getLazyInitialized(.a));
 }
 
 fn getLazyInitialized(param: enum(u8) {

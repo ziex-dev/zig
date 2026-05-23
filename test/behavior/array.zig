@@ -723,7 +723,7 @@ test "runtime side-effects in comptime-known array init" {
         },
     };
     try expectEqual([4]u4{ 1, 2, 4, 8 }, init);
-    try expectEqual(@as(u4, std.math.maxInt(u4)), side_effects);
+    try expect(@as(u4, std.math.maxInt(u4)) == side_effects);
 }
 
 test "slice initialized through reference to anonymous array init provides result types" {
@@ -769,10 +769,10 @@ test "many-item pointer initialized through reference to anonymous array init pr
         @truncate(my_u32),
         @truncate(my_u64),
     };
-    try expectEqual(123, foo[0]);
-    try expectEqual(456, foo[1]);
-    try expectEqual(123, foo[2]);
-    try expectEqual(456, foo[3]);
+    try expect(123 == foo[0]);
+    try expect(456 == foo[1]);
+    try expect(123 == foo[2]);
+    try expect(456 == foo[3]);
 }
 
 test "many-item sentinel-terminated pointer initialized through reference to anonymous array init provides result types" {
@@ -788,11 +788,11 @@ test "many-item sentinel-terminated pointer initialized through reference to ano
         @truncate(my_u32),
         @truncate(my_u64),
     };
-    try expectEqual(123, foo[0]);
-    try expectEqual(456, foo[1]);
-    try expectEqual(123, foo[2]);
-    try expectEqual(456, foo[3]);
-    try expectEqual(999, foo[4]);
+    try expect(123 == foo[0]);
+    try expect(456 == foo[1]);
+    try expect(123 == foo[2]);
+    try expect(456 == foo[3]);
+    try expect(999 == foo[4]);
 }
 
 test "pointer to array initialized through reference to anonymous array init provides result types" {
@@ -998,10 +998,10 @@ test "@splat array with sentinel" {
         fn doTheTest(comptime T: type, x: T, comptime s: T) !void {
             const arr: [10:s]T = @splat(x);
             for (arr) |elem| {
-                try expectEqual(x, elem);
+                try expect(x == elem);
             }
             const ptr: [*]const T = &arr;
-            try expectEqual(s, ptr[10]); // sentinel correct
+            try expect(s == ptr[10]); // sentinel correct
         }
     };
 

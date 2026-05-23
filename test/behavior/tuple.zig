@@ -384,18 +384,18 @@ test "tuple pointer is indexable" {
 
     const x: S = .{ 123, true };
     comptime assert(@TypeOf(&(&x)[0]) == *const u32); // validate constness
-    try expectEqual(@as(u32, 123), (&x)[0]);
-    try expectEqual(true, (&x)[1]);
+    try expect(@as(u32, 123) == (&x)[0]);
+    try expect(true == (&x)[1]);
 
     var y: S = .{ 123, true };
     comptime assert(@TypeOf(&(&y)[0]) == *u32); // validate constness
-    try expectEqual(@as(u32, 123), (&y)[0]);
-    try expectEqual(true, (&y)[1]);
+    try expect(@as(u32, 123) == (&y)[0]);
+    try expect(true == (&y)[1]);
 
     (&y)[0] = 100;
     (&y)[1] = false;
-    try expectEqual(@as(u32, 100), (&y)[0]);
-    try expectEqual(false, (&y)[1]);
+    try expect(@as(u32, 100) == (&y)[0]);
+    try expect(false == (&y)[1]);
 }
 
 test "coerce anon tuple to tuple" {
@@ -407,8 +407,8 @@ test "coerce anon tuple to tuple" {
     _ = .{ &x, &y };
     const t = .{ x, y };
     const s: struct { u8, u16 } = t;
-    try expectEqual(x, s[0]);
-    try expectEqual(y, s[1]);
+    try expect(x == s[0]);
+    try expect(y == s[1]);
 }
 
 test "empty tuple type" {
@@ -512,7 +512,7 @@ test "empty struct in tuple" {
 
     const T = struct { struct {} };
     const info = @typeInfo(T);
-    try std.testing.expectEqual(@as(usize, 1), info.@"struct".fields.len);
+    try std.testing.expect(@as(usize, 1) == info.@"struct".fields.len);
     try std.testing.expectEqualStrings("0", info.@"struct".fields[0].name);
     try std.testing.expect(@typeInfo(info.@"struct".fields[0].type) == .@"struct");
 }
@@ -524,7 +524,7 @@ test "empty union in tuple" {
 
     const T = struct { union {} };
     const info = @typeInfo(T);
-    try std.testing.expectEqual(@as(usize, 1), info.@"struct".fields.len);
+    try std.testing.expect(@as(usize, 1) == info.@"struct".fields.len);
     try std.testing.expectEqualStrings("0", info.@"struct".fields[0].name);
     try std.testing.expect(@typeInfo(info.@"struct".fields[0].type) == .@"union");
 }
