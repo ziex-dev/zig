@@ -16,8 +16,8 @@ test "optional" {
     const none: ?u32 = @import("zon/none.zon");
     const @"null": @TypeOf(null) = @import("zon/none.zon");
     try expect(@as(u32, 10) == some);
-    try expectEqual(@as(?u32, null), none);
-    try expectEqual(null, @"null");
+    try expect(@as(?u32, null) == none);
+    try expect(null == @"null");
 }
 
 test "union" {
@@ -227,7 +227,7 @@ test "string literals" {
     try expectEqualSlices(u8, "ab\\c", @import("zon/abc-escaped.zon"));
     const zero_terminated: [:0]const u8 = @import("zon/abc.zon");
     try expectEqualDeep(zero_terminated, "abc");
-    try expectEqual(0, zero_terminated[zero_terminated.len]);
+    try expect(0 == zero_terminated[zero_terminated.len]);
     try expectEqualStrings(
         \\Hello, world!
         \\This is a multiline string!
@@ -473,19 +473,19 @@ test "pointers" {
 
     // Primitive optional with varying levels of pointers
     try expect(@as(u8, 'a') == @as(?*const u8, @import("zon/a.zon")).?.*);
-    try expectEqual(null, @as(?*const u8, @import("zon/none.zon")));
+    try expect(null == @as(?*const u8, @import("zon/none.zon")));
 
     try expect(@as(u8, 'a') == @as(*const ?u8, @import("zon/a.zon")).*.?);
-    try expectEqual(null, @as(*const ?u8, @import("zon/none.zon")).*);
+    try expect(null == @as(*const ?u8, @import("zon/none.zon")).*);
 
     try expect(@as(u8, 'a') == @as(?*const *const u8, @import("zon/a.zon")).?.*.*);
-    try expectEqual(null, @as(?*const *const u8, @import("zon/none.zon")));
+    try expect(null == @as(?*const *const u8, @import("zon/none.zon")));
 
     try expect(@as(u8, 'a') == @as(*const ?*const u8, @import("zon/a.zon")).*.?.*);
-    try expectEqual(null, @as(*const ?*const u8, @import("zon/none.zon")).*);
+    try expect(null == @as(*const ?*const u8, @import("zon/none.zon")).*);
 
     try expect(@as(u8, 'a') == @as(*const *const ?u8, @import("zon/a.zon")).*.*.?);
-    try expectEqual(null, @as(*const *const ?u8, @import("zon/none.zon")).*.*);
+    try expect(null == @as(*const *const ?u8, @import("zon/none.zon")).*.*);
 
     try expectEqual([3]u8{ 2, 4, 6 }, @as(*const [3]u8, @import("zon/vec3_int.zon")).*);
 

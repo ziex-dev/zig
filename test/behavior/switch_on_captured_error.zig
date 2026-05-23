@@ -333,7 +333,7 @@ test "switch on error union catch capture" {
                     else => 3,
                 });
                 comptime assert(@TypeOf(ptr) == *const usize);
-                try expectEqual(ptr, &(a catch unreachable));
+                try expect(ptr == &(a catch unreachable));
             }
             {
                 const a: anyerror!usize = error.A;

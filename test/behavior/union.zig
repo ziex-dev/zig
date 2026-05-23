@@ -1022,7 +1022,7 @@ test "@unionInit on union with u8 tag but no fields" {
             _ = &data;
             var o = Data.decode(&[_]u8{});
             _ = &o;
-            try expectEqual(Type.no_op, o);
+            try expect(Type.no_op == o);
         }
     };
 

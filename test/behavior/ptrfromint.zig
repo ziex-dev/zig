@@ -39,7 +39,7 @@ test "@ptrFromInt creates null pointer" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const ptr = @as(?*u32, @ptrFromInt(0));
-    try expectEqual(@as(?*u32, null), ptr);
+    try expect(@as(?*u32, null) == ptr);
 }
 
 test "@ptrFromInt creates allowzero zero pointer" {

@@ -1740,7 +1740,7 @@ test "initializer takes a pointer to a variable inside its struct" {
         fn doTheTest() !void {
             var foo: S = .{};
             _ = &foo;
-            try expectEqual(&S.instance, foo.s);
+            try expect(&S.instance == foo.s);
         }
     };
 

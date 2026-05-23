@@ -352,7 +352,7 @@ test "comptime @bitCast packed struct to int and back" {
     // S -> Int
     var s: S = .{};
     _ = &s;
-    try expectEqual(@as(Int, @bitCast(s)), comptime @as(Int, @bitCast(S{})));
+    try expect(@as(Int, @bitCast(s)) == comptime @as(Int, @bitCast(S{})));
 
     // Int -> S
     var i: Int = 0;

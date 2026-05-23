@@ -140,13 +140,13 @@ test "Type.Struct" {
 
     const A = @Struct(.auto, null, &.{ "x", "y" }, &.{ u8, u32 }, &@splat(.{}));
     const infoA = @typeInfo(A).@"struct";
-    try testing.expectEqual(Type.ContainerLayout.auto, infoA.layout);
+    try testing.expect(Type.ContainerLayout.auto == infoA.layout);
     try testing.expectEqualSlices(u8, "x", infoA.fields[0].name);
     try testing.expect(u8 == infoA.fields[0].type);
-    try testing.expectEqual(@as(?*const anyopaque, null), infoA.fields[0].default_value_ptr);
+    try testing.expect(@as(?*const anyopaque, null) == infoA.fields[0].default_value_ptr);
     try testing.expectEqualSlices(u8, "y", infoA.fields[1].name);
     try testing.expect(u32 == infoA.fields[1].type);
-    try testing.expectEqual(@as(?*const anyopaque, null), infoA.fields[1].default_value_ptr);
+    try testing.expect(@as(?*const anyopaque, null) == infoA.fields[1].default_value_ptr);
     try testing.expectEqualSlices(Type.Declaration, &.{}, infoA.decls);
     try testing.expect(@as(bool, false) == infoA.is_tuple);
 
@@ -164,10 +164,10 @@ test "Type.Struct" {
         &.{ .{}, .{ .default_value_ptr = &@as(u32, 5) } },
     );
     const infoB = @typeInfo(B).@"struct";
-    try testing.expectEqual(Type.ContainerLayout.@"extern", infoB.layout);
+    try testing.expect(Type.ContainerLayout.@"extern" == infoB.layout);
     try testing.expectEqualSlices(u8, "x", infoB.fields[0].name);
     try testing.expect(u8 == infoB.fields[0].type);
-    try testing.expectEqual(@as(?*const anyopaque, null), infoB.fields[0].default_value_ptr);
+    try testing.expect(@as(?*const anyopaque, null) == infoB.fields[0].default_value_ptr);
     try testing.expectEqualSlices(u8, "y", infoB.fields[1].name);
     try testing.expect(u32 == infoB.fields[1].type);
     try testing.expect(@as(u32, 5) == infoB.fields[1].defaultValue().?);
@@ -185,7 +185,7 @@ test "Type.Struct" {
         },
     );
     const infoC = @typeInfo(C).@"struct";
-    try testing.expectEqual(Type.ContainerLayout.@"packed", infoC.layout);
+    try testing.expect(Type.ContainerLayout.@"packed" == infoC.layout);
     try testing.expectEqualSlices(u8, "x", infoC.fields[0].name);
     try testing.expect(u8 == infoC.fields[0].type);
     try testing.expect(@as(u8, 3) == infoC.fields[0].defaultValue().?);
@@ -198,7 +198,7 @@ test "Type.Struct" {
     // empty struct
     const F = @Struct(.auto, null, &.{}, &.{}, &.{});
     const infoF = @typeInfo(F).@"struct";
-    try testing.expectEqual(Type.ContainerLayout.auto, infoF.layout);
+    try testing.expect(Type.ContainerLayout.auto == infoF.layout);
     try testing.expect(infoF.fields.len == 0);
     try testing.expect(@as(bool, false) == infoF.is_tuple);
 }
@@ -253,7 +253,7 @@ test "Type.Union" {
     var packed_untagged: PackedUntagged = .{ .signed = -1 };
     _ = &packed_untagged;
     try testing.expect(@as(i32, -1) == packed_untagged.signed);
-    try testing.expectEqual(~@as(u32, 0), packed_untagged.unsigned);
+    try testing.expect(~@as(u32, 0) == packed_untagged.unsigned);
 
     const Tag = @Enum(u1, .exhaustive, &.{ "signed", "unsigned" }, &.{ 0, 1 });
     const Tagged = @Union(.auto, Tag, &.{ "signed", "unsigned" }, &.{ i32, u32 }, &.{ .{}, .{} });

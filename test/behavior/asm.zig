@@ -158,7 +158,7 @@ test "rw constraint (x86_64)" {
         : [a] "+r" (res),
         : [b] "r" (@as(i32, 13)),
         : .{ .flags = true });
-    try expectEqual(@as(i32, 18), res);
+    try expect(@as(i32, 18) == res);
 }
 
 test "asm modifiers (AArch64)" {

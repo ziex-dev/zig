@@ -409,7 +409,7 @@ test "dereference undefined pointer to zero-bit type" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const p0: *void = undefined;
-    try testing.expectEqual({}, p0.*);
+    try testing.expect({} == p0.*);
 
     const p1: *[0]u32 = undefined;
     try testing.expect(p1.*.len == 0);

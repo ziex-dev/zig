@@ -136,7 +136,7 @@ fn testPackedUnionInPackedStruct() !void {
         }
     };
 
-    try std.testing.expectEqual(RequestType.read, Request.init(.{ .key = 3 }).active_type);
+    try std.testing.expect(RequestType.read == Request.init(.{ .key = 3 }).active_type);
 }
 
 test "packed union initialized with a runtime value" {

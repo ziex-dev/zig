@@ -515,7 +515,7 @@ test "orelse on C pointer" {
     // TODO https://github.com/ziglang/zig/issues/6597
     const foo: [*c]const u8 = "hey";
     const d = foo orelse @compileError("bad");
-    try expectEqual([*c]const u8, @TypeOf(d));
+    try expect([*c]const u8 == @TypeOf(d));
 }
 
 test "alignment of wrapping an optional payload" {

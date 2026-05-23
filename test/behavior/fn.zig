@@ -564,7 +564,7 @@ test "pass and return comptime-only types" {
         }
     };
 
-    try expectEqual(null, S.returnNull(null));
+    try expect(null == S.returnNull(null));
     try expect(@as(u0, 0) == S.returnUndefined(undefined));
 }
 

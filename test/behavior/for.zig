@@ -488,7 +488,7 @@ test "inferred alloc ptr of for loop" {
         const opt = for (0..1) |_| {
             if (cond) break cond;
         } else null;
-        try expectEqual(@as(?bool, null), opt);
+        try expect(@as(?bool, null) == opt);
     }
     {
         var cond = true;
@@ -496,7 +496,7 @@ test "inferred alloc ptr of for loop" {
         const opt = for (0..1) |_| {
             if (cond) break cond;
         } else null;
-        try expectEqual(@as(?bool, true), opt);
+        try expect(@as(?bool, true) == opt);
     }
 }
 
