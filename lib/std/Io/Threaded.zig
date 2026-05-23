@@ -14416,13 +14416,8 @@ fn lookupDnsSearch(
     options: HostName.LookupOptions,
 ) (HostName.LookupError || Io.QueueClosedError)!void {
     const t_io = io(t);
-    const rc = HostName.ResolvConf.init(t_io) catch return error.ResolvConfParseFailed;
-
-    // Count dots, suppress search when >=ndots or name ends in
-    // a dot, which is an explicit request for global scope.
-    const dots = std.mem.countScalar(u8, host_name.bytes, '.');
-    const search_len = if (dots >= rc.ndots or std.mem.endsWith(u8, host_name.bytes, ".")) 0 else rc.search_len;
-    const search = rc.search_buffer[0..search_len];
+    var rc = HostName.ResolvConf.init(t.allocator, t_io) catch return error.ResolvConfParseFailed;
+    defer rc.deinit();
 
     var canon_name = host_name.bytes;
 
@@ -14438,15 +14433,23 @@ fn lookupDnsSearch(
     const canon_buf = options.canonical_name_buffer orelse &local_buf;
     @memcpy(canon_buf[0..canon_name.len], canon_name);
     canon_buf[canon_name.len] = '.';
-    var it = std.mem.tokenizeAny(u8, search, " \t");
-    while (it.next()) |token| {
-        @memcpy(canon_buf[canon_name.len + 1 ..][0..token.len], token);
-        const lookup_canon_name = canon_buf[0 .. canon_name.len + 1 + token.len];
-        if (t.lookupDns(lookup_canon_name, &rc, resolved, options)) |result| {
-            return result;
-        } else |err| switch (err) {
-            error.UnknownHostName, error.NoAddressReturned => continue,
-            else => |e| return e,
+    if (rc.search) |search| {
+        // Count dots, suppress search when >=ndots or name ends in
+        // a dot, which is an explicit request for global scope.
+        const dots = std.mem.countScalar(u8, host_name.bytes, '.');
+        const search_len = if (dots >= rc.ndots or std.mem.endsWith(u8, host_name.bytes, ".")) 0 else search.len;
+        var it = std.mem.tokenizeAny(u8, search[0..search_len], " \t");
+        while (it.next()) |token| {
+            const lookup_canon_name_len = canon_name.len + 1 + token.len;
+            if (lookup_canon_name_len > HostName.max_len) continue;
+            @memcpy(canon_buf[canon_name.len + 1 ..][0..token.len], token);
+            const lookup_canon_name = canon_buf[0..lookup_canon_name_len];
+            if (t.lookupDns(lookup_canon_name, &rc, resolved, options)) |result| {
+                return result;
+            } else |err| switch (err) {
+                error.UnknownHostName, error.NoAddressReturned => continue,
+                else => |e| return e,
+            }
         }
     }
 

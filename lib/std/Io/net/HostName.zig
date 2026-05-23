@@ -13,6 +13,7 @@ const IpAddress = Io.net.IpAddress;
 const Ip6Address = Io.net.Ip6Address;
 const assert = std.debug.assert;
 const Stream = Io.net.Stream;
+const Allocator = std.mem.Allocator;
 
 /// Externally managed memory. Already checked to be valid.
 bytes: []const u8,
@@ -383,25 +384,25 @@ fn enqueueConnection(
 }
 
 pub const ResolvConf = struct {
+    allocator: Allocator,
     attempts: u32,
     ndots: u32,
     timeout_seconds: u32,
     nameservers_buffer: [max_nameservers]IpAddress,
     nameservers_len: usize,
-    search_buffer: [max_len]u8,
-    search_len: usize,
+    search: ?[]u8,
 
     /// According to resolv.conf(5) there is a maximum of 3 nameservers in this
     /// file.
     pub const max_nameservers = 3;
 
     /// Returns `error.StreamTooLong` if a line is longer than 512 bytes.
-    pub fn init(io: Io) !ResolvConf {
+    pub fn init(allocator: Allocator, io: Io) !ResolvConf {
         var rc: ResolvConf = .{
+            .allocator = allocator,
             .nameservers_buffer = undefined,
             .nameservers_len = 0,
-            .search_buffer = undefined,
-            .search_len = 0,
+            .search = null,
             .ndots = 1,
             .timeout_seconds = 5,
             .attempts = 2,
@@ -427,6 +428,10 @@ pub const ResolvConf = struct {
             else => |e| return e,
         };
         return rc;
+    }
+
+    pub fn deinit(rc: *ResolvConf) void {
+        if (rc.search) |search| rc.allocator.free(search);
     }
 
     const Directive = enum { options, nameserver, domain, search };
@@ -462,8 +467,8 @@ pub const ResolvConf = struct {
                 },
                 .domain, .search => {
                     const rest = line_it.rest();
-                    @memcpy(rc.search_buffer[0..rest.len], rest);
-                    rc.search_len = rest.len;
+                    if (rc.search) |search| rc.allocator.free(search);
+                    rc.search = try rc.allocator.dupe(u8, rest);
                 },
             }
         } else |err| switch (err) {
@@ -500,15 +505,38 @@ test ResolvConf {
     var reader: Io.Reader = .fixed(input);
 
     var rc: ResolvConf = .{
+        .allocator = std.testing.allocator,
         .nameservers_buffer = undefined,
         .nameservers_len = 0,
-        .search_buffer = undefined,
-        .search_len = 0,
+        .search = null,
         .ndots = 1,
         .timeout_seconds = 5,
         .attempts = 2,
     };
+    defer rc.deinit();
 
     try rc.parse(std.testing.io, &reader);
     try std.testing.expectEqual(3, rc.nameservers().len);
+    try std.testing.expectEqual(null, rc.search);
+}
+
+test "ResolvConf search list" {
+    const search = "staging.local staging.foo.example production.foo.local production.local bar.local preview.bar.local preview.foo.local preview.local testing.local testing.foo.local testing.bar.local foo.bar.internal foo.local testing.preview.foo.local testing.preview.bar.test local";
+    const input = "nameserver 10.255.255.254\nsearch " ++ search ++ "\nsearch " ++ search ++ "\n";
+    var reader: Io.Reader = .fixed(input);
+
+    var rc: ResolvConf = .{
+        .allocator = std.testing.allocator,
+        .nameservers_buffer = undefined,
+        .nameservers_len = 0,
+        .search = null,
+        .ndots = 1,
+        .timeout_seconds = 5,
+        .attempts = 2,
+    };
+    defer rc.deinit();
+
+    try rc.parse(std.testing.io, &reader);
+    try std.testing.expectEqual(1, rc.nameservers().len);
+    try std.testing.expectEqual(search.len, rc.search.?.len);
 }
