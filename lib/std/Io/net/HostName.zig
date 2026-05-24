@@ -462,6 +462,9 @@ pub const ResolvConf = struct {
                 },
                 .domain, .search => {
                     const rest = line_it.rest();
+
+                    if (rest.len > max_len) continue;
+
                     @memcpy(rc.search_buffer[0..rest.len], rest);
                     rc.search_len = rest.len;
                 },
