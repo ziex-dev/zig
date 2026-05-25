@@ -85,7 +85,11 @@ fn mainServer(init: std.process.Init.Minimal) !void {
     });
 
     while (true) {
-        const hdr = try server.receiveMessage();
+        const hdr = server.receiveMessage() catch |err| switch (err) {
+            error.EndOfStream => return std.process.exit(0),
+            else => |e| return e,
+        };
+
         switch (hdr.tag) {
             .exit => {
                 return std.process.exit(0);
