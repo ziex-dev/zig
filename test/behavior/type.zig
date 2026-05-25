@@ -175,7 +175,7 @@ test "Type.Struct" {
     try testing.expectEqual(@as(bool, false), infoB.is_tuple);
 
     const C = @Struct(
-        .@"packed",
+        .@"bitpack",
         null,
         &.{ "x", "y" },
         &.{ u8, u32 },
@@ -185,7 +185,7 @@ test "Type.Struct" {
         },
     );
     const infoC = @typeInfo(C).@"struct";
-    try testing.expectEqual(Type.ContainerLayout.@"packed", infoC.layout);
+    try testing.expectEqual(Type.ContainerLayout.@"bitpack", infoC.layout);
     try testing.expectEqualSlices(u8, "x", infoC.fields[0].name);
     try testing.expectEqual(u8, infoC.fields[0].type);
     try testing.expectEqual(@as(u8, 3), infoC.fields[0].defaultValue().?);
@@ -249,7 +249,7 @@ test "Type.Union" {
     untagged.int = 3;
     try testing.expectEqual(@as(i32, 3), untagged.int);
 
-    const PackedUntagged = @Union(.@"packed", null, &.{ "signed", "unsigned" }, &.{ i32, u32 }, &.{ .{}, .{} });
+    const PackedUntagged = @Union(.@"bitpack", null, &.{ "signed", "unsigned" }, &.{ i32, u32 }, &.{ .{}, .{} });
     var packed_untagged: PackedUntagged = .{ .signed = -1 };
     _ = &packed_untagged;
     try testing.expectEqual(@as(i32, -1), packed_untagged.signed);

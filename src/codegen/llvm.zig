@@ -2331,7 +2331,7 @@ pub const Object = struct {
                 defer fields.deinit(gpa);
 
                 switch (struct_type.layout) {
-                    .@"packed" => {
+                    .@"bitpack" => {
                         try fields.ensureTotalCapacityPrecise(gpa, 1);
                         fields.appendAssumeCapacity(try o.builder.debugMemberType(
                             try o.builder.metadataString("bits"),
@@ -2396,7 +2396,7 @@ pub const Object = struct {
 
                 const enum_tag_ty: Type = .fromInterned(union_type.enum_tag_type);
 
-                if (union_type.layout == .@"packed") {
+                if (union_type.layout == .@"bitpack") {
                     const bitpack_field = try o.builder.debugMemberType(
                         try o.builder.metadataString("bits"),
                         null, // file
@@ -3152,7 +3152,7 @@ pub const Object = struct {
 
                     const struct_type = ip.loadStructType(t.toIntern());
 
-                    if (struct_type.layout == .@"packed") {
+                    if (struct_type.layout == .@"bitpack") {
                         const int_ty = try o.lowerType(.fromInterned(struct_type.packed_backing_int_type));
                         try o.type_map.put(o.gpa, t.toIntern(), int_ty);
                         return int_ty;
@@ -3268,7 +3268,7 @@ pub const Object = struct {
 
                     const union_obj = ip.loadUnionType(t.toIntern());
 
-                    if (union_obj.layout == .@"packed") {
+                    if (union_obj.layout == .@"bitpack") {
                         const int_ty = try o.lowerType(.fromInterned(union_obj.packed_backing_int_type));
                         try o.type_map.put(o.gpa, t.toIntern(), int_ty);
                         return int_ty;
@@ -3771,7 +3771,7 @@ pub const Object = struct {
                 .struct_type => {
                     const struct_type = ip.loadStructType(ty.toIntern());
                     const struct_ty = try o.lowerType(ty);
-                    assert(struct_type.layout != .@"packed");
+                    assert(struct_type.layout != .@"bitpack");
                     const llvm_len = struct_ty.aggregateLen(&o.builder);
 
                     const ExpectedContents = extern struct {
@@ -3851,7 +3851,7 @@ pub const Object = struct {
 
                 const union_obj = zcu.typeToUnion(ty).?;
                 const container_layout = union_obj.layout;
-                assert(container_layout != .@"packed");
+                assert(container_layout != .@"bitpack");
 
                 var need_unnamed = false;
                 const payload = if (un.tag != .none) p: {
@@ -3971,7 +3971,7 @@ pub const Object = struct {
                     },
                     .@"struct", .@"union" => switch (agg_ty.containerLayout(zcu)) {
                         .auto => agg_ty.structFieldOffset(@intCast(field.index), zcu),
-                        .@"extern", .@"packed" => unreachable,
+                        .@"extern", .@"bitpack" => unreachable,
                     },
                     else => unreachable,
                 };

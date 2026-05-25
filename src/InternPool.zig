@@ -3187,7 +3187,7 @@ pub const LoadedStructType = struct {
     namespace: NamespaceIndex,
 
     layout: std.lang.Type.ContainerLayout,
-    /// May be `undefined` if `layout != .@"packed"`.
+    /// May be `undefined` if `layout != .@"bitpack"`.
     packed_backing_mode: BackingTypeMode,
 
     /// Initially `false`, and set to `true` once any dependency on or reference to the struct's
@@ -3207,17 +3207,17 @@ pub const LoadedStructType = struct {
     field_defaults: Index.Slice,
     field_aligns: Alignment.Slice,
     field_is_comptime_bits: ComptimeBits,
-    /// If `layout` is `.@"packed"`, this is `.empty`.
+    /// If `layout` is `.@"bitpack"`, this is `.empty`.
     field_runtime_order: RuntimeOrder.Slice,
-    /// If `layout` is `.@"packed"`, this is `.empty`.
+    /// If `layout` is `.@"bitpack"`, this is `.empty`.
     field_offsets: Offsets,
-    /// Only valid if `layout` is `.@"packed"`.
+    /// Only valid if `layout` is `.@"bitpack"`.
     packed_backing_int_type: Index,
-    /// Only valid if `layout` is *not* `.@"packed"`.
+    /// Only valid if `layout` is *not* `.@"bitpack"`.
     class: TypeClass,
-    /// Only valid if `layout` is *not* `.@"packed"`.
+    /// Only valid if `layout` is *not* `.@"bitpack"`.
     size: u32,
-    /// Only valid if `layout` is *not* `.@"packed"`.
+    /// Only valid if `layout` is *not* `.@"bitpack"`.
     alignment: Alignment,
 
     pub const ComptimeBits = struct {
@@ -3307,7 +3307,7 @@ pub const LoadedStructType = struct {
                 .fields_len = s.field_names.len,
                 .next_index = 0,
             },
-            .@"packed" => unreachable,
+            .@"bitpack" => unreachable,
         }
     }
     pub const RuntimeOrderIterator = struct {
@@ -3336,7 +3336,7 @@ pub const LoadedStructType = struct {
                 .runtime_order = null,
                 .last_index = s.field_names.len,
             },
-            .@"packed" => unreachable,
+            .@"bitpack" => unreachable,
         }
     }
     pub const ReverseRuntimeOrderIterator = struct {
@@ -3371,7 +3371,7 @@ pub const LoadedUnionType = struct {
 
     layout: std.lang.Type.ContainerLayout,
     enum_tag_mode: BackingTypeMode,
-    /// May be `undefined` if `layout != .@"packed"`.
+    /// May be `undefined` if `layout != .@"bitpack"`.
     packed_backing_mode: BackingTypeMode,
 
     /// Only reified unions store field names; typically they should be loaded from `enum_tag_type`
@@ -3401,15 +3401,15 @@ pub const LoadedUnionType = struct {
     /// Even if `tag_usage == .none` and `has_runtime_tag == false`, this is still populated with
     /// the union's "hypothetical" tag type.
     enum_tag_type: Index,
-    /// Only valid if `layout` is `.@"packed"`.
+    /// Only valid if `layout` is `.@"bitpack"`.
     packed_backing_int_type: Index,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Not valid if `layout` is `.@"bitpack"`.
     class: TypeClass,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Not valid if `layout` is `.@"bitpack"`.
     size: u32,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Not valid if `layout` is `.@"bitpack"`.
     padding: u32,
-    /// Not valid if `layout` is `.@"packed"`.
+    /// Not valid if `layout` is `.@"bitpack"`.
     alignment: Alignment,
 
     pub const TagUsage = enum(u2) {
@@ -3643,7 +3643,7 @@ pub fn loadStructType(ip: *const InternPool, index: Index) LoadedStructType {
         .name = extra.data.name,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
-        .layout = .@"packed",
+        .layout = .@"bitpack",
         .packed_backing_mode = backing_mode,
 
         .want_layout = extra.data.bits.want_layout,
@@ -3773,7 +3773,7 @@ pub fn loadUnionType(ip: *const InternPool, index: Index) LoadedUnionType {
         .name = extra.data.name,
         .name_nav = extra.data.name_nav,
         .namespace = extra.data.namespace,
-        .layout = .@"packed",
+        .layout = .@"bitpack",
         .tag_usage = .none,
         .enum_tag_mode = .auto,
         .enum_tag_type = extra.data.enum_tag_type,
@@ -4322,7 +4322,7 @@ pub const Index = enum(u32) {
                             switch (@typeInfo(Type)) {
                                 .int => {},
                                 .@"enum" => {},
-                                .@"struct" => |info| assert(info.layout == .@"packed"),
+                                .@"struct" => |info| assert(info.layout == .@"bitpack"),
                                 .optional => |info| {
                                     checkConfig(name ++ ".?");
                                     checkField(name ++ ".?", info.child);
@@ -7744,7 +7744,7 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
                 .vector_type => |vector_type| .{ vector_type.child, .none },
                 .tuple_type => .{ .none, .none },
                 .struct_type => child: {
-                    assert(ip.loadStructType(aggregate.ty).layout != .@"packed");
+                    assert(ip.loadStructType(aggregate.ty).layout != .@"bitpack");
                     break :child .{ .none, .none };
                 },
                 else => unreachable,
@@ -8005,7 +8005,7 @@ pub fn getDeclaredStructType(
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeStructPacked).@"struct".fields.len +
                 ini.captures.len + // capture
                 ini.fields_len + // field_name
@@ -8149,7 +8149,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeStructPacked).@"struct".fields.len +
                 2 + // type_hash
                 ini.fields_len + // field_name
@@ -8322,7 +8322,7 @@ pub fn getDeclaredUnionType(
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeUnionPacked).@"struct".fields.len +
                 ini.captures.len + // capture
                 ini.fields_len); // field_type
@@ -8444,7 +8444,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
     const is_extern = switch (ini.layout) {
         .auto => false,
         .@"extern" => true,
-        .@"packed" => {
+        .@"bitpack" => {
             try extra.ensureUnusedCapacity(@typeInfo(Tag.TypeUnionPacked).@"struct".fields.len +
                 2 + // type_hash
                 ini.fields_len + // reified_field_name
@@ -8895,7 +8895,7 @@ pub fn getUnion(
 ) Allocator.Error!Index {
     assert(un.ty != .none);
     assert(un.val != .none);
-    assert(ip.loadUnionType(un.ty).layout != .@"packed");
+    assert(ip.loadUnionType(un.ty).layout != .@"bitpack");
 
     var gop = try ip.getOrPutKey(gpa, io, tid, .{ .un = un });
     defer gop.deinit();

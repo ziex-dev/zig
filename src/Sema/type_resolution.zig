@@ -277,7 +277,7 @@ pub fn resolveStructLayout(sema: *Sema, struct_ty: Type) CompileError!void {
         }
     }
 
-    if (struct_obj.layout == .@"packed") {
+    if (struct_obj.layout == .@"bitpack") {
         return resolvePackedStructLayout(sema, &block, struct_ty, &struct_obj);
     }
 
@@ -359,7 +359,7 @@ pub fn resolveStructLayout(sema: *Sema, struct_ty: Type) CompileError!void {
     switch (struct_obj.layout) {
         .auto => {},
         .@"extern" => assert(class != .no_possible_value), // field types are all extern, so are not NPV
-        .@"packed" => unreachable,
+        .@"bitpack" => unreachable,
     }
 
     if (struct_obj.layout == .auto) {
@@ -823,7 +823,7 @@ pub fn resolveUnionLayout(sema: *Sema, union_ty: Type) CompileError!void {
         }
     }
 
-    if (union_obj.layout == .@"packed") {
+    if (union_obj.layout == .@"bitpack") {
         return resolvePackedUnionLayout(sema, &block, union_ty, &union_obj, enum_tag_ty);
     }
 

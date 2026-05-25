@@ -3469,7 +3469,7 @@ pub const Inst = struct {
             has_fields_len: bool,
             name_strategy: NameStrategy,
             layout: std.lang.Type.ContainerLayout,
-            /// Always `false` if `layout != .@"packed"`.
+            /// Always `false` if `layout != .@"bitpack"`.
             has_backing_int_type: bool,
             any_field_aligns: bool,
             any_field_defaults: bool,
@@ -3692,7 +3692,7 @@ pub const Inst = struct {
                 return switch (k) {
                     .auto, .tagged_explicit, .tagged_enum, .tagged_enum_explicit => .auto,
                     .@"extern" => .@"extern",
-                    .@"packed", .packed_explicit => .@"packed",
+                    .@"packed", .packed_explicit => .@"bitpack",
                 };
             }
         };

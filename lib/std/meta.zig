@@ -231,10 +231,10 @@ test containerLayout {
     };
 
     try testing.expect(containerLayout(S1) == .auto);
-    try testing.expect(containerLayout(S2) == .@"packed");
+    try testing.expect(containerLayout(S2) == .@"bitpack");
     try testing.expect(containerLayout(S3) == .@"extern");
     try testing.expect(containerLayout(U1) == .auto);
-    try testing.expect(containerLayout(U2) == .@"packed");
+    try testing.expect(containerLayout(U2) == .@"bitpack");
     try testing.expect(containerLayout(U3) == .@"extern");
 }
 
@@ -620,7 +620,7 @@ pub fn eql(a: anytype, b: @TypeOf(a)) bool {
 
     switch (@typeInfo(T)) {
         .@"struct" => |info| {
-            if (info.layout == .@"packed") return a == b;
+            if (info.layout == .@"bitpack") return a == b;
 
             inline for (info.fields) |field_info| {
                 if (!eql(@field(a, field_info.name), @field(b, field_info.name))) return false;
@@ -635,7 +635,7 @@ pub fn eql(a: anytype, b: @TypeOf(a)) bool {
             }
         },
         .@"union" => |info| {
-            if (info.layout == .@"packed") return a == b;
+            if (info.layout == .@"bitpack") return a == b;
             const UnionTag = info.tag_type orelse
                 @compileError("cannot compare untagged union type " ++ @typeName(T));
 
@@ -953,7 +953,7 @@ pub inline fn hasUniqueRepresentation(comptime T: type) bool {
         .array => |info| hasUniqueRepresentation(info.child),
 
         .@"struct" => |info| {
-            if (info.layout == .@"packed") return @sizeOf(T) * 8 == @bitSizeOf(T);
+            if (info.layout == .@"bitpack") return @sizeOf(T) * 8 == @bitSizeOf(T);
 
             var sum_size = @as(usize, 0);
 

@@ -311,7 +311,7 @@ fn testPackedStruct() !void {
     const struct_info = @typeInfo(TestPackedStruct);
     try expect(struct_info == .@"struct");
     try expect(struct_info.@"struct".is_tuple == false);
-    try expect(struct_info.@"struct".layout == .@"packed");
+    try expect(struct_info.@"struct".layout == .@"bitpack");
     try expect(struct_info.@"struct".backing_integer == u128);
     try expect(struct_info.@"struct".fields.len == 4);
     try expect(struct_info.@"struct".fields[0].alignment == null);

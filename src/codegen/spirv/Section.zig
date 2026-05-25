@@ -133,7 +133,7 @@ pub fn writeOperand(section: *Section, comptime Operand: type, operand: Operand)
                 }
             },
             .@"struct" => |info| {
-                if (info.layout == .@"packed") {
+                if (info.layout == .@"bitpack") {
                     section.writeWord(@as(Word, @bitCast(operand)));
                 } else {
                     section.writeExtendedMask(Operand, operand);
@@ -249,7 +249,7 @@ fn operandSize(comptime Operand: type, operand: Operand) usize {
                 break :blk total;
             },
             .@"struct" => |struct_info| {
-                if (struct_info.layout == .@"packed") return 1;
+                if (struct_info.layout == .@"bitpack") return 1;
 
                 var total: usize = 0;
                 inline for (@typeInfo(Operand).@"struct".fields) |field| {

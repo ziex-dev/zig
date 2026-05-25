@@ -606,7 +606,7 @@ pub fn typeToValtype(ty: Type, zcu: *const Zcu, target: *const std.Target) std.w
             .unrolled => .i32,
         },
         .@"union", .@"struct" => switch (ty.containerLayout(zcu)) {
-            .@"packed" => typeToValtype(ty.bitpackBackingInt(zcu), zcu, target),
+            .@"bitpack" => typeToValtype(ty.bitpackBackingInt(zcu), zcu, target),
             .auto, .@"extern" => .i32,
         },
         else => .i32, // all represented as reference/immediate
@@ -1214,7 +1214,7 @@ fn isByRef(ty: Type, zcu: *const Zcu, target: *const std.Target) bool {
         .frame,
         => return ty.hasRuntimeBits(zcu),
         .@"struct", .@"union" => switch (ty.containerLayout(zcu)) {
-            .@"packed" => return isByRef(ty.bitpackBackingInt(zcu), zcu, target),
+            .@"bitpack" => return isByRef(ty.bitpackBackingInt(zcu), zcu, target),
             .@"extern", .auto => return ty.hasRuntimeBits(zcu),
         },
         .vector => return determineSimdStoreStrategy(ty, zcu, target) == .unrolled,
@@ -2338,12 +2338,12 @@ const IntType = struct {
                 const loaded_struct = ip.loadStructType(ty_index);
                 switch (loaded_struct.layout) {
                     .auto, .@"extern" => unreachable,
-                    .@"packed" => ty_index = loaded_struct.packed_backing_int_type,
+                    .@"bitpack" => ty_index = loaded_struct.packed_backing_int_type,
                 }
             },
             .union_type => return switch (ip.loadUnionType(ty_index).layout) {
                 .auto, .@"extern" => unreachable,
-                .@"packed" => .{ .is_signed = false, .bits = @intCast(ty.bitSize(zcu)) },
+                .@"bitpack" => .{ .is_signed = false, .bits = @intCast(ty.bitSize(zcu)) },
             },
             .enum_type => ty_index = ip.loadEnumType(ty_index).int_tag_type,
             .error_set_type, .inferred_error_set_type => return .{ .is_signed = false, .bits = zcu.errorSetBits() },
@@ -4667,11 +4667,11 @@ fn lowerPtr(cg: *CodeGen, ptr_val: InternPool.Index, prev_offset: u64) InnerErro
                 },
                 .@"struct" => switch (base_ty.containerLayout(zcu)) {
                     .auto => base_ty.structFieldOffset(@intCast(field.index), zcu),
-                    .@"extern", .@"packed" => unreachable,
+                    .@"extern", .@"bitpack" => unreachable,
                 },
                 .@"union" => switch (base_ty.containerLayout(zcu)) {
                     .auto => base_ty.structFieldOffset(@intCast(field.index), zcu),
-                    .@"extern", .@"packed" => unreachable,
+                    .@"extern", .@"bitpack" => unreachable,
                 },
                 else => unreachable,
             };
@@ -5374,7 +5374,7 @@ fn structFieldPtr(
     const struct_ptr_ty_info = struct_ptr_ty.ptrInfo(zcu);
 
     const offset = switch (struct_ty.containerLayout(zcu)) {
-        .@"packed" => switch (struct_ty.zigTypeTag(zcu)) {
+        .@"bitpack" => switch (struct_ty.zigTypeTag(zcu)) {
             .@"struct" => offset: {
                 if (result_ty.ptrInfo(zcu).packed_offset.host_size != 0) {
                     break :offset @as(u32, 0);
@@ -5412,7 +5412,7 @@ fn airStructFieldVal(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
     if (!field_ty.hasRuntimeBits(zcu)) return cg.finishAir(inst, .none, &.{struct_field.struct_operand});
 
     const result: WValue = switch (struct_ty.containerLayout(zcu)) {
-        .@"packed" => unreachable, // legalize .expand_packed_struct_field_val
+        .@"bitpack" => unreachable, // legalize .expand_packed_struct_field_val
         else => result: {
             const offset = std.math.cast(u32, struct_ty.structFieldOffset(field_index, zcu)) orelse {
                 return cg.fail("Field type '{f}' too big to fit into stack frame", .{field_ty.fmt(pt)});
@@ -6579,7 +6579,7 @@ fn airAggregateInit(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
                 break :result_value result;
             },
             .@"struct" => switch (result_ty.containerLayout(zcu)) {
-                .@"packed" => unreachable, // legalize .expand_packed_aggregate_init
+                .@"bitpack" => unreachable, // legalize .expand_packed_aggregate_init
                 else => {
                     const result = try cg.allocStack(result_ty);
                     const offset = try cg.buildPointerOffset(result, 0, .new); // pointer to offset
@@ -6776,7 +6776,7 @@ fn airFieldParentPtr(cg: *CodeGen, inst: Air.Inst.Index) InnerError!void {
     const field_index = extra.field_index;
     const field_offset = switch (parent_ty.containerLayout(zcu)) {
         .auto, .@"extern" => parent_ty.structFieldOffset(field_index, zcu),
-        .@"packed" => offset: {
+        .@"bitpack" => offset: {
             const parent_ptr_offset = parent_ptr_ty.ptrInfo(zcu).packed_offset.bit_offset;
             const field_offset = if (zcu.typeToStruct(parent_ty)) |loaded_struct| zcu.structPackedFieldBitOffset(loaded_struct, field_index) else 0;
             const field_ptr_offset = field_ptr_ty.ptrInfo(zcu).packed_offset.bit_offset;

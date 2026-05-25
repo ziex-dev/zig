@@ -660,7 +660,7 @@ pub const Type = union(enum) {
     pub const ContainerLayout = enum(u2) {
         auto,
         @"extern",
-        @"packed",
+        @"bitpack",
     };
 
     /// This data structure is used by the Zig language code generation and

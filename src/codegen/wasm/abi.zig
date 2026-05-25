@@ -39,7 +39,7 @@ pub fn classifyType(ty: Type, zcu: *const Zcu) Class {
         },
         .@"struct" => {
             const struct_type = zcu.typeToStruct(ty).?;
-            if (struct_type.layout == .@"packed") {
+            if (struct_type.layout == .@"bitpack") {
                 return .{ .direct = ty };
             }
             if (struct_type.field_types.len > 1) {
@@ -56,7 +56,7 @@ pub fn classifyType(ty: Type, zcu: *const Zcu) Class {
         },
         .@"union" => {
             const union_obj = zcu.typeToUnion(ty).?;
-            if (union_obj.layout == .@"packed") {
+            if (union_obj.layout == .@"bitpack") {
                 return .{ .direct = ty };
             }
             const layout = ty.unionGetLayout(zcu);

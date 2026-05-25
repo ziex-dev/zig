@@ -325,7 +325,7 @@ pub fn writeToMemory(val: Value, zcu: *const Zcu, buffer: []u8) error{
                     });
                     try writeToMemory(field_val, zcu, buffer[off..]);
                 },
-                .@"packed" => {
+                .@"bitpack" => {
                     const int_index = ip.indexToKey(val.toIntern()).@"bitpack".backing_int_val;
                     return Value.fromInterned(int_index).writeToMemory(zcu, buffer);
                 },
@@ -337,7 +337,7 @@ pub fn writeToMemory(val: Value, zcu: *const Zcu, buffer: []u8) error{
                 const payload_val = val.unionPayload(zcu);
                 return writeToMemory(payload_val, zcu, buffer);
             },
-            .@"packed" => {
+            .@"bitpack" => {
                 const int_val: Value = .fromInterned(ip.indexToKey(val.toIntern()).@"bitpack".backing_int_val);
                 return writeToMemory(int_val, zcu, buffer);
             },
@@ -436,7 +436,7 @@ pub fn writeToPackedMemory(
             }
         },
         .@"struct", .@"union" => {
-            assert(ty.containerLayout(zcu) == .@"packed");
+            assert(ty.containerLayout(zcu) == .@"bitpack");
             const int_val: Value = .fromInterned(ip.indexToKey(val.toIntern()).@"bitpack".backing_int_val);
             return int_val.writeToPackedMemory(zcu, buffer, bit_offset);
         },
@@ -573,7 +573,7 @@ pub fn readFromPackedMemory(
             return pt.aggregateValue(ty, elems);
         },
         .@"struct", .@"union" => {
-            assert(ty.containerLayout(zcu) == .@"packed");
+            assert(ty.containerLayout(zcu) == .@"bitpack");
             const int_val: Value = try .readFromPackedMemory(ty.bitpackBackingInt(zcu), pt, buffer, bit_offset, gpa);
             return pt.bitpackValue(ty, int_val);
         },
@@ -860,13 +860,13 @@ pub fn fieldValue(val: Value, pt: Zcu.PerThread, index: usize) !Value {
         .un => |un| {
             switch (Type.fromInterned(un.ty).containerLayout(zcu)) {
                 .auto, .@"extern" => {}, // TODO assert the tag is correct
-                .@"packed" => unreachable,
+                .@"bitpack" => unreachable,
             }
             return .fromInterned(un.val);
         },
         .@"bitpack" => |@"bitpack"| {
             const ty: Type = .fromInterned(@"bitpack".ty);
-            assert(ty.containerLayout(zcu) == .@"packed");
+            assert(ty.containerLayout(zcu) == .@"bitpack");
             const int_val: Value = .fromInterned(@"bitpack".backing_int_val);
             assert(!int_val.isUndef(zcu));
             const field_ty = ty.fieldType(index, zcu);
@@ -1763,11 +1763,11 @@ pub fn ptrField(parent_ptr: Value, field_idx: u32, pt: Zcu.PerThread) !Value {
                 field_ptr_ty,
                 pt,
             ),
-            .@"packed" => return pt.getCoerced(parent_ptr, field_ptr_ty),
+            .@"bitpack" => return pt.getCoerced(parent_ptr, field_ptr_ty),
         },
         .@"union" => switch (aggregate_ty.containerLayout(zcu)) {
             .auto => {},
-            .@"packed", .@"extern" => return pt.getCoerced(parent_ptr, field_ptr_ty),
+            .@"bitpack", .@"extern" => return pt.getCoerced(parent_ptr, field_ptr_ty),
         },
         else => unreachable,
     }
@@ -2142,7 +2142,7 @@ pub fn pointerDerivation(ptr_val: Value, arena: Allocator, pt: Zcu.PerThread, op
                 }
             },
             .@"struct" => switch (cur_ty.containerLayout(zcu)) {
-                .auto, .@"packed" => break,
+                .auto, .@"bitpack" => break,
                 .@"extern" => for (0..cur_ty.structFieldCount(zcu)) |field_idx| {
                     const field_ty = cur_ty.fieldType(field_idx, zcu);
                     const start_off = cur_ty.structFieldOffset(field_idx, zcu);

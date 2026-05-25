@@ -1432,7 +1432,7 @@ const Writer = struct {
         try stream.print("{s}, ", .{@tagName(struct_decl.name_strategy)});
 
         if (struct_decl.backing_int_type_body) |backing_int_type_body| {
-            assert(struct_decl.layout == .@"packed");
+            assert(struct_decl.layout == .@"bitpack");
             try stream.writeAll("packed(");
             try self.writeBracedDecl(stream, backing_int_type_body);
             try stream.writeAll("), ");

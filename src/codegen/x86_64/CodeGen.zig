@@ -81922,7 +81922,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                         switch (ty.zigTypeTag(zcu)) {
                             else => {},
                             .@"struct", .@"union" => {
-                                assert(ty.containerLayout(zcu) == .@"packed");
+                                assert(ty.containerLayout(zcu) == .@"bitpack");
                                 for (&ops) |*op| op.wrapInt(cg) catch |err| switch (err) {
                                     error.SelectFailed => return cg.fail("failed to select {s} wrap {f} {f}", .{
                                         @tagName(air_tag),
@@ -103866,7 +103866,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 const field_ty = ty_pl.ty.toType();
                 const field_off: u31 = switch (agg_ty.containerLayout(zcu)) {
                     .auto, .@"extern" => @intCast(agg_ty.structFieldOffset(struct_field.field_index, zcu)),
-                    .@"packed" => unreachable,
+                    .@"bitpack" => unreachable,
                 };
                 var ops = try cg.tempsFromOperands(inst, .{struct_field.struct_operand});
                 var res = if (!hack_around_sema_opv_bugs or field_ty.hasRuntimeBits(zcu))
@@ -171437,7 +171437,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                                     }
                                 }
                             },
-                            .@"packed" => unreachable,
+                            .@"bitpack" => unreachable,
                         }
                     },
                     .tuple_type => |tuple_type| {
@@ -173043,7 +173043,7 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
             .save_err_return_trace_index => {
                 const ty_pl = air_datas[@intFromEnum(inst)].ty_pl;
                 const agg_ty = ty_pl.ty.toType();
-                assert(agg_ty.containerLayout(zcu) != .@"packed");
+                assert(agg_ty.containerLayout(zcu) != .@"bitpack");
                 var ert: Temp = .{ .index = err_ret_trace_index };
                 var res = try ert.load(.usize, .{ .disp = @intCast(agg_ty.structFieldOffset(ty_pl.payload, zcu)) }, cg);
                 try ert.die(cg);
@@ -181869,14 +181869,14 @@ fn intInfo(cg: *CodeGen, ty: Type) ?std.lang.Type.Int {
             const loaded_struct = ip.loadStructType(ty_index);
             switch (loaded_struct.layout) {
                 .auto, .@"extern" => return null,
-                .@"packed" => ty_index = loaded_struct.packed_backing_int_type,
+                .@"bitpack" => ty_index = loaded_struct.packed_backing_int_type,
             }
         },
         .union_type => {
             const loaded_union = ip.loadUnionType(ty_index);
             switch (loaded_union.layout) {
                 .auto, .@"extern" => return null,
-                .@"packed" => ty_index = loaded_union.packed_backing_int_type,
+                .@"bitpack" => ty_index = loaded_union.packed_backing_int_type,
             }
         },
         .enum_type => ty_index = ip.loadEnumType(ty_index).int_tag_type,

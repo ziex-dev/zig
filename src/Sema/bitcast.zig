@@ -348,7 +348,7 @@ const UnpackValueBits = struct {
                             assert(cur_bit_off == 0);
                         },
                     },
-                    .@"packed" => {
+                    .@"bitpack" => {
                         // Just add all fields in order. There are no padding bits.
                         // This is identical between LE and BE targets.
                         for (0..ty.structFieldCount(zcu)) |i| {
@@ -367,7 +367,7 @@ const UnpackValueBits = struct {
                 // either an integer or a byte array, both of which we can unpack.
                 const payload_val = Value.fromInterned(un.val);
                 const pad_bits = bit_size - payload_val.typeOf(zcu).bitSize(zcu);
-                if (endian == .little or ty.containerLayout(zcu) == .@"packed") {
+                if (endian == .little or ty.containerLayout(zcu) == .@"bitpack") {
                     try unpack.add(payload_val);
                     try unpack.padding(pad_bits);
                 } else {
@@ -563,7 +563,7 @@ const PackValueBits = struct {
                     }
                     return pt.aggregateValue(ty, elems);
                 },
-                .@"packed" => {
+                .@"bitpack" => {
                     const backing_int_val = try pack.primitive(ty.bitpackBackingInt(zcu));
                     if (backing_int_val.isUndef(zcu)) return pt.undefValue(ty);
                     return pt.bitpackValue(ty, backing_int_val);
@@ -621,7 +621,7 @@ const PackValueBits = struct {
                         .field_types = zcu.typeToUnion(ty).?.field_types.get(ip),
                     }, SizeSortCtx.lessThan);
 
-                    const padding_after = endian == .little or ty.containerLayout(zcu) == .@"packed";
+                    const padding_after = endian == .little or ty.containerLayout(zcu) == .@"bitpack";
 
                     for (field_order) |field_idx| {
                         const field_ty = Type.fromInterned(zcu.typeToUnion(ty).?.field_types.get(ip)[field_idx]);
@@ -658,7 +658,7 @@ const PackValueBits = struct {
                         .val = backing_val.toIntern(),
                     }));
                 },
-                .@"packed" => {
+                .@"bitpack" => {
                     const backing_int_val = try pack.primitive(ty.bitpackBackingInt(zcu));
                     if (backing_int_val.isUndef(zcu)) return pt.undefValue(ty);
                     return pt.bitpackValue(ty, backing_int_val);
