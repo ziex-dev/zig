@@ -5286,7 +5286,7 @@ fn unionDeclInner(
                 break :l if (opt_arg_node == .none) .tagged_enum else .tagged_enum_explicit;
             },
             .@"extern" => .@"extern",
-            .@"bitpack" => if (opt_arg_node != .none) .packed_explicit else .@"packed",
+            .@"bitpack" => if (opt_arg_node != .none) .bitpack_explicit else .@"bitpack",
         },
         .arg_type_body_len = arg_type_body_len,
         .decls_len = scan_result.decls_len,

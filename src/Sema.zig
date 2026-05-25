@@ -34277,8 +34277,8 @@ fn zirUnionDecl(
             => .tagged,
 
             .@"extern",
-            .@"packed",
-            .packed_explicit,
+            .@"bitpack",
+            .bitpack_explicit,
             => .none,
         },
         .enum_tag_mode = switch (union_decl.kind) {
@@ -34286,7 +34286,7 @@ fn zirUnionDecl(
             else => .auto,
         },
         .packed_backing_mode = switch (union_decl.kind) {
-            .packed_explicit => .explicit,
+            .bitpack_explicit => .explicit,
             else => .auto,
         },
     })) {

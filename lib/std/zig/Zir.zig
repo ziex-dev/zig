@@ -3676,15 +3676,15 @@ pub const Inst = struct {
             tagged_enum_explicit,
             /// `extern union`
             @"extern",
-            /// `packed union`
-            @"packed",
-            /// `packed union(T)`
-            packed_explicit,
+            /// `bitpack union`
+            @"bitpack",
+            /// `bitpack union(T)`
+            bitpack_explicit,
 
             pub fn hasArgType(k: Kind) bool {
                 return switch (k) {
-                    .auto, .tagged_enum, .@"extern", .@"packed" => false,
-                    .tagged_explicit, .tagged_enum_explicit, .packed_explicit => true,
+                    .auto, .tagged_enum, .@"extern", .@"bitpack" => false,
+                    .tagged_explicit, .tagged_enum_explicit, .bitpack_explicit => true,
                 };
             }
 
@@ -3692,7 +3692,7 @@ pub const Inst = struct {
                 return switch (k) {
                     .auto, .tagged_explicit, .tagged_enum, .tagged_enum_explicit => .auto,
                     .@"extern" => .@"extern",
-                    .@"packed", .packed_explicit => .@"bitpack",
+                    .@"bitpack", .bitpack_explicit => .@"bitpack",
                 };
             }
         };

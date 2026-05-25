@@ -1496,9 +1496,9 @@ const Writer = struct {
         switch (union_decl.kind) {
             .auto => try stream.writeAll("auto, "),
             .@"extern" => try stream.writeAll("extern, "),
-            .@"packed" => try stream.writeAll("packed, "),
-            .packed_explicit => {
-                try stream.writeAll("packed(");
+            .@"bitpack" => try stream.writeAll("bitpack, "),
+            .bitpack_explicit => {
+                try stream.writeAll("bitpack(");
                 try self.writeBracedDecl(stream, union_decl.arg_type_body.?);
                 try stream.writeAll("), ");
             },
