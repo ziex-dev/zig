@@ -18,7 +18,19 @@ const Allocator = std.mem.Allocator;
 /// Externally managed memory. Already checked to be valid.
 bytes: []const u8,
 
-pub const max_len = 255;
+// [RFC 1035, Section 3.1](https://datatracker.ietf.org/doc/html/rfc1035#section-3.1)
+// Each label is represented as a one octet length field followed by that
+// number of octets. Since every domain name ends with the null label of
+// the root, a domain name is terminated by a length byte of zero.
+// The total length of a domain name (i.e., label octets and label length
+// octets) is restricted to 255 octets or less.
+
+// The string representation without the trailing dot is two bytes smaller
+// so the maximum is 253, with the trailing dot it is 254.
+//  www.example.com
+//  www.example.com.
+// 3www7example3com0
+pub const max_len = 254;
 
 pub const ValidateError = error{
     NameTooLong,
@@ -33,7 +45,7 @@ pub fn validate(bytes: []const u8) ValidateError!void {
     const end = if (bytes[bytes.len - 1] == '.') bytes.len - 1 else bytes.len;
 
     // The accepted maximum length of a hostname, including labels and dots.
-    if (end > max_len) return error.NameTooLong;
+    if (end >= max_len) return error.NameTooLong;
 
     // Hostnames are divided into dot-separated "labels", which:
     //
@@ -79,12 +91,12 @@ test validate {
     try validate("127.0.0.1"); // Also a valid hostname
 
     const many_a: [63]u8 = @splat('a');
-    try validate(&many_a ++ ".com"); // Label exactly 63 chars (valid)
+    try validate(&many_a ++ ".com"); // Label exactly 63 chars
 
-    const many_a_dot_buf: [127][2]u8 = @splat(.{ 'a', '.' });
+    const many_a_dot_buf: [126][2]u8 = @splat(.{ 'a', '.' });
     const many_a_dot: []const u8 = @ptrCast(&many_a_dot_buf);
-    try validate(many_a_dot ++ "a"); // Total length 255 (valid)
-    try validate(many_a_dot ++ "a."); // Total length 255 + trailing dot (valid)
+    try validate(many_a_dot ++ "a"); // Total length 253
+    try validate(many_a_dot ++ "a."); // Total length 254 with trailing dot
 
     // Invalid hostnames
     try std.testing.expectError(error.InvalidHostName, validate(""));
@@ -99,8 +111,8 @@ test validate {
     try std.testing.expectError(error.InvalidHostName, validate("."));
     try std.testing.expectError(error.InvalidHostName, validate(".."));
     try std.testing.expectError(error.InvalidHostName, validate(&many_a ++ "a.com")); // Label length 64 (too long)
-    try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "ab")); // Total length 256 (too long)
-    try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "ab.")); // Total length 256 + trailing dot (too long)
+    try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "ab")); // Total length 254 without trailing dot
+    try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "ab.")); // Total length 255 with trailing dot
 }
 
 pub fn init(bytes: []const u8) ValidateError!HostName {

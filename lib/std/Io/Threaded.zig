@@ -13623,7 +13623,7 @@ fn netLookupFallible(
 
     const t_io = t.io();
     const name = host_name.bytes;
-    assert(name.len <= HostName.max_len);
+    if (name.len > HostName.max_len) return error.UnknownHostName;
 
     // On Linux, glibc provides getaddrinfo_a which is capable of supporting our semantics.
     // However, musl's POSIX-compliant getaddrinfo is not, so we bypass it.
@@ -14425,6 +14425,9 @@ fn lookupDnsSearch(
     if (std.mem.endsWith(u8, canon_name, ".")) canon_name.len -= 1;
     if (std.mem.endsWith(u8, canon_name, ".")) return error.UnknownHostName;
 
+    // Cannot reach max length after trimming the trailing dot
+    if (canon_name.len >= HostName.max_len) return error.UnknownHostName;
+
     // Name with search domain appended is set up in `canon_name`. This
     // both provides the desired default canonical name (if the requested
     // name is not a CNAME record) and serves as a buffer for passing the
@@ -14797,17 +14800,8 @@ fn writeResolutionQuery(q: *[280]u8, op: HostName.DnsOpcode, dname: []const u8, 
     if (std.mem.endsWith(u8, name, ".")) name.len -= 1;
     if (std.mem.endsWith(u8, name, ".")) return error.UnknownHostName;
 
-    // [RFC 1035, Section 3.1](https://datatracker.ietf.org/doc/html/rfc1035#section-3.1)
-    // Each label is represented as a one octet length field followed by that
-    // number of octets. Since every domain name ends with the null label of
-    // the root, a domain name is terminated by a length byte of zero.
-    // The total length of a domain name (i.e., label octets and label length
-    // octets) is restricted to 255 octets or less.
-
-    // The string representation is two bytes smaller so the maximum is 253.
-    //  www.example.com
-    // 3www7example3com0
-    if (name.len > 253) return error.UnknownHostName;
+    // Cannot reach max length after trimming the trailing dot
+    if (name.len >= HostName.max_len) return error.UnknownHostName;
     const n = 17 + name.len + @intFromBool(name.len != 0);
 
     var header: HostName.DnsHeader = .{
