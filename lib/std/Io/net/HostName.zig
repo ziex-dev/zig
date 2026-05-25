@@ -458,7 +458,7 @@ pub const ResolvConf = struct {
     /// file.
     pub const max_nameservers = 3;
 
-    /// Returns `error.StreamTooLong` if a line is longer than 512 bytes.
+    /// Returns `error.StreamTooLong` if a value is longer than 512 bytes, except search list.
     pub fn init(allocator: Allocator, io: Io) !ResolvConf {
         var rc: ResolvConf = .{
             .allocator = allocator,
@@ -483,8 +483,8 @@ pub const ResolvConf = struct {
         };
         defer file.close(io);
 
-        var line_buf: [512]u8 = undefined;
-        var file_reader = file.reader(io, &line_buf);
+        var buf: [512]u8 = undefined;
+        var file_reader = file.reader(io, &buf);
         parse(&rc, io, &file_reader.interface) catch |err| switch (err) {
             error.ReadFailed => return file_reader.err.?,
             else => |e| return e,
@@ -499,42 +499,67 @@ pub const ResolvConf = struct {
     const Directive = enum { options, nameserver, domain, search };
     const Option = enum { ndots, attempts, timeout };
 
+    // According to resolv.conf(5), directive must start the line.
+    // Lines started by ';' and '#' are comments.
     pub fn parse(rc: *ResolvConf, io: Io, reader: *Io.Reader) !void {
-        while (reader.takeSentinel('\n')) |line_with_comment| {
-            const line = line: {
-                var split = std.mem.splitScalar(u8, line_with_comment, '#');
-                break :line split.first();
-            };
-            var line_it = std.mem.tokenizeAny(u8, line, " \t");
+        while (reader.peekSentinel(' ')) |keyword| {
+            // Empty lines
+            if (std.mem.startsWith(u8, keyword, "\n")) {
+                for (keyword) |c| if (c == '\n') reader.toss(1) else break;
+                continue;
+            }
+            // Comment lines
+            if (std.mem.startsWith(u8, keyword, ";") or std.mem.startsWith(u8, keyword, "#")) {
+                _ = reader.discardDelimiterInclusive('\n') catch continue;
+                continue;
+            }
+            // Lines have a keyword but no value
+            if (std.mem.findScalar(u8, keyword, '\n')) |pos| {
+                reader.toss(pos);
+                continue;
+            }
 
-            const token = line_it.next() orelse continue;
-            switch (std.meta.stringToEnum(Directive, token) orelse continue) {
-                .options => while (line_it.next()) |sub_tok| {
-                    var colon_it = std.mem.splitScalar(u8, sub_tok, ':');
-                    const name = colon_it.first();
-                    const value_txt = colon_it.next() orelse continue;
-                    const value = std.fmt.parseInt(u8, value_txt, 10) catch |err| switch (err) {
-                        error.Overflow => 255,
-                        error.InvalidCharacter => continue,
-                    };
-                    switch (std.meta.stringToEnum(Option, name) orelse continue) {
-                        .ndots => rc.ndots = @min(value, 15),
-                        .attempts => rc.attempts = @min(value, 10),
-                        .timeout => rc.timeout_seconds = @min(value, 60),
+            const directive = std.meta.stringToEnum(Directive, keyword) orelse {
+                _ = reader.discardDelimiterInclusive('\n') catch continue;
+                continue;
+            };
+            reader.toss(keyword.len + 1);
+
+            switch (directive) {
+                .options => {
+                    const line = reader.takeSentinel('\n') catch continue;
+                    var line_it = std.mem.tokenizeAny(u8, line, " \t");
+                    while (line_it.next()) |sub_tok| {
+                        var colon_it = std.mem.splitScalar(u8, sub_tok, ':');
+                        const name = colon_it.first();
+                        const value_txt = colon_it.next() orelse continue;
+                        const value = std.fmt.parseInt(u8, value_txt, 10) catch |err| switch (err) {
+                            error.Overflow => 255,
+                            error.InvalidCharacter => continue,
+                        };
+                        switch (std.meta.stringToEnum(Option, name) orelse continue) {
+                            .ndots => rc.ndots = @min(value, 15),
+                            .attempts => rc.attempts = @min(value, 10),
+                            .timeout => rc.timeout_seconds = @min(value, 60),
+                        }
                     }
                 },
                 .nameserver => {
-                    const ip_txt = line_it.next() orelse continue;
+                    const ip_txt = reader.takeSentinel('\n') catch continue;
+                    if (ip_txt.len == 0) continue;
                     try addNumeric(rc, io, ip_txt, 53);
                 },
                 .domain, .search => {
-                    const rest = line_it.rest();
+                    var w: Io.Writer.Allocating = .init(rc.allocator);
+                    defer w.deinit();
+                    _ = try reader.streamDelimiter(&w.writer, '\n');
+                    reader.toss(1);
                     if (rc.search) |search| rc.allocator.free(search);
-                    rc.search = try rc.allocator.dupe(u8, rest);
+                    rc.search = try w.toOwnedSlice();
                 },
             }
         } else |err| switch (err) {
-            error.EndOfStream => if (reader.bufferedLen() != 0) return error.EndOfStream,
+            error.EndOfStream => {},
             else => |e| return e,
         }
 
@@ -600,5 +625,5 @@ test "ResolvConf search list" {
 
     try rc.parse(std.testing.io, &reader);
     try std.testing.expectEqual(1, rc.nameservers().len);
-    try std.testing.expectEqual(search.len, rc.search.?.len);
+    try std.testing.expectEqualSlices(u8, search, rc.search.?);
 }
