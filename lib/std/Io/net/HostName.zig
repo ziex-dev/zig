@@ -224,6 +224,56 @@ pub const DnsRecord = enum(u8) {
     _,
 };
 
+pub const DnsQr = enum(u1) {
+    query = 0,
+    response = 1,
+};
+
+pub const DnsOpcode = enum(u4) {
+    query = 0,
+    /// Inverse query, obsolete
+    iquery = 1,
+    status = 2,
+    notify = 4,
+    update = 5,
+    _,
+};
+
+/// DNS Query/Response Headers
+/// [RFC 6895, Section 2](https://datatracker.ietf.org/doc/html/rfc6895#section-2)
+pub const DnsHeader = packed struct(u96) {
+    /// Additional information count
+    arcount: u16,
+    /// Authority count/Update count
+    nscount: u16,
+    /// Answer count/Prerequisite count
+    ancount: u16,
+    /// Query count/Zone count
+    qdcount: u16,
+
+    /// Response code
+    rcode: u4,
+    /// Checking disabled
+    cd: bool,
+    /// Authenticated data
+    ad: bool,
+    /// Reserved, must be zero
+    z: u1 = 0,
+    /// Recursion available
+    ra: bool,
+
+    /// Recursion desired
+    rd: bool,
+    /// Truncation
+    tc: bool,
+    /// Authoritative answer
+    aa: bool,
+    opcode: DnsOpcode,
+    qr: DnsQr,
+
+    id: u16,
+};
+
 pub const DnsResponse = struct {
     bytes: []const u8,
     bytes_index: u32,

@@ -14480,7 +14480,7 @@ fn lookupDns(
         if (options.family != fr.af) {
             var entropy: [2]u8 = undefined;
             random(t, &entropy);
-            const len = writeResolutionQuery(&query_buffers[nq], 0, lookup_canon_name, 1, fr.rr, entropy);
+            const len = try writeResolutionQuery(&query_buffers[nq], .query, lookup_canon_name, 1, fr.rr, @bitCast(entropy));
             queries_buffer[nq] = query_buffers[nq][0..len];
             nq += 1;
         }
@@ -14789,33 +14789,89 @@ fn lookupHostsReader(
 }
 
 /// Writes DNS resolution query packet data to `w`; at most 280 bytes.
-fn writeResolutionQuery(q: *[280]u8, op: u4, dname: []const u8, class: u8, ty: HostName.DnsRecord, entropy: [2]u8) usize {
+fn writeResolutionQuery(q: *[280]u8, op: HostName.DnsOpcode, dname: []const u8, class: u8, ty: HostName.DnsRecord, entropy: u16) !usize {
     // This implementation is ported from musl libc.
+    // https://git.musl-libc.org/cgit/musl/tree/src/network/res_mkquery.c?id=001c1afb0a08912a6fdc7c462c53e221de4bc9f1
     // A more idiomatic "ziggy" implementation would be welcome.
     var name = dname;
     if (std.mem.endsWith(u8, name, ".")) name.len -= 1;
-    assert(name.len <= 253);
+    if (std.mem.endsWith(u8, name, ".")) return error.UnknownHostName;
+
+    // [RFC 1035, Section 3.1](https://datatracker.ietf.org/doc/html/rfc1035#section-3.1)
+    // Each label is represented as a one octet length field followed by that
+    // number of octets. Since every domain name ends with the null label of
+    // the root, a domain name is terminated by a length byte of zero.
+    // The total length of a domain name (i.e., label octets and label length
+    // octets) is restricted to 255 octets or less.
+
+    // The string representation is two bytes smaller so the maximum is 253.
+    //  www.example.com
+    // 3www7example3com0
+    if (name.len > 253) return error.UnknownHostName;
     const n = 17 + name.len + @intFromBool(name.len != 0);
 
-    // Construct query template - ID will be filled later
-    q[0..2].* = entropy;
-    @memset(q[2..n], 0);
-    q[2] = @as(u8, op) * 8 + 1;
-    q[5] = 1;
-    @memcpy(q[13..][0..name.len], name);
-    var i: usize = 13;
-    var j: usize = undefined;
-    while (q[i] != 0) : (i = j + 1) {
-        j = i;
-        while (q[j] != 0 and q[j] != '.') : (j += 1) {}
-        // TODO determine the circumstances for this and whether or
-        // not this should be an error.
-        if (j - i - 1 > 62) unreachable;
-        q[i - 1] = @intCast(j - i);
+    var header: HostName.DnsHeader = .{
+        .id = entropy,
+        .qr = .query,
+        .opcode = op,
+        .aa = false,
+        .tc = false,
+        .rd = true,
+        .ra = false,
+        .ad = false,
+        .cd = false,
+        .rcode = 0,
+        .qdcount = 1,
+        .ancount = 0,
+        .nscount = 0,
+        .arcount = 0,
+    };
+    if (builtin.cpu.arch.endian() == .little) std.mem.byteSwapAllFields(HostName.DnsHeader, &header);
+    q[0..12].* = @bitCast(header);
+
+    @memset(q[13 + name.len .. n], 0);
+    q[n - 3] = @intFromEnum(ty);
+    q[n - 1] = class;
+
+    // Domain name is "."
+    if (name.len == 0) {
+        @branchHint(.unlikely);
+        q[12] = 0;
+        return n;
     }
-    q[i + 1] = @intFromEnum(ty);
-    q[i + 3] = class;
+
+    @memcpy(q[13..][0..name.len], name);
+    var i: usize = 12;
+    var it = std.mem.splitScalar(u8, name, '.');
+    while (it.next()) |label| : (i += label.len + 1) {
+        // [RFC 2181, Section 11](https://datatracker.ietf.org/doc/html/rfc2181#section-11)
+        // The length of any one label is limited to between 1 and 63 octets.
+        if (label.len == 0 or label.len > 63) return error.UnknownHostName;
+        q[i] = @intCast(label.len);
+    }
     return n;
+}
+
+test writeResolutionQuery {
+    const six_zeros: [6]u8 = @splat(0);
+    const many_o_dot_buf: [123][2]u8 = @splat(.{ 'o', '.' });
+    const many_o_dot: []const u8 = @ptrCast(&many_o_dot_buf);
+    const many_one_o_buf: [123][2]u8 = @splat(.{ 1, 'o' });
+    const many_one_o: []const u8 = @ptrCast(&many_one_o_buf);
+    var q: [280]u8 = undefined;
+
+    try std.testing.expectEqualSlices(u8, "\x21\x34\x01\x00\x00\x01" ++ six_zeros ++ "\x03www\x07example\x03com\x00" ++ "\x00\x01\x00\x01", q[0..try writeResolutionQuery(&q, .query, "www.example.com", 1, .A, 0x2134)]);
+    try std.testing.expectEqualSlices(u8, "\x56\x87\x01\x00\x00\x01" ++ six_zeros ++ "\x04test\x00" ++ "\x00\x01\x00\x01", q[0..try writeResolutionQuery(&q, .query, "test", 1, .A, 0x5687)]);
+    try std.testing.expectEqualSlices(u8, "\x00\x00\x01\x00\x00\x01" ++ six_zeros ++ "\x04test\x00" ++ "\x00\x01\x00\x01", q[0..try writeResolutionQuery(&q, .query, "test.", 1, .A, 0)]);
+    try std.testing.expectEqualSlices(u8, "\x00\x00\x01\x00\x00\x01" ++ six_zeros ++ "\x00" ++ "\x00\x1c\x00\x01", q[0..try writeResolutionQuery(&q, .query, "", 1, .AAAA, 0)]);
+    try std.testing.expectEqualSlices(u8, "\x00\x00\x01\x00\x00\x01" ++ six_zeros ++ "\x00" ++ "\x00\x01\x00\x01", q[0..try writeResolutionQuery(&q, .query, ".", 1, .A, 0)]);
+    try std.testing.expectEqualSlices(u8, "\x21\x34\x01\x00\x00\x01" ++ six_zeros ++ many_one_o ++ "\x07example\x00" ++ "\x00\x01\x00\x01", q[0..try writeResolutionQuery(&q, .query, many_o_dot ++ "example", 1, .A, 0x2134)]);
+    try std.testing.expectEqualSlices(u8, "\x00\x00\x01\x00\x00\x01" ++ six_zeros ++ "\x3f" ++ @as([63]u8, @splat('a')) ++ "\x00" ++ "\x00\x01\x00\x01", q[0..try writeResolutionQuery(&q, .query, &@as([63]u8, @splat('a')), 1, .A, 0)]);
+
+    try std.testing.expectError(error.UnknownHostName, writeResolutionQuery(&q, .query, many_o_dot ++ "internal", 1, .A, 0));
+    try std.testing.expectError(error.UnknownHostName, writeResolutionQuery(&q, .query, "www..com", 1, .A, 0));
+    try std.testing.expectError(error.UnknownHostName, writeResolutionQuery(&q, .query, ".com", 1, .A, 0));
+    try std.testing.expectError(error.UnknownHostName, writeResolutionQuery(&q, .query, @as([64]u8, @splat('a')) ++ ".test", 1, .A, 0));
 }
 
 const LookupDnsWindows = struct {
