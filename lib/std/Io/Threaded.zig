@@ -14416,8 +14416,9 @@ fn lookupDnsSearch(
     options: HostName.LookupOptions,
 ) (HostName.LookupError || Io.QueueClosedError)!void {
     const t_io = io(t);
-    var rc = HostName.ResolvConf.init(t.allocator, t_io) catch return error.ResolvConfParseFailed;
+    var rc: HostName.ResolvConf = .init(t.allocator);
     defer rc.deinit();
+    rc.parseFromAbsolutePath(t_io, "/etc/resolv.conf") catch return error.ResolvConfParseFailed;
 
     var canon_name = host_name.bytes;
 
