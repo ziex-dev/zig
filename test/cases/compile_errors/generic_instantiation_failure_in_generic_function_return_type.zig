@@ -9,7 +9,7 @@ fn sliceAsBytes(slice: anytype) isPtrTo(.array)(@TypeOf(slice)) {}
 
 pub const TraitFn = fn (type) bool;
 
-pub fn isPtrTo(comptime id: std.builtin.TypeId) TraitFn {
+pub fn isPtrTo(comptime id: std.lang.TypeId) TraitFn {
     const Closure = struct {
         pub fn trait(comptime T: type) bool {
             if (!comptime isSingleItemPtr(T)) return false;
@@ -26,7 +26,7 @@ pub fn isSingleItemPtr(comptime T: type) bool {
     return false;
 }
 
-pub fn is(comptime id: std.builtin.TypeId) TraitFn {
+pub fn is(comptime id: std.lang.TypeId) TraitFn {
     const Closure = struct {
         pub fn trait(comptime T: type) bool {
             return id == @typeInfo(T);

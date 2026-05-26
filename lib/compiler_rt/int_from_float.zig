@@ -96,7 +96,7 @@ pub inline fn intFromFloat(comptime I: type, a: anytype) I {
     return result;
 }
 
-pub inline fn bigIntFromFloat(comptime signedness: std.builtin.Signedness, result: []u32, a: anytype) void {
+pub inline fn bigIntFromFloat(comptime signedness: std.lang.Signedness, result: []u32, a: anytype) void {
     switch (result.len) {
         0 => return,
         inline 1...4 => |limbs_len| {

@@ -147,7 +147,7 @@ pub fn resolveAddressesDwarf(
     cov: *Coverage,
     gpa: Allocator,
     io: Io,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
     /// Asserts the addresses are in ascending order.
     sorted_pc_addrs: []const u64,
     /// Asserts its length equals length of `sorted_pc_addrs`.

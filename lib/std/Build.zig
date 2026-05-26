@@ -692,7 +692,7 @@ pub const ExecutableOptions = struct {
     name: []const u8,
     root_module: *Module,
     version: ?std.SemanticVersion = null,
-    linkage: ?std.builtin.LinkMode = null,
+    linkage: ?std.lang.LinkMode = null,
     max_rss: u64 = 0,
     use_llvm: ?bool = null,
     use_lld: ?bool = null,
@@ -742,7 +742,7 @@ pub fn addObject(b: *Build, options: ObjectOptions) *Step.Compile {
 }
 
 pub const LibraryOptions = struct {
-    linkage: std.builtin.LinkMode = .static,
+    linkage: std.lang.LinkMode = .static,
     name: []const u8,
     root_module: *Module,
     version: ?std.SemanticVersion = null,
@@ -819,7 +819,7 @@ pub const AssemblyOptions = struct {
     /// To choose the same computer as the one building the package, pass the
     /// `host` field of the package's `Build` instance.
     target: ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.OptimizeMode,
     max_rss: u64 = 0,
     zig_lib_dir: ?LazyPath = null,
 };
@@ -1324,10 +1324,10 @@ pub fn step(b: *Build, name: []const u8, description: []const u8) *Step {
 }
 
 pub const StandardOptimizeOptionOptions = struct {
-    preferred_optimize_mode: ?std.builtin.OptimizeMode = null,
+    preferred_optimize_mode: ?std.lang.OptimizeMode = null,
 };
 
-pub fn standardOptimizeOption(b: *Build, options: StandardOptimizeOptionOptions) std.builtin.OptimizeMode {
+pub fn standardOptimizeOption(b: *Build, options: StandardOptimizeOptionOptions) std.lang.OptimizeMode {
     const graph = b.graph;
 
     if (options.preferred_optimize_mode) |mode| {
@@ -1339,7 +1339,7 @@ pub fn standardOptimizeOption(b: *Build, options: StandardOptimizeOptionOptions)
     }
 
     if (b.option(
-        std.builtin.OptimizeMode,
+        std.lang.OptimizeMode,
         "optimize",
         "Prioritize performance, safety, or binary size",
     )) |mode| {

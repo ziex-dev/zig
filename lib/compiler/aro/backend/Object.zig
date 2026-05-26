@@ -47,7 +47,7 @@ pub fn declareSymbol(
     obj: *Object,
     section: Section,
     name: ?[]const u8,
-    linkage: std.builtin.GlobalLinkage,
+    linkage: std.lang.GlobalLinkage,
     @"type": SymbolType,
     offset: u64,
     size: u64,

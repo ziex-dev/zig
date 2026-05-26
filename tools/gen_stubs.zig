@@ -536,7 +536,7 @@ pub fn main(init: std.process.Init) !void {
     try stdout.flush();
 }
 
-fn parseElf(parse: Parse, comptime is_64: bool, comptime endian: std.builtin.Endian) !void {
+fn parseElf(parse: Parse, comptime is_64: bool, comptime endian: std.lang.Endian) !void {
     const arena = parse.arena;
     const elf_bytes = parse.elf_bytes;
     const header = parse.header;

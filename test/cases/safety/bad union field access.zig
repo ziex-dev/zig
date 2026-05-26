@@ -1,7 +1,6 @@
 const std = @import("std");
 
-pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-    _ = stack_trace;
+pub fn panic(message: []const u8, _: ?*std.lang.StackTrace, _: ?usize) noreturn {
     if (std.mem.eql(u8, message, "access of union field 'float' while field 'int' is active")) {
         std.process.exit(0);
     }
@@ -22,6 +21,7 @@ pub fn main() !void {
 fn bar(f: *Foo) void {
     f.float = 12.34;
 }
+
 // run
 // backend=selfhosted,llvm
 // target=x86_64-linux

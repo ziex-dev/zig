@@ -4927,7 +4927,7 @@ fn cmdBuild(
     var override_global_cache_dir: ?[]const u8 = EnvVar.ZIG_GLOBAL_CACHE_DIR.get(environ_map);
     var override_local_cache_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_CACHE_DIR.get(environ_map);
     var override_pkg_dir: ?[]const u8 = EnvVar.ZIG_LOCAL_PKG_DIR.get(environ_map);
-    var maker_optimize_mode: std.builtin.OptimizeMode = if (EnvVar.ZIG_DEBUG_CMD.isSet(environ_map))
+    var maker_optimize_mode: std.lang.OptimizeMode = if (EnvVar.ZIG_DEBUG_CMD.isSet(environ_map))
         .Debug
     else
         .ReleaseSafe;
@@ -5788,7 +5788,7 @@ const MakeRunner = struct {
         thread_limit: usize,
         color: Color,
         reference_trace: ?u32,
-        optimize_mode: std.builtin.OptimizeMode,
+        optimize_mode: std.lang.OptimizeMode,
     };
 };
 

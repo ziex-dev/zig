@@ -846,7 +846,7 @@ pub const Step = extern struct {
             command,
             reactor,
 
-            pub fn init(wasi_exec_model: ?std.builtin.WasiExecModel) WasiExecModel {
+            pub fn init(wasi_exec_model: ?std.lang.WasiExecModel) WasiExecModel {
                 return switch (wasi_exec_model orelse return .default) {
                     .command => .command,
                     .reactor => .reactor,
@@ -858,14 +858,14 @@ pub const Step = extern struct {
             dynamic,
             default,
 
-            pub fn init(link_mode: ?std.builtin.LinkMode) Linkage {
+            pub fn init(link_mode: ?std.lang.LinkMode) Linkage {
                 return switch (link_mode orelse return .default) {
                     .static => .static,
                     .dynamic => .dynamic,
                 };
             }
 
-            pub fn unwrap(this: @This()) ?std.builtin.LinkMode {
+            pub fn unwrap(this: @This()) ?std.lang.LinkMode {
                 return switch (this) {
                     .static => .static,
                     .dynamic => .dynamic,
@@ -887,7 +887,7 @@ pub const Step = extern struct {
                 };
             }
 
-            pub fn toOutputMode(kind: Kind) std.builtin.OutputMode {
+            pub fn toOutputMode(kind: Kind) std.lang.OutputMode {
                 return switch (kind) {
                     .exe, .@"test" => .Exe,
                     .lib => .Lib,
@@ -1612,7 +1612,7 @@ pub const Module = struct {
         small,
         default,
 
-        pub fn init(o: ?std.builtin.OptimizeMode) Optimize {
+        pub fn init(o: ?std.lang.OptimizeMode) Optimize {
             return switch (o orelse return .default) {
                 .Debug => .debug,
                 .ReleaseSafe => .safe,
@@ -1628,7 +1628,7 @@ pub const Module = struct {
         async,
         default,
 
-        pub fn init(ut: ?std.builtin.UnwindTables) UnwindTables {
+        pub fn init(ut: ?std.lang.UnwindTables) UnwindTables {
             return switch (ut orelse return .default) {
                 .none => .none,
                 .sync => .sync,
@@ -1684,7 +1684,7 @@ pub const Module = struct {
         sanitize_c: SanitizeC,
         sanitize_thread: DefaultingBool,
         fuzz: DefaultingBool,
-        code_model: std.builtin.CodeModel,
+        code_model: std.lang.CodeModel,
         c_macros: bool,
         include_dirs: bool,
         lib_paths: bool,
@@ -2000,7 +2000,7 @@ pub const SystemLib = struct {
         force,
     };
 
-    pub const LinkMode = std.builtin.LinkMode;
+    pub const LinkMode = std.lang.LinkMode;
 
     pub const Flags = packed struct(u32) {
         needed: bool,

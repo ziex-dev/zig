@@ -15,7 +15,7 @@ root_source_file: ?LazyPath,
 import_table: std.StringArrayHashMapUnmanaged(*Module),
 
 resolved_target: ?std.Build.ResolvedTarget = null,
-optimize: ?std.builtin.OptimizeMode = null,
+optimize: ?std.lang.OptimizeMode = null,
 dwarf_format: ?std.dwarf.Format,
 
 c_macros: ArrayList([]const u8),
@@ -26,14 +26,14 @@ frameworks: std.StringArrayHashMapUnmanaged(LinkFrameworkOptions),
 link_objects: ArrayList(LinkObject),
 
 strip: ?bool,
-unwind_tables: ?std.builtin.UnwindTables,
+unwind_tables: ?std.lang.UnwindTables,
 single_threaded: ?bool,
 stack_protector: ?bool,
 stack_check: ?bool,
 sanitize_c: ?std.zig.SanitizeC,
 sanitize_thread: ?bool,
 fuzz: ?bool,
-code_model: std.builtin.CodeModel,
+code_model: std.lang.CodeModel,
 valgrind: ?bool,
 pic: ?bool,
 red_zone: ?bool,
@@ -70,7 +70,7 @@ pub const SystemLib = struct {
     needed: bool,
     weak: bool,
     use_pkg_config: UsePkgConfig,
-    preferred_link_mode: std.builtin.LinkMode,
+    preferred_link_mode: std.lang.LinkMode,
     search_strategy: SystemLib.SearchStrategy,
 
     pub const UsePkgConfig = std.Build.Configuration.SystemLib.UsePkgConfig;
@@ -199,7 +199,7 @@ pub const CreateOptions = struct {
     imports: []const Import = &.{},
 
     target: ?std.Build.ResolvedTarget = null,
-    optimize: ?std.builtin.OptimizeMode = null,
+    optimize: ?std.lang.OptimizeMode = null,
 
     /// `true` requires a compilation that includes this Module to link libc.
     /// `false` causes a build failure if a compilation that includes this Module would link libc.
@@ -211,9 +211,9 @@ pub const CreateOptions = struct {
     link_libcpp: ?bool = null,
     single_threaded: ?bool = null,
     strip: ?bool = null,
-    unwind_tables: ?std.builtin.UnwindTables = null,
+    unwind_tables: ?std.lang.UnwindTables = null,
     dwarf_format: ?std.dwarf.Format = null,
-    code_model: std.builtin.CodeModel = .default,
+    code_model: std.lang.CodeModel = .default,
     stack_protector: ?bool = null,
     stack_check: ?bool = null,
     sanitize_c: ?std.zig.SanitizeC = null,
@@ -333,7 +333,7 @@ pub const LinkSystemLibraryOptions = struct {
     /// priority given to later ones.
     weak: bool = false,
     use_pkg_config: SystemLib.UsePkgConfig = .yes,
-    preferred_link_mode: std.builtin.LinkMode = .dynamic,
+    preferred_link_mode: std.lang.LinkMode = .dynamic,
     search_strategy: SystemLib.SearchStrategy = .paths_first,
 };
 

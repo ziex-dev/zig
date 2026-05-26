@@ -1,5 +1,4 @@
 const Run = @This();
-const builtin = @import("builtin");
 
 const std = @import("std");
 const Io = std.Io;

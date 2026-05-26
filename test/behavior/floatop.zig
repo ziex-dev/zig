@@ -1558,7 +1558,7 @@ test "eval @setFloatMode at compile-time" {
 }
 
 fn fnWithFloatMode() f32 {
-    @setFloatMode(std.builtin.FloatMode.strict);
+    @setFloatMode(std.lang.FloatMode.strict);
     return 1234.0;
 }
 

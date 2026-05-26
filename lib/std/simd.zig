@@ -395,7 +395,7 @@ pub fn prefixScanWithFunc(
 /// Supports the same operations as the @reduce() builtin. Takes O(logN) to compute.
 /// The scan is not linear, which may affect floating point errors. This may affect the determinism of
 /// algorithms that use this function.
-pub fn prefixScan(comptime op: std.builtin.ReduceOp, comptime hop: isize, vec: anytype) @TypeOf(vec) {
+pub fn prefixScan(comptime op: std.lang.ReduceOp, comptime hop: isize, vec: anytype) @TypeOf(vec) {
     const VecType = @TypeOf(vec);
     const Child = std.meta.Child(VecType);
 

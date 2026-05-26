@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 const mem = std.mem;
-const OptimizeMode = std.builtin.OptimizeMode;
+const OptimizeMode = std.lang.OptimizeMode;
 const Step = std.Build.Step;
 
 // Cases
@@ -19,9 +19,9 @@ pub const LlvmIrContext = @import("src/LlvmIr.zig");
 pub const LibcContext = @import("src/Libc.zig");
 
 const ModuleTestTarget = struct {
-    linkage: ?std.builtin.LinkMode = null,
+    linkage: ?std.lang.LinkMode = null,
     target: std.Target.Query = .{},
-    optimize_mode: std.builtin.OptimizeMode = .Debug,
+    optimize_mode: std.lang.OptimizeMode = .Debug,
     link_libc: ?bool = null,
     single_threaded: ?bool = null,
     use_llvm: ?bool = null,

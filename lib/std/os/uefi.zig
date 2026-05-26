@@ -70,7 +70,7 @@ pub const EventType = packed struct(u32) {
 };
 
 /// The calling convention used for all external functions part of the UEFI API.
-pub const cc: std.builtin.CallingConvention = switch (@import("builtin").target.cpu.arch) {
+pub const cc: std.lang.CallingConvention = switch (@import("builtin").target.cpu.arch) {
     .x86_64 => .{ .x86_64_win = .{} },
     else => .c,
 };

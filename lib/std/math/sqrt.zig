@@ -1,7 +1,7 @@
 const std = @import("../std.zig");
 const math = std.math;
 const expect = std.testing.expect;
-const TypeId = std.builtin.TypeId;
+const TypeId = std.lang.TypeId;
 const maxInt = std.math.maxInt;
 
 /// Returns the square root of x.

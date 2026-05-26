@@ -3,7 +3,7 @@
 
 const std = @import("../std.zig");
 const assert = std.debug.assert;
-const Endian = std.builtin.Endian;
+const Endian = std.lang.Endian;
 const Order = std.math.Order;
 
 /// Compares two arrays in constant time (for a given length) and returns whether they are equal.

@@ -670,7 +670,7 @@ pub fn MultiArrayList(comptime T: type) type {
         const Entry = entry: {
             var entry_field_names: [field_names.len][]const u8 = undefined;
             var entry_field_types: [field_names.len]type = undefined;
-            var entry_field_attrs: [field_names.len]std.builtin.Type.Struct.FieldAttributes = undefined;
+            var entry_field_attrs: [field_names.len]std.lang.Type.Struct.FieldAttributes = undefined;
             for (sizes.fields, &entry_field_names, &entry_field_types, &entry_field_attrs) |i, *name, *Type, *attrs| {
                 name.* = field_names[i] ++ "_ptr";
                 Type.* = *field_types[i];

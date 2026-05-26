@@ -25,7 +25,7 @@ test "@src" {
 
 test "@src used as a comptime parameter" {
     const S = struct {
-        fn Foo(comptime src: std.builtin.SourceLocation) type {
+        fn Foo(comptime src: std.lang.SourceLocation) type {
             return struct {
                 comptime {
                     _ = src;

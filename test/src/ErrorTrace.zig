@@ -127,5 +127,5 @@ const ErrorTrace = @This();
 const std = @import("std");
 const builtin = @import("builtin");
 const Step = std.Build.Step;
-const OptimizeMode = std.builtin.OptimizeMode;
+const OptimizeMode = std.lang.OptimizeMode;
 const mem = std.mem;

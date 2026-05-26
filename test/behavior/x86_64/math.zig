@@ -34,7 +34,7 @@ pub fn ChangeScalar(comptime Type: type, comptime NewScalar: type) type {
         .vector => |vector| @Vector(vector.len, NewScalar),
     };
 }
-pub fn AsSignedness(comptime Type: type, comptime signedness: std.builtin.Signedness) type {
+pub fn AsSignedness(comptime Type: type, comptime signedness: std.lang.Signedness) type {
     return switch (@typeInfo(Scalar(Type))) {
         .int => |int| ChangeScalar(Type, @Int(signedness, int.bits)),
         .float => Type,

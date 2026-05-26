@@ -207,7 +207,7 @@ test "variadic functions" {
             vprintf(buffer, format, &ap);
         }
 
-        fn vprintf(buffer: [*]u8, format: [*:0]const u8, ap: *std.builtin.VaList) callconv(.c) void {
+        fn vprintf(buffer: [*]u8, format: [*:0]const u8, ap: *std.lang.VaList) callconv(.c) void {
             var i: usize = 0;
             for (format[0..3]) |byte| switch (byte) {
                 's' => {

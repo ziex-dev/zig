@@ -1,14 +1,10 @@
 const std = @import("std");
-
-pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, ra: ?usize) noreturn {
-    _ = stack_trace;
-    _ = ra;
+pub fn panic(message: []const u8, _: ?*std.lang.StackTrace, _: ?usize) noreturn {
     if (std.mem.eql(u8, message, "attempt to use null value")) {
         std.process.exit(0);
     }
     std.process.exit(1);
 }
-
 pub fn main() !void {
     foo() catch |err| switch (err) {};
     return error.TestFailed;

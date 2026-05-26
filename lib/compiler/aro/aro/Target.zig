@@ -934,7 +934,7 @@ pub fn defaultFpEvalMethod(target: *const Target) LangOpts.FPEvalMethod {
 }
 
 /// Value of the `-m` flag for `ld` for this target
-pub fn ldEmulationOption(target: *const Target, arm_endianness: ?std.builtin.Endian) ?[]const u8 {
+pub fn ldEmulationOption(target: *const Target, arm_endianness: ?std.lang.Endian) ?[]const u8 {
     return switch (target.cpu.arch) {
         .arm,
         .armeb,
@@ -1558,7 +1558,7 @@ pub fn ptrBitWidth(target: *const Target) u16 {
     return std.Target.ptrBitWidth_cpu_abi(target.cpu, target.abi);
 }
 
-pub fn cCharSignedness(target: *const Target) std.builtin.Signedness {
+pub fn cCharSignedness(target: *const Target) std.lang.Signedness {
     return target.toZigTarget().cCharSignedness();
 }
 

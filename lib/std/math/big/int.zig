@@ -13,8 +13,8 @@ const mem = std.mem;
 const maxInt = std.math.maxInt;
 const minInt = std.math.minInt;
 const assert = std.debug.assert;
-const Endian = std.builtin.Endian;
-const Signedness = std.builtin.Signedness;
+const Endian = std.lang.Endian;
+const Signedness = std.lang.Signedness;
 const native_endian = builtin.cpu.arch.endian();
 
 // Comptime-computed constants for supported bases (2 - 36)
@@ -2193,7 +2193,7 @@ pub const Const = struct {
 
     /// Returns the number of bits required to represent the integer in twos-complement form
     /// with the given signedness.
-    pub fn bitCountTwosCompForSignedness(self: Const, signedness: std.builtin.Signedness) usize {
+    pub fn bitCountTwosCompForSignedness(self: Const, signedness: std.lang.Signedness) usize {
         return self.bitCountTwosComp() + @intFromBool(self.positive and signedness == .signed);
     }
 

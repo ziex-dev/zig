@@ -576,7 +576,7 @@ const FuzzTestRunner = struct {
             assert(instance.message.items.len >= @sizeOf(InHeader));
             const header_ptr: *InHeader = @ptrCast(instance.message.items);
             var header = header_ptr.*;
-            if (std.builtin.Endian.native != .little) {
+            if (std.lang.Endian.native != .little) {
                 std.mem.byteSwapAllFields(InHeader, &header);
             }
             return header;
@@ -1027,7 +1027,7 @@ const FuzzTestRunner = struct {
             .tag = .new_fuzz_input,
             .bytes_len = @intCast(bytes.len),
         };
-        if (std.builtin.Endian.native != .little) {
+        if (std.lang.Endian.native != .little) {
             std.mem.byteSwapAllFields(OutHeader, &out_header);
         }
         try f.broadcast.ensureTotalCapacity(gpa, @sizeOf(OutHeader) + bytes.len);

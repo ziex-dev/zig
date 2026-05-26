@@ -289,7 +289,7 @@ fn printEnum(
     options: *Options,
     out: *std.ArrayList(u8),
     comptime T: type,
-    comptime val: std.builtin.Type.Enum,
+    comptime val: std.lang.Type.Enum,
     indent: u8,
 ) !void {
     const gpa = options.step.owner.allocator;
@@ -319,7 +319,7 @@ fn printStruct(
     options: *Options,
     out: *std.ArrayList(u8),
     comptime T: type,
-    comptime val: std.builtin.Type.Struct,
+    comptime val: std.lang.Type.Struct,
     indent: u8,
 ) !void {
     const gpa = options.step.owner.allocator;
@@ -382,7 +382,7 @@ fn printStruct(
 fn printStructValue(
     options: *Options,
     out: *std.ArrayList(u8),
-    comptime struct_val: std.builtin.Type.Struct,
+    comptime struct_val: std.lang.Type.Struct,
     val: anytype,
     indent: u8,
 ) !void {

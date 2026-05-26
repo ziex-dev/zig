@@ -768,7 +768,7 @@ pub const Insn = packed struct {
         };
     }
 
-    fn endian_swap(endian: std.builtin.Endian, comptime size: Size, dst: Reg) Insn {
+    fn endian_swap(endian: std.lang.Endian, comptime size: Size, dst: Reg) Insn {
         return Insn{
             .code = switch (endian) {
                 .big => 0xdc,

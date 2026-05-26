@@ -16386,7 +16386,7 @@ fn zirTypeInfo(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Ai
 
             const enum_mode_ty = try sema.getStdLangType(src, .@"Type.Enum.Mode");
 
-            const enum_mode_tag: std.builtin.Type.Enum.Mode = if (enum_obj.nonexhaustive) .nonexhaustive else .exhaustive;
+            const enum_mode_tag: std.lang.Type.Enum.Mode = if (enum_obj.nonexhaustive) .nonexhaustive else .exhaustive;
 
             const enum_mode: Value = try sema.uninterpretStdLangType(enum_mode_tag, enum_mode_ty);
 

@@ -1,13 +1,10 @@
 const std = @import("std");
-
-pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-    _ = stack_trace;
+pub fn panic(message: []const u8, _: ?*std.lang.StackTrace, _: ?usize) noreturn {
     if (std.mem.eql(u8, message, "cast causes pointer to be null")) {
         std.process.exit(0);
     }
     std.process.exit(1);
 }
-
 pub fn main() !void {
     var c_ptr: [*c]u8 = 0;
     _ = &c_ptr;
@@ -15,7 +12,6 @@ pub fn main() !void {
     _ = zig_ptr;
     return error.TestFailed;
 }
-
 // run
 // backend=selfhosted,llvm
 // target=x86_64-linux,aarch64-linux

@@ -49,7 +49,7 @@ fn testInner(comptime T: type, comptime u: T, comptime maybe_defined: T) void {
         else => unreachable,
     };
 
-    const mode: std.builtin.FloatMode = switch (@typeInfo(Scalar)) {
+    const mode: std.lang.FloatMode = switch (@typeInfo(Scalar)) {
         .float => .optimized,
         .int => .strict, // it shouldn't matter
         else => unreachable,

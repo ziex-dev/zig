@@ -710,7 +710,7 @@ pub inline fn readSliceEndian(
     r: *Reader,
     comptime Elem: type,
     buffer: []Elem,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
 ) Error!void {
     try readSliceAll(r, @ptrCast(buffer));
     if (native_endian != endian) for (buffer) |*elem| std.mem.byteSwapAllFields(Elem, elem);
@@ -725,7 +725,7 @@ pub inline fn readSliceEndianAlloc(
     allocator: Allocator,
     comptime Elem: type,
     len: usize,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
 ) ReadAllocError![]Elem {
     const dest = try allocator.alloc(Elem, len);
     errdefer allocator.free(dest);
@@ -1165,19 +1165,19 @@ pub fn takeByteSigned(r: *Reader) Error!i8 {
 }
 
 /// Asserts the buffer was initialized with a capacity at least `@bitSizeOf(T) / 8`.
-pub inline fn takeInt(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+pub inline fn takeInt(r: *Reader, comptime T: type, endian: std.lang.Endian) Error!T {
     const n = @divExact(@typeInfo(T).int.bits, 8);
     return std.mem.readInt(T, try r.takeArray(n), endian);
 }
 
 /// Asserts the buffer was initialized with a capacity at least `@bitSizeOf(T) / 8`.
-pub inline fn peekInt(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+pub inline fn peekInt(r: *Reader, comptime T: type, endian: std.lang.Endian) Error!T {
     const n = @divExact(@typeInfo(T).int.bits, 8);
     return std.mem.readInt(T, try r.peekArray(n), endian);
 }
 
 /// Asserts the buffer was initialized with a capacity at least `n`.
-pub fn takeVarInt(r: *Reader, comptime Int: type, endian: std.builtin.Endian, n: usize) Error!Int {
+pub fn takeVarInt(r: *Reader, comptime Int: type, endian: std.lang.Endian, n: usize) Error!Int {
     assert(n <= @sizeOf(Int));
     return std.mem.readVarInt(Int, try r.take(n), endian);
 }
@@ -1216,7 +1216,7 @@ pub fn peekStructPointer(r: *Reader, comptime T: type) Error!*align(1) T {
 /// See also:
 /// * `takeStructPointer`
 /// * `peekStruct`
-pub inline fn takeStruct(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+pub inline fn takeStruct(r: *Reader, comptime T: type, endian: std.lang.Endian) Error!T {
     switch (@typeInfo(T)) {
         .@"struct" => |info| switch (info.layout) {
             .auto => @compileError("ill-defined memory layout"),
@@ -1242,7 +1242,7 @@ pub inline fn takeStruct(r: *Reader, comptime T: type, endian: std.builtin.Endia
 /// See also:
 /// * `takeStruct`
 /// * `peekStructPointer`
-pub inline fn peekStruct(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+pub inline fn peekStruct(r: *Reader, comptime T: type, endian: std.lang.Endian) Error!T {
     switch (@typeInfo(T)) {
         .@"struct" => |info| switch (info.layout) {
             .auto => @compileError("ill-defined memory layout"),
@@ -1266,7 +1266,7 @@ pub const TakeEnumError = Error || error{InvalidEnumTag};
 /// it. Otherwise, returns `error.InvalidEnumTag`.
 ///
 /// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
-pub fn takeEnum(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) TakeEnumError!Enum {
+pub fn takeEnum(r: *Reader, comptime Enum: type, endian: std.lang.Endian) TakeEnumError!Enum {
     const Tag = @typeInfo(Enum).@"enum".tag_type;
     const int = try r.takeInt(Tag, endian);
     return std.enums.fromInt(Enum, int) orelse return error.InvalidEnumTag;
@@ -1275,7 +1275,7 @@ pub fn takeEnum(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Tak
 /// Reads an integer with the same size as the given nonexhaustive enum's tag type.
 ///
 /// Asserts the buffer was initialized with a capacity at least `@sizeOf(Enum)`.
-pub fn takeEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.builtin.Endian) Error!Enum {
+pub fn takeEnumNonexhaustive(r: *Reader, comptime Enum: type, endian: std.lang.Endian) Error!Enum {
     const info = @typeInfo(Enum).@"enum";
     comptime assert(info.mode != .exhaustive);
     comptime assert(@bitSizeOf(info.tag_type) == @sizeOf(info.tag_type) * 8);

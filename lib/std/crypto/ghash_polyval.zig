@@ -22,7 +22,7 @@ pub const Ghash = Hash(.big, true);
 /// POLYVAL is typically used to compute the authentication tag in the AES-GCM-SIV construction.
 pub const Polyval = Hash(.little, false);
 
-fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
+fn Hash(comptime endian: std.lang.Endian, comptime shift_key: bool) type {
     return struct {
         const Self = @This();
 

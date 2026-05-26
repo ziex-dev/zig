@@ -16,7 +16,7 @@ fn add(
     test_step: *std.Build.Step,
     c_name: []const u8,
     cpp_name: []const u8,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.OptimizeMode,
 ) void {
     const target = b.graph.host;
 

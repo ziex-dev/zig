@@ -1,6 +1,6 @@
 const std = @import("std");
 const mem = std.mem;
-const ZigType = std.builtin.Type;
+const ZigType = std.lang.Type;
 const CallingConvention = @import("../backend.zig").CallingConvention;
 const Compilation = @import("Compilation.zig");
 const Diagnostics = @import("Diagnostics.zig");
@@ -1371,11 +1371,11 @@ fn applySelected(qt: QualType, p: *Parser) !QualType {
     } })).withQualifiers(qt);
 }
 
-pub fn visibilityFromString(s: []const u8) ?std.builtin.SymbolVisibility {
+pub fn visibilityFromString(s: []const u8) ?std.lang.SymbolVisibility {
     if (mem.eql(u8, s, "internal")) {
         return .hidden;
     }
-    const visibility = std.meta.stringToEnum(std.builtin.SymbolVisibility, s) orelse return null;
+    const visibility = std.meta.stringToEnum(std.lang.SymbolVisibility, s) orelse return null;
     // compiler will notify us if .internal is added as a visibility type
     switch (visibility) {
         .default, .hidden, .protected => {},

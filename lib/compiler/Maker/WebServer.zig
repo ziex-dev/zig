@@ -503,7 +503,7 @@ fn serveLibFile(
 fn serveClientWasm(
     ws: *WebServer,
     req: *http.Server.Request,
-    optimize_mode: std.builtin.OptimizeMode,
+    optimize_mode: std.lang.OptimizeMode,
 ) !void {
     const gpa = ws.maker.gpa;
 
@@ -576,7 +576,7 @@ pub fn serveTarFile(ws: *WebServer, request: *http.Server.Request, paths: []cons
     try response.end();
 }
 
-fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.builtin.OptimizeMode) !Cache.Path {
+fn buildClientWasm(ws: *WebServer, arena: Allocator, optimize: std.lang.OptimizeMode) !Cache.Path {
     const root_name = "build-web";
     const arch_os_abi = "wasm32-freestanding";
     const cpu_features = "baseline+atomics+bulk_memory+multivalue+mutable_globals+nontrapping_fptoint+reference_types+sign_ext";

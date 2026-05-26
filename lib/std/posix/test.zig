@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 const native_os = builtin.target.os.tag;
-const AtomicRmwOp = std.builtin.AtomicRmwOp;
-const AtomicOrder = std.builtin.AtomicOrder;
+const AtomicRmwOp = std.lang.AtomicRmwOp;
+const AtomicOrder = std.lang.AtomicOrder;
 
 const std = @import("../std.zig");
 const Io = std.Io;

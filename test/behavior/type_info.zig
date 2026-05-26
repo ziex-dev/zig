@@ -2,8 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const mem = std.mem;
 
-const Type = std.builtin.Type;
-const TypeId = std.builtin.TypeId;
+const Type = std.lang.Type;
+const TypeId = std.lang.TypeId;
 
 const assert = std.debug.assert;
 const expect = std.testing.expect;

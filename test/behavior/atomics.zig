@@ -231,7 +231,7 @@ fn testAtomicRmwInts() !void {
     }
 }
 
-fn testAtomicRmwInt(comptime signedness: std.builtin.Signedness, comptime N: usize) !void {
+fn testAtomicRmwInt(comptime signedness: std.lang.Signedness, comptime N: usize) !void {
     const int = @Int(signedness, N);
 
     var x: int = 1;
@@ -292,7 +292,7 @@ test "atomicrmw with 128-bit ints" {
     try comptime testAtomicRmwInt128(.unsigned);
 }
 
-fn testAtomicRmwInt128(comptime signedness: std.builtin.Signedness) !void {
+fn testAtomicRmwInt128(comptime signedness: std.lang.Signedness) !void {
     const uint = @Int(.unsigned, 128);
     const int = @Int(signedness, 128);
 

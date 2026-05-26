@@ -215,7 +215,7 @@ pub const Suffix = enum {
         };
     }
 
-    pub fn signedness(suffix: Suffix) std.builtin.Signedness {
+    pub fn signedness(suffix: Suffix) std.lang.Signedness {
         return if (suffix.isSignedInteger()) .signed else .unsigned;
     }
 

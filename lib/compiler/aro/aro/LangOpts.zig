@@ -138,7 +138,7 @@ allow_half_args_and_returns: bool = false,
 /// null indicates that the user did not select a value, use target to determine default
 fp_eval_method: ?FPEvalMethod = null,
 /// If set, use specified signedness for `char` instead of the target's default char signedness
-char_signedness_override: ?std.builtin.Signedness = null,
+char_signedness_override: ?std.lang.Signedness = null,
 /// If set, override the default availability of char8_t (by default, enabled in C23 and later; disabled otherwise)
 has_char8_t_override: ?bool = null,
 
@@ -157,7 +157,7 @@ gnuc_version: ?u32 = null,
 
 bounds_safety: BoundsSafety = .none,
 
-default_symbol_visibility: std.builtin.SymbolVisibility = .default,
+default_symbol_visibility: std.lang.SymbolVisibility = .default,
 
 pub fn setStandard(self: *LangOpts, name: []const u8) error{InvalidStandard}!void {
     self.standard = Standard.NameMap.get(name) orelse return error.InvalidStandard;
@@ -185,6 +185,6 @@ pub fn setFpEvalMethod(self: *LangOpts, fp_eval_method: FPEvalMethod) void {
     self.fp_eval_method = fp_eval_method;
 }
 
-pub fn setCharSignedness(self: *LangOpts, signedness: std.builtin.Signedness) void {
+pub fn setCharSignedness(self: *LangOpts, signedness: std.lang.Signedness) void {
     self.char_signedness_override = signedness;
 }

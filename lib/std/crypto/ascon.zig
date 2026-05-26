@@ -23,7 +23,7 @@ const native_endian = builtin.cpu.arch.endian();
 /// The original NIST submission (v1.2) serializes these words as big-endian,
 /// but NIST SP 800-232 switched to a little-endian representation.
 /// Software implementations are free to use native endianness with no security degradation.
-pub fn State(comptime endian: std.builtin.Endian) type {
+pub fn State(comptime endian: std.lang.Endian) type {
     return struct {
         const Self = @This();
 

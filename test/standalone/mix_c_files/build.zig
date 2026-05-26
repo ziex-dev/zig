@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
     add(b, test_step, .ReleaseSafe);
 }
 
-fn add(b: *std.Build, test_step: *std.Build.Step, optimize: std.builtin.OptimizeMode) void {
+fn add(b: *std.Build, test_step: *std.Build.Step, optimize: std.lang.OptimizeMode) void {
     const exe = b.addExecutable(.{
         .name = "test",
         .root_module = b.createModule(.{

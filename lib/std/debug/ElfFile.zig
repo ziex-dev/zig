@@ -4,7 +4,7 @@ const ElfFile = @This();
 
 const std = @import("std");
 const Io = std.Io;
-const Endian = std.builtin.Endian;
+const Endian = std.lang.Endian;
 const Dwarf = std.debug.Dwarf;
 const Allocator = std.mem.Allocator;
 const elf = std.elf;

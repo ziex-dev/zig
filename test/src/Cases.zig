@@ -48,8 +48,8 @@ pub const Case = struct {
     target: std.Build.ResolvedTarget,
     /// In order to be able to run e.g. Execution updates, this must be set
     /// to Executable.
-    output_mode: std.builtin.OutputMode,
-    optimize_mode: std.builtin.OptimizeMode = .Debug,
+    output_mode: std.lang.OutputMode,
+    optimize_mode: std.lang.OptimizeMode = .Debug,
 
     files: std.array_list.Managed(File),
     case: ?union(enum) {
@@ -360,7 +360,7 @@ fn addFromDirInner(
         const targets = try manifest.getConfigForKeyAlloc(ctx.arena, "target", std.Target.Query);
         const is_test = try manifest.getConfigForKeyAssertSingle("is_test", bool);
         const link_libc = try manifest.getConfigForKeyAssertSingle("link_libc", bool);
-        const output_mode = try manifest.getConfigForKeyAssertSingle("output_mode", std.builtin.OutputMode);
+        const output_mode = try manifest.getConfigForKeyAssertSingle("output_mode", std.lang.OutputMode);
         const pic = try manifest.getConfigForKeyAssertSingle("pic", ?bool);
         const pie = try manifest.getConfigForKeyAssertSingle("pie", ?bool);
         const emit_asm = try manifest.getConfigForKeyAssertSingle("emit_asm", bool);

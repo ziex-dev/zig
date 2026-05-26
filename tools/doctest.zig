@@ -843,11 +843,11 @@ fn writeEscapedLines(out: *Writer, text: []const u8) !void {
 
 const Code = struct {
     id: Id,
-    mode: std.builtin.OptimizeMode,
+    mode: std.lang.OptimizeMode,
     link_objects: []const []const u8,
     target_str: ?[]const u8,
     link_libc: bool,
-    link_mode: ?std.builtin.LinkMode,
+    link_mode: ?std.lang.LinkMode,
     disable_cache: bool,
     just_check_syntax: bool,
     additional_options: []const []const u8,
@@ -903,8 +903,8 @@ fn parseManifest(arena: Allocator, source_bytes: []const u8) !Code {
     else
         fatal("unrecognized manifest id: '{s}'", .{first_line});
 
-    var mode: std.builtin.OptimizeMode = .Debug;
-    var link_mode: ?std.builtin.LinkMode = null;
+    var mode: std.lang.OptimizeMode = .Debug;
+    var link_mode: ?std.lang.LinkMode = null;
     var link_objects: std.ArrayList([]const u8) = .empty;
     var additional_options: std.ArrayList([]const u8) = .empty;
     var target_str: ?[]const u8 = null;
@@ -915,10 +915,10 @@ fn parseManifest(arena: Allocator, source_bytes: []const u8) !Code {
     while (it.next()) |prefixed_line| {
         const line = skipPrefix(prefixed_line);
         if (mem.startsWith(u8, line, "optimize=")) {
-            mode = std.meta.stringToEnum(std.builtin.OptimizeMode, line["optimize=".len..]) orelse
+            mode = std.meta.stringToEnum(std.lang.OptimizeMode, line["optimize=".len..]) orelse
                 fatal("bad optimization mode line: '{s}'", .{line});
         } else if (mem.startsWith(u8, line, "link_mode=")) {
-            link_mode = std.meta.stringToEnum(std.builtin.LinkMode, line["link_mode=".len..]) orelse
+            link_mode = std.meta.stringToEnum(std.lang.LinkMode, line["link_mode=".len..]) orelse
                 fatal("bad link mode line: '{s}'", .{line});
         } else if (mem.startsWith(u8, line, "link_object=")) {
             try link_objects.append(arena, line["link_object=".len..]);

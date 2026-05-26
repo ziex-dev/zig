@@ -1,5 +1,5 @@
 //! This namespace is the default one used by the Zig compiler to emit various
-//! kinds of safety panics, due to the logic in `std.builtin.panic`.
+//! kinds of safety panics, due to the logic in `std.lang.panic`.
 //!
 //! Since Zig does not have interfaces, this file serves as an example template
 //! for users to provide their own alternative panic handling.

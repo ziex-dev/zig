@@ -3,7 +3,7 @@ const meta = std.meta;
 const testing = std.testing;
 const mem = std.mem;
 const assert = std.debug.assert;
-const Type = std.builtin.Type;
+const Type = std.lang.Type;
 
 /// This is useful for saving memory when allocating an object that has many
 /// optional components. The optional objects are allocated sequentially in
@@ -22,7 +22,7 @@ pub fn TrailerFlags(comptime Fields: type) type {
         pub const FieldValues = blk: {
             var field_names: [bit_count][]const u8 = undefined;
             var field_types: [bit_count]type = undefined;
-            var field_attrs: [bit_count]std.builtin.Type.Struct.FieldAttributes = undefined;
+            var field_attrs: [bit_count]std.lang.Type.Struct.FieldAttributes = undefined;
             const fields_info = @typeInfo(Fields).@"struct";
             for (
                 fields_info.field_names,

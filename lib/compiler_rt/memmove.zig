@@ -8,7 +8,7 @@ const Element = compiler_rt.PreferredLoadStoreElement;
 
 comptime {
     if (builtin.object_format != .c) {
-        const export_options: std.builtin.ExportOptions = .{
+        const export_options: std.lang.ExportOptions = .{
             .name = "memmove",
             .linkage = compiler_rt.linkage,
             .visibility = compiler_rt.visibility,

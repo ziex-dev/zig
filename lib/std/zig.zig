@@ -163,8 +163,8 @@ pub const BinNameOptions = struct {
     os_tag: std.Target.Os.Tag,
     ofmt: std.Target.ObjectFormat,
     abi: std.Target.Abi,
-    output_mode: std.builtin.OutputMode,
-    link_mode: ?std.builtin.LinkMode = null,
+    output_mode: std.lang.OutputMode,
+    link_mode: ?std.lang.LinkMode = null,
     version: ?std.SemanticVersion = null,
 };
 

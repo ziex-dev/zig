@@ -574,7 +574,7 @@ pub const QualType = packed struct(u32) {
         };
     }
 
-    pub fn signedness(qt: QualType, comp: *const Compilation) std.builtin.Signedness {
+    pub fn signedness(qt: QualType, comp: *const Compilation) std.lang.Signedness {
         return loop: switch (qt.base(comp).type) {
             .complex => |complex| continue :loop complex.base(comp).type,
             .atomic => |atomic| continue :loop atomic.base(comp).type,
@@ -1200,7 +1200,7 @@ pub const QualType = packed struct(u32) {
         return max_requested;
     }
 
-    pub fn linkage(qt: QualType, comp: *const Compilation) std.builtin.GlobalLinkage {
+    pub fn linkage(qt: QualType, comp: *const Compilation) std.lang.GlobalLinkage {
         if (qt.hasAttribute(comp, .internal_linkage)) return .internal;
         if (qt.hasAttribute(comp, .weak)) return .weak;
         if (qt.hasAttribute(comp, .selectany)) return .link_once;
@@ -1614,7 +1614,7 @@ pub const Type = union(enum) {
     pub const BitInt = struct {
         /// Must be >= 1 if unsigned and >= 2 if signed
         bits: u16,
-        signedness: std.builtin.Signedness,
+        signedness: std.lang.Signedness,
     };
 
     pub const Func = struct {

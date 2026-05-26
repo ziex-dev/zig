@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const Type = std.builtin.Type;
+const Type = std.lang.Type;
 const testing = std.testing;
 const assert = std.debug.assert;
 
@@ -196,11 +196,11 @@ test "Type.Enum" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
     const Foo = @Enum(u8, .exhaustive, &.{ "a", "b" }, &.{ 1, 5 });
-    try testing.expectEqual(std.builtin.Type.Enum.Mode.exhaustive, @typeInfo(Foo).@"enum".mode);
+    try testing.expectEqual(std.lang.Type.Enum.Mode.exhaustive, @typeInfo(Foo).@"enum".mode);
     try testing.expectEqual(@as(u8, 1), @intFromEnum(Foo.a));
     try testing.expectEqual(@as(u8, 5), @intFromEnum(Foo.b));
     const Bar = @Enum(u32, .nonexhaustive, &.{ "a", "b" }, &.{ 1, 5 });
-    try testing.expectEqual(std.builtin.Type.Enum.Mode.nonexhaustive, @typeInfo(Bar).@"enum".mode);
+    try testing.expectEqual(std.lang.Type.Enum.Mode.nonexhaustive, @typeInfo(Bar).@"enum".mode);
     try testing.expectEqual(@as(u32, 1), @intFromEnum(Bar.a));
     try testing.expectEqual(@as(u32, 5), @intFromEnum(Bar.b));
     try testing.expectEqual(@as(u32, 6), @intFromEnum(@as(Bar, @enumFromInt(6))));
@@ -419,7 +419,7 @@ test "undefined type value" {
 test "reify struct with zero fields through const arrays" {
     const names: [0][]const u8 = .{};
     const types: [0]type = .{};
-    const attrs: [0]std.builtin.Type.Struct.FieldAttributes = .{};
+    const attrs: [0]std.lang.Type.Struct.FieldAttributes = .{};
     const S = @Struct(.auto, null, &names, &types, &attrs);
     comptime assert(@typeInfo(S) == .@"struct");
     comptime assert(@typeInfo(S).@"struct".field_names.len == 0);

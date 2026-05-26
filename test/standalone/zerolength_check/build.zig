@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
     add(b, test_step, .ReleaseSafe);
 }
 
-fn add(b: *std.Build, test_step: *std.Build.Step, optimize: std.builtin.OptimizeMode) void {
+fn add(b: *std.Build, test_step: *std.Build.Step, optimize: std.lang.OptimizeMode) void {
     const unit_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = b.resolveTargetQuery(.{

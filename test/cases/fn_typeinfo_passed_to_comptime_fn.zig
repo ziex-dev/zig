@@ -8,7 +8,7 @@ fn someFn(arg: ?*c_int) f64 {
     _ = arg;
     return 8;
 }
-fn foo(comptime info: std.builtin.Type) !void {
+fn foo(comptime info: std.lang.Type) !void {
     try std.testing.expect(info.@"fn".param_types[0].? == ?*c_int);
 }
 

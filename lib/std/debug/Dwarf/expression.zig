@@ -39,7 +39,7 @@ pub const Options = struct {
     /// The address size of the target architecture
     addr_size: u8 = @sizeOf(usize),
     /// Endianness of the target architecture
-    endian: std.builtin.Endian = native_endian,
+    endian: std.lang.Endian = native_endian,
     /// Restrict the stack machine to a subset of opcodes used in call frame instructions
     call_frame_context: bool = false,
 };

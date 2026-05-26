@@ -12,7 +12,7 @@ const math = std.math;
 const mem = std.mem;
 const testing = std.testing;
 const assert = std.debug.assert;
-const Endian = std.builtin.Endian;
+const Endian = std.lang.Endian;
 
 // A Limb is a single digit in a big integer.
 const Limb = usize;

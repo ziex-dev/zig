@@ -4171,7 +4171,7 @@ pub const msghdr = switch (native_os) {
 ///     pad1: MuslOnlyPadding(.little) = 0,
 ///
 /// On 32-bit and non-musl systems, these fields will be zero sized, and ignored.
-fn MuslOnlyPadding(endian: std.builtin.Endian) type {
+fn MuslOnlyPadding(endian: std.lang.Endian) type {
     return if (builtin.abi.isMusl() and @sizeOf(usize) == 8 and native_endian == endian) u32 else u0;
 }
 

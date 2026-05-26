@@ -341,7 +341,7 @@ fn __atomic_compare_exchange_16(ptr: *u128, expected: *u128, desired: u128, succ
     return atomic_compare_exchange_N(u128, ptr, expected, desired, success, failure);
 }
 
-inline fn fetch_op_N(comptime T: type, comptime op: std.builtin.AtomicRmwOp, ptr: *T, val: T, model: i32) T {
+inline fn fetch_op_N(comptime T: type, comptime op: std.lang.AtomicRmwOp, ptr: *T, val: T, model: i32) T {
     _ = model;
     const Updater = struct {
         fn update(new: T, old: T) T {

@@ -150,7 +150,7 @@ embed_dirs: std.ArrayList([]const u8) = .empty,
 environment: Environment = .{},
 target: Target = .default,
 darwin_target_variant: ?Target = null,
-cmodel: std.builtin.CodeModel = .default,
+cmodel: std.lang.CodeModel = .default,
 
 code_gen_options: CodeGenOptions = .default,
 langopts: LangOpts = .{},
@@ -1195,7 +1195,7 @@ pub fn float80Type(comp: *const Compilation) ?QualType {
 }
 
 /// Smallest integer type with at least N bits
-pub fn intLeastN(comp: *const Compilation, bits: usize, signedness: std.builtin.Signedness) QualType {
+pub fn intLeastN(comp: *const Compilation, bits: usize, signedness: std.lang.Signedness) QualType {
     if (bits == 64 and (comp.target.os.tag.isDarwin() or comp.target.cpu.arch.isWasm())) {
         // WebAssembly and Darwin use `long long` for `int_least64_t` and `int_fast64_t`.
         return if (signedness == .signed) .long_long else .ulong_long;
@@ -1217,7 +1217,7 @@ fn generateFastOrLeastType(
     comp: *Compilation,
     bits: usize,
     kind: enum { least, fast },
-    signedness: std.builtin.Signedness,
+    signedness: std.lang.Signedness,
     w: *Io.Writer,
 ) !void {
     const ty = comp.intLeastN(bits, signedness); // defining the fast types as the least types is permitted
@@ -1449,7 +1449,7 @@ pub fn fixedEnumTagType(comp: *const Compilation) ?QualType {
     return null;
 }
 
-pub fn getCharSignedness(comp: *const Compilation) std.builtin.Signedness {
+pub fn getCharSignedness(comp: *const Compilation) std.lang.Signedness {
     return comp.langopts.char_signedness_override orelse comp.target.cCharSignedness();
 }
 

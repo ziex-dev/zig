@@ -3394,7 +3394,7 @@ test "big int conversion read/write twos complement" {
     var buffer1 = try testing.allocator.alloc(u8, 64);
     defer testing.allocator.free(buffer1);
 
-    const endians = [_]std.builtin.Endian{ .little, .big };
+    const endians = [_]std.lang.Endian{ .little, .big };
     const abi_size = 64;
 
     for (endians) |endian| {

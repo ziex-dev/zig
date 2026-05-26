@@ -10,7 +10,7 @@ const debug = std.debug;
 ///
 /// Important: the counter mode doesn't provide authenticated encryption: the ciphertext can be trivially modified without this being detected.
 /// As a result, applications should generally never use it directly, but only in a construction that includes a MAC.
-pub fn ctr(comptime BlockCipher: anytype, block_cipher: BlockCipher, dst: []u8, src: []const u8, iv: [BlockCipher.block_length]u8, endian: std.builtin.Endian) void {
+pub fn ctr(comptime BlockCipher: anytype, block_cipher: BlockCipher, dst: []u8, src: []const u8, iv: [BlockCipher.block_length]u8, endian: std.lang.Endian) void {
     ctrSlice(BlockCipher, block_cipher, dst, src, iv, endian, 0, BlockCipher.block_length);
 }
 
@@ -28,7 +28,7 @@ pub fn ctrSlice(
     dst: []u8,
     src: []const u8,
     iv: [BlockCipher.block_length]u8,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
     comptime counter_offset: usize,
     comptime counter_size: usize,
 ) void {
@@ -89,7 +89,7 @@ test "ctr mode" {
         const in = [_]u8{};
         const expected = [_]u8{};
         var out: [0]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -98,7 +98,7 @@ test "ctr mode" {
         const in = [_]u8{0x6b};
         const expected = [_]u8{0x87};
         var out: [1]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -107,7 +107,7 @@ test "ctr mode" {
         const in = [_]u8{ 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17 };
         const expected = [_]u8{ 0x87, 0x4d, 0x61, 0x91, 0xb6, 0x20, 0xe3, 0x26, 0x1b, 0xef, 0x68, 0x64, 0x99, 0x0d, 0xb6 };
         var out: [15]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -116,7 +116,7 @@ test "ctr mode" {
         const in = [_]u8{ 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a };
         const expected = [_]u8{ 0x87, 0x4d, 0x61, 0x91, 0xb6, 0x20, 0xe3, 0x26, 0x1b, 0xef, 0x68, 0x64, 0x99, 0x0d, 0xb6, 0xce };
         var out: [16]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -125,7 +125,7 @@ test "ctr mode" {
         const in = [_]u8{ 0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93, 0x17, 0x2a, 0xae };
         const expected = [_]u8{ 0x87, 0x4d, 0x61, 0x91, 0xb6, 0x20, 0xe3, 0x26, 0x1b, 0xef, 0x68, 0x64, 0x99, 0x0d, 0xb6, 0xce, 0x98 };
         var out: [17]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -140,7 +140,7 @@ test "ctr mode" {
             0x98, 0x06, 0xf6, 0x6b, 0x79, 0x70, 0xfd, 0xff, 0x86, 0x17, 0x18, 0x7b, 0xb9, 0xff, 0xfd, 0xff,
         };
         var out: [32]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -157,7 +157,7 @@ test "ctr mode" {
             0x5a, 0xe4, 0xdf, 0x3e, 0xdb,
         };
         var out: [37]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -176,7 +176,7 @@ test "ctr mode" {
             0x1e, 0x03, 0x1d, 0xda, 0x2f, 0xbe, 0x03, 0xd1, 0x79, 0x21, 0x70, 0xa0, 0xf3, 0x00, 0x9c, 0xee,
         };
         var out: [64]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -207,7 +207,7 @@ test "ctr mode" {
         });
 
         var out: [100]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.builtin.Endian.big);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], iv, std.lang.Endian.big);
         try testing.expectEqualSlices(u8, expected[0..], out[0..]);
     }
 
@@ -218,7 +218,7 @@ test "ctr mode" {
 
         // We'll compute the expected value from the actual encryption
         var out: [16]u8 = undefined;
-        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], le_iv, std.builtin.Endian.little);
+        ctr(aes.AesEncryptCtx(aes.Aes128), ctx, out[0..], in[0..], le_iv, std.lang.Endian.little);
 
         // The actual output for this test with little-endian counter=1
         const expected = [_]u8{ 0x7e, 0x48, 0x15, 0xa8, 0x16, 0x66, 0xf0, 0xea, 0xad, 0x3c, 0x07, 0x97, 0x2f, 0xe8, 0x25, 0xc1 };

@@ -794,7 +794,7 @@ pub fn Log2IntCeil(comptime T: type) type {
 /// Returns the smallest integer type that can hold both from and to.
 pub fn IntFittingRange(comptime from: comptime_int, comptime to: comptime_int) type {
     assert(from <= to);
-    const signedness: std.builtin.Signedness = if (from < 0) .signed else .unsigned;
+    const signedness: std.lang.Signedness = if (from < 0) .signed else .unsigned;
     return @Int(
         signedness,
         @as(u16, @intFromBool(signedness == .signed)) +

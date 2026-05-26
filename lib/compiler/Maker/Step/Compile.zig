@@ -228,7 +228,7 @@ fn lowerZigArgs(
         var prev_has_cflags = false;
         var prev_has_rcflags = false;
         var prev_search_strategy: Configuration.SystemLib.SearchStrategy = .paths_first;
-        var prev_preferred_link_mode: std.builtin.LinkMode = .dynamic;
+        var prev_preferred_link_mode: std.lang.LinkMode = .dynamic;
         // Track the number of positional arguments so that a nice error can be
         // emitted if there is nothing to link.
         var total_linker_objects: usize = @intFromBool(root_module.root_source_file != .none);

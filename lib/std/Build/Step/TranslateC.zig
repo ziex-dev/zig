@@ -14,7 +14,7 @@ include_dirs: std.ArrayList(std.Build.Module.IncludeDir) = .empty,
 system_libs: std.ArrayList(std.Build.Module.SystemLib) = .empty,
 c_macros: std.ArrayList(Configuration.String) = .empty,
 target: std.Build.ResolvedTarget,
-optimize: std.builtin.OptimizeMode,
+optimize: std.lang.OptimizeMode,
 output_file: Configuration.GeneratedFileIndex,
 link_libc: bool,
 
@@ -23,7 +23,7 @@ pub const base_tag: Step.Tag = .translate_c;
 pub const Options = struct {
     root_source_file: std.Build.LazyPath,
     target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: std.lang.OptimizeMode,
     link_libc: bool = true,
 };
 
@@ -51,8 +51,8 @@ pub const AddExecutableOptions = struct {
     name: ?[]const u8 = null,
     version: ?std.SemanticVersion = null,
     target: ?std.Build.ResolvedTarget = null,
-    optimize: ?std.builtin.OptimizeMode = null,
-    linkage: ?std.builtin.LinkMode = null,
+    optimize: ?std.lang.OptimizeMode = null,
+    linkage: ?std.lang.LinkMode = null,
 };
 
 pub fn getOutput(translate_c: *TranslateC) std.Build.LazyPath {

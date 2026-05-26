@@ -5,7 +5,7 @@ const Io = std.Io;
 const math = std.math;
 const mem = std.mem;
 const assert = std.debug.assert;
-const Endian = std.builtin.Endian;
+const Endian = std.lang.Endian;
 const native_endian = @import("builtin").target.cpu.arch.endian();
 
 pub const AT_NULL = 0;

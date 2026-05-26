@@ -243,11 +243,11 @@ const Code = struct {
     name: []const u8,
     source_token: Token,
     just_check_syntax: bool,
-    mode: std.builtin.OptimizeMode,
+    mode: std.lang.OptimizeMode,
     link_objects: []const []const u8,
     target_str: ?[]const u8,
     link_libc: bool,
-    link_mode: ?std.builtin.LinkMode,
+    link_mode: ?std.lang.LinkMode,
     disable_cache: bool,
     additional_options: []const []const u8,
 
@@ -319,11 +319,11 @@ fn walk(arena: Allocator, io: Io, tokenizer: *Tokenizer, out_dir: Dir, w: anytyp
                         return parseError(tokenizer, code_kind_tok, "unrecognized code kind: {s}", .{code_kind_str});
                     }
 
-                    var mode: std.builtin.OptimizeMode = .Debug;
+                    var mode: std.lang.OptimizeMode = .Debug;
                     var link_objects = std.array_list.Managed([]const u8).init(arena);
                     var target_str: ?[]const u8 = null;
                     var link_libc = false;
-                    var link_mode: ?std.builtin.LinkMode = null;
+                    var link_mode: ?std.lang.LinkMode = null;
                     var disable_cache = false;
                     var additional_options = std.array_list.Managed([]const u8).init(arena);
 

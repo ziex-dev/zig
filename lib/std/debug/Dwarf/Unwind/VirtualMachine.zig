@@ -103,7 +103,7 @@ pub fn populateCieLastRow(
     gpa: Allocator,
     cie: *Unwind.CommonInformationEntry,
     addr_size_bytes: u8,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
 ) !void {
     assert(cie.last_row == null);
 
@@ -135,7 +135,7 @@ pub fn runTo(
     cie: *const Unwind.CommonInformationEntry,
     fde: *const Unwind.FrameDescriptionEntry,
     addr_size_bytes: u8,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
 ) !Row {
     assert(vm.cie_row == null);
 
@@ -181,7 +181,7 @@ fn evalInstructions(
     target_addr: u64,
     instruction_bytes: []const u8,
     addr_size_bytes: u8,
-    endian: std.builtin.Endian,
+    endian: std.lang.Endian,
 ) !void {
     var fr: std.Io.Reader = .fixed(instruction_bytes);
     while (fr.seek < fr.buffer.len) {
@@ -378,7 +378,7 @@ pub const Instruction = union(enum) {
     pub fn read(
         reader: *std.Io.Reader,
         addr_size_bytes: u8,
-        endian: std.builtin.Endian,
+        endian: std.lang.Endian,
     ) !Instruction {
         const inst: OpcodeByte = @bitCast(try reader.takeByte());
         return switch (inst.opcode) {

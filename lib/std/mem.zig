@@ -5,7 +5,7 @@ const assert = debug.assert;
 const math = std.math;
 const mem = @This();
 const testing = std.testing;
-const Endian = std.builtin.Endian;
+const Endian = std.lang.Endian;
 const native_endian = builtin.cpu.arch.endian();
 
 /// The standard library currently thoroughly depends on byte size
@@ -1827,8 +1827,8 @@ pub fn readVarPackedInt(
     bytes: []const u8,
     bit_offset: usize,
     bit_count: usize,
-    endian: std.builtin.Endian,
-    signedness: std.builtin.Signedness,
+    endian: std.lang.Endian,
+    signedness: std.lang.Signedness,
 ) T {
     const uN = @Int(.unsigned, @bitSizeOf(T));
     const iN = @Int(.signed, @bitSizeOf(T));
@@ -2136,7 +2136,7 @@ test writePackedInt {
 
 /// Stores an integer to packed memory with provided bit_offset, bit_count, and signedness.
 /// If negative, the written value is sign-extended.
-pub fn writeVarPackedInt(bytes: []u8, bit_offset: usize, bit_count: usize, value: anytype, endian: std.builtin.Endian) void {
+pub fn writeVarPackedInt(bytes: []u8, bit_offset: usize, bit_count: usize, value: anytype, endian: std.lang.Endian) void {
     const T = @TypeOf(value);
     const uN = @Int(.unsigned, @bitSizeOf(T));
 
@@ -4299,7 +4299,7 @@ test alignPointer {
 
 fn CopyPtrAttrs(
     comptime source: type,
-    comptime size: std.builtin.Type.Pointer.Size,
+    comptime size: std.lang.Type.Pointer.Size,
     comptime child: type,
 ) type {
     const ptr = @typeInfo(source).pointer;
@@ -4833,7 +4833,7 @@ test doNotOptimizeAway {
     doNotOptimizeAway(@as(f64, 0.0));
     doNotOptimizeAway(@as([4]u8, @splat(0)));
     doNotOptimizeAway(@as([100]u8, @splat(0)));
-    doNotOptimizeAway(@as(std.builtin.Endian, .little));
+    doNotOptimizeAway(@as(std.lang.Endian, .little));
 }
 
 test alignForward {

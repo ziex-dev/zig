@@ -1677,7 +1677,7 @@ pub const Cpu = struct {
             return null;
         }
 
-        pub fn endian(arch: Arch) std.builtin.Endian {
+        pub fn endian(arch: Arch) std.lang.Endian {
             return switch (arch) {
                 .aarch64,
                 .alpha,
@@ -1797,9 +1797,9 @@ pub const Cpu = struct {
             };
         }
 
-        /// Returns the array of `Arch` to which a specific `std.builtin.CallingConvention` applies.
+        /// Returns the array of `Arch` to which a specific `std.lang.CallingConvention` applies.
         /// Asserts that `cc` is not `.auto`, `.@"async"`, `.naked`, or `.@"inline"`.
-        pub fn fromCallingConvention(cc: std.builtin.CallingConvention.Tag) []const Arch {
+        pub fn fromCallingConvention(cc: std.lang.CallingConvention.Tag) []const Arch {
             return switch (cc) {
                 .auto,
                 .async,
@@ -2321,7 +2321,7 @@ pub const AddressSpaceContext = enum {
 /// `address_space` is valid in that context.
 pub fn supportsAddressSpace(
     target: Target,
-    address_space: std.builtin.AddressSpace,
+    address_space: std.lang.AddressSpace,
     context: ?AddressSpaceContext,
 ) bool {
     const arch = target.cpu.arch;
@@ -3056,7 +3056,7 @@ pub fn stackGrowth(target: *const Target) StackGrowth {
 /// Default signedness of `char` for the native C compiler for this target
 /// Note that char signedness is implementation-defined and many compilers provide
 /// an option to override the default signedness e.g. GCC's -funsigned-char / -fsigned-char
-pub fn cCharSignedness(target: *const Target) std.builtin.Signedness {
+pub fn cCharSignedness(target: *const Target) std.lang.Signedness {
     if (target.os.tag.isDarwin() or target.os.tag == .windows or target.os.tag == .uefi) return .signed;
 
     return switch (target.cpu.arch) {
@@ -3739,7 +3739,7 @@ pub fn cMaxIntAlignment(target: *const Target) u16 {
     };
 }
 
-pub fn cCallingConvention(target: *const Target) ?std.builtin.CallingConvention {
+pub fn cCallingConvention(target: *const Target) ?std.lang.CallingConvention {
     return switch (target.cpu.arch) {
         .x86_64 => switch (target.os.tag) {
             .windows, .uefi => .{ .x86_64_win = .{} },

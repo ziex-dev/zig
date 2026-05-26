@@ -106,7 +106,7 @@ pub fn declareSymbol(
     elf: *Elf,
     section_kind: Object.Section,
     maybe_name: ?[]const u8,
-    linkage: std.builtin.GlobalLinkage,
+    linkage: std.lang.GlobalLinkage,
     @"type": Object.SymbolType,
     offset: u64,
     size: u64,

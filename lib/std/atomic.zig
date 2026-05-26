@@ -1,7 +1,7 @@
 const builtin = @import("builtin");
 
 const std = @import("std.zig");
-const AtomicOrder = std.builtin.AtomicOrder;
+const AtomicOrder = std.lang.AtomicOrder;
 const testing = std.testing;
 const assert = std.debug.assert;
 
@@ -83,7 +83,7 @@ pub fn Value(comptime T: type) type {
 
         pub inline fn rmw(
             self: *Self,
-            comptime op: std.builtin.AtomicRmwOp,
+            comptime op: std.lang.AtomicRmwOp,
             operand: T,
             comptime order: AtomicOrder,
         ) T {

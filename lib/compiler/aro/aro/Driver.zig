@@ -394,7 +394,7 @@ pub fn parseArgs(
                 };
                 try d.macro_prefix_map.append(gpa, pair);
             } else if (option(arg, "-mcmodel=")) |cmodel| {
-                d.comp.cmodel = std.meta.stringToEnum(std.builtin.CodeModel, cmodel) orelse
+                d.comp.cmodel = std.meta.stringToEnum(std.lang.CodeModel, cmodel) orelse
                     return d.fatal("unsupported machine code model: '{s}'", .{arg});
             } else if (mem.eql(u8, arg, "-mkernel")) {
                 d.mkernel = true;

@@ -861,7 +861,7 @@ pub const ErrorDetailsWithoutCodePage = blk: {
     const field_count = details_info.field_names.len;
     var field_names: [field_count - 1][]const u8 = undefined;
     var field_types: [field_count - 1]type = undefined;
-    var field_attrs: [field_count - 1]std.builtin.Type.Struct.FieldAttributes = undefined;
+    var field_attrs: [field_count - 1]std.lang.Type.Struct.FieldAttributes = undefined;
     var i: usize = 0;
     for (details_info.field_names, details_info.field_types, details_info.field_attrs) |field_name, field_type, field_attr| {
         if (std.mem.eql(u8, field_name, "code_page")) continue;

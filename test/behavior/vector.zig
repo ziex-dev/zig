@@ -751,7 +751,7 @@ test "vector reduce operation" {
     if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isPowerPC()) return error.SkipZigTest; // https://github.com/llvm/llvm-project/issues/195562
 
     const S = struct {
-        fn testReduce(comptime op: std.builtin.ReduceOp, x: anytype, expected: anytype) !void {
+        fn testReduce(comptime op: std.lang.ReduceOp, x: anytype, expected: anytype) !void {
             const N = @typeInfo(@TypeOf(x)).array.len;
             const TX = @typeInfo(@TypeOf(x)).array.child;
 

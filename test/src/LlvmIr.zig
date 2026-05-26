@@ -18,7 +18,7 @@ const TestCase = struct {
     params: Params,
 
     pub const Params = struct {
-        code_model: std.builtin.CodeModel = .default,
+        code_model: std.lang.CodeModel = .default,
         dll_export_fns: ?bool = null,
         dwarf_format: ?std.dwarf.Format = null,
         error_tracing: ?bool = null,
@@ -27,7 +27,7 @@ const TestCase = struct {
         // For most cases, we want to test the LLVM IR that we output; we don't want to be in the
         // business of testing LLVM's optimization passes. `Debug` gets us the closest to that as it
         // disables the vast majority of passes in LLVM.
-        optimize: std.builtin.OptimizeMode = .Debug,
+        optimize: std.lang.OptimizeMode = .Debug,
         pic: ?bool = null,
         pie: ?bool = null,
         red_zone: ?bool = null,
@@ -37,7 +37,7 @@ const TestCase = struct {
         stack_protector: ?bool = null,
         strip: ?bool = null,
         target: std.Target.Query = .{},
-        unwind_tables: ?std.builtin.UnwindTables = null,
+        unwind_tables: ?std.lang.UnwindTables = null,
         valgrind: ?bool = null,
     };
 };

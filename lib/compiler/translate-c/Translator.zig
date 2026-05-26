@@ -1,7 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const assert = std.debug.assert;
-const CallingConvention = std.builtin.CallingConvention;
+const CallingConvention = std.lang.CallingConvention;
 
 const aro = @import("aro");
 const CToken = aro.Tokenizer.Token;
@@ -1615,7 +1615,7 @@ fn typeHasWrappingOverflow(t: *Translator, qt: QualType) bool {
 /// Signedness of type when translated to Zig.
 /// Different from `QualType.signedness()` for `char` and enums.
 /// Returns null for non-int types.
-fn signedness(t: *Translator, qt: QualType) ?std.builtin.Signedness {
+fn signedness(t: *Translator, qt: QualType) ?std.lang.Signedness {
     return loop: switch (qt.base(t.comp).type) {
         .bool => .unsigned,
         .bit_int => |bit_int| bit_int.signedness,
