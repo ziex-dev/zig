@@ -15387,7 +15387,7 @@ fn childWaitPosix(child: *process.Child) process.Child.WaitError!process.Child.T
         var status: posix.W = undefined;
         const syscall: Syscall = try .start();
         while (true) switch (posix.errno(
-            @intCast(posix.system.wait4(pid, &status, .{}, ru_ptr)),
+            posix.system.wait4(pid, &status, .{}, ru_ptr),
         )) {
             .SUCCESS => {
                 syscall.finish();
@@ -15476,7 +15476,7 @@ fn childKillPosix(child: *process.Child) !void {
 
     if (have_wait4) {
         while (true) switch (posix.errno(
-            @intCast(posix.system.wait4(pid, null, .{}, null)),
+            posix.system.wait4(pid, null, .{}, null),
         )) {
             .SUCCESS => return,
             .INTR => continue,
