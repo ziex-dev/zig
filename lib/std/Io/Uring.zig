@@ -779,7 +779,6 @@ pub fn io(ev: *Evented) Io {
             .netConnectUnix = netConnectUnixUnavailable,
             .netSocketCreatePair = netSocketCreatePairUnavailable,
             .netSend = netSendUnavailable,
-            .netRead = netReadUnavailable,
             .netWrite = netWriteUnavailable,
             .netWriteFile = netWriteFileUnavailable,
             .netClose = netClose,
@@ -2105,6 +2104,12 @@ fn operate(userdata: ?*anyopaque, operation: Io.Operation) Io.Cancelable!Io.Oper
                 };
             },
         },
+        .net_read => |o| .{
+            .net_read = r: {
+                _ = o;
+                break :r error.NetworkDown; // TODO
+            },
+        },
     };
 }
 
@@ -2392,6 +2397,10 @@ fn batchDrainSubmitted(
                 _ = o;
                 @panic("TODO implement batchDrainSubmitted for net_receive");
             },
+            .net_read => |o| {
+                _ = o;
+                @panic("TODO implement batchDrainSubmitted for net_read");
+            },
         })) |result| {
             switch (batch.completed.tail) {
                 .none => batch.completed.head = index,
@@ -2493,6 +2502,7 @@ fn batchDrainReady(batch: *Io.Batch) Io.Timeout.Error!void {
                 },
                 .device_io_control => unreachable,
                 .net_receive => @panic("TODO"),
+                .net_read => @panic("TODO"),
             })) |result| {
                 switch (batch.completed.tail) {
                     .none => batch.completed.head = index,
@@ -2802,7 +2812,7 @@ fn dirCreateFile(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    flags: File.CreateFlags,
+    flags: Dir.CreateFileOptions,
 ) File.OpenError!File {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
 
@@ -2986,7 +2996,7 @@ fn dirOpenFile(
     userdata: ?*anyopaque,
     dir: Dir,
     sub_path: []const u8,
-    flags: File.OpenFlags,
+    flags: Dir.OpenFileOptions,
 ) File.OpenError!File {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
 
@@ -3060,7 +3070,7 @@ fn dirRead(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) Dir.Read
             }
             const n = while (true) {
                 try sync.cancel_region.await(.nothing);
-                const rc = linux.getdents64(dr.dir.handle, dr.buffer.ptr, dr.buffer.len);
+                const rc = linux.getdents64(dr.dir.handle, dr.buffer.ptr, @min(dr.buffer.len, std.math.maxInt(c_uint)));
                 switch (linux.errno(rc)) {
                     .SUCCESS => break rc,
                     .INTR => {},
@@ -4094,7 +4104,7 @@ fn fileMemoryMapWrite(userdata: ?*anyopaque, mm: *File.MemoryMap) File.WritePosi
 
 fn processExecutableOpen(
     userdata: ?*anyopaque,
-    flags: File.OpenFlags,
+    flags: Dir.OpenFileOptions,
 ) process.OpenExecutableError!File {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     return dirOpenFile(ev, .{ .handle = linux.AT.FDCWD }, "/proc/self/exe", flags);
@@ -4216,7 +4226,7 @@ fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) proces
     const arena = arena_allocator.allocator();
 
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
-    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeSentinel(u8, arg, 0)).ptr;
 
     const env_block = env_block: {
         const prog_fd: i32 = -1;
@@ -4359,7 +4369,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     // Therefore, we do all the allocation for the execve() before the fork().
     // This means we must do the null-termination of argv and env vars here.
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
-    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeSentinel(u8, arg, 0)).ptr;
 
     const env_block = env_block: {
         const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
@@ -4729,7 +4739,7 @@ fn childWait(userdata: ?*anyopaque, child: *process.Child) process.Child.WaitErr
                 return switch (code) {
                     .EXITED => .{ .exited = @truncate(status) },
                     .KILLED, .DUMPED => .{ .signal = @enumFromInt(status) },
-                    .TRAPPED, .STOPPED => .{ .stopped = status },
+                    .TRAPPED, .STOPPED => .{ .stopped = @enumFromInt(status) },
                     _, .CONTINUED => .{ .unknown = status },
                 };
             },
@@ -4948,7 +4958,7 @@ fn randomSecure(userdata: ?*anyopaque, buffer: []u8) Io.RandomSecureError!void {
     var cancel_region: CancelRegion = .init();
     defer cancel_region.deinit();
     ev.urandomReadAll(&cancel_region, buffer) catch |err| switch (err) {
-        error.Canceled => return error.Canceled,
+        error.Canceled => |e| return e,
         else => return error.EntropyUnavailable,
     };
 }
@@ -5140,18 +5150,6 @@ fn netReceive(
             else => |err| return .{ unexpectedErrno(err), message_i },
         }
     }
-}
-
-fn netReadUnavailable(
-    userdata: ?*anyopaque,
-    fd: net.Socket.Handle,
-    data: [][]u8,
-) net.Stream.Reader.Error!usize {
-    const ev: *Evented = @ptrCast(@alignCast(userdata));
-    _ = ev;
-    _ = fd;
-    _ = data;
-    return error.NetworkDown;
 }
 
 fn netWriteUnavailable(

@@ -513,6 +513,9 @@ pub const GetSockNameError = error{
     SocketNotBound,
 
     FileDescriptorNotASocket,
+
+    /// The socket is not connected (connection-oriented sockets only).
+    SocketUnconnected,
 } || UnexpectedError;
 
 pub fn getpeername(sock: socket_t, addr: *sockaddr, addrlen: *socklen_t) GetSockNameError!void {
@@ -529,6 +532,7 @@ pub fn getpeername(sock: socket_t, addr: *sockaddr, addrlen: *socklen_t) GetSock
             .INVAL => unreachable, // invalid parameters
             .NOTSOCK => return error.FileDescriptorNotASocket,
             .NOBUFS => return error.SystemResources,
+            .NOTCONN => return error.SocketUnconnected,
         }
     }
 }
@@ -682,7 +686,7 @@ pub fn munmap(memory: []align(page_size_min) const u8) void {
         .SUCCESS => return,
         .INVAL => unreachable, // Invalid parameters.
         .NOMEM => unreachable, // Attempted to unmap a region in the middle of an existing mapping.
-        else => |e| if (unexpected_error_tracing) {
+        else => |e| if (std.options.unexpected_error_tracing) {
             std.debug.panic("unexpected errno: {d} ({t})", .{ @intFromEnum(e), e });
         } else unreachable,
     }
@@ -799,7 +803,7 @@ pub fn dl_iterate_phdr(
             }
         }.callbackC, @ptrCast(@constCast(&context)))) {
             0 => return,
-            else => |err| return @as(Error, @errorCast(@errorFromInt(@as(std.meta.Int(.unsigned, @bitSizeOf(anyerror)), @intCast(err))))),
+            else => |err| return @as(Error, @errorCast(@errorFromInt(@as(@Int(.unsigned, @bitSizeOf(anyerror)), @intCast(err))))),
         }
     }
 
@@ -830,7 +834,7 @@ pub fn dl_iterate_phdr(
     while (it.next()) |entry| {
         const phdrs: []elf.ElfN.Phdr = if (entry.addr != 0) phdrs: {
             const ehdr: *elf.ElfN.Ehdr = @ptrFromInt(entry.addr);
-            assert(mem.eql(u8, ehdr.ident[0..4], elf.MAGIC));
+            assert(mem.eql(u8, &ehdr.ident.magic, elf.MAGIC));
             const phdrs: [*]elf.ElfN.Phdr = @ptrFromInt(entry.addr + ehdr.phoff);
             break :phdrs phdrs[0..ehdr.phnum];
         } else getSelfPhdrs();
@@ -1658,22 +1662,12 @@ pub fn name_to_handle_atZ(
 
 pub const lfs64_abi = native_os == .linux and builtin.link_libc and (builtin.abi.isGnu() or builtin.abi.isAndroid());
 
-/// Whether or not `error.Unexpected` will print its value and a stack trace.
-///
-/// If this happens the fix is to add the error code to the corresponding
-/// switch expression, possibly introduce a new error in the error set, and
-/// send a patch to Zig.
-pub const unexpected_error_tracing = builtin.mode == .Debug and switch (builtin.zig_backend) {
-    .stage2_llvm, .stage2_x86_64 => true,
-    else => false,
-};
-
 pub const UnexpectedError = std.Io.UnexpectedError;
 
 /// Call this when you made a syscall or something that sets errno
 /// and you get an unexpected error.
 pub fn unexpectedErrno(err: E) UnexpectedError {
-    if (unexpected_error_tracing) {
+    if (std.options.unexpected_error_tracing) {
         std.debug.print("unexpected errno: {d}\n", .{@intFromEnum(err)});
         std.debug.dumpCurrentStackTrace(.{});
     }

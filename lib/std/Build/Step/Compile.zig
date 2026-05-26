@@ -219,6 +219,8 @@ generated_docs: ?*GeneratedFile,
 generated_asm: ?*GeneratedFile,
 generated_bin: ?*GeneratedFile,
 generated_pdb: ?*GeneratedFile,
+// hack for stage2_x86_64 + coff
+generated_compiler_rt_dyn_lib: ?*GeneratedFile,
 generated_implib: ?*GeneratedFile,
 generated_llvm_bc: ?*GeneratedFile,
 generated_llvm_ir: ?*GeneratedFile,
@@ -441,6 +443,7 @@ pub fn create(owner: *std.Build, options: Options) *Compile {
         .generated_asm = null,
         .generated_bin = null,
         .generated_pdb = null,
+        .generated_compiler_rt_dyn_lib = null,
         .generated_implib = null,
         .generated_llvm_bc = null,
         .generated_llvm_ir = null,
@@ -608,10 +611,6 @@ pub fn addObjCopy(cs: *Compile, options: Step.ObjCopy.Options) *Step.ObjCopy {
     return b.addObjCopy(cs.getEmittedBin(), copy);
 }
 
-pub fn checkObject(compile: *Compile) *Step.CheckObject {
-    return Step.CheckObject.create(compile.step.owner, compile.getEmittedBin(), compile.rootModuleTarget().ofmt);
-}
-
 pub fn setLinkerScript(compile: *Compile, source: LazyPath) void {
     const b = compile.step.owner;
     compile.linker_script = source.dupe(b);
@@ -691,6 +690,13 @@ pub fn producesPdbFile(compile: *Compile) bool {
     return compile.isDynamicLibrary() or compile.kind == .exe or compile.kind == .@"test";
 }
 
+pub fn producesCompilerRtDynLib(compile: *Compile) bool {
+    if (compile.rootModuleTarget().ofmt != .coff) return false;
+    if (compile.bundle_compiler_rt orelse (compile.kind == .exe or compile.isDynamicLibrary()))
+        return compile.use_llvm == false;
+    return false;
+}
+
 pub fn producesImplib(compile: *Compile) bool {
     return compile.isDll();
 }
@@ -768,43 +774,46 @@ pub fn runPkgConfig(step: *Step, lib_name: []const u8) !PkgConfigResult {
         else => return err,
     };
 
-    var zig_cflags = std.array_list.Managed([]const u8).init(b.allocator);
-    defer zig_cflags.deinit();
-    var zig_libs = std.array_list.Managed([]const u8).init(b.allocator);
-    defer zig_libs.deinit();
+    var zig_cflags: std.ArrayList([]const u8) = .empty;
+    defer zig_cflags.deinit(b.allocator);
+    var zig_libs: std.ArrayList([]const u8) = .empty;
+    defer zig_libs.deinit(b.allocator);
 
     var arg_it = mem.tokenizeAny(u8, stdout, " \r\n\t");
     while (arg_it.next()) |arg| {
         if (mem.eql(u8, arg, "-I")) {
             const dir = arg_it.next() orelse return error.PkgConfigInvalidOutput;
-            try zig_cflags.appendSlice(&[_][]const u8{ "-I", dir });
+            try zig_cflags.appendSlice(b.allocator, &.{ "-I", dir });
         } else if (mem.startsWith(u8, arg, "-I")) {
-            try zig_cflags.append(arg);
+            try zig_cflags.append(b.allocator, arg);
         } else if (mem.eql(u8, arg, "-L")) {
             const dir = arg_it.next() orelse return error.PkgConfigInvalidOutput;
-            try zig_libs.appendSlice(&[_][]const u8{ "-L", dir });
+            try zig_libs.appendSlice(b.allocator, &.{ "-L", dir });
         } else if (mem.startsWith(u8, arg, "-L")) {
-            try zig_libs.append(arg);
+            try zig_libs.append(b.allocator, arg);
         } else if (mem.eql(u8, arg, "-l")) {
             const lib = arg_it.next() orelse return error.PkgConfigInvalidOutput;
-            try zig_libs.appendSlice(&[_][]const u8{ "-l", lib });
+            try zig_libs.appendSlice(b.allocator, &.{ "-l", lib });
         } else if (mem.startsWith(u8, arg, "-l")) {
-            try zig_libs.append(arg);
+            try zig_libs.append(b.allocator, arg);
         } else if (mem.eql(u8, arg, "-D")) {
             const macro = arg_it.next() orelse return error.PkgConfigInvalidOutput;
-            try zig_cflags.appendSlice(&[_][]const u8{ "-D", macro });
+            try zig_cflags.appendSlice(b.allocator, &.{ "-D", macro });
         } else if (mem.startsWith(u8, arg, "-D")) {
-            try zig_cflags.append(arg);
+            try zig_cflags.append(b.allocator, arg);
         } else if (mem.startsWith(u8, arg, wl_rpath_prefix)) {
-            try zig_cflags.appendSlice(&[_][]const u8{ "-rpath", arg[wl_rpath_prefix.len..] });
+            try zig_cflags.appendSlice(b.allocator, &.{ "-rpath", arg[wl_rpath_prefix.len..] });
         } else if (b.debug_pkg_config) {
             return step.fail("unknown pkg-config flag '{s}'", .{arg});
         }
     }
 
+    try zig_cflags.shrinkToLen(b.allocator);
+    try zig_libs.shrinkToLen(b.allocator);
+
     return .{
-        .cflags = try zig_cflags.toOwnedSlice(),
-        .libs = try zig_libs.toOwnedSlice(),
+        .cflags = zig_cflags.toOwnedSliceAssert(),
+        .libs = zig_libs.toOwnedSliceAssert(),
     };
 }
 
@@ -867,6 +876,12 @@ pub fn getEmittedH(compile: *Compile) LazyPath {
 pub fn getEmittedPdb(compile: *Compile) LazyPath {
     _ = compile.getEmittedBin();
     return compile.getEmittedFileGeneric(&compile.generated_pdb);
+}
+
+/// Returns the generated compiler_rt dynamic library.
+/// This is a hack for stage2_x86_64 + coff.
+pub fn getEmittedCompilerRtDynLib(compile: *Compile) ?LazyPath {
+    return compile.getEmittedFileGeneric(&compile.generated_compiler_rt_dyn_lib);
 }
 
 /// Returns the path to the generated documentation directory.
@@ -1377,7 +1392,6 @@ fn getZigArgs(compile: *Compile, fuzz: bool) ![][]const u8 {
         try zig_args.append("--debug-incremental");
     }
 
-    if (b.verbose_cimport) try zig_args.append("--verbose-cimport");
     if (b.verbose_air) try zig_args.append("--verbose-air");
     if (b.verbose_llvm_ir) |path| try zig_args.append(b.fmt("--verbose-llvm-ir={s}", .{path}));
     if (b.verbose_llvm_bc) |path| try zig_args.append(b.fmt("--verbose-llvm-bc={s}", .{path}));
@@ -1794,6 +1808,8 @@ fn make(step: *Step, options: Step.MakeOptions) !void {
         // zig fmt: off
         if (compile.generated_bin)     |lp| lp.path = compile.outputPath(output_dir, .bin);
         if (compile.generated_pdb)     |lp| lp.path = compile.outputPath(output_dir, .pdb);
+        // hack for stage2_x86_64 + coff
+        if (compile.generated_compiler_rt_dyn_lib) |lp| lp.path = compile.outputPath(output_dir, .compiler_rt_dyn_lib);
         if (compile.generated_implib)  |lp| lp.path = compile.outputPath(output_dir, .implib);
         if (compile.generated_h)       |lp| lp.path = compile.outputPath(output_dir, .h);
         if (compile.generated_docs)    |lp| lp.path = compile.outputPath(output_dir, .docs);

@@ -518,9 +518,9 @@ pub fn readFromPackedMemory(
         },
         .int => {
             if (buffer.len == 0) return pt.intValue(ty, 0);
+            if (ty.toIntern() == .u0_type) return pt.intValue(ty, 0);
             const int_info = ty.intInfo(zcu);
             const bits = int_info.bits;
-            if (bits == 0) return pt.intValue(ty, 0);
 
             // Fast path for integers <= u64
             if (bits <= 64) switch (int_info.signedness) {
@@ -882,15 +882,16 @@ pub fn fieldValue(val: Value, pt: Zcu.PerThread, index: usize) !Value {
                 else => unreachable,
             };
             // Avoid hitting gpa for accesses to small packed structs
-            var sfba_state = std.heap.stackFallback(128, zcu.comp.gpa);
-            const sfba = sfba_state.get();
-            const buf = try sfba.alloc(u8, @intCast((ty.bitSize(zcu) + 7) / 8));
-            defer sfba.free(buf);
+            var bfa_buf: [128]u8 = undefined;
+            var bfa_state: std.heap.BufferFirstAllocator = .init(&bfa_buf, zcu.comp.gpa);
+            const bfa = bfa_state.allocator();
+            const buf = try bfa.alloc(u8, @intCast((ty.bitSize(zcu) + 7) / 8));
+            defer bfa.free(buf);
             int_val.writeToPackedMemory(zcu, buf, 0) catch |err| switch (err) {
                 error.ReinterpretDeclRef => unreachable, // it's an integer
                 error.OutOfMemory => |e| return e,
             };
-            return Value.readFromPackedMemory(field_ty, pt, buf, field_bit_offset, sfba) catch |err| switch (err) {
+            return Value.readFromPackedMemory(field_ty, pt, buf, field_bit_offset, bfa) catch |err| switch (err) {
                 error.IllDefinedMemoryLayout => unreachable, // it's a bitpack
                 error.OutOfMemory => |e| return e,
             };
@@ -1610,7 +1611,7 @@ pub fn hasRepeatedByteRepr(val: Value, zcu: *const Zcu) !?u8 {
     defer zcu.gpa.free(byte_buffer);
 
     writeToMemory(val, zcu, byte_buffer) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
         error.ReinterpretDeclRef => return null,
         // TODO: The writeToMemory function was originally created for the purpose
         // of comptime pointer casting. However, it is now additionally being used
@@ -1844,7 +1845,7 @@ pub fn ptrElem(orig_parent_ptr: Value, field_idx: u64, pt: Zcu.PerThread) !Value
     } }));
 }
 
-fn canonicalizeBasePtr(base_ptr: Value, want_size: std.builtin.Type.Pointer.Size, want_child: Type, pt: Zcu.PerThread) !Value {
+fn canonicalizeBasePtr(base_ptr: Value, want_size: std.lang.Type.Pointer.Size, want_child: Type, pt: Zcu.PerThread) !Value {
     const ptr_ty = base_ptr.typeOf(pt.zcu);
     const ptr_info = ptr_ty.ptrInfo(pt.zcu);
 
@@ -2198,19 +2199,19 @@ pub fn pointerDerivation(ptr_val: Value, arena: Allocator, pt: Zcu.PerThread, op
 const InterpretMode = enum {
     /// In this mode, types are assumed to match what the compiler was built with in terms of field
     /// order, field types, etc. This improves compiler performance. However, it means that certain
-    /// modifications to `std.builtin` will result in compiler crashes.
+    /// modifications to `std.lang` will result in compiler crashes.
     direct,
     /// In this mode, various details of the type are allowed to differ from what the compiler was built
     /// with. Fields are matched by name rather than index; added struct fields are ignored, and removed
     /// struct fields use their default value if one exists. This is slower than `.direct`, but permits
-    /// making certain changes to `std.builtin` (in particular reordering/adding/removing fields), so it
-    /// is useful when applying breaking changes.
+    /// making certain changes to `std.lang` (in particular reordering/adding/removing fields), so it is
+    /// useful when applying breaking changes.
     by_name,
 };
 const interpret_mode: InterpretMode = @field(InterpretMode, @tagName(build_options.value_interpret_mode));
 
 /// Given a `Value` representing a comptime-known value of type `T`, unwrap it into an actual `T` known to the compiler.
-/// This is useful for accessing `std.builtin` structures received from comptime logic.
+/// This is useful for accessing `std.lang` structures received from comptime logic.
 pub fn interpret(val: Value, comptime T: type, pt: Zcu.PerThread) error{ OutOfMemory, UndefinedValue, TypeMismatch }!T {
     const zcu = pt.zcu;
     const io = zcu.comp.io;
@@ -2312,7 +2313,7 @@ pub fn interpret(val: Value, comptime T: type, pt: Zcu.PerThread) error{ OutOfMe
 }
 
 /// Given any `val` and a `Type` corresponding `@TypeOf(val)`, construct a `Value` representing it which can be used
-/// within the compilation. This is useful for passing `std.builtin` structures in the compiler back to the compilation.
+/// within the compilation. This is useful for passing `std.lang` structures in the compiler back to the compilation.
 /// This is the inverse of `interpret`.
 pub fn uninterpret(val: anytype, ty: Type, pt: Zcu.PerThread) error{ OutOfMemory, TypeMismatch }!Value {
     const T = @TypeOf(val);

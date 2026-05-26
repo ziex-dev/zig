@@ -1371,7 +1371,7 @@ pub const Inst = struct {
         /// Register, memory, register operands.
         /// Uses `rrx` payload with extra data of type `Memory`.
         rmr,
-        /// Register, memory, immediate (word) operands.
+        /// Register, memory, immediate (signed word) operands.
         /// Uses `rix` payload with extra data of type `Memory`.
         rmi,
         /// Register, memory, immediate (signed) operands.
@@ -1404,7 +1404,7 @@ pub const Inst = struct {
         /// Memory, register, register operands.
         /// Uses `rrx` payload with extra data of type `Memory`.
         mrr,
-        /// Memory, register, immediate (word) operands.
+        /// Memory, register, immediate (signed word) operands.
         /// Uses `rix` payload with extra data of type `Memory`.
         mri,
         /// References another Mir instruction directly.
@@ -1685,7 +1685,7 @@ pub const Inst = struct {
         rix: struct {
             fixes: Fixes = ._,
             r1: Register,
-            i: u16,
+            i: i16,
             payload: u32,
         },
         /// Register, register, byte immediate, followed by Custom payload found in extra.
@@ -1737,7 +1737,7 @@ pub const Inst = struct {
             @typeInfo(Tag).@"enum".fields.len != 251)
         {
             const cond_src = (struct {
-                fn src() std.builtin.SourceLocation {
+                fn src() std.lang.SourceLocation {
                     return @src();
                 }
             }).src();
@@ -1777,7 +1777,7 @@ pub const Inst = struct {
 pub const RegisterList = struct {
     bitset: BitSet,
 
-    const BitSet = std.bit_set.IntegerBitSet(32);
+    const BitSet = std.bit_set.Integer(32);
     const Self = @This();
 
     pub const empty: RegisterList = .{ .bitset = .empty };
@@ -1976,7 +1976,7 @@ pub fn emit(
     pt: Zcu.PerThread,
     src_loc: Zcu.LazySrcLoc,
     func_index: InternPool.Index,
-    atom_index: u32,
+    atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
 ) codegen.CodeGenError!void {
@@ -1998,7 +1998,7 @@ pub fn emit(
         .bin_file = lf,
         .pt = pt,
         .pic = mod.pic,
-        .atom_index = atom_index,
+        .atom_id = atom_id,
         .debug_output = debug_output,
         .w = w,
 
@@ -2030,7 +2030,7 @@ pub fn emitLazy(
     pt: Zcu.PerThread,
     src_loc: Zcu.LazySrcLoc,
     lazy_sym: link.File.LazySymbol,
-    atom_index: u32,
+    atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
 ) codegen.CodeGenError!void {
@@ -2049,7 +2049,7 @@ pub fn emitLazy(
         .bin_file = lf,
         .pt = pt,
         .pic = mod.pic,
-        .atom_index = atom_index,
+        .atom_id = atom_id,
         .debug_output = debug_output,
         .w = w,
 

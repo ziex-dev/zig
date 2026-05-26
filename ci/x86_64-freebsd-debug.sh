@@ -7,7 +7,7 @@ set -e
 
 TARGET="x86_64-freebsd-none"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.312+164c598cd"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -31,10 +31,7 @@ cmake .. \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
   -DZIG_NO_LIB=ON \
-  -GNinja \
-  -DCMAKE_C_LINKER_DEPFILE_SUPPORTED=FALSE \
-  -DCMAKE_CXX_LINKER_DEPFILE_SUPPORTED=FALSE
-# https://github.com/ziglang/zig/issues/22213
+  -GNinja
 
 # Now cmake will use zig as the C/C++ compiler. We reset the environment variables
 # so that installation and testing do not get affected by them.

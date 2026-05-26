@@ -15,6 +15,15 @@ test "global variable alignment" {
     }
 }
 
+test "large abi alignment of global" {
+    const S = struct {
+        var global: @This() = undefined;
+        x: u64 align(64),
+    };
+
+    try std.testing.expect(@ctz(@intFromPtr(&S.global)) >= 6);
+}
+
 test "large alignment of local constant" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest; // flaky
@@ -317,7 +326,6 @@ test "@alignCast functions" {
 
     // function alignment is a compile error on wasm
     if (native_arch.isWasm()) return error.SkipZigTest;
-    if (native_arch.isThumb()) return error.SkipZigTest;
 
     try expect(fnExpectsOnly1(simple4) == 0x19);
 }
@@ -527,7 +535,6 @@ test "alignment of zero-bit types is respected" {
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest; // TODO
 
     const S = struct { arr: [0]usize = .{} };

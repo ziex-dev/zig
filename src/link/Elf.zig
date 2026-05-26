@@ -286,7 +286,7 @@ pub fn createEmpty(
 
         .image_base = b: {
             if (is_dyn_lib) break :b 0;
-            if (output_mode == .Exe and comp.config.pie) break :b 0;
+            if (output_mode == .Exe and (comp.config.pie or target.os.tag == .haiku)) break :b 0;
             break :b options.image_base orelse switch (ptr_width) {
                 .p32 => 0x10000,
                 .p64 => 0x1000000,
@@ -757,8 +757,7 @@ pub fn flush(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id, prog_node: std
     defer sub_prog_node.end();
 
     return flushInner(self, arena, tid) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.LinkFailure => return error.LinkFailure,
+        error.OutOfMemory, error.LinkFailure => |e| return e,
         else => |e| return diags.fail("ELF flush failed: {t}", .{e}),
     };
 }
@@ -881,10 +880,10 @@ fn flushInner(self: *Elf, arena: Allocator, tid: Zcu.PerThread.Id) !void {
     self.rela_plt.clearRetainingCapacity();
 
     if (self.zigObjectPtr()) |zo| {
-        var undefs: std.AutoArrayHashMap(SymbolResolver.Index, std.array_list.Managed(Ref)) = .init(gpa);
+        var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.array_list.Managed(Ref)) = .empty;
         defer {
             for (undefs.values()) |*refs| refs.deinit();
-            undefs.deinit();
+            undefs.deinit(gpa);
         }
 
         var has_reloc_errors = false;
@@ -1332,10 +1331,10 @@ fn scanRelocs(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
     const shared_objects = self.shared_objects.values();
 
-    var undefs: std.AutoArrayHashMap(SymbolResolver.Index, std.array_list.Managed(Ref)) = .init(gpa);
+    var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.array_list.Managed(Ref)) = .empty;
     defer {
         for (undefs.values()) |*refs| refs.deinit();
-        undefs.deinit();
+        undefs.deinit(gpa);
     }
 
     var has_reloc_errors = false;
@@ -1393,9 +1392,9 @@ pub fn initOutputSection(self: *Elf, args: struct {
         if (self.base.isRelocatable()) break :blk args.name;
         if (args.flags & elf.SHF_MERGE != 0) break :blk args.name;
         const name_prefixes: []const [:0]const u8 = &.{
-            ".text",       ".data.rel.ro", ".data", ".rodata", ".bss.rel.ro",       ".bss",
-            ".init_array", ".fini_array",  ".tbss", ".tdata",  ".gcc_except_table", ".ctors",
-            ".dtors",      ".gnu.warning",
+            ".text",          ".data.rel.ro", ".data",        ".rodata", ".bss.rel.ro", ".bss",
+            ".preinit_array", ".init_array",  ".fini_array",  ".tbss",   ".tdata",      ".gcc_except_table",
+            ".ctors",         ".dtors",       ".gnu.warning",
         };
         inline for (name_prefixes) |prefix| {
             if (mem.eql(u8, args.name, prefix) or mem.startsWith(u8, args.name, prefix ++ ".")) {
@@ -1410,6 +1409,8 @@ pub fn initOutputSection(self: *Elf, args: struct {
         switch (args.type) {
             elf.SHT_NULL => unreachable,
             elf.SHT_PROGBITS => {
+                if (mem.eql(u8, args.name, ".preinit_array") or mem.startsWith(u8, args.name, ".preinit_array."))
+                    break :tt elf.SHT_PREINIT_ARRAY;
                 if (mem.eql(u8, args.name, ".init_array") or mem.startsWith(u8, args.name, ".init_array."))
                     break :tt elf.SHT_INIT_ARRAY;
                 if (mem.eql(u8, args.name, ".fini_array") or mem.startsWith(u8, args.name, ".fini_array."))
@@ -1717,7 +1718,7 @@ pub fn updateContainerType(
         @panic("Attempted to compile for object format that was disabled by build configuration");
     }
     return self.zigObjectPtr().?.updateContainerType(pt, ty, success) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
     };
 }
 
@@ -1748,12 +1749,12 @@ pub fn deleteExport(
 fn checkDuplicates(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
 
-    var dupes = std.AutoArrayHashMap(SymbolResolver.Index, std.ArrayList(File.Index)).init(gpa);
+    var dupes: std.array_hash_map.Auto(SymbolResolver.Index, std.ArrayList(File.Index)) = .empty;
     defer {
         for (dupes.values()) |*list| {
             list.deinit(gpa);
         }
-        dupes.deinit();
+        dupes.deinit(gpa);
     }
 
     if (self.zigObjectPtr()) |zig_object| {
@@ -2992,10 +2993,10 @@ fn allocateSpecialPhdrs(self: *Elf) void {
 fn writeAtoms(self: *Elf) !void {
     const gpa = self.base.comp.gpa;
 
-    var undefs: std.AutoArrayHashMap(SymbolResolver.Index, std.array_list.Managed(Ref)) = .init(gpa);
+    var undefs: std.array_hash_map.Auto(SymbolResolver.Index, std.array_list.Managed(Ref)) = .empty;
     defer {
         for (undefs.values()) |*refs| refs.deinit();
-        undefs.deinit();
+        undefs.deinit(gpa);
     }
 
     var buffer: std.Io.Writer.Allocating = .init(gpa);
@@ -3942,7 +3943,7 @@ fn formatPhdr(ctx: FormatPhdr, writer: *std.Io.Writer) std.Io.Writer.Error!void 
     const write = phdr.p_flags & elf.PF_W != 0;
     const read = phdr.p_flags & elf.PF_R != 0;
     const exec = phdr.p_flags & elf.PF_X != 0;
-    var flags: [3]u8 = [_]u8{'_'} ** 3;
+    var flags: [3]u8 = @splat('_');
     if (exec) flags[0] = 'X';
     if (write) flags[1] = 'W';
     if (read) flags[2] = 'R';

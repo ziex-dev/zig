@@ -7,11 +7,11 @@ set -e
 
 TARGET="x86_64-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
-export PATH="$HOME/deps/wasmtime-v42.0.1-x86_64-linux:$HOME/deps/qemu-linux-x86_64-10.2.2/bin:$HOME/local/bin:$PATH"
+export PATH="$HOME/deps/wasmtime-v44.0.0-x86_64-linux:$HOME/deps/qemu-linux-x86_64-11.0.0/bin:$HOME/local/bin:$PATH"
 
 # Override the cache directories because they won't actually help other CI runs
 # which will be testing alternate versions of zig, and ultimately would just
@@ -39,10 +39,7 @@ cmake .. \
   -DZIG_TARGET_MCPU="$MCPU" \
   -DZIG_STATIC=ON \
   -DZIG_NO_LIB=ON \
-  -GNinja \
-  -DCMAKE_C_LINKER_DEPFILE_SUPPORTED=FALSE \
-  -DCMAKE_CXX_LINKER_DEPFILE_SUPPORTED=FALSE
-# https://github.com/ziglang/zig/issues/22213
+  -GNinja
 
 # Now cmake will use zig as the C/C++ compiler. We reset the environment variables
 # so that installation and testing do not get affected by them.
@@ -51,7 +48,10 @@ unset CXX
 
 ninja install
 
-# simultaneously test building self-hosted without LLVM and with 32-bit arm
+# Covers several things:
+# 1. building the compiler without LLVM
+# 2. 32-bit
+# 3. arm
 stage3-release/bin/zig build \
   -Dtarget=arm-linux-musleabihf \
   -Dno-lib
@@ -69,6 +69,10 @@ stage3-release/bin/zig build test docs \
   --zig-lib-dir "$PWD/../lib" \
   -Denable-superhtml \
   --test-timeout 12m
+
+# Ensure that the fuzzer at least compiles.
+stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
+stage3-release/bin/zig build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 stage3-release/bin/zig build \

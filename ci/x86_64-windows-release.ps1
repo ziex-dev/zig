@@ -1,6 +1,6 @@
 $TARGET = "x86_64-windows-gnu"
 $MCPU = "baseline"
-$PREFIX_PATH = "$($Env:USERPROFILE)\deps\zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
+$PREFIX_PATH = "$($Env:USERPROFILE)\deps\zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 $ZIG = "$PREFIX_PATH\bin\zig.exe"
 $ZIG_LIB_DIR = "$(Get-Location)\lib"
 $ZSF_MAX_RSS = if ($Env:ZSF_MAX_RSS) { $Env:ZSF_MAX_RSS } else { 0 }
@@ -53,6 +53,13 @@ stage3-release\bin\zig.exe build test docs `
   -Denable-symlinks-windows `
   --test-timeout 30m
 CheckLastExitCode
+
+# Ensure that the fuzzer at least compiles.
+# https://codeberg.org/ziglang/zig/issues/31893
+# stage3-release\bin\zig.exe build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=ReleaseSafe
+# CheckLastExitCode
+# stage3-release\bin\zig.exe build test-std --fuzz=1K -Dno-lib -Dfuzz-only -Doptimize=Debug
+# CheckLastExitCode
 
 # Ensure that stage3 and stage4 are byte-for-byte identical.
 Write-Output "Build and compare stage4..."

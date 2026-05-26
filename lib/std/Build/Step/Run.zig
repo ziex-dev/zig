@@ -1173,7 +1173,7 @@ fn formatTerm(term: ?process.Child.Term, w: *std.Io.Writer) std.Io.Writer.Error!
     if (term) |t| switch (t) {
         .exited => |code| try w.print("exited with code {d}", .{code}),
         .signal => |sig| try w.print("terminated with signal {t}", .{sig}),
-        .stopped => |sig| try w.print("stopped with signal {d}", .{sig}),
+        .stopped => |sig| try w.print("stopped with signal {t}", .{sig}),
         .unknown => |code| try w.print("terminated for unknown reason with code {d}", .{code}),
     } else {
         try w.writeAll("exited with any code");
@@ -1323,24 +1323,11 @@ fn runCommand(
                 },
                 .wasmtime => |bin_name| {
                     if (b.enable_wasmtime) {
-                        // https://github.com/bytecodealliance/wasmtime/issues/7384
-                        //
-                        // In Wasmtime versions prior to 14, options passed after the module name
-                        // could be interpreted by Wasmtime if it recognized them. As with many CLI
-                        // tools, the `--` token is used to stop that behavior and indicate that the
-                        // remaining arguments are for the WASM program being executed. Historically,
-                        // we passed `--` after the module name here.
-                        //
-                        // After version 14, the `--` can no longer be passed after the module name,
-                        // but is also not necessary as Wasmtime will no longer try to interpret
-                        // options after the module name. So, we could just simply omit `--` for
-                        // newer Wasmtime versions. But to maintain compatibility for older versions
-                        // that still try to interpret options after the module name, we have moved
-                        // the `--` before the module name. This appears to work for both old and
-                        // new Wasmtime versions.
                         try interp_argv.append(bin_name);
                         try interp_argv.append("--dir=.");
-                        try interp_argv.append("--");
+                        // Wasmtime doeesn't inherit environment variables from the parent process
+                        // by default. '-S inherit-env' was added in Wasmtime version 20.
+                        try interp_argv.append("-Sinherit-env");
                         try interp_argv.append(argv[0]);
                         try interp_argv.appendSlice(argv[1..]);
                     } else {
@@ -2179,11 +2166,15 @@ const FuzzTestRunner = struct {
                 const result = completion.result;
                 switch (completion.index % 3) {
                     0 => try f.completeStdinWrite(id, result.file_write_streaming catch |e| switch (e) {
-                        error.BrokenPipe => return f.instanceEos(id),
+                        // Avoid calling `instanceEos` until EndOfStream is seen with stderr so
+                        // that all stderr is collected.
+                        error.BrokenPipe => continue,
                         else => |write_e| return write_e,
                     }),
                     1 => try f.completeStdoutRead(id, result.file_read_streaming catch |e| switch (e) {
-                        error.EndOfStream => return f.instanceEos(id),
+                        // Avoid calling `instanceEos` until EndOfStream is seen with stderr so
+                        // that all stderr is collected.
+                        error.EndOfStream => continue,
                         else => |read_e| return read_e,
                     }),
                     2 => try f.completeStderrRead(id, result.file_read_streaming catch |e| switch (e) {
@@ -2373,7 +2364,10 @@ const FuzzTestRunner = struct {
         var in_name_buf: [12]u8 = undefined;
         var in_name: []const u8 = undefined;
         var i: u32 = 0;
-        const header: InputHeader = while (true) {
+        const header: InputHeader = while (true) : ({
+            if (i == std.math.maxInt(u32)) return;
+            i += 1;
+        }) {
             const name_prefix = "f" ++ Io.Dir.path.sep_str ++ "in";
             in_name = std.fmt.bufPrint(&in_name_buf, name_prefix ++ "{x}", .{i}) catch unreachable;
             in_f = b.cache_root.handle.openFile(io, in_name, .{
@@ -2407,8 +2401,6 @@ const FuzzTestRunner = struct {
             }
 
             in_f.close(io);
-            if (i == std.math.maxInt(u32)) return;
-            i += 1;
         };
         defer in_f.close(io);
 
@@ -2492,7 +2484,7 @@ const FuzzTestRunner = struct {
         const step_owner = f.run.step.owner;
         const arena = step_owner.allocator;
 
-        // Collect any remaining stderr
+        // Collect any available stderr
         while (f.batch.next()) |completion| {
             if (completion.index % 3 != 2) continue;
             const len = completion.result.file_read_streaming catch continue;
@@ -2712,12 +2704,14 @@ fn evalGeneric(run: *Run, spawn_options: process.SpawnOptions) !EvalGenericResul
 
             try multi_reader.checkAnyError();
 
+            // TODO: this string can leak since alloc below can return error.
             stdout_bytes = try multi_reader.toOwnedSlice(0);
+            // TODO: this string can leak since its allocated using gpa and `try child.wait(io)` below can fail.
             stderr_bytes = try multi_reader.toOwnedSlice(1);
         } else {
             var stdout_reader = stdout.readerStreaming(io, &.{});
             stdout_bytes = stdout_reader.interface.allocRemaining(arena, run.stdio_limit) catch |err| switch (err) {
-                error.OutOfMemory => return error.OutOfMemory,
+                error.OutOfMemory => |e| return e,
                 error.ReadFailed => return stdout_reader.err.?,
                 error.StreamTooLong => return error.StdoutStreamTooLong,
             };
@@ -2725,7 +2719,7 @@ fn evalGeneric(run: *Run, spawn_options: process.SpawnOptions) !EvalGenericResul
     } else if (child.stderr) |stderr| {
         var stderr_reader = stderr.readerStreaming(io, &.{});
         stderr_bytes = stderr_reader.interface.allocRemaining(arena, run.stdio_limit) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
+            error.OutOfMemory => |e| return e,
             error.ReadFailed => return stderr_reader.err.?,
             error.StreamTooLong => return error.StderrStreamTooLong,
         };
@@ -2804,8 +2798,8 @@ fn hashStdIo(hh: *std.Build.Cache.HashHelper, stdio: StdIo) void {
                 .expect_term => |term| {
                     hh.add(@as(std.meta.Tag(process.Child.Term), term));
                     switch (term) {
-                        inline .exited, .signal => |x| hh.add(x),
-                        .stopped, .unknown => |x| hh.add(x),
+                        inline .exited, .signal, .stopped => |x| hh.add(x),
+                        .unknown => |x| hh.add(x),
                     }
                 },
             }

@@ -129,7 +129,7 @@ mir_table: std.ArrayList(Mir.Inst.Index) = .empty,
 /// which is a relative jump, based on the address following the reloc.
 epilogue_relocs: std.ArrayList(Mir.Inst.Index) = .empty,
 
-reused_operands: std.StaticBitSet(Air.Liveness.bpi - 1) = undefined,
+reused_operands: std.bit_set.Static(Air.Liveness.bpi - 1) = undefined,
 inst_tracking: InstTrackingMap = .empty,
 
 // Key is the block instruction
@@ -938,7 +938,7 @@ pub fn generate(
 
     const fn_info = zcu.typeToFunc(fn_type).?;
     var call_info = function.resolveCallingConventionValues(fn_info, &.{}, .args_frame) catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         else => |e| return e,
     };
     defer call_info.deinit(&function);
@@ -983,7 +983,7 @@ pub fn generate(
     }
 
     function.gen(&file.zir.?, func_zir.inst, func.comptime_args, call_info.air_arg_count) catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
@@ -998,22 +998,19 @@ pub fn generate(
         } },
     });
 
-    var mir: Mir = .{
-        .instructions = .empty,
-        .extra = &.{},
-        .string_bytes = &.{},
-        .locals = &.{},
-        .table = &.{},
-        .frame_locs = .empty,
+    try function.mir_extra.shrinkToLen(gpa);
+    try function.mir_string_bytes.shrinkToLen(gpa);
+    try function.mir_locals.shrinkToLen(gpa);
+    try function.mir_table.shrinkToLen(gpa);
+
+    return .{
+        .instructions = function.mir_instructions.toOwnedSlice(),
+        .extra = function.mir_extra.toOwnedSliceAssert(),
+        .string_bytes = function.mir_string_bytes.toOwnedSliceAssert(),
+        .locals = function.mir_locals.toOwnedSliceAssert(),
+        .table = function.mir_table.toOwnedSliceAssert(),
+        .frame_locs = function.frame_locs.toOwnedSlice(),
     };
-    errdefer mir.deinit(gpa);
-    mir.instructions = function.mir_instructions.toOwnedSlice();
-    mir.extra = try function.mir_extra.toOwnedSlice(gpa);
-    mir.string_bytes = try function.mir_string_bytes.toOwnedSlice(gpa);
-    mir.locals = try function.mir_locals.toOwnedSlice(gpa);
-    mir.table = try function.mir_table.toOwnedSlice(gpa);
-    mir.frame_locs = function.frame_locs.toOwnedSlice();
-    return mir;
 }
 
 pub fn getTmpMir(cg: *CodeGen) Mir {
@@ -1032,7 +1029,7 @@ pub fn generateLazy(
     pt: Zcu.PerThread,
     src_loc: Zcu.LazySrcLoc,
     lazy_sym: link.File.LazySymbol,
-    atom_index: u32,
+    atom_id: link.File.AtomId,
     w: *std.Io.Writer,
     debug_output: link.File.DebugInfoOutput,
 ) codegen.CodeGenError!void {
@@ -1071,12 +1068,12 @@ pub fn generateLazy(
     }
 
     function.genLazy(lazy_sym) catch |err| switch (err) {
-        error.CodegenFail => return error.CodegenFail,
+        error.CodegenFail => |e| return e,
         error.OutOfRegisters => return function.fail("ran out of registers (Zig compiler bug)", .{}),
         else => |e| return e,
     };
 
-    try function.getTmpMir().emitLazy(bin_file, pt, src_loc, lazy_sym, atom_index, w, debug_output);
+    try function.getTmpMir().emitLazy(bin_file, pt, src_loc, lazy_sym, atom_id, w, debug_output);
 }
 
 const FormatNavData = struct {
@@ -1851,8 +1848,7 @@ fn asmRegisterMemoryImmediate(
     imm: Immediate,
 ) !void {
     if (switch (imm) {
-        .signed => |s| if (std.math.cast(i16, s)) |x| @as(u16, @bitCast(x)) else null,
-        .unsigned => |u| std.math.cast(u16, u),
+        inline .signed, .unsigned => |x| std.math.cast(i16, x),
         .nav, .uav, .lazy_sym, .extern_func => unreachable,
     }) |small_imm| {
         _ = try self.addInst(.{
@@ -1974,7 +1970,7 @@ fn asmMemoryRegisterImmediate(
         .data = .{ .rix = .{
             .fixes = tag[0],
             .r1 = reg,
-            .i = @intCast(imm.unsigned),
+            .i = @as(u8, @intCast(imm.unsigned)),
             .payload = try self.addExtra(Mir.Memory.encode(m)),
         } },
     });
@@ -2050,7 +2046,16 @@ fn gen(
 
                 self.performReloc(skip_sse_reloc);
             },
-            .x86_64_win => return self.fail("TODO implement gen var arg function for Win64", .{}),
+            .x86_64_win => {
+                for (abi.Win64.c_abi_int_param_regs[0..], 0..) |reg, reg_i|
+                    try self.genSetMem(
+                        .{ .frame = .args_frame },
+                        @intCast(reg_i * 8),
+                        .usize,
+                        .{ .register = reg },
+                        .{},
+                    );
+            },
             else => |cc| return self.fail("{s} does not support var args", .{@tagName(cc)}),
         };
 
@@ -2060,7 +2065,7 @@ fn gen(
 
         const epilogue = if (self.epilogue_relocs.items.len > 0) epilogue: {
             var last_inst: Mir.Inst.Index = @intCast(self.mir_instructions.len - 1);
-            while (self.epilogue_relocs.getLastOrNull() == last_inst) {
+            while (self.epilogue_relocs.getLast() == last_inst) {
                 self.epilogue_relocs.items.len -= 1;
                 self.mir_instructions.set(last_inst, .{
                     .tag = .pseudo,
@@ -60831,14 +60836,14 @@ fn genBody(cg: *CodeGen, body: []const Air.Inst.Index) InnerError!void {
                 try slot.finish(inst, &.{}, &.{}, cg);
             },
             .assembly => try cg.airAsm(inst),
-            .bit_and, .bit_or, .xor, .bool_and, .bool_or => |air_tag| {
+            .bit_and, .bit_or, .xor => |air_tag| {
                 const bin_op = air_datas[@intFromEnum(inst)].bin_op;
                 var ops = try cg.tempsFromOperands(inst, .{ bin_op.lhs, bin_op.rhs });
                 var res: [1]Temp = undefined;
                 cg.select(&res, &.{cg.typeOf(bin_op.lhs)}, &ops, switch (@as(Mir.Inst.Tag, switch (air_tag) {
                     else => unreachable,
-                    .bit_and, .bool_and => .@"and",
-                    .bit_or, .bool_or => .@"or",
+                    .bit_and => .@"and",
+                    .bit_or => .@"or",
                     .xor => .xor,
                 })) {
                     else => unreachable,
@@ -173812,9 +173817,9 @@ fn genLazy(cg: *CodeGen, lazy_sym: link.File.LazySymbol) InnerError!void {
             var err_temp = try cg.tempInit(err_ty, err_mcv);
 
             const ExpectedContents = [32]Mir.Inst.Index;
-            var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-                std.heap.stackFallback(@sizeOf(ExpectedContents), cg.gpa);
-            const allocator = stack.get();
+            var bfa_buf: ExpectedContents = undefined;
+            var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), cg.gpa);
+            const allocator = bfa.allocator();
 
             const relocs = try allocator.alloc(Mir.Inst.Index, error_set_type.names.len);
             defer allocator.free(relocs);
@@ -173947,7 +173952,7 @@ fn setFrameLoc(
     offset.* += self.frame_allocs.items(.abi_size)[frame_i];
 }
 
-fn computeFrameLayout(self: *CodeGen, cc: std.builtin.CallingConvention.Tag) !FrameLayout {
+fn computeFrameLayout(self: *CodeGen, cc: std.lang.CallingConvention.Tag) !FrameLayout {
     const frame_allocs_len = self.frame_allocs.len;
     try self.frame_locs.resize(self.gpa, frame_allocs_len);
     const stack_frame_order = try self.gpa.alloc(FrameIndex, frame_allocs_len - FrameIndex.named_count);
@@ -174212,11 +174217,12 @@ fn restoreState(self: *CodeGen, state: State, deaths: []const Air.Inst.Index, co
     for (deaths) |death| try self.processDeath(death, .{ .emit_instructions = opts.emit_instructions });
 
     const ExpectedContents = [@typeInfo(RegisterManager.TrackedRegisters).array.len]RegisterLock;
-    var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-        if (opts.update_tracking) {} else std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
+    const bfa_buf_len = if (opts.update_tracking) 0 else 1;
+    var bfa_buf: [bfa_buf_len]ExpectedContents = undefined;
+    var stack = if (opts.update_tracking) {} else std.heap.BufferFirstAllocator.init(@ptrCast(&bfa_buf), self.gpa);
 
     var reg_locks = if (opts.update_tracking) {} else try std.array_list.Managed(RegisterLock).initCapacity(
-        stack.get(),
+        stack.allocator(),
         @typeInfo(ExpectedContents).array.len,
     );
     defer if (!opts.update_tracking) {
@@ -174288,7 +174294,7 @@ pub fn spillEflagsIfOccupied(self: *CodeGen) !void {
     }
 }
 
-pub fn spillCallerPreservedRegs(self: *CodeGen, cc: std.builtin.CallingConvention.Tag, ignore_reg: Register) !void {
+pub fn spillCallerPreservedRegs(self: *CodeGen, cc: std.lang.CallingConvention.Tag, ignore_reg: Register) !void {
     switch (cc) {
         inline .auto, .x86_64_sysv, .x86_64_win => |tag| inline for (comptime abi.getCallerPreservedRegs(tag)) |reg|
             if (reg != ignore_reg) try self.register_manager.getKnownReg(reg, null),
@@ -175911,7 +175917,7 @@ fn genLocalDebugInfo(cg: *CodeGen, air_tag: Air.Inst.Tag, ty: Type, mcv: MCValue
     };
 }
 
-fn airCall(self: *CodeGen, inst: Air.Inst.Index, modifier: std.builtin.CallModifier, opts: CopyOptions) !void {
+fn airCall(self: *CodeGen, inst: Air.Inst.Index, modifier: std.lang.CallModifier, opts: CopyOptions) !void {
     if (modifier == .always_tail) return self.fail("TODO implement tail calls for x86_64", .{});
 
     const call = self.air.unwrapCall(inst);
@@ -175921,9 +175927,9 @@ fn airCall(self: *CodeGen, inst: Air.Inst.Index, modifier: std.builtin.CallModif
         tys: [32][@sizeOf(Type)]u8 align(@alignOf(Type)),
         vals: [32][@sizeOf(MCValue)]u8 align(@alignOf(MCValue)),
     };
-    var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-        std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
-    const allocator = stack.get();
+    var bfa_buf: [1]ExpectedContents = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), self.gpa);
+    const allocator = bfa.allocator();
 
     const arg_tys = try allocator.alloc(Type, arg_refs.len);
     defer allocator.free(arg_tys);
@@ -175977,9 +175983,9 @@ fn genCall(self: *CodeGen, info: union(enum) {
         frame_indices: [32]FrameIndex,
         reg_locks: [32][@sizeOf(?RegisterLock)]u8 align(@alignOf(?RegisterLock)),
     };
-    var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-        std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
-    const allocator = stack.get();
+    var bfa_buf: ExpectedContents = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), self.gpa);
+    const allocator = bfa.allocator();
 
     const var_args = try allocator.alloc(Type, args.len - fn_info.param_types.len);
     defer allocator.free(var_args);
@@ -176021,12 +176027,22 @@ fn genCall(self: *CodeGen, info: union(enum) {
         .indirect => |reg_off| try self.register_manager.getReg(reg_off.reg, null),
         else => unreachable,
     }
-    for (call_info.args, arg_types, args, frame_indices) |dst_arg, arg_ty, src_arg, *frame_index|
+    for (call_info.args, arg_types, args, frame_indices, 0..) |dst_arg, arg_ty, src_arg, *frame_index, arg_i|
         switch (dst_arg) {
             .none => {},
             .register => |reg| {
                 try self.register_manager.getReg(reg, null);
                 try reg_locks.append(self.register_manager.lockReg(reg));
+
+                if (fn_info.is_var_args and
+                    fn_info.cc == .x86_64_win and
+                    reg.class() == .sse and
+                    arg_i < abi.Win64.c_abi_int_param_regs.len)
+                {
+                    // Floating point arguments must be duplicated into the equivalent integer registers on this ABI
+                    const int_reg = abi.Win64.c_abi_int_param_regs[arg_i];
+                    try reg_locks.append(self.register_manager.lockReg(int_reg));
+                }
             },
             .register_pair => |regs| {
                 for (regs) |reg| try self.register_manager.getReg(reg, null);
@@ -176130,7 +176146,7 @@ fn genCall(self: *CodeGen, info: union(enum) {
         else => unreachable,
     }
 
-    for (call_info.args, arg_types, args, frame_indices) |dst_arg, arg_ty, src_arg, frame_index|
+    for (call_info.args, arg_types, args, frame_indices, 0..) |dst_arg, arg_ty, src_arg, frame_index, arg_i|
         switch (dst_arg) {
             .none, .load_frame => {},
             .register => |dst_reg| switch (fn_info.cc) {
@@ -176145,6 +176161,16 @@ fn genCall(self: *CodeGen, info: union(enum) {
                     try self.genSetReg(dst_alias, promoted_ty, src_arg, opts);
                     if (promoted_ty.toIntern() != arg_ty.toIntern())
                         try self.truncateRegister(arg_ty, dst_alias);
+
+                    if (fn_info.is_var_args and
+                        fn_info.cc == .x86_64_win and
+                        dst_reg.class() == .sse and
+                        arg_i < abi.Win64.c_abi_int_param_regs.len)
+                    {
+                        const int_dst_reg = abi.Win64.c_abi_int_param_regs[arg_i];
+                        const int_dst_alias = registerAlias(int_dst_reg, promoted_abi_size);
+                        try self.genSetReg(int_dst_alias, promoted_ty, .{ .register = dst_alias }, opts);
+                    }
                 },
             },
             .register_pair => try self.genCopy(arg_ty, dst_arg, src_arg, opts),
@@ -176181,7 +176207,8 @@ fn genCall(self: *CodeGen, info: union(enum) {
             else => unreachable,
         };
 
-    if (fn_info.is_var_args) try self.asmRegisterImmediate(.{ ._, .mov }, .al, .u(call_info.fp_count));
+    if (fn_info.is_var_args and fn_info.cc == .x86_64_sysv)
+        try self.asmRegisterImmediate(.{ ._, .mov }, .al, .u(call_info.fp_count));
 
     // Due to incremental compilation, how function calls are generated depends
     // on linking.
@@ -176518,7 +176545,7 @@ fn lowerBlock(self: *CodeGen, inst: Air.Inst.Index, body: []const Air.Inst.Index
     defer block_data.value.deinit(self.gpa);
     if (block_data.value.relocs.items.len > 0) {
         var last_inst: Mir.Inst.Index = @intCast(self.mir_instructions.len - 1);
-        while (block_data.value.relocs.getLastOrNull() == last_inst) {
+        while (block_data.value.relocs.getLast() == last_inst) {
             block_data.value.relocs.items.len -= 1;
             self.mir_instructions.set(last_inst, .{
                 .tag = .pseudo,
@@ -176559,9 +176586,9 @@ fn lowerSwitchBr(
         bigint_limbs: [std.math.big.int.calcTwosCompLimbCount(1 << 10)]std.math.big.Limb,
         relocs: [1 << 6]Mir.Inst.Index,
     };
-    var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-        std.heap.stackFallback(@sizeOf(ExpectedContents), cg.gpa);
-    const allocator = stack.get();
+    var bfa_buf: ExpectedContents = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), cg.gpa);
+    const allocator = bfa.allocator();
 
     const state = try cg.saveState();
 
@@ -177412,7 +177439,7 @@ fn airAsm(self: *CodeGen, inst: Air.Inst.Index) !void {
         }
 
         var mnem_size: struct {
-            op_has_size: std.StaticBitSet(4),
+            op_has_size: std.bit_set.Static(4),
             size: Memory.Size,
             used: bool,
             fn init(size: ?Memory.Size) @This() {
@@ -178351,7 +178378,7 @@ fn genCopy(self: *CodeGen, ty: Type, dst_mcv: MCValue, src_mcv: MCValue, opts: C
                     else => unreachable,
                 },
                 dst_tag => |src_regs| {
-                    var remaining: std.StaticBitSet(dst_regs.len) = .full;
+                    var remaining: std.bit_set.Static(dst_regs.len) = .full;
                     var hazard_regs = src_regs;
                     while (!remaining.eql(.empty)) {
                         var remaining_it = remaining.iterator(.{});
@@ -179471,7 +179498,7 @@ fn airBitCast(self: *CodeGen, inst: Air.Inst.Index) !void {
         );
         var offset = dst_limbs_len * 8;
         if (offset < abi_size) {
-            const dst_signedness: std.builtin.Signedness = if (dst_ty.isAbiInt(zcu))
+            const dst_signedness: std.lang.Signedness = if (dst_ty.isAbiInt(zcu))
                 dst_ty.intInfo(zcu).signedness
             else
                 .unsigned;
@@ -179613,8 +179640,8 @@ fn atomicOp(
     ptr_ty: Type,
     val_ty: Type,
     unused: bool,
-    rmw_op: ?std.builtin.AtomicRmwOp,
-    order: std.builtin.AtomicOrder,
+    rmw_op: ?std.lang.AtomicRmwOp,
+    order: std.lang.AtomicOrder,
 ) InnerError!MCValue {
     const pt = self.pt;
     const zcu = pt.zcu;
@@ -179687,7 +179714,7 @@ fn atomicOp(
             defer self.register_manager.unlockReg(dst_lock);
 
             try self.genSetReg(dst_reg, val_ty, val_mcv, .{});
-            if (rmw_op == std.builtin.AtomicRmwOp.Sub and mir_tag[1] == .xadd) {
+            if (rmw_op == std.lang.AtomicRmwOp.Sub and mir_tag[1] == .xadd) {
                 try self.genUnOpMir(.{ ._, .neg }, val_ty, dst_mcv);
             }
             try self.asmMemoryRegister(mir_tag, ptr_mem, registerAlias(dst_reg, val_abi_size));
@@ -179871,7 +179898,7 @@ fn atomicOp(
             };
             const val_lo_mem = try val_mem_mcv.mem(self, .{ .size = .qword });
             const val_hi_mem = try val_mem_mcv.address().offset(8).deref().mem(self, .{ .size = .qword });
-            if (rmw_op != std.builtin.AtomicRmwOp.Xchg) {
+            if (rmw_op != std.lang.AtomicRmwOp.Xchg) {
                 try self.asmRegisterRegister(.{ ._, .mov }, .rbx, .rax);
                 try self.asmRegisterRegister(.{ ._, .mov }, .rcx, .rdx);
             }
@@ -180006,7 +180033,7 @@ fn airAtomicLoad(self: *CodeGen, inst: Air.Inst.Index) !void {
     return self.finishAir(inst, result, .{ atomic_load.ptr, .none, .none });
 }
 
-fn airAtomicStore(self: *CodeGen, inst: Air.Inst.Index, order: std.builtin.AtomicOrder) !void {
+fn airAtomicStore(self: *CodeGen, inst: Air.Inst.Index, order: std.lang.AtomicOrder) !void {
     const bin_op = self.air.instructions.items(.data)[@intFromEnum(inst)].bin_op;
 
     const ptr_ty = self.typeOf(bin_op.lhs);
@@ -180126,7 +180153,7 @@ fn airMemset(self: *CodeGen, inst: Air.Inst.Index, safety: bool) !void {
                     .{ .i_, .mul },
                     len_reg,
                     len_reg,
-                    .s(elem_abi_size),
+                    .u(elem_abi_size),
                 );
                 try self.genInlineMemcpy(second_elem_ptr_mcv, dst_ptr, len_mcv, .{ .no_alias = false });
 
@@ -180793,7 +180820,18 @@ fn airVaStart(self: *CodeGen, inst: Air.Inst.Index) !void {
             field_off += @intCast(ptr_anyopaque_ty.abiSize(zcu));
             break :result .{ .load_frame = .{ .index = dst_fi } };
         },
-        .x86_64_win => return self.fail("TODO implement c_va_start for Win64", .{}),
+        .x86_64_win => result: {
+            const dst_fi = try self.allocFrameIndex(.initSpill(va_list_ty, zcu));
+            const fn_info = zcu.typeToFunc(self.fn_type).?;
+            try self.genSetMem(
+                .{ .frame = dst_fi },
+                0,
+                ptr_anyopaque_ty,
+                .{ .lea_frame = .{ .index = .args_frame, .off = @intCast(fn_info.param_types.len * 8) } },
+                .{},
+            );
+            break :result .{ .load_frame = .{ .index = dst_fi } };
+        },
         else => |cc| return self.fail("{s} does not support var args", .{@tagName(cc)}),
     };
     return self.finishAir(inst, result, .{ .none, .none, .none });
@@ -180932,46 +180970,101 @@ fn airVaArg(self: *CodeGen, inst: Air.Inst.Index) !void {
                 break :result dst_mcv;
             }
 
-            assert(ty.toIntern() == .f32_type and promote_ty.toIntern() == .f64_type);
-            const dst_mcv = if (promote_mcv.isRegister())
-                promote_mcv
-            else
-                try self.copyToRegisterWithInstTracking(inst, ty, promote_mcv);
-            const dst_reg = dst_mcv.getReg().?.to128();
-            const dst_lock = self.register_manager.lockReg(dst_reg);
-            defer if (dst_lock) |lock| self.register_manager.unlockReg(lock);
-
-            if (self.hasFeature(.avx)) if (promote_mcv.isBase()) try self.asmRegisterRegisterMemory(
-                .{ .v_ss, .cvtsd2 },
-                dst_reg,
-                dst_reg,
-                try promote_mcv.mem(self, .{ .size = .qword }),
-            ) else try self.asmRegisterRegisterRegister(
-                .{ .v_ss, .cvtsd2 },
-                dst_reg,
-                dst_reg,
-                (if (promote_mcv.isRegister())
-                    promote_mcv.getReg().?
-                else
-                    try self.copyToTmpRegister(promote_ty, promote_mcv)).to128(),
-            ) else if (promote_mcv.isBase()) try self.asmRegisterMemory(
-                .{ ._ss, .cvtsd2 },
-                dst_reg,
-                try promote_mcv.mem(self, .{ .size = .qword }),
-            ) else try self.asmRegisterRegister(
-                .{ ._ss, .cvtsd2 },
-                dst_reg,
-                (if (promote_mcv.isRegister())
-                    promote_mcv.getReg().?
-                else
-                    try self.copyToTmpRegister(promote_ty, promote_mcv)).to128(),
-            );
+            try self.convertFloatVarArg(inst, ty, promote_ty, promote_mcv);
             break :result promote_mcv;
         },
-        .x86_64_win => return self.fail("TODO implement c_va_arg for Win64", .{}),
+        .x86_64_win => result: {
+            try self.spillEflagsIfOccupied();
+
+            const promote_mcv = try self.allocTempRegOrMem(promote_ty, true);
+            const promote_lock = switch (promote_mcv) {
+                .register => |reg| self.register_manager.lockRegAssumeUnused(reg),
+                else => null,
+            };
+            defer if (promote_lock) |lock| self.register_manager.unlockReg(lock);
+
+            const ptr_arg_list_reg =
+                try self.copyToTmpRegister(self.typeOf(ty_op.operand), .{ .air_ref = ty_op.operand });
+            const ptr_arg_list_lock = self.register_manager.lockRegAssumeUnused(ptr_arg_list_reg);
+            defer self.register_manager.unlockReg(ptr_arg_list_lock);
+
+            const next_arg_ptr: MCValue = .{ .indirect = .{ .reg = ptr_arg_list_reg } };
+
+            const class = abi.classifyWindows(promote_ty, zcu, self.target, .arg);
+            switch (class) {
+                .integer, .sse => {
+                    const next_arg_ptr_reg = try self.copyToTmpRegister(.usize, next_arg_ptr);
+                    if (!unused) try self.genCopy(promote_ty, promote_mcv, .{
+                        .indirect = .{ .reg = next_arg_ptr_reg },
+                    }, .{});
+                    try self.asmRegisterMemory(.{ ._, .lea }, next_arg_ptr_reg, .{
+                        .base = .{ .reg = next_arg_ptr_reg.to64() },
+                        .mod = .{ .rm = .{ .disp = 8 } },
+                    });
+                    try self.genCopy(.usize, next_arg_ptr, .{ .register = next_arg_ptr_reg }, .{});
+                },
+                .memory => unreachable,
+                else => return self.fail("TODO implement c_va_arg for {f} on Win64", .{promote_ty.fmt(pt)}),
+            }
+
+            if (unused) break :result .unreach;
+            if (ty.toIntern() == promote_ty.toIntern()) break :result promote_mcv;
+
+            if (!promote_ty.isRuntimeFloat()) {
+                const dst_mcv = try self.allocRegOrMem(inst, true);
+                try self.genCopy(ty, dst_mcv, promote_mcv, .{});
+                break :result dst_mcv;
+            }
+
+            try self.convertFloatVarArg(inst, ty, promote_ty, promote_mcv);
+            break :result promote_mcv;
+        },
         else => |cc| return self.fail("{s} does not support var args", .{@tagName(cc)}),
     };
     return self.finishAir(inst, result, .{ ty_op.operand, .none, .none });
+}
+
+fn convertFloatVarArg(
+    self: *CodeGen,
+    inst: Air.Inst.Index,
+    ty: Type,
+    promote_ty: Type,
+    promote_mcv: MCValue,
+) !void {
+    assert(ty.toIntern() == .f32_type and promote_ty.toIntern() == .f64_type);
+    const dst_mcv = if (promote_mcv.isRegister())
+        promote_mcv
+    else
+        try self.copyToRegisterWithInstTracking(inst, ty, promote_mcv);
+    const dst_reg = dst_mcv.getReg().?.to128();
+    const dst_lock = self.register_manager.lockReg(dst_reg);
+    defer if (dst_lock) |lock| self.register_manager.unlockReg(lock);
+
+    if (self.hasFeature(.avx)) if (promote_mcv.isBase()) try self.asmRegisterRegisterMemory(
+        .{ .v_ss, .cvtsd2 },
+        dst_reg,
+        dst_reg,
+        try promote_mcv.mem(self, .{ .size = .qword }),
+    ) else try self.asmRegisterRegisterRegister(
+        .{ .v_ss, .cvtsd2 },
+        dst_reg,
+        dst_reg,
+        (if (promote_mcv.isRegister())
+            promote_mcv.getReg().?
+        else
+            try self.copyToTmpRegister(promote_ty, promote_mcv)).to128(),
+    ) else if (promote_mcv.isBase()) try self.asmRegisterMemory(
+        .{ ._ss, .cvtsd2 },
+        dst_reg,
+        try promote_mcv.mem(self, .{ .size = .qword }),
+    ) else try self.asmRegisterRegister(
+        .{ ._ss, .cvtsd2 },
+        dst_reg,
+        (if (promote_mcv.isRegister())
+            promote_mcv.getReg().?
+        else
+            try self.copyToTmpRegister(promote_ty, promote_mcv)).to128(),
+    );
 }
 
 fn airVaCopy(self: *CodeGen, inst: Air.Inst.Index) !void {
@@ -181059,9 +181152,9 @@ fn resolveCallingConventionValues(
     const ExpectedContents = extern struct {
         param_types: [32][@sizeOf(Type)]u8 align(@alignOf(Type)),
     };
-    var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-        std.heap.stackFallback(@sizeOf(ExpectedContents), cg.gpa);
-    const allocator = stack.get();
+    var bfa_buf: ExpectedContents = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), cg.gpa);
+    const allocator = bfa.allocator();
 
     const param_types = try allocator.alloc(Type, fn_info.param_types.len + var_args.len);
     defer allocator.free(param_types);
@@ -181508,9 +181601,9 @@ fn splitType(self: *CodeGen, comptime parts_len: usize, ty: Type) ![parts_len]Ty
     const ip = &zcu.intern_pool;
     var parts: [parts_len]Type = undefined;
     switch (ip.indexToKey(ty.toIntern())) {
-        .vector_type => |vector_type| if (std.math.divExact(u32, vector_type.len, parts_len)) |vec_len| return .{
-            try pt.vectorType(.{ .len = vec_len, .child = vector_type.child }),
-        } ** parts_len else |err| switch (err) {
+        .vector_type => |vector_type| if (std.math.divExact(u32, vector_type.len, parts_len)) |vec_len| {
+            return @splat(try pt.vectorType(.{ .len = vec_len, .child = vector_type.child }));
+        } else |err| switch (err) {
             error.DivisionByZero => unreachable,
             error.UnexpectedRemainder => {},
         },
@@ -181539,9 +181632,11 @@ fn splitType(self: *CodeGen, comptime parts_len: usize, ty: Type) ![parts_len]Ty
             else => break,
         };
     } else {
-        var part_sizes: u64 = 0;
-        for (parts) |part| part_sizes += part.abiSize(zcu);
-        if (part_sizes == ty.abiSize(zcu)) return parts;
+        var parts_size: u64 = 0;
+        for (parts) |part| parts_size += part.abiSize(zcu);
+        const abi_size = ty.abiSize(zcu);
+        if (abi_size == parts_size) return parts;
+        if (classes[classes.len - 1] == .float and abi_size > parts_size and abi_size <= parts_size + 4) return parts;
     };
     return self.fail("TODO implement splitType({d}, {f})", .{ parts_len, ty.fmt(pt) });
 }
@@ -181718,7 +181813,7 @@ fn nonBoolScalarBitSize(cg: *CodeGen, ty: Type) u32 {
     };
 }
 
-fn intInfo(cg: *CodeGen, ty: Type) ?std.builtin.Type.Int {
+fn intInfo(cg: *CodeGen, ty: Type) ?std.lang.Type.Int {
     const zcu = cg.pt.zcu;
     const ip = &zcu.intern_pool;
     var ty_index = ty.ip_index;
@@ -187465,11 +187560,9 @@ const Temp = struct {
         }
 
         const max = std.math.maxInt(@typeInfo(Index).@"enum".tag_type);
-        const Set = std.StaticBitSet(max);
+        const Set = std.bit_set.Static(max);
         const SafetySet = if (std.debug.runtime_safety) Set else struct {
-            inline fn initEmpty() @This() {
-                return .{};
-            }
+            pub const empty: @This() = .{};
 
             inline fn isSet(_: @This(), index: usize) bool {
                 assert(index < max);
@@ -188433,7 +188526,7 @@ const Select = struct {
 
             const ConstSpec = struct {
                 ref: Select.Operand.Ref = .none,
-                to_signedness: ?std.builtin.Signedness = null,
+                to_signedness: ?std.lang.Signedness = null,
                 vectorize_to: ?Memory.Size = null,
             };
 
@@ -188442,7 +188535,7 @@ const Select = struct {
                 after: u2,
                 at: u2,
 
-                fn tag(spec: CallConvRegSpec, cg: *const CodeGen) std.builtin.CallingConvention.Tag {
+                fn tag(spec: CallConvRegSpec, cg: *const CodeGen) std.lang.CallingConvention.Tag {
                     return switch (spec.cc) {
                         .none => unreachable,
                         .ccc => cg.target.cCallingConvention().?,
@@ -188572,11 +188665,11 @@ const Select = struct {
                             .smax_mem, .umin_mem => .bool_false,
                         }) },
                         else => {
-                            const scalar_info: std.builtin.Type.Int = cg.intInfo(scalar_ty) orelse .{
+                            const scalar_info: std.lang.Type.Int = cg.intInfo(scalar_ty) orelse .{
                                 .signedness = .signed,
                                 .bits = cg.floatBits(scalar_ty).?,
                             };
-                            const res_scalar_info: std.builtin.Type.Int = .{
+                            const res_scalar_info: std.lang.Type.Int = .{
                                 .signedness = const_spec.to_signedness orelse scalar_info.signedness,
                                 .bits = switch (spec.kind) {
                                     else => scalar_info.bits,
@@ -188611,9 +188704,9 @@ const Select = struct {
                             }
 
                             const ExpectedContents = [std.math.big.int.calcTwosCompLimbCount(1 << 10)]std.math.big.Limb;
-                            var stack align(@max(@alignOf(ExpectedContents), @alignOf(std.heap.StackFallbackAllocator(0)))) =
-                                std.heap.stackFallback(@sizeOf(ExpectedContents), cg.gpa);
-                            const allocator = stack.get();
+                            var bfa_buf: ExpectedContents = undefined;
+                            var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), cg.gpa);
+                            const allocator = bfa.allocator();
                             var res_big_int: std.math.big.int.Mutable = .{
                                 .limbs = try allocator.alloc(
                                     std.math.big.Limb,
@@ -188644,7 +188737,7 @@ const Select = struct {
                                         .positive = undefined,
                                     };
                                     defer allocator.free(big_int.limbs);
-                                    const signedness: std.builtin.Signedness = switch (spec.kind) {
+                                    const signedness: std.lang.Signedness = switch (spec.kind) {
                                         else => unreachable,
                                         .slimit_delta_mem => .signed,
                                         .umax_delta_mem => .unsigned,
@@ -188679,7 +188772,9 @@ const Select = struct {
                     try pt.aggregateValue(try pt.vectorType(.{ .len = 4, .child = .u32_type }), &(.{
                         (try pt.intValue(.u32, @as(u64, @bitCast(@as(f64, 0x1p52))) >> 32)).toIntern(),
                         (try pt.intValue(.u32, @as(u64, @bitCast(@as(f64, 0x1p84))) >> 32)).toIntern(),
-                    } ++ .{(try pt.intValue(.u32, 0)).toIntern()} ** 2)),
+                        (try pt.intValue(.u32, 0)).toIntern(),
+                        (try pt.intValue(.u32, 0)).toIntern(),
+                    })),
                 ), true },
                 .f32_0_0x1p64_mem => .{ try cg.tempMemFromValue(
                     try pt.aggregateValue(try pt.vectorType(.{ .len = 2, .child = .f32_type }), &.{

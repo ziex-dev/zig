@@ -47,9 +47,6 @@ const glibc_targets = [_]LibCTarget{
     .{ .arch = .mips64, .abi = .gnuabin32, .dest = "mips-linux-gnu" },
     .{ .arch = .mips64el, .abi = .gnuabi64, .dest = "mips-linux-gnu" },
     .{ .arch = .mips64el, .abi = .gnuabin32, .dest = "mips-linux-gnu" },
-    .{ .arch = .powerpc, .abi = .gnueabi, .dest = "powerpc-linux-gnu" },
-    .{ .arch = .powerpc, .abi = .gnueabihf, .dest = "powerpc-linux-gnu" },
-    .{ .arch = .powerpc64, .abi = .gnu, .dest = "powerpc-linux-gnu" },
     .{ .arch = .powerpc64le, .abi = .gnu, .dest = "powerpc-linux-gnu" },
     .{ .arch = .riscv32, .abi = .gnu, .dest = "riscv-linux-gnu" },
     .{ .arch = .riscv64, .abi = .gnu, .dest = "riscv-linux-gnu" },
@@ -130,7 +127,7 @@ const Contents = struct {
 };
 
 const HashToContents = std.StringHashMap(Contents);
-const TargetToHash = std.StringArrayHashMap([]const u8);
+const TargetToHash = std.array_hash_map.String([]const u8);
 const PathTable = std.StringHashMap(*TargetToHash);
 
 const LibCVendor = enum {
@@ -317,7 +314,7 @@ pub fn main(init: std.process.Init) !void {
                             const path_gop = try path_table.getOrPut(rel_path);
                             const target_to_hash = if (path_gop.found_existing) path_gop.value_ptr.* else blk: {
                                 const ptr = try arena.create(TargetToHash);
-                                ptr.* = TargetToHash.init(arena);
+                                ptr.* = .empty;
                                 path_gop.value_ptr.* = ptr;
                                 break :blk ptr;
                             };
@@ -327,14 +324,14 @@ pub fn main(init: std.process.Init) !void {
                             // such cases, we manually patch the affected header after processing, so it's fine that
                             // only one header wins here.
                             if (libc_target.dest != null) {
-                                const hash_gop = try target_to_hash.getOrPut(dest_target);
+                                const hash_gop = try target_to_hash.getOrPut(arena, dest_target);
                                 if (hash_gop.found_existing) std.debug.print("overwrote: {s} {s} {s}\n", .{
                                     libc_dir,
                                     rel_path,
                                     dest_target,
                                 }) else hash_gop.value_ptr.* = hash;
                             } else {
-                                try target_to_hash.putNoClobber(dest_target, hash);
+                                try target_to_hash.putNoClobber(arena, dest_target, hash);
                             }
                         },
                         else => std.debug.print("warning: weird file: {s}\n", .{full_path}),

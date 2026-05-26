@@ -18,7 +18,7 @@ fn usage(io: Io) noreturn {
         \\                            By default, enabled unless a port is specified.
         \\
     ) catch {};
-    std.process.exit(1);
+    std.process.exit(0);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -423,7 +423,14 @@ fn buildWasmBinary(
             );
             return error.WasmCompilationFailed;
         },
-        .stopped, .unknown => {
+        .stopped => |sig| {
+            std.log.err(
+                "the following command stopped unexpectedly with signal {t}:\n{s}",
+                .{ sig, try std.Build.Step.allocPrintCmd(arena, .inherit, null, argv.items) },
+            );
+            return error.WasmCompilationFailed;
+        },
+        .unknown => {
             std.log.err(
                 "the following command terminated unexpectedly:\n{s}",
                 .{try std.Build.Step.allocPrintCmd(arena, .inherit, null, argv.items)},

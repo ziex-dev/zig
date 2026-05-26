@@ -1830,7 +1830,7 @@ pub const Visibility = enum(u2) {
     hidden = 1,
     protected = 2,
 
-    pub fn fromSymbolVisibility(sv: std.builtin.SymbolVisibility) Visibility {
+    pub fn fromSymbolVisibility(sv: std.lang.SymbolVisibility) Visibility {
         return switch (sv) {
             .default => .default,
             .hidden => .hidden,
@@ -2310,7 +2310,7 @@ pub fn trailingStrtabString(self: *Builder) Allocator.Error!StrtabString {
 }
 
 pub fn trailingStrtabStringAssumeCapacity(self: *Builder) StrtabString {
-    const start = self.strtab_string_indices.getLast();
+    const start = self.strtab_string_indices.getLast().?;
     const bytes: []const u8 = self.strtab_string_bytes.items[start..];
     const gop = self.strtab_string_map.getOrPutAssumeCapacityAdapted(bytes, StrtabString.Adapter{ .builder = self });
     if (gop.found_existing) {
@@ -7628,9 +7628,7 @@ pub const Constant = enum(u32) {
                             const expected_limbs = @divExact(512, @bitSizeOf(std.math.big.Limb));
                             string: [
                                 (std.math.big.int.Const{
-                                    .limbs = &([1]std.math.big.Limb{
-                                        maxInt(std.math.big.Limb),
-                                    } ** expected_limbs),
+                                    .limbs = &@as([expected_limbs]std.math.big.Limb, @splat(maxInt(std.math.big.Limb))),
                                     .positive = false,
                                 }).sizeInBaseUpperBound(10)
                             ]u8,
@@ -7638,9 +7636,9 @@ pub const Constant = enum(u32) {
                                 std.math.big.int.calcToStringLimbsBufferLen(expected_limbs, 10)
                             ]std.math.big.Limb,
                         };
-                        var stack align(@alignOf(ExpectedContents)) =
-                            std.heap.stackFallback(@sizeOf(ExpectedContents), data.builder.gpa);
-                        const allocator = stack.get();
+                        var bfa_buf: ExpectedContents = undefined;
+                        var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), data.builder.gpa);
+                        const allocator = bfa.allocator();
                         const str = bigint.toStringAlloc(allocator, 10, undefined) catch return error.WriteFailed;
                         defer allocator.free(str);
                         try w.writeAll(str);
@@ -7659,9 +7657,9 @@ pub const Constant = enum(u32) {
                     .float => {
                         const Float = struct {
                             fn Repr(comptime T: type) type {
-                                return packed struct(std.meta.Int(.unsigned, @bitSizeOf(T))) {
-                                    mantissa: std.meta.Int(.unsigned, std.math.floatMantissaBits(T)),
-                                    exponent: std.meta.Int(.unsigned, std.math.floatExponentBits(T)),
+                                return packed struct(@Int(.unsigned, @bitSizeOf(T))) {
+                                    mantissa: @Int(.unsigned, std.math.floatMantissaBits(T)),
+                                    exponent: @Int(.unsigned, std.math.floatExponentBits(T)),
                                     sign: u1,
                                 };
                             }
@@ -8907,7 +8905,7 @@ pub fn deinit(self: *Builder) void {
 
 pub fn finishModuleAsm(self: *Builder, aw: *Writer.Allocating) Allocator.Error!void {
     self.module_asm = aw.toArrayList();
-    if (self.module_asm.getLastOrNull()) |last| if (last != '\n')
+    if (self.module_asm.getLast()) |last| if (last != '\n')
         try self.module_asm.append(self.gpa, '\n');
 }
 
@@ -8953,7 +8951,7 @@ pub fn trailingString(self: *Builder) Allocator.Error!String {
 }
 
 pub fn trailingStringAssumeCapacity(self: *Builder) String {
-    const start = self.string_indices.getLast();
+    const start = self.string_indices.getLast().?;
     const bytes: []const u8 = self.string_bytes.items[start..];
     const gop = self.string_map.getOrPutAssumeCapacityAdapted(bytes, String.Adapter{ .builder = self });
     if (gop.found_existing) {
@@ -9209,9 +9207,9 @@ pub fn getIntrinsic(
             fields: [expected_fields_len]Type,
         },
     };
-    var stack align(@max(@alignOf(std.heap.StackFallbackAllocator(0)), @alignOf(ExpectedContents))) =
-        std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
-    const allocator = stack.get();
+    var bfa_buf: ExpectedContents = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), self.gpa);
+    const allocator = bfa.allocator();
 
     const name = name: {
         {
@@ -9347,7 +9345,7 @@ pub fn nanConst(self: *Builder, ty: Type) Allocator.Error!Constant {
         .double => try self.doubleConst(std.math.nan(f64)),
         .fp128 => try self.fp128Const(std.math.nan(f128)),
         .x86_fp80 => try self.x86_fp80Const(std.math.nan(f80)),
-        .ppc_fp128 => try self.ppc_fp128Const(.{std.math.nan(f64)} ** 2),
+        .ppc_fp128 => try self.ppc_fp128Const(@splat(.{std.math.nan(f64)})),
         else => unreachable,
     };
 }
@@ -9720,8 +9718,7 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
             metadata_formatter.need_comma = true;
             defer metadata_formatter.need_comma = undefined;
             try w.print(
-                \\{f} ={f}{f}{f}{f}{f}{f}{f}{f} {s} {f}{f}{f}{f}
-                \\
+                \\{f} ={f}{f}{f}{f}{f}{f}{f}{f} {s} {f}{f}
             , .{
                 variable.global.fmt(self),
                 Linkage.fmtOptional(
@@ -9737,6 +9734,14 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                 @tagName(variable.mutability),
                 global.type.fmt(self, .percent),
                 variable.init.fmt(self, .{ .space = true }),
+            });
+            if (variable.section != .none) {
+                try w.print(", section {f}", .{variable.section.fmtQ(self)});
+            }
+            try w.print(
+                \\{f}{f}
+                \\
+            , .{
                 variable.alignment.fmt(", "),
                 try metadata_formatter.fmt("!dbg ", global.dbg, null),
             });
@@ -9830,6 +9835,9 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
         {
             metadata_formatter.need_comma = false;
             defer metadata_formatter.need_comma = undefined;
+            if (function.section != .none) {
+                try w.print(" section {f}", .{function.section.fmtQ(self)});
+            }
             try w.print("{f}{f}", .{
                 function.alignment.fmt(" "),
                 try metadata_formatter.fmt(" !dbg ", global.dbg, null),
@@ -10024,9 +10032,9 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                         defer metadata_formatter.need_comma = undefined;
                         switch (extra.weights) {
                             .none => {},
-                            .unpredictable => try w.writeAll("!unpredictable !{}"),
+                            .unpredictable => try w.writeAll(", !unpredictable !{}"),
                             _ => try w.print("{f}", .{
-                                try metadata_formatter.fmt("!prof ", extra.weights.toMetadata(), null),
+                                try metadata_formatter.fmt(", !prof ", extra.weights.toMetadata(), null),
                             }),
                         }
                     },
@@ -10597,9 +10605,7 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                         const expected_limbs = @divExact(512, @bitSizeOf(std.math.big.Limb));
                         string: [
                             (std.math.big.int.Const{
-                                .limbs = &([1]std.math.big.Limb{
-                                    maxInt(std.math.big.Limb),
-                                } ** expected_limbs),
+                                .limbs = &@as([expected_limbs]std.math.big.Limb, @splat(maxInt(std.math.big.Limb))),
                                 .positive = false,
                             }).sizeInBaseUpperBound(10)
                         ]u8,
@@ -10607,9 +10613,9 @@ pub fn print(self: *Builder, w: *Writer) (Writer.Error || Allocator.Error)!void 
                             std.math.big.int.calcToStringLimbsBufferLen(expected_limbs, 10)
                         ]std.math.big.Limb,
                     };
-                    var stack align(@alignOf(ExpectedContents)) =
-                        std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
-                    const allocator = stack.get();
+                    var bfa_buf: ExpectedContents = undefined;
+                    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), self.gpa);
+                    const allocator = bfa.allocator();
 
                     const limbs = self.metadata_limbs.items[extra.limbs_index..][0..extra.limbs_len];
                     const bigint: std.math.big.int.Const = .{
@@ -11129,9 +11135,9 @@ fn bigIntConstAssumeCapacity(
     const bits = type_item.data;
 
     const ExpectedContents = [64 / @sizeOf(std.math.big.Limb)]std.math.big.Limb;
-    var stack align(@alignOf(ExpectedContents)) =
-        std.heap.stackFallback(@sizeOf(ExpectedContents), self.gpa);
-    const allocator = stack.get();
+    var bfa_buf: ExpectedContents = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(@ptrCast(&bfa_buf), self.gpa);
+    const allocator = bfa.allocator();
 
     var limbs: []std.math.big.Limb = &.{};
     defer allocator.free(limbs);
@@ -12154,7 +12160,7 @@ pub fn trailingMetadataString(self: *Builder) Allocator.Error!Metadata.String {
 }
 
 pub fn trailingMetadataStringAssumeCapacity(self: *Builder) Metadata.String {
-    const start = self.metadata_string_indices.getLast();
+    const start = self.metadata_string_indices.getLast().?;
     const bytes: []const u8 = self.metadata_string_bytes.items[start..];
     assert(bytes.len > 0);
     const gop = self.metadata_string_map.getOrPutAssumeCapacityAdapted(bytes, Metadata.String.Adapter{ .builder = self });
@@ -13947,8 +13953,8 @@ pub fn toBitcode(self: *Builder, allocator: Allocator, producer: Producer) bitco
                         const bit_count = extra.type.scalarBits(self);
                         const val: i64 = if (bit_count <= 64)
                             bigint.toInt(i64) catch unreachable
-                        else if (bigint.toInt(u64)) |val|
-                            @bitCast(val)
+                        else if (bigint.toInt(u63)) |val|
+                            @bitCast(@as(u64, val))
                         else |_| {
                             const limbs = try record.addManyAsSlice(
                                 self.gpa,

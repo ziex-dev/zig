@@ -24,7 +24,7 @@ pub const empty: Environ = .{ .block = .empty };
 /// operating system `void` is also used.
 pub const Block = switch (native_os) {
     .windows => GlobalBlock,
-    .wasi => switch (builtin.link_libc) {
+    .wasi, .emscripten => switch (builtin.link_libc) {
         false => GlobalBlock,
         true => PosixBlock,
     },
@@ -754,7 +754,7 @@ pub fn createPosixBlock(
             },
             .nothing => {},
         };
-        envp[envp_len] = try gpa.dupeZ(u8, mem.span(entry));
+        envp[envp_len] = try gpa.dupeSentinel(u8, mem.span(entry), 0);
         envp_len += 1;
     }
 

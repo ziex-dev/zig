@@ -67,7 +67,7 @@ test_results: TestResults,
 
 /// The return address associated with creation of this step that can be useful
 /// to print along with debugging messages.
-debug_stack_trace: std.builtin.StackTrace,
+debug_stack_trace: std.debug.StackTrace,
 
 pub const TestResults = struct {
     /// The total number of tests in the step. Every test has a "status" from the following:
@@ -176,7 +176,6 @@ pub const Id = enum {
             .update_source_files => UpdateSourceFiles,
             .run => Run,
             .check_file => CheckFile,
-            .check_object => CheckObject,
             .config_header => ConfigHeader,
             .objcopy => ObjCopy,
             .options => Options,
@@ -186,7 +185,6 @@ pub const Id = enum {
 };
 
 pub const CheckFile = @import("Step/CheckFile.zig");
-pub const CheckObject = @import("Step/CheckObject.zig");
 pub const ConfigHeader = @import("Step/ConfigHeader.zig");
 pub const Fail = @import("Step/Fail.zig");
 pub const Fmt = @import("Step/Fmt.zig");
@@ -282,8 +280,7 @@ pub fn make(s: *Step, options: MakeOptions) error{ MakeFailed, MakeSkipped }!voi
     }
 
     make_result catch |err| switch (err) {
-        error.MakeFailed => return error.MakeFailed,
-        error.MakeSkipped => return error.MakeSkipped,
+        error.MakeFailed, error.MakeSkipped => |e| return e,
         else => {
             s.result_error_msgs.append(arena, @errorName(err)) catch @panic("OOM");
             return error.MakeFailed;
@@ -328,7 +325,7 @@ pub fn cast(step: *Step, comptime T: type) ?*T {
 /// For debugging purposes, prints identifying information about this Step.
 pub fn dump(step: *Step, t: Io.Terminal) void {
     const w = t.writer;
-    if (step.debug_stack_trace.instruction_addresses.len > 0) {
+    if (step.debug_stack_trace.return_addresses.len > 0) {
         w.print("name: '{s}'. creation stack trace:\n", .{step.name}) catch {};
         std.debug.writeStackTrace(&step.debug_stack_trace, t) catch {};
     } else {
@@ -725,19 +722,12 @@ pub inline fn handleChildProcUnsupported(s: *Step) error{ OutOfMemory, MakeFaile
 /// Asserts that the caller has already populated `s.result_failed_command`.
 pub fn handleChildProcessTerm(s: *Step, term: std.process.Child.Term) error{ MakeFailed, OutOfMemory }!void {
     assert(s.result_failed_command != null);
-    switch (term) {
-        .exited => |code| {
-            if (code != 0) {
-                return s.fail("process exited with error code {d}", .{code});
-            }
-        },
-        .signal => |sig| {
-            return s.fail("process terminated with signal {t}", .{sig});
-        },
-        .stopped, .unknown => {
-            return s.fail("process terminated unexpectedly", .{});
-        },
-    }
+    return switch (term) {
+        .exited => |code| if (code != 0) s.fail("process exited with error code {d}", .{code}),
+        .signal => |sig| s.fail("process terminated with signal {t}", .{sig}),
+        .stopped => |sig| s.fail("process stopped with signal {t}", .{sig}),
+        .unknown => s.fail("process terminated unexpectedly", .{}),
+    };
 }
 
 pub fn allocPrintCmd(
@@ -852,8 +842,7 @@ fn failWithCacheError(
                 });
             },
         },
-        error.OutOfMemory => return error.OutOfMemory,
-        error.Canceled => return error.Canceled,
+        error.OutOfMemory, error.Canceled => |e| return e,
         error.InvalidFormat => return s.fail("failed to check cache: invalid manifest file format", .{}),
     }
 }
@@ -992,6 +981,7 @@ pub fn reset(step: *Step, gpa: Allocator) void {
     step.result_peak_rss = 0;
     step.result_failed_command = null;
     step.test_results = .{};
+    step.clearWatchInputs();
 
     step.result_error_bundle.deinit(gpa);
     step.result_error_bundle = std.zig.ErrorBundle.empty;
@@ -1013,7 +1003,6 @@ pub fn invalidateResult(step: *Step, gpa: Allocator) bool {
 
 test {
     _ = CheckFile;
-    _ = CheckObject;
     _ = Fail;
     _ = Fmt;
     _ = InstallArtifact;

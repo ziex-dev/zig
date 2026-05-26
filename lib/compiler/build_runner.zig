@@ -26,9 +26,9 @@ pub const std_options: std.Options = .{
 pub fn main(init: process.Init.Minimal) !void {
     // The build runner is often short-lived, but thanks to `--watch` and `--webui`, that's not
     // always the case. So, we do need a true gpa for some things.
-    var debug_gpa_state: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = debug_gpa_state.deinit();
-    const gpa = debug_gpa_state.allocator();
+    var safe_gpa_state: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
+    defer _ = safe_gpa_state.deinit();
+    const gpa = safe_gpa_state.allocator();
 
     var threaded: std.Io.Threaded = .init(gpa, .{
         .environ = init.environ,
@@ -333,8 +333,6 @@ pub fn main(init: process.Init.Minimal) !void {
                 builder.verbose_llvm_ir = arg["--verbose-llvm-ir=".len..];
             } else if (mem.startsWith(u8, arg, "--verbose-llvm-bc=")) {
                 builder.verbose_llvm_bc = arg["--verbose-llvm-bc=".len..];
-            } else if (mem.eql(u8, arg, "--verbose-cimport")) {
-                builder.verbose_cimport = true;
             } else if (mem.eql(u8, arg, "--verbose-cc")) {
                 builder.verbose_cc = true;
             } else if (mem.eql(u8, arg, "--verbose-llvm-cpu-features")) {
@@ -1399,7 +1397,7 @@ fn makeStep(
             defer run.max_rss_mutex.unlock(io);
             run.available_rss += s.max_rss;
             dispatch_set.ensureUnusedCapacity(gpa, run.memory_blocked_steps.items.len) catch @panic("OOM");
-            while (run.memory_blocked_steps.getLastOrNull()) |candidate| {
+            while (run.memory_blocked_steps.getLast()) |candidate| {
                 if (run.available_rss < candidate.max_rss) break;
                 assert(run.memory_blocked_steps.pop() == candidate);
                 dispatch_set.appendAssumeCapacity(candidate);
@@ -1559,7 +1557,7 @@ fn printUsage(b: *std.Build, w: *Writer) !void {
             const name = try fmt.allocPrint(arena, "  -D{s}=[{t}]", .{ option.name, option.type_id });
             try w.print("{s:<30} {s}\n", .{ name, option.description });
             if (option.enum_options) |enum_options| {
-                const padding = " " ** 33;
+                const padding: [33]u8 = @splat(' ');
                 try w.writeAll(padding ++ "Supported Values:\n");
                 for (enum_options) |enum_option| {
                     try w.print(padding ++ "  {s}\n", .{enum_option});

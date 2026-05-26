@@ -224,6 +224,9 @@ pub const DT_PPC64_NUM = 4;
 pub const DT_IA_64_PLT_RESERVE = (DT_LOPROC + 0);
 pub const DT_IA_64_NUM = 1;
 
+pub const DT_XTENSA_GOT_LOC_OFF = 0x70000000;
+pub const DT_XTENSA_GOT_LOC_SZ = 0x70000001;
+
 pub const DT_NIOS2_GP = 0x70000002;
 
 pub const DF_ORIGIN = 0x00000001;
@@ -1043,7 +1046,7 @@ pub const Elf32 = struct {
     pub const Addr = u32;
     pub const Off = u32;
     pub const Ehdr = extern struct {
-        ident: [EI.NIDENT]u8,
+        ident: Ident,
         type: ET,
         machine: EM,
         version: Word,
@@ -1133,7 +1136,7 @@ pub const Elf64 = struct {
     pub const Addr = u64;
     pub const Off = u64;
     pub const Ehdr = extern struct {
-        ident: [EI.NIDENT]u8,
+        ident: Ident,
         type: ET,
         machine: EM,
         version: Word,
@@ -1610,6 +1613,20 @@ pub const Sym = switch (@sizeOf(usize)) {
 };
 /// Deprecated, use `std.elf.ElfN.Addr`
 pub const Addr = ElfN.Addr;
+
+pub const Ident = extern struct {
+    magic: [MAGIC.len]u8 = MAGIC.*,
+    class: CLASS,
+    data: DATA,
+    version: u8,
+    osabi: OSABI,
+    abiversion: u8,
+    pad: [7]u8 = @splat(0),
+
+    comptime {
+        assert(@sizeOf(Ident) == EI.NIDENT);
+    }
+};
 
 /// Deprecated, use `@intFromEnum(std.elf.CLASS.NONE)`
 pub const ELFCLASSNONE = @intFromEnum(CLASS.NONE);
@@ -3054,7 +3071,7 @@ pub const ar_hdr = extern struct {
 fn genSpecialMemberName(comptime name: []const u8) *const [16]u8 {
     assert(name.len <= 16);
     const padding = 16 - name.len;
-    return name ++ &[_]u8{0x20} ** padding;
+    return name ++ @as([padding]u8, @splat(0x20));
 }
 
 // Archive files start with the ARMAG identifying string.  Then follows a

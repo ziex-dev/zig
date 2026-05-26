@@ -166,7 +166,7 @@ pub fn directEnumArrayDefault(
     init_values: EnumFieldStruct(E, Data, default),
 ) [directEnumArrayLen(E, max_unused_slots)]Data {
     const len = comptime directEnumArrayLen(E, max_unused_slots);
-    var result: [len]Data = if (default) |d| [_]Data{d} ** len else undefined;
+    var result: [len]Data = @splat(default orelse undefined);
     inline for (@typeInfo(@TypeOf(init_values)).@"struct".fields) |f| {
         const enum_value = @field(E, f.name);
         const index = @as(usize, @intCast(@intFromEnum(enum_value)));
@@ -247,7 +247,7 @@ pub fn EnumSet(comptime E: type) type {
         /// The element type for this set.
         pub const Key = Indexer.Key;
 
-        const BitSet = std.StaticBitSet(Indexer.count);
+        const BitSet = std.bit_set.Static(Indexer.count);
 
         /// The maximum number of items in this set.
         pub const len = Indexer.count;
@@ -283,18 +283,6 @@ pub fn EnumSet(comptime E: type) type {
 
         /// A set containing all possible keys.
         pub const full: Self = .{ .bits = .full };
-
-        /// Deprecated: use `.empty`.
-        /// Returns a set containing no keys.
-        pub fn initEmpty() Self {
-            return .empty;
-        }
-
-        /// Deprecated: use `.full`.
-        /// Returns a set containing all possible keys.
-        pub fn initFull() Self {
-            return .full;
-        }
 
         /// Returns a set containing multiple keys.
         pub fn initMany(keys: []const Key) Self {
@@ -445,7 +433,7 @@ pub fn EnumMap(comptime E: type, comptime V: type) type {
         /// The number of possible keys in the map
         pub const len = Indexer.count;
 
-        const BitSet = std.StaticBitSet(Indexer.count);
+        const BitSet = std.bit_set.Static(Indexer.count);
 
         /// Bits determining whether items are in the map
         bits: BitSet = .empty,
@@ -1291,7 +1279,7 @@ pub fn EnumIndexer(comptime E: type) type {
             const min_value = std.math.minInt(BackingInt);
             const max_value = std.math.maxInt(BackingInt);
 
-            const RangeType = std.meta.Int(.unsigned, @bitSizeOf(BackingInt));
+            const RangeType = @Int(.unsigned, @bitSizeOf(BackingInt));
             pub const count: comptime_int = std.math.maxInt(RangeType) + 1;
 
             pub fn indexOf(e: E) usize {
@@ -1307,7 +1295,7 @@ pub fn EnumIndexer(comptime E: type) type {
                 if (backing_int_sign == .unsigned)
                     return @enumFromInt(i);
 
-                return @enumFromInt(@as(std.meta.Int(.signed, @bitSizeOf(RangeType) + 1), @intCast(i)) + min_value);
+                return @enumFromInt(@as(@Int(.signed, @bitSizeOf(RangeType) + 1), @intCast(i)) + min_value);
             }
         };
     }
@@ -1380,14 +1368,14 @@ test "EnumIndexer non-exhaustive" {
         i4,
         i8,
         i16,
-        std.meta.Int(.signed, @bitSizeOf(isize) - 1),
+        @Int(.signed, @bitSizeOf(isize) - 1),
         isize,
         u1,
         u2,
         u3,
         u4,
         u16,
-        std.meta.Int(.unsigned, @bitSizeOf(usize) - 1),
+        @Int(.unsigned, @bitSizeOf(usize) - 1),
         usize,
     };
     inline for (backing_ints) |BackingInt| {
@@ -1400,7 +1388,7 @@ test "EnumIndexer non-exhaustive" {
         const min_tag: E = @enumFromInt(std.math.minInt(BackingInt));
         const max_tag: E = @enumFromInt(std.math.maxInt(BackingInt));
 
-        const RangedType = std.meta.Int(.unsigned, @bitSizeOf(BackingInt));
+        const RangedType = @Int(.unsigned, @bitSizeOf(BackingInt));
         const max_index: comptime_int = std.math.maxInt(RangedType);
         const number_zero_tag_index: usize = switch (@typeInfo(BackingInt).int.signedness) {
             .unsigned => 0,

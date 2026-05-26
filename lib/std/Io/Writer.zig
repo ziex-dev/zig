@@ -551,64 +551,68 @@ pub fn writeAll(w: *Writer, bytes: []const u8) Error!void {
     while (index < bytes.len) index += try w.write(bytes[index..]);
 }
 
-/// Renders fmt string with args, calling `writer` with slices of bytes.
-/// If `writer` returns an error, the error is returned from `format` and
-/// `writer` is not called again.
+/// Renders `fmt` string with `args`, calling `w` with slices of bytes.
 ///
-/// The format string must be comptime-known and may contain placeholders following
-/// this format:
-/// `{[argument][specifier]:[fill][alignment][width].[precision]}`
+/// The format string must be comptime-known and may contain placeholders
+/// following this format:
+/// ```
+/// {[argument][specifier]:[fill][alignment][width].[precision]}
+/// ```
 ///
-/// Above, each word including its surrounding [ and ] is a parameter which you have to replace with something:
+/// Above, each word including its surrounding [ and ] is a parameter to be replaced with:
 ///
-/// - *argument* is either the numeric index or the field name of the argument that should be inserted
-///   - when using a field name, you are required to enclose the field name (an identifier) in square
-///     brackets, e.g. {[score]...} as opposed to the numeric index form which can be written e.g. {2...}
-/// - *specifier* is a type-dependent formatting option that determines how a type should formatted (see below)
-/// - *fill* is a single byte which is used to pad formatted numbers.
-/// - *alignment* is one of the three bytes '<', '^', or '>' to make numbers
+/// - **argument** is either the numeric index or the field name of the argument that should be inserted.
+///   - When using a field name, the field name (an identifier) must be enclosed in square
+///     brackets, e.g. `{[score]...}` as opposed to the numeric index form which can be written e.g. `{2...}`.
+/// - **specifier** is a type-dependent formatting option that determines how a type should formatted (see below).
+/// - **fill** is a single byte which is used to pad formatted numbers.
+/// - **alignment** is one of the three bytes '<', '^', or '>' to make numbers
 ///   left, center, or right-aligned, respectively.
 ///   - Not all specifiers support alignment.
-///   - Alignment is not Unicode-aware; appropriate only when used with raw bytes or ASCII.
-/// - *width* is the total width of the field in bytes. This only applies to number formatting.
-/// - *precision* specifies how many decimals a formatted number should have.
+///   - Alignment is not Unicode-aware; appropriate only when used with raw
+///     bytes or ASCII.
+/// - **width** is the total size of the field in bytes, only applicable to
+///   number formatting.
+/// - **precision** specifies how many decimals a formatted number should have.
 ///
-/// Note that most of the parameters are optional and may be omitted. Also you
-/// can leave out separators like `:` and `.` when all parameters after the
-/// separator are omitted.
+/// Most of the parameters are optional and may be omitted. The separators (':'
+/// and '.') may be omitted when all parameters afterwards are omitted.
 ///
-/// Only exception is the *fill* parameter. If a non-zero *fill* character is
-/// required at the same time as *width* is specified, one has to specify
-/// *alignment* as well, as otherwise the digit following `:` is interpreted as
-/// *width*, not *fill*.
+/// The **fill** parameter is an exception. If a non-zero **fill** character is
+/// required at the same time as **width** is specified, **alignment** is
+/// required, otherwise the digit following ':' is interpreted as **width**.
 ///
-/// The *specifier* has several options for types:
-/// - `x` and `X`: output numeric value in hexadecimal notation, or string in hexadecimal bytes
+/// **specifier** supports:
+/// - `x` and `X`: numeric value in hexadecimal notation, or string in hexadecimal bytes
 /// - `s`:
 ///   - for pointer-to-many and C pointers of u8, print as a C-string using zero-termination
 ///   - for slices of u8, print the entire slice as a string without zero-termination
 /// - `t`:
 ///   - for enums and tagged unions: prints the tag name
 ///   - for error sets: prints the error name
-/// - `b64`: output string as standard base64
-/// - `e`: output floating point value in scientific notation
-/// - `d`: output numeric value in decimal notation
-/// - `b`: output integer value in binary notation
-/// - `o`: output integer value in octal notation
-/// - `c`: output integer as an ASCII character. Integer type must have 8 bits at max.
-/// - `u`: output integer as an UTF-8 sequence. Integer type must have 21 bits at max.
-/// - `D`: output nanoseconds as duration
-/// - `B`: output bytes in SI units (decimal)
-/// - `Bi`: output bytes in IEC units (binary)
-/// - `?`: output optional value as either the unwrapped value, or `null`; may be followed by a format specifier for the underlying value.
-/// - `!`: output error union value as either the unwrapped value, or the formatted error value; may be followed by a format specifier for the underlying value.
-/// - `*`: output the address of the value instead of the value itself.
-/// - `any`: output a value of any type using its default format.
-/// - `f`: delegates to a method on the type named "format" with the signature `fn (*Writer, args: anytype) Writer.Error!void`.
+/// - `b64`: string as standard base64
+/// - `e`: floating point value in scientific notation
+/// - `d`: numeric value in decimal notation
+/// - `b`: integer value in binary notation
+/// - `o`: integer value in octal notation
+/// - `c`: integer as an ASCII character. Integer type must have 8 bits at max.
+/// - `u`: integer as an UTF-8 sequence. Integer type must have 21 bits at max.
+/// - `B`: bytes in SI units (decimal)
+/// - `Bi`: bytes in IEC units (binary)
+/// - `?`: optional value as either the unwrapped value, or `null`; may be
+///   followed by a format specifier for the underlying value.
+/// - `!`: error union value as either the unwrapped value, or the formatted
+///   error value; may be followed by a format specifier for the underlying
+///   value.
+/// - `*`: the address of the value instead of the value itself.
+/// - `any`: a value of any type using its default format.
+/// - `f`: delegates to the `format` method of the type, passing `*Writer` and
+///   expecting `Error!void` returned.
 ///
-/// A user type may be a `struct`, `vector`, `union` or `enum` type.
+/// A user type may be a struct, vector, union or enum type.
 ///
-/// To print literal curly braces, escape them by writing them twice, e.g. `{{` or `}}`.
+/// Literal curly braces can be escaped in the format string via doubling, e.g.
+/// `{{` or `}}`.
 pub fn print(w: *Writer, comptime fmt: []const u8, args: anytype) Error!void {
     const ArgsType = @TypeOf(args);
     const args_type_info = @typeInfo(ArgsType);
@@ -777,7 +781,7 @@ test splatByteAll {
     defer aw.deinit();
 
     try aw.writer.splatByteAll('7', 45);
-    try testing.expectEqualStrings("7" ** 45, aw.writer.buffered());
+    try testing.expectEqualStrings(&@as([45]u8, @splat('7')), aw.writer.buffered());
 }
 
 pub fn splatBytePreserve(w: *Writer, preserve: usize, byte: u8, n: usize) Error!void {
@@ -798,12 +802,14 @@ pub fn splatBytePreserve(w: *Writer, preserve: usize, byte: u8, n: usize) Error!
             return;
         }
     }
-    // All the next bytes received must be preserved.
-    if (preserve < w.end) {
-        @memmove(w.buffer[0..preserve], w.buffer[w.end - preserve ..][0..preserve]);
-        w.end = preserve;
-    }
-    while (remaining > 0) remaining -= try w.splatByte(byte, remaining);
+    // Ensure the contract of `rebase` is upheld.
+    assert(w.end + remaining > w.buffer.len);
+    // Offset the amount preserved by the amount we have left to splat
+    // since the remaining splat is always going to be part of that
+    // preservation.
+    try w.vtable.rebase(w, preserve -| remaining, remaining);
+    @memset(w.buffer[w.end..][0..remaining], byte);
+    w.end += remaining;
 }
 
 /// Writes the same byte many times, allowing short writes.
@@ -1513,7 +1519,7 @@ pub fn printIntAny(
     // The type must have the same size as `base` or be wider in order for the
     // division to work
     const min_int_bits = comptime @max(value_info.bits, 8);
-    const MinInt = std.meta.Int(.unsigned, min_int_bits);
+    const MinInt = @Int(.unsigned, min_int_bits);
 
     const abs_value = @abs(value);
     // The worst case in terms of space needed is base 2, plus 1 for the sign
@@ -1633,7 +1639,7 @@ pub fn printFloatHex(w: *Writer, value: anytype, case: std.fmt.Case, opt_precisi
     });
 
     const T = @TypeOf(v);
-    const TU = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const TU = @Int(.unsigned, @bitSizeOf(T));
 
     const mantissa_bits = std.math.floatMantissaBits(T);
     const fractional_bits = std.math.floatFractionalBits(T);
@@ -1920,7 +1926,6 @@ test "serialize signed LEB128" {
     try testLeb128Encoding(i128, std.math.minInt(i128), "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x7E");
 
     // Specific cases
-    try testLeb128Encoding(i0, 0, "\x00");
     try testLeb128Encoding(i8, 0, "\x00");
 
     try testLeb128Encoding(i2, -1, "\x7F");
@@ -2883,4 +2888,47 @@ test "writableSlice with fixed writer" {
     var w: std.Io.Writer = .fixed(&buf);
     try w.writeByte(1);
     try std.testing.expectError(error.WriteFailed, w.writableSlice(2));
+}
+
+test splatBytePreserve {
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 5 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 9, .preserve = 5, .splat_len = 2 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 10 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 10 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 11 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 80 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 85 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 11 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 80 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 85 });
+}
+
+fn testSplatBytePreserve(options: struct { buf_len: u4, fill_len: u4, preserve: u4, splat_len: u8 }) !void {
+    assert(options.fill_len <= options.buf_len);
+    assert(options.preserve <= options.buf_len);
+
+    const fill_buf = "abcdefghijklmno";
+    const fill = fill_buf[0..options.fill_len];
+    var expected_out_buf: [256]u8 = @splat('X');
+    @memcpy(expected_out_buf[0..options.fill_len], fill);
+    const expected_out = expected_out_buf[0 .. options.fill_len + options.splat_len];
+    const expected_preserved = expected_out[expected_out.len -| options.preserve..];
+
+    var out_buf: [256]u8 = undefined;
+    var fw: Writer = .fixed(&out_buf);
+    var indirect_buffer: [16]u8 = undefined;
+    var twi: std.testing.WriterIndirect = .init(&fw, indirect_buffer[0..options.buf_len]);
+    const w = &twi.interface;
+
+    try w.writeAll(fill);
+    try w.splatBytePreserve(options.preserve, 'X', options.splat_len);
+
+    try std.testing.expectEqualStrings(expected_preserved, w.buffer[w.end -| options.preserve..w.end]);
+
+    try w.flush();
+
+    try std.testing.expectEqualStrings(expected_out, fw.buffer[0..fw.end]);
 }

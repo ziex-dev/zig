@@ -744,6 +744,7 @@ pub fn parseTargetQueryOrReportFatalError(
 pub const EnvVar = enum {
     ZIG_GLOBAL_CACHE_DIR,
     ZIG_LOCAL_CACHE_DIR,
+    ZIG_LOCAL_PKG_DIR,
     ZIG_LIB_DIR,
     ZIG_LIBC,
     ZIG_BUILD_RUNNER,
@@ -796,11 +797,6 @@ pub const SimpleComptimeReason = enum(u32) {
     operand_branchHint,
     operand_setRuntimeSafety,
     operand_embedFile,
-    operand_cImport,
-    operand_cDefine_macro_name,
-    operand_cDefine_macro_value,
-    operand_cInclude_file_name,
-    operand_cUndef_macro_name,
     operand_shuffle_mask,
     operand_atomicRmw_operation,
     operand_reduce_operation,
@@ -815,7 +811,6 @@ pub const SimpleComptimeReason = enum(u32) {
     compile_error_string,
     inline_assembly_code,
     atomic_order,
-    array_mul_factor,
     slice_cat_operand,
     inline_call_target,
     generic_call_target,
@@ -881,7 +876,7 @@ pub const SimpleComptimeReason = enum(u32) {
     casted_to_comptime_enum,
     casted_to_comptime_int,
     casted_to_comptime_float,
-    std_builtin_decl,
+    std_lang_decl,
 
     pub fn message(r: SimpleComptimeReason) []const u8 {
         return switch (r) {
@@ -891,11 +886,6 @@ pub const SimpleComptimeReason = enum(u32) {
             .operand_branchHint          => "operand to '@branchHint' must be comptime-known",
             .operand_setRuntimeSafety    => "operand to '@setRuntimeSafety' must be comptime-known",
             .operand_embedFile           => "operand to '@embedFile' must be comptime-known",
-            .operand_cImport             => "operand to '@cImport' is evaluated at comptime",
-            .operand_cDefine_macro_name  => "'@cDefine' macro name must be comptime-known",
-            .operand_cDefine_macro_value => "'@cDefine' macro value must be comptime-known",
-            .operand_cInclude_file_name  => "'@cInclude' file name must be comptime-known",
-            .operand_cUndef_macro_name   => "'@cUndef' macro name must be comptime-known",
             .operand_shuffle_mask        => "'@shuffle' mask must be comptime-known",
             .operand_atomicRmw_operation => "'@atomicRmw' operation must be comptime-known",
             .operand_reduce_operation    => "'@reduce' operation must be comptime-known",
@@ -908,7 +898,6 @@ pub const SimpleComptimeReason = enum(u32) {
             .compile_error_string => "compile error string must be comptime-known",
             .inline_assembly_code => "inline assembly code must be comptime-known",
             .atomic_order         => "atomic order must be comptime-known",
-            .array_mul_factor     => "array multiplication factor must be comptime-known",
             .slice_cat_operand    => "slice being concatenated must be comptime-known",
             .inline_call_target   => "function being called inline must be comptime-known",
             .generic_call_target  => "generic function being called must be comptime-known",
@@ -970,7 +959,7 @@ pub const SimpleComptimeReason = enum(u32) {
             .casted_to_comptime_enum      => "value casted to enum with 'comptime_int' tag type must be comptime-known",
             .casted_to_comptime_int       => "value casted to 'comptime_int' must be comptime-known",
             .casted_to_comptime_float     => "value casted to 'comptime_float' must be comptime-known",
-            .std_builtin_decl             => "'std.builtin' declaration values must be comptime-known",
+            .std_lang_decl                => "'std.lang' declaration values must be comptime-known",
             // zig fmt: on
         };
     }
@@ -986,11 +975,14 @@ pub const EmitArtifact = enum {
     docs,
     pdb,
     h,
+    compiler_rt_dyn_lib,
 
     /// If using `Server` to communicate with the compiler, it will place requested artifacts in
     /// paths under the output directory, where those paths are named according to this function.
     /// Returned string is allocated with `gpa` and owned by the caller.
     pub fn cacheName(ea: EmitArtifact, gpa: Allocator, opts: BinNameOptions) Allocator.Error![]const u8 {
+        // hack for stage2_x86_64 + coff. See Coff.flush.
+        if (ea == .compiler_rt_dyn_lib) return "compiler_rt.dll";
         const suffix: []const u8 = switch (ea) {
             .bin => return binNameAlloc(gpa, opts),
             .@"asm" => ".s",
@@ -1000,6 +992,7 @@ pub const EmitArtifact = enum {
             .docs => "-docs",
             .pdb => ".pdb",
             .h => ".h",
+            .compiler_rt_dyn_lib => unreachable,
         };
         return std.fmt.allocPrint(gpa, "{s}{s}", .{ opts.root_name, suffix });
     }

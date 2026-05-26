@@ -181,6 +181,8 @@ test "resolve DNS" {
 }
 
 test "listen on a port, send bytes, receive bytes" {
+    if (true) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/31388
+
     const io = testing.io;
 
     // Try only the IPv4 variant as some CI builders have no IPv6 localhost
@@ -348,6 +350,8 @@ test "decompress compressed DNS name" {
 }
 
 test "cancel accept" {
+    if (builtin.cpu.arch.isSPARC() and builtin.os.tag == .linux) return error.SkipZigTest; // https://codeberg.org/ziglang/zig/issues/35347
+
     const io = testing.io;
     const localhost: net.IpAddress = .{ .ip4 = .loopback(0) };
 

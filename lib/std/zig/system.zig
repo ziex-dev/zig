@@ -461,14 +461,8 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
             result.cpu.features.removeFeature(@intFromEnum(Target.arm.Feature.vfp2));
         }
 
-        // https://github.com/llvm/llvm-project/issues/135283
-        if (result.cpu.arch.isMIPS() and result.abi.float() == .soft) {
-            result.cpu.features.addFeature(@intFromEnum(Target.mips.Feature.soft_float));
-        }
-
-        // https://github.com/llvm/llvm-project/issues/168992
-        if (result.cpu.arch == .s390x) {
-            result.cpu.features.removeFeature(@intFromEnum(Target.s390x.Feature.vector));
+        if (result.cpu.arch.isXtensa() and result.abi == .call0) {
+            result.cpu.features.removeFeature(@intFromEnum(Target.xtensa.Feature.windowed));
         }
     }
 
@@ -1185,11 +1179,25 @@ fn detectAndroidApiLevel(io: Io) !u32 {
         return error.ApiLevelQueryFailed;
     };
 
-    const term = try child.wait(io);
-    if (term != .exited or term.exited != 0) {
-        std.log.err("getprop terminated abnormally: {}", .{term});
-        return error.ApiLevelQueryFailed;
+    switch (try child.wait(io)) {
+        .exited => |code| if (code != 0) {
+            std.log.err("getprop terminated abnormally with exit code: {d}", .{code});
+            return error.ApiLevelQueryFailed;
+        },
+        .signal => |sig| {
+            std.log.err("getprop terminated abnormally with signal: {t}", .{sig});
+            return error.ApiLevelQueryFailed;
+        },
+        .stopped => |sig| {
+            std.log.err("getprop stopped abnormally with signal: {t}", .{sig});
+            return error.ApiLevelQueryFailed;
+        },
+        .unknown => {
+            std.log.err("getprop terminated abnormally", .{});
+            return error.ApiLevelQueryFailed;
+        },
     }
+
     return api_level;
 }
 

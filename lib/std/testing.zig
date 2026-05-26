@@ -17,19 +17,11 @@ var failing_allocator_instance = FailingAllocator.init(base_allocator_instance.a
 });
 var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
 
-/// This should only be used in temporary test programs.
-pub const allocator = allocator_instance.allocator();
-pub var allocator_instance: std.heap.DebugAllocator(.{
-    .stack_trace_frames = if (std.debug.sys_can_stack_trace) 10 else 0,
-    .resize_stack_traces = true,
-    // A unique value so that when a default-constructed
-    // DebugAllocator is incorrectly passed to testing allocator, or
-    // vice versa, panic occurs.
-    .canary = @truncate(0x2731e675c3a701ba),
-}) = b: {
-    if (!builtin.is_test) @compileError("testing allocator used when not testing");
-    break :b .init;
-};
+pub var allocator_instance: std.heap.SafeAllocator = undefined;
+pub const allocator = if (builtin.is_test)
+    allocator_instance.allocator()
+else
+    @compileError("not testing");
 
 pub var io_instance: Io.Threaded = undefined;
 pub const io = if (builtin.is_test) io_instance.io() else @compileError("not testing");
@@ -163,7 +155,7 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
                     }
                 }
 
-                const BackingInt = std.meta.Int(.unsigned, @bitSizeOf(T));
+                const BackingInt = @Int(.unsigned, @bitSizeOf(T));
                 return expectEqual(
                     @as(BackingInt, @bitCast(expected)),
                     @as(BackingInt, @bitCast(actual)),
@@ -501,7 +493,7 @@ const BytesDiffer = struct {
         var row: usize = 0;
         while (expected_iterator.next()) |chunk| {
             // to avoid having to calculate diffs twice per chunk
-            var diffs: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 };
+            var diffs: std.bit_set.Integer(16) = .{ .mask = 0 };
             for (chunk, 0..) |byte, col| {
                 const absolute_byte_index = col + row * 16;
                 const diff = if (absolute_byte_index < self.actual.len) self.actual[absolute_byte_index] != byte else true;
@@ -1331,6 +1323,67 @@ pub const ReaderIndirect = struct {
             error.WriteFailed => unreachable,
             else => |e| return e,
         };
+    }
+};
+
+/// A `Io.Writer` that writes its data to another `Io.Writer`, and only
+/// writes new data to its own buffer during `drain`.
+pub const WriterIndirect = struct {
+    out: *Io.Writer,
+    interface: Io.Writer,
+
+    pub fn init(out: *Io.Writer, buffer: []u8) WriterIndirect {
+        return .{
+            .out = out,
+            .interface = .{
+                .vtable = &.{
+                    .drain = drain,
+                },
+                .buffer = buffer,
+                .end = 0,
+            },
+        };
+    }
+
+    fn drain(w: *Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const w_indirect: *WriterIndirect = @alignCast(@fieldParentPtr("interface", w));
+
+        // Write all data in the buffer to `out`
+        try w_indirect.out.writeAll(w.buffer[0..w.end]);
+        w.end = 0;
+
+        // Refill buffer using data
+        {
+            const end_before_fill = w.end;
+            for (data[0 .. data.len - 1]) |bytes| {
+                const dest = w.buffer[w.end..];
+                const len = @min(bytes.len, dest.len);
+                @memcpy(dest[0..len], bytes[0..len]);
+                w.end += len;
+            }
+            const pattern = data[data.len - 1];
+            switch (pattern.len) {
+                0 => {},
+                1 => {
+                    const len = @min(w.buffer[w.end..].len, splat);
+                    @memset(w.buffer[w.end..][0..len], pattern[0]);
+                    w.end += len;
+                },
+                else => {
+                    const dest = w.buffer[w.end..];
+                    for (0..splat) |i| {
+                        const start_i = i * pattern.len;
+                        if (start_i >= dest.len) break;
+                        const remaining = dest[start_i..];
+                        const len = @min(pattern.len, remaining.len);
+                        @memcpy(remaining[0..len], pattern[0..len]);
+                        w.end += len;
+                    }
+                },
+            }
+
+            return w.end - end_before_fill;
+        }
     }
 };
 
