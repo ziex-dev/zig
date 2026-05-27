@@ -42,8 +42,8 @@ pub fn aroDiagnosticsToErrorBundle(
             if (msg.location) |location| {
                 break :src_loc try bundle.addSourceLocation(.{
                     .src_path = try bundle.addString(location.path),
-                    .line = location.line_no - 1, // 1-based -> 0-based
-                    .column = location.col - 1, // 1-based -> 0-based
+                    .line = location.line_no -| 1, // 1-based -> 0-based
+                    .column = location.col -| 1, // 1-based -> 0-based
                     .span_start = location.width,
                     .span_main = location.width,
                     .span_end = location.width,
