@@ -163,30 +163,36 @@ pub fn deinit(ws: *WebServer) void {
 
     gpa.free(ws.step_names_trailing);
 }
+
+// If the WerbServer can't bind an address using its familly, we retry
+// using address another family.
+fn listen(ws: *WebServer) net.IpAddress.ListenError!net.Server {
+    const maker = ws.maker;
+    const io = maker.graph.io;
+
+    return ws.listen_address.listen(io, .{ .reuse_address = true }) catch |err| switch (err) {
+        error.AddressFamilyUnsupported => {
+            log.err("failed to listen to {f}: {t}", .{ ws.listen_address, err });
+            ws.listen_address = switch (ws.listen_address) {
+                .ip4 => |ip4| .{ .ip6 = net.Ip6Address.fromIp4(ip4) },
+                .ip6 => |ip6| .{ .ip4 = if (net.Ip4Address.fromIp6(ip6)) |ip| ip else return err },
+            };
+            log.info("retrying with {f}", .{ws.listen_address});
+            return try ws.listen_address.listen(io, .{ .reuse_address = true });
+        },
+        else => return err,
+    };
+}
+
 pub fn start(ws: *WebServer) error{AlreadyReported}!void {
     assert(ws.tcp_server == null);
     assert(ws.serve_task == null);
     const maker = ws.maker;
     const io = maker.graph.io;
 
-	// If the WerbServer can't bind an address using an IpV6 address, we retry
-	// using an IpV4 address.
-    ws.tcp_server = blk: {
-        break :blk ws.listen_address.listen(io, .{ .reuse_address = true }) catch |err1| switch (err1) {
-            error.AddressUnavailable => {
-                log.err("failed to listen to ipv6 port {d}: {t}", .{ ws.listen_address.getPort(), err1 });
-                ws.listen_address = .{ .ip4 = .loopback(0) };
-                log.info("trying ipv4", .{});
-                break :blk ws.listen_address.listen(io, .{ .reuse_address = true }) catch |err2| {
-                    log.err("failed to listen to ipv4 port {d}: {t}", .{ ws.listen_address.getPort(), err2 });
-                    return error.AlreadyReported;
-                };
-            },
-            else => {
-                log.err("failed to listen to port {d}: {t}", .{ ws.listen_address.getPort(), err1 });
-                return error.AlreadyReported;
-            },
-        };
+    ws.tcp_server = ws.listen() catch |err| {
+        log.err("failed to listen to {f}: {t}", .{ ws.listen_address, err });
+        return error.AlreadyReported;
     };
 
     ws.serve_task = io.concurrent(serve, .{ws}) catch |err| {
