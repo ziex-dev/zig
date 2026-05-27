@@ -533,7 +533,7 @@ pub fn main(init: process.Init.Minimal) !void {
     }
 
     const main_progress_node = std.Progress.start(io, .{
-        .disable_printing = (color == .off),
+        .disable_printing = (graph.stderr_mode.? == .no_color),
     });
     defer main_progress_node.end();
 
