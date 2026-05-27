@@ -12,14 +12,14 @@ pub const CrtFile = enum {
     libc_a,
 };
 
-pub fn execModelCrtFile(wasi_exec_model: std.builtin.WasiExecModel) CrtFile {
+pub fn execModelCrtFile(wasi_exec_model: std.lang.WasiExecModel) CrtFile {
     return switch (wasi_exec_model) {
         .reactor => CrtFile.crt1_reactor_o,
         .command => CrtFile.crt1_command_o,
     };
 }
 
-pub fn execModelCrtFileFullName(wasi_exec_model: std.builtin.WasiExecModel) []const u8 {
+pub fn execModelCrtFileFullName(wasi_exec_model: std.lang.WasiExecModel) []const u8 {
     return switch (execModelCrtFile(wasi_exec_model)) {
         .crt1_reactor_o => "crt1-reactor.o",
         .crt1_command_o => "crt1-command.o",
@@ -530,7 +530,6 @@ const libc_bottom_half_src_files = [_][]const u8{
     "wasi/libc-bottom-half/sources/math/math-builtins.c",
     "wasi/libc-bottom-half/sources/posix.c",
     "wasi/libc-bottom-half/sources/preopens.c",
-    "wasi/libc-bottom-half/sources/reallocarray.c",
     "wasi/libc-bottom-half/sources/sbrk.c",
     "wasi/libc-bottom-half/sources/truncate.c",
     "wasi/libc-bottom-half/sources/__wasilibc_dt.c",
@@ -682,8 +681,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/__cos.c",
     "musl/src/math/__cosdf.c",
     "musl/src/math/coshl.c",
-    "musl/src/math/__cosl.c",
-    "musl/src/math/cosl.c",
     "musl/src/math/erf.c",
     "musl/src/math/erff.c",
     "musl/src/math/erfl.c",
@@ -695,16 +692,8 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/expm1.c",
     "musl/src/math/expm1f.c",
     "musl/src/math/expm1l.c",
-    "musl/src/math/fdim.c",
-    "musl/src/math/fdimf.c",
-    "musl/src/math/fdiml.c",
-    "musl/src/math/finite.c",
-    "musl/src/math/finitef.c",
     "musl/src/math/fma.c",
     "musl/src/math/fmaf.c",
-    "musl/src/math/frexp.c",
-    "musl/src/math/frexpf.c",
-    "musl/src/math/frexpl.c",
     "musl/src/math/ilogb.c",
     "musl/src/math/ilogbf.c",
     "musl/src/math/ilogbl.c",
@@ -738,9 +727,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/logbf.c",
     "musl/src/math/logbl.c",
     "musl/src/math/logl.c",
-    "musl/src/math/lrint.c",
-    "musl/src/math/lrintf.c",
-    "musl/src/math/lrintl.c",
     "musl/src/math/lround.c",
     "musl/src/math/lroundf.c",
     "musl/src/math/lroundl.c",
@@ -763,6 +749,7 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/nexttowardf.c",
     "musl/src/math/nexttowardl.c",
     "musl/src/math/__polevll.c",
+    "musl/src/math/pow.c",
     "musl/src/math/pow_data.c",
     "musl/src/math/powf.c",
     "musl/src/math/powf_data.c",
@@ -773,7 +760,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/remquo.c",
     "musl/src/math/remquof.c",
     "musl/src/math/remquol.c",
-    "musl/src/math/rintl.c",
     "musl/src/math/scalb.c",
     "musl/src/math/scalbf.c",
     "musl/src/math/scalbln.c",
@@ -786,16 +772,11 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/math/significand.c",
     "musl/src/math/significandf.c",
     "musl/src/math/__sin.c",
-    "musl/src/math/sincosl.c",
     "musl/src/math/__sindf.c",
     "musl/src/math/sinhl.c",
-    "musl/src/math/__sinl.c",
-    "musl/src/math/sinl.c",
     "musl/src/math/__tan.c",
     "musl/src/math/__tandf.c",
     "musl/src/math/tanhl.c",
-    "musl/src/math/__tanl.c",
-    "musl/src/math/tanl.c",
     "musl/src/math/tgamma.c",
     "musl/src/math/tgammaf.c",
     "musl/src/math/tgammal.c",
@@ -919,13 +900,10 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/stdlib/ecvt.c",
     "musl/src/stdlib/fcvt.c",
     "musl/src/stdlib/gcvt.c",
-    "musl/src/string/strdup.c",
     "musl/src/string/strerror_r.c",
-    "musl/src/string/strndup.c",
     "musl/src/string/strverscmp.c",
     "musl/src/string/wcscasecmp.c",
     "musl/src/string/wcscasecmp_l.c",
-    "musl/src/string/wcsdup.c",
     "musl/src/string/wcsncasecmp.c",
     "musl/src/string/wcsncasecmp_l.c",
     "musl/src/thread/default_attr.c",
@@ -956,8 +934,6 @@ const libc_top_half_src_files = [_][]const u8{
     "musl/src/thread/pthread_setcancelstate.c",
     "musl/src/thread/pthread_setcanceltype.c",
     "musl/src/thread/pthread_setspecific.c",
-    "musl/src/thread/pthread_spin_destroy.c",
-    "musl/src/thread/pthread_spin_init.c",
     "musl/src/thread/pthread_testcancel.c",
     "musl/src/thread/thrd_sleep.c",
     "musl/src/time/asctime.c",
@@ -1103,9 +1079,6 @@ const libc_top_half_src_files = [_][]const u8{
     "wasi/thread-stub/pthread_rwlock_trywrlock.c",
     "wasi/thread-stub/pthread_rwlock_unlock.c",
     "wasi/thread-stub/pthread_rwlock_wrlock.c",
-    "wasi/thread-stub/pthread_spin_lock.c",
-    "wasi/thread-stub/pthread_spin_trylock.c",
-    "wasi/thread-stub/pthread_spin_unlock.c",
 };
 
 const crt1_command_src_file = "wasi/libc-bottom-half/crt/crt1-command.c";

@@ -20,8 +20,13 @@ comptime {
     _ = root;
 
     if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
-        if (native_os == .windows and !@hasDecl(root, "_DllMainCRTStartup")) {
-            @export(&_DllMainCRTStartup, .{ .name = "_DllMainCRTStartup" });
+        const dll_main_crt_startup = if (builtin.abi.isGnu()) "DllMainCRTStartup" else "_DllMainCRTStartup";
+        if (native_os == .windows and !builtin.link_libc and !@hasDecl(root, dll_main_crt_startup)) {
+            @export(&DllMainCRTStartup, .{ .name = dll_main_crt_startup });
+        } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "DllMain")) {
+            if (!@typeInfo(@TypeOf(root.DllMain)).@"fn".calling_convention.eql(.winapi)) {
+                @export(&DllMain, .{ .name = "DllMain" });
+            }
         }
     } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
         if (builtin.link_libc and @hasDecl(root, "main")) {
@@ -71,7 +76,7 @@ comptime {
     }
 }
 
-fn _DllMainCRTStartup(
+fn DllMainCRTStartup(
     hinstDLL: std.os.windows.HINSTANCE,
     fdwReason: std.os.windows.DWORD,
     lpReserved: std.os.windows.LPVOID,
@@ -81,10 +86,18 @@ fn _DllMainCRTStartup(
     }
 
     if (@hasDecl(root, "DllMain")) {
-        return root.DllMain(hinstDLL, fdwReason, lpReserved);
+        return root.DllMain(@ptrCast(hinstDLL), fdwReason, lpReserved);
     }
 
     return .TRUE;
+}
+
+fn DllMain(
+    hinstDLL: std.os.windows.HINSTANCE,
+    fdwReason: std.os.windows.DWORD,
+    lpReserved: std.os.windows.LPVOID,
+) callconv(.winapi) std.os.windows.BOOL {
+    return root.DllMain(@ptrCast(hinstDLL), fdwReason, lpReserved);
 }
 
 fn wasm_freestanding_start() callconv(.c) void {
@@ -156,6 +169,7 @@ fn _start() callconv(.naked) noreturn {
             .kvx => ".cfi_undefined r14",
             .loongarch32, .loongarch64 => ".cfi_undefined 1",
             .m68k => ".cfi_undefined %%pc",
+            .m88k => ".cfi_undefined %%r1",
             .microblaze, .microblazeel => ".cfi_undefined r15",
             .mips, .mipsel, .mips64, .mips64el => ".cfi_undefined $ra",
             .or1k => ".cfi_undefined r9",
@@ -169,6 +183,7 @@ fn _start() callconv(.naked) noreturn {
             .sparc, .sparc64 => ".cfi_undefined %%i7",
             .x86 => ".cfi_undefined %%eip",
             .x86_64 => ".cfi_undefined %%rip",
+            .xtensa, .xtensaeb => "", // No CFI support.
             else => @compileError("unsupported arch"),
         });
 
@@ -318,6 +333,16 @@ fn _start() callconv(.naked) noreturn {
             \\ lea %[posixCallMainAndExit] - . - 8, %%a0
             \\ jsr (%%pc, %%a0)
             ,
+            .m88k =>
+            // r1 = LR, r30 = FP, r31 = SP
+            \\ or %%r0, %%r0, %%r0
+            \\ or %%r0, %%r0, %%r0
+            \\ or %%30, %%r0, %%r0
+            \\ or %%r1, %%r0, %%r0
+            \\ or %%r2, %%r31, %%r0
+            \\ clr %%r31, %%r31, 4<0>
+            \\ br.n %[posixCallMainAndExit]
+            ,
             .microblaze, .microblazeel =>
             // r1 = SP, r15 = LR, r19 = FP, r20 = GP
             \\ ori r15, r0, r0
@@ -461,6 +486,15 @@ fn _start() callconv(.naked) noreturn {
             \\ and %%sp, -16, %%sp
             \\ sub %%sp, 2047, %%sp
             \\ ba,a %[posixCallMainAndExit]
+            ,
+            .xtensa, .xtensaeb =>
+            // a0 = LR, a7 = FP, a1 = SP
+            \\ movi a0, 0
+            \\ movi a7, 0
+            \\ mov a2, sp
+            \\ movi a8, -16
+            \\ and sp, sp, a8
+            \\ callx0 %[posixCallMainAndExit]
             ,
             else => @compileError("unsupported arch"),
         }
@@ -631,6 +665,7 @@ inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8)
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
         t.environ = .{ .process_environ = .{ .block = env_block } };
+        t.environ_initialized = env_block.isEmpty();
     }
     std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
@@ -664,21 +699,32 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
-    if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
-        if (std.Options.debug_threaded_io) |t| t.argv0.value = argv[0];
+    const environ: [:null]?[*:0]u8 = switch (builtin.os.tag) {
+        .wasi, .emscripten => environ: {
+            const c_environ = std.c.environ;
+            var env_count: usize = 0;
+            while (c_environ[env_count] != null) : (env_count += 1) {}
+            break :environ c_environ[0..env_count :null];
+        },
+        else => &.{},
+    };
+    const env_block: std.process.Environ.Block = .{ .slice = environ };
+    if (std.Options.debug_threaded_io) |t| {
+        if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
+        t.environ = .{ .process_environ = .{ .block = env_block } };
+        t.environ_initialized = env_block.isEmpty();
     }
-    return callMain(argv, .empty);
+    return callMain(argv, env_block);
 }
 
 /// General error message for a malformed return type
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
-const use_debug_allocator = !is_wasm and switch (builtin.mode) {
-    .Debug => true,
-    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
+const use_safe_allocator = !is_wasm and switch (builtin.mode) {
+    .Debug, .ReleaseSafe => true,
     .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+var safe_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 
 inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.Block) u8 {
     const fn_info = @typeInfo(@TypeOf(root.main)).@"fn";
@@ -688,8 +734,8 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
         .environ = .{ .block = environ },
     }));
 
-    const gpa = if (use_debug_allocator)
-        debug_allocator.allocator()
+    const gpa = if (use_safe_allocator)
+        safe_allocator.allocator()
     else if (builtin.link_libc)
         std.heap.c_allocator
     else if (is_wasm)
@@ -699,8 +745,8 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
     else
         comptime unreachable;
 
-    defer if (use_debug_allocator) {
-        _ = debug_allocator.deinit(); // Leaks do not affect return code.
+    defer if (use_safe_allocator) {
+        _ = safe_allocator.deinit(); // Leaks do not affect return code.
     };
 
     const arena_backing_allocator = if (is_wasm) gpa else std.heap.page_allocator;
@@ -748,7 +794,7 @@ inline fn wrapMain(result: anytype) u8 {
         std.log.err("{t}", .{err});
         switch (native_os) {
             .freestanding, .other => {},
-            else => if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace),
+            else => if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace),
         }
         return 1;
     };

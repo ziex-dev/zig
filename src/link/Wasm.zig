@@ -931,8 +931,7 @@ pub const ZcuFunc = union {
             const ip = &zcu.intern_pool;
             switch (ip.indexToKey(i.key(wasm).*)) {
                 .func => |func| {
-                    const fn_ty = zcu.navValue(func.owner_nav).typeOf(zcu);
-                    const fn_info = zcu.typeToFunc(fn_ty).?;
+                    const fn_info = zcu.typeToFunc(.fromInterned(func.ty)).?;
                     return wasm.getExistingFunctionType(fn_info.cc, fn_info.param_types.get(ip), .fromInterned(fn_info.return_type), target).?;
                 },
                 .enum_type => {
@@ -2830,6 +2829,7 @@ pub const Feature = packed struct(u8) {
         @"exception-handling",
         @"extended-const",
         fp16,
+        gc,
         memory64,
         multimemory,
         multivalue,
@@ -2853,6 +2853,7 @@ pub const Feature = packed struct(u8) {
                 .exception_handling => .@"exception-handling",
                 .extended_const => .@"extended-const",
                 .fp16 => .fp16,
+                .gc => .gc,
                 .multimemory => .multimemory,
                 .multivalue => .multivalue,
                 .mutable_globals => .@"mutable-globals",
@@ -2876,6 +2877,7 @@ pub const Feature = packed struct(u8) {
                 .@"exception-handling" => .exception_handling,
                 .@"extended-const" => .extended_const,
                 .fp16 => .fp16,
+                .gc => .gc,
                 .memory64 => null, // Linker-only feature.
                 .multimemory => .multimemory,
                 .multivalue => .multivalue,
@@ -3089,11 +3091,11 @@ fn parseArchive(wasm: *Wasm, obj: link.Input.Object) !void {
     // In this case we must force link all embedded object files within the archive
     // We loop over all symbols, and then group them by offset as the offset
     // notates where the object file starts.
-    var offsets = std.AutoArrayHashMap(u32, void).init(gpa);
-    defer offsets.deinit();
+    var offsets: std.array_hash_map.Auto(u32, void) = .empty;
+    defer offsets.deinit(gpa);
     for (archive.toc.values()) |symbol_offsets| {
         for (symbol_offsets.items) |sym_offset| {
-            try offsets.put(sym_offset, {});
+            try offsets.put(gpa, sym_offset, {});
         }
     }
 
@@ -3346,8 +3348,7 @@ pub fn updateLineNumber(wasm: *Wasm, pt: Zcu.PerThread, ti_id: InternPool.Tracke
     const diags = &comp.link_diags;
     if (wasm.dwarf) |*dw| {
         dw.updateLineNumber(pt.zcu, ti_id) catch |err| switch (err) {
-            error.Overflow => return error.Overflow,
-            error.OutOfMemory => return error.OutOfMemory,
+            error.Overflow, error.OutOfMemory => |e| return e,
             else => |e| return diags.fail("failed to update dwarf line numbers: {s}", .{@errorName(e)}),
         };
     }
@@ -3874,15 +3875,14 @@ pub fn flush(
     try wasm.flush_buffer.data_imports.reinit(gpa, wasm.data_imports.keys(), wasm.data_imports.values());
 
     return wasm.flush_buffer.finish(wasm) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.LinkFailure => return error.LinkFailure,
+        error.OutOfMemory, error.LinkFailure => |e| return e,
         else => |e| return diags.fail("failed to flush wasm: {s}", .{@errorName(e)}),
     };
 }
 
 fn defaultEntrySymbolName(
     preloaded_strings: *const PreloadedStrings,
-    wasi_exec_model: std.builtin.WasiExecModel,
+    wasi_exec_model: std.lang.WasiExecModel,
 ) String {
     return switch (wasi_exec_model) {
         .reactor => preloaded_strings._initialize,
@@ -3962,7 +3962,7 @@ pub fn getExistingFuncType2(wasm: *const Wasm, params: []const std.wasm.Valtype,
 
 pub fn internFunctionType(
     wasm: *Wasm,
-    cc: std.builtin.CallingConvention,
+    cc: std.lang.CallingConvention,
     params: []const InternPool.Index,
     return_type: Zcu.Type,
     target: *const std.Target,
@@ -3976,7 +3976,7 @@ pub fn internFunctionType(
 
 pub fn getExistingFunctionType(
     wasm: *Wasm,
-    cc: std.builtin.CallingConvention,
+    cc: std.lang.CallingConvention,
     params: []const InternPool.Index,
     return_type: Zcu.Type,
     target: *const std.Target,
@@ -4210,7 +4210,7 @@ pub fn errorNameTableAddr(wasm: *Wasm) u32 {
 
 fn convertZcuFnType(
     comp: *Compilation,
-    cc: std.builtin.CallingConvention,
+    cc: std.lang.CallingConvention,
     params: []const InternPool.Index,
     return_type: Zcu.Type,
     target: *const std.Target,

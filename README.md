@@ -47,14 +47,14 @@ Ensure you have the required dependencies:
 
  * CMake >= 3.15
  * System C/C++ Toolchain
- * LLVM, Clang, LLD development libraries, version 21.x, compiled with the
+ * LLVM, Clang, LLD development libraries, version 22.x, compiled with the
    same system C/C++ toolchain.
    - If the system package manager lacks these libraries, or has them misconfigured,
      see below for how to build them from source.
 
 Then it is the standard CMake build process:
 
-```
+```sh
 mkdir build
 cd build
 cmake ..
@@ -69,7 +69,7 @@ This produces `stage3/bin/zig` which is the Zig compiler built by itself.
 
 In this case, the only system dependency is a C compiler.
 
-```
+```sh
 cc -o bootstrap bootstrap.c
 ./bootstrap
 ```
@@ -95,7 +95,7 @@ installed C compiler toolchain.
 From here you can tinker with `zig2` or you can proceed to installation using
 the build system as usual:
 
-```
+```sh
 ./zig2 build
 ```
 
@@ -118,7 +118,7 @@ The easiest way to obtain both of these artifacts is to use
 directory `out/zig-$target-$cpu` and `out/$target-$cpu`, to be used as
 `$ZIG_PREFIX` and `$LLVM_PREFIX`, respectively, in the following command:
 
-```
+```sh
 "$ZIG_PREFIX/zig" build \
   -p stage3 \
   --search-prefix "$LLVM_PREFIX" \
@@ -257,15 +257,15 @@ that you have **no** trailing slash (`/` or `\`) at the end of the
 
 Install [CMake](https://cmake.org/), version 3.20.0 or newer.
 
-[Download LLVM, Clang, and LLD sources](https://releases.llvm.org/download.html#21.0.0)
+[Download LLVM, Clang, and LLD sources](https://releases.llvm.org/download.html#22.0.0)
 The downloads from llvm lead to the github release pages, where the source's
-will be listed as : `llvm-21.X.X.src.tar.xz`, `clang-21.X.X.src.tar.xz`,
-`lld-21.X.X.src.tar.xz`. Unzip each to their own directory. Ensure no
+will be listed as : `llvm-22.X.X.src.tar.xz`, `clang-22.X.X.src.tar.xz`,
+`lld-22.X.X.src.tar.xz`. Unzip each to their own directory. Ensure no
 directories have spaces in them. For example:
 
- * `C:\Users\Andy\llvm-21.0.0.src`
- * `C:\Users\Andy\clang-21.0.0.src`
- * `C:\Users\Andy\lld-21.0.0.src`
+ * `C:\Users\Andy\llvm-22.0.0.src`
+ * `C:\Users\Andy\clang-22.0.0.src`
+ * `C:\Users\Andy\lld-22.0.0.src`
 
 Install [Build Tools for Visual Studio
 2019](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2019).
@@ -298,9 +298,9 @@ Using the start menu, run **x64 Native Tools Command Prompt for VS 2019** and ex
 ##### Release Mode
 
 ```bat
-mkdir C:\Users\Andy\llvm-21.0.0.src\build-release
-cd C:\Users\Andy\llvm-21.0.0.src\build-release
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-release-mt -
+mkdir C:\Users\Andy\llvm-22.0.0.src\build-release
+cd C:\Users\Andy\llvm-22.0.0.src\build-release
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -
 DLLVM_ENABLE_ZLIB=OFF -DCMAKE_BUILD_TYPE=Release -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_USE_CRT_RELEASE=MT
 msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ```
@@ -308,10 +308,10 @@ msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ##### Debug Mode
 
 ```bat
-mkdir C:\Users\Andy\llvm-21.0.0.src\build-debug
-cd C:\Users\Andy\llvm-21.0.0.src\build-debug
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-debug -
-DLLVM_ENABLE_ZLIB=OFF -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="AVR" -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_USE_CRT_DEBUG=MTd
+mkdir C:\Users\Andy\llvm-22.0.0.src\build-debug
+cd C:\Users\Andy\llvm-22.0.0.src\build-debug
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -
+DLLVM_ENABLE_ZLIB=OFF -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD="AVR" -DLLVM_ENABLE_LIBXML2=OFF -DLLVM_USE_CRT_DEBUG=MTd
 msbuild /m INSTALL.vcxproj
 ```
 
@@ -322,18 +322,18 @@ Using the start menu, run **x64 Native Tools Command Prompt for VS 2019** and ex
 ##### Release Mode
 
 ```bat
-mkdir C:\Users\Andy\lld-21.0.0.src\build-release
-cd C:\Users\Andy\lld-21.0.0.src\build-release
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-14.0.6-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
+mkdir C:\Users\Andy\lld-22.0.0.src\build-release
+cd C:\Users\Andy\lld-22.0.0.src\build-release
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-14.0.6-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
 msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ```
 
 ##### Debug Mode
 
 ```bat
-mkdir C:\Users\Andy\lld-21.0.0.src\build-debug
-cd C:\Users\Andy\lld-21.0.0.src\build-debug
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
+mkdir C:\Users\Andy\lld-22.0.0.src\build-debug
+cd C:\Users\Andy\lld-22.0.0.src\build-debug
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
 msbuild /m INSTALL.vcxproj
 ```
 
@@ -344,18 +344,18 @@ Using the start menu, run **x64 Native Tools Command Prompt for VS 2019** and ex
 ##### Release Mode
 
 ```bat
-mkdir C:\Users\Andy\clang-21.0.0.src\build-release
-cd C:\Users\Andy\clang-21.0.0.src\build-release
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
+mkdir C:\Users\Andy\clang-22.0.0.src\build-release
+cd C:\Users\Andy\clang-22.0.0.src\build-release
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_PREFIX_PATH=C:\Users\Andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-release-mt -DCMAKE_BUILD_TYPE=Release -DLLVM_USE_CRT_RELEASE=MT
 msbuild /m -p:Configuration=Release INSTALL.vcxproj
 ```
 
 ##### Debug Mode
 
 ```bat
-mkdir C:\Users\Andy\clang-21.0.0.src\build-debug
-cd C:\Users\Andy\clang-21.0.0.src\build-debug
-"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-21.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
+mkdir C:\Users\Andy\clang-22.0.0.src\build-debug
+cd C:\Users\Andy\clang-22.0.0.src\build-debug
+"c:\Program Files\CMake\bin\cmake.exe" .. -Thost=x64 -G "Visual Studio 16 2019" -A x64 -DCMAKE_INSTALL_PREFIX=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_PREFIX_PATH=C:\Users\andy\llvm+clang+lld-22.0.0-x86_64-windows-msvc-debug -DCMAKE_BUILD_TYPE=Debug -DLLVM_USE_CRT_DEBUG=MTd
 msbuild /m INSTALL.vcxproj
 ```
 
@@ -369,16 +369,16 @@ directory instead of a global installation.
 
 This is the generally recommended approach.
 
-```
+```sh
 cd ~/Downloads
-git clone --depth 1 --branch release/21.x https://github.com/llvm/llvm-project llvm-project-21
-cd llvm-project-21
-git checkout release/21.x
+git clone --depth 1 --branch release/22.x https://github.com/llvm/llvm-project llvm-project-22
+cd llvm-project-22
+git checkout release/22.x
 
 mkdir build-release
 cd build-release
 cmake ../llvm \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm21-assert \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-assert \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_ENABLE_PROJECTS="lld;clang" \
   -DLLVM_ENABLE_LIBXML2=OFF \
@@ -396,18 +396,18 @@ This is occasionally needed when debugging Zig's LLVM backend. Here we build
 the three projects separately so that LLVM can be in Debug mode while the
 others are in Release mode.
 
-```
+```sh
 cd ~/Downloads
-git clone --depth 1 --branch release/21.x https://github.com/llvm/llvm-project llvm-project-21
-cd llvm-project-21
-git checkout release/21.x
+git clone --depth 1 --branch release/22.x https://github.com/llvm/llvm-project llvm-project-22
+cd llvm-project-22
+git checkout release/22.x
 
 # LLVM
 mkdir llvm/build-debug
 cd llvm/build-debug
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm21-debug \
-  -DCMAKE_PREFIX_PATH=$HOME/local/llvm21-debug \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-debug \
+  -DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug \
   -DCMAKE_BUILD_TYPE=Debug \
   -DLLVM_ENABLE_LIBXML2=OFF \
   -DLLVM_ENABLE_TERMINFO=OFF \
@@ -421,8 +421,8 @@ cd ../..
 mkdir lld/build-debug
 cd lld/build-debug
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm21-debug \
-  -DCMAKE_PREFIX_PATH=$HOME/local/llvm21-debug \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-debug \
+  -DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_PARALLEL_LINK_JOBS=1 \
   -DCMAKE_CXX_STANDARD=17 \
@@ -434,8 +434,8 @@ cd ../..
 mkdir clang/build-debug
 cd clang/build-debug
 cmake .. \
-  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm21-debug \
-  -DCMAKE_PREFIX_PATH=$HOME/local/llvm21-debug \
+  -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm22-debug \
+  -DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug \
   -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_PARALLEL_LINK_JOBS=1 \
   -DLLVM_INCLUDE_TESTS=OFF \
@@ -445,8 +445,8 @@ cd ../..
 ```
 
 Then add to your Zig CMake line that you got from the README.md:
-`-DCMAKE_PREFIX_PATH=$HOME/local/llvm21-debug` or
-`-DCMAKE_PREFIX_PATH=$HOME/local/llvm21-assert` depending on whether you want
+`-DCMAKE_PREFIX_PATH=$HOME/local/llvm22-debug` or
+`-DCMAKE_PREFIX_PATH=$HOME/local/llvm22-assert` depending on whether you want
 Debug or Release LLVM.
 
 
@@ -552,7 +552,7 @@ To reduce time spent waiting for the compiler to build, try these techniques:
 
 ### Testing
 
-```
+```sh
 stage4/bin/zig build test
 ```
 
@@ -572,7 +572,7 @@ Another example is choosing a different set of things to test. For example,
 not the other ones. Combining this suggestion with the previous one, you could
 do this:
 
-```
+```sh
 stage4/bin/zig build test-std -Dskip-release
 ```
 
@@ -588,13 +588,13 @@ this information and more in the `zig build --help` menu.
 This command will run the standard library tests with only the native target
 configuration and is estimated to complete in 3 minutes:
 
-```
+```sh
 zig build test-std -Dno-matrix
 ```
 
 However, one may also use `zig test` directly. From inside the `ziglang/zig` repo root:
 
-```
+```sh
 zig test lib/std/std.zig --zig-lib-dir lib
 ```
 
@@ -605,14 +605,14 @@ you're trying to test in practice.)
 
 Note that `--test-filter` filters on fully qualified names, so e.g. it's possible to run only the `std.json` tests with:
 
-```
+```sh
 zig test lib/std/std.zig --zig-lib-dir lib --test-filter "json."
 ```
 
 If you used `-Dno-lib` and you are in a `build/` subdirectory, you can omit the
 `--zig-lib-dir` argument:
 
-```
+```sh
 stage3/bin/zig test ../lib/std/std.zig
 ```
 
@@ -658,38 +658,31 @@ WebAssembly-related.
 
 ### Improving Translate-C
 
-`translate-c` is a feature provided by Zig that converts C source code into
-Zig source code. It powers the `zig translate-c` command as well as
-[@cImport](https://ziglang.org/documentation/master/#cImport), allowing Zig
-code to not only take advantage of function prototypes defined in .h files,
-but also `static inline` functions written in C, and even some macros.
+`translate-c` is a feature provided by Zig that converts C source code into Zig
+source code. It powers the `zig translate-c` command, allowing Zig code to not
+only take advantage of function prototypes defined in C header files, but also
+`static inline` functions written in C, and even some macros.
 
 This feature used to work by using libclang API to parse and semantically
 analyze C/C++ files, and then based on the provided AST and type information,
 generating Zig AST, and finally using the mechanisms of `zig fmt` to render the
 Zig AST to a file.
 
-However, C translation is in a transitional period right now. It used to be
-based on Clang, but is now based on Aro:
+However, it is now based on [arocc](https://github.com/Vexu/arocc/), a
+third-party C compiler written in Zig. Test coverage, bug reports, and official
+implementation live in this repository: [ziglang/translate-c](https://codeberg.org/ziglang/translate-c/)
 
-[Pull Request: update aro and translate-c to latest; delete clang translate-c](https://github.com/ziglang/zig/pull/24497)
-
-Test coverage as well as bug reports have been moved to this repository:
-
-[ziglang/translate-c](https://codeberg.org/ziglang/translate-c/)
-
-In the future, [@cImport will move to the build system](https://github.com/ziglang/zig/issues/20630),
-but for now, the translate-c logic is copy-pasted from that project into
-[ziglang/zig](https://codeberg.org/ziglang/zig/), powering both `zig translate-c`
-and `@cImport`.
+This package is currently vendored into the Zig source tree. The TranslateC
+build step takes advantage of this to provide the ability to setup C
+translation in one's build.zig script.
 
 Please see the readme of the translate-c project for how to contribute. Once an
 issue is resolved (and test coverage added) there, the changes can be
 immediately backported to the zig compiler.
 
-Once we fix the problems people are facing from this transition from Clang to
-Aro, we can move on to enhancing the translate-c package such that `@cImport`
-becomes redundant and can therefore be eliminated from the language.
+However, in the future, this build step will be removed in favor of explicit
+dependency on the translate-c package via build system / package manager. At
+that point, Zig will stop vendoring arocc.
 
 ### Autodoc
 
@@ -771,7 +764,7 @@ To build the LLDB fork, make sure you have
 [prerequisites](https://lldb.llvm.org/resources/build.html#preliminaries)
 installed, and then do something like:
 
-```
+```sh
 $ cmake llvm -G Ninja -B build -DLLVM_ENABLE_PROJECTS="clang;lldb" -DCMAKE_BUILD_TYPE=RelWithDebInfo -DLLVM_ENABLE_ASSERTIONS=ON -DLLDB_ENABLE_LIBEDIT=ON -DLLDB_ENABLE_PYTHON=ON
 $ cmake --build build --target lldb --target lldb-server
 ```

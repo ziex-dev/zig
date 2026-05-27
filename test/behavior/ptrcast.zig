@@ -515,7 +515,6 @@ test "@ptrCast single-item pointer to slice with length 1" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
 
     const S = struct {
         fn doTheTest(comptime T: type, ptr: *const T) !void {
@@ -536,7 +535,6 @@ test "@ptrCast single-item pointer to slice of bytes" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest; // TODO
 
     const S = struct {
         fn doTheTest(comptime T: type, ptr: *const T) !void {
@@ -561,4 +559,12 @@ test "@ptrCast array pointer removing sentinel" {
     comptime assert(out[1] == 2);
     comptime assert(out[2] == 3);
     comptime assert(out[3] == 4);
+}
+
+test "@ptrcast larger type to smaller one" {
+    const T = packed struct { x: u17 };
+    const a: u32 = 0;
+    const b: *const T = @ptrCast(&a);
+    const c = b.x;
+    _ = c;
 }

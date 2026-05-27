@@ -138,7 +138,7 @@ const Agg = struct {
 };
 
 const v1 = Value{ .Int = 1234 };
-const v2 = Value{ .Array = [_]u8{3} ** 9 };
+const v2 = Value{ .Array = @splat(3) };
 
 const err = @as(anyerror!Agg, Agg{
     .val1 = v1,
@@ -1156,7 +1156,7 @@ test "extern union most-aligned field is smaller" {
         },
         un: [110]u8,
     };
-    var a: ?U = .{ .un = [_]u8{0} ** 110 };
+    var a: ?U = .{ .un = @splat(0) };
     _ = &a;
     try expect(a != null);
 }
@@ -1592,7 +1592,6 @@ test "memset packed union" {
 
     try comptime S.doTheTest();
 
-    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest; // TODO
     try S.doTheTest();
 }
 
@@ -1750,8 +1749,6 @@ test "reinterpret packed union" {
     try comptime S.doTheTest();
 
     if (builtin.zig_backend == .stage2_c) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.isWasm()) return error.SkipZigTest; // TODO
-    if (builtin.cpu.arch.endian() == .big) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/21050
     try S.doTheTest();
 }
 
@@ -2184,7 +2181,6 @@ test "matching captures causes union equivalence" {
 test "signed enum tag with negative value" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
     const Enum = enum(i8) {

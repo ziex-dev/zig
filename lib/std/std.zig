@@ -1,7 +1,3 @@
-pub const ArrayHashMap = array_hash_map.ArrayHashMap;
-pub const ArrayHashMapUnmanaged = array_hash_map.ArrayHashMapUnmanaged;
-pub const AutoArrayHashMap = array_hash_map.AutoArrayHashMap;
-pub const AutoArrayHashMapUnmanaged = array_hash_map.AutoArrayHashMapUnmanaged;
 pub const AutoHashMap = hash_map.AutoHashMap;
 pub const AutoHashMapUnmanaged = hash_map.AutoHashMapUnmanaged;
 pub const BitStack = @import("BitStack.zig");
@@ -13,7 +9,9 @@ pub const StaticStringMapWithEql = static_string_map.StaticStringMapWithEql;
 pub const Deque = @import("deque.zig").Deque;
 pub const DoublyLinkedList = @import("DoublyLinkedList.zig");
 pub const DynLib = @import("dynamic_library.zig").DynLib;
+/// Deprecated: use `bit_set.DynamicManaged`.
 pub const DynamicBitSet = bit_set.DynamicBitSet;
+/// Deprecated: use `bit_set.Dynamic`.
 pub const DynamicBitSetUnmanaged = bit_set.DynamicBitSetUnmanaged;
 pub const EnumArray = enums.EnumArray;
 pub const EnumMap = enums.EnumMap;
@@ -28,16 +26,22 @@ pub const Progress = @import("Progress.zig");
 pub const Random = @import("Random.zig");
 pub const SemanticVersion = @import("SemanticVersion.zig");
 pub const SinglyLinkedList = @import("SinglyLinkedList.zig");
+/// Deprecated: use `bit_set.Static`.
 pub const StaticBitSet = bit_set.StaticBitSet;
 pub const StringHashMap = hash_map.StringHashMap;
 pub const StringHashMapUnmanaged = hash_map.StringHashMapUnmanaged;
-pub const StringArrayHashMap = array_hash_map.StringArrayHashMap;
-pub const StringArrayHashMapUnmanaged = array_hash_map.StringArrayHashMapUnmanaged;
 pub const Target = @import("Target.zig");
 pub const Thread = @import("Thread.zig");
 pub const Treap = @import("treap.zig").Treap;
 pub const Tz = tz.Tz;
 pub const Uri = @import("Uri.zig");
+
+/// Deprecated; use `array_hash_map.Custom`.
+pub const ArrayHashMapUnmanaged = array_hash_map.Custom;
+/// Deprecated; use `array_hash_map.Auto`.
+pub const AutoArrayHashMapUnmanaged = array_hash_map.Auto;
+/// Deprecated; use `array_hash_map.String`.
+pub const StringArrayHashMapUnmanaged = array_hash_map.String;
 
 /// A contiguous, growable list of items in memory. This is a wrapper around a
 /// slice of `T` values.
@@ -61,7 +65,11 @@ pub const array_hash_map = @import("array_hash_map.zig");
 pub const atomic = @import("atomic.zig");
 pub const base64 = @import("base64.zig");
 pub const bit_set = @import("bit_set.zig");
-pub const builtin = @import("builtin.zig");
+/// Deprecated; use `lang`.
+///
+/// To be removed after Zig 0.17.0.
+pub const builtin = lang;
+pub const lang = @import("lang.zig");
 pub const c = @import("c.zig");
 pub const coff = @import("coff.zig");
 pub const compress = @import("compress.zig");
@@ -164,6 +172,8 @@ pub const Options = struct {
     /// * `debug.dumpCurrentStackTrace`
     /// * `debug.writeStackTrace`
     /// * `debug.dumpStackTrace`
+    /// * `debug.writeErrorReturnTrace`
+    /// * `debug.dumpErrorReturnTrace`
     ///
     /// Stack traces can generally be collected and printed when debug info is stripped, but are
     /// often less useful since they usually cannot be mapped to source locations and/or have bad
@@ -176,6 +186,16 @@ pub const Options = struct {
 
     /// Allows disabling networking in std.Io implementations.
     networking: bool = true,
+
+    /// Whether or not `error.Unexpected` will print its value and a stack trace.
+    ///
+    /// If this happens the fix is to add the error code to the corresponding
+    /// switch expression, possibly introduce a new error in the error set, and
+    /// send a patch to Zig.
+    unexpected_error_tracing: bool = @import("builtin").mode == .Debug and switch (@import("builtin").zig_backend) {
+        .stage2_llvm, .stage2_x86_64 => true,
+        else => false,
+    },
 
     /// TODO This is a separate decl instead of a field as a workaround around
     /// compilation errors due to zig not being lazy enough.

@@ -409,7 +409,10 @@ pub const PathNameError = error{
 };
 
 pub const AccessError = error{
+    /// The requested `AccessOptions` would be denied to the file, or search
+    /// permission is denied for one of the directories in the path prefix.
     AccessDenied,
+    /// Write permission was requested but the file is immutable.
     PermissionDenied,
     FileNotFound,
     InputOutput,
@@ -495,6 +498,76 @@ pub fn closeMany(io: Io, dirs: []const Dir) void {
     return io.vtable.dirClose(io.userdata, dirs);
 }
 
+pub const OpenFileOptions = struct {
+    mode: Mode = .read_only,
+    /// Determines the behavior when opening a path that refers to a directory.
+    ///
+    /// If set to true, directories may be opened, but `error.IsDir` is still
+    /// possible in certain scenarios, e.g. attempting to open a directory with
+    /// write permissions.
+    ///
+    /// If set to false, `error.IsDir` will always be returned when opening a directory.
+    ///
+    /// When set to false:
+    /// * On Windows, the behavior is implemented without any extra syscalls.
+    /// * On other operating systems, the behavior is implemented with an additional
+    ///   `fstat` syscall.
+    allow_directory: bool = true,
+    /// Indicates intent for only some operations to be performed on this
+    /// opened file:
+    /// * `close`
+    /// * `stat`
+    /// On Linux and FreeBSD, this corresponds to `std.posix.O.PATH`.
+    path_only: bool = false,
+    /// Open the file with an advisory lock to coordinate with other processes
+    /// accessing it at the same time. An exclusive lock will prevent other
+    /// processes from acquiring a lock. A shared lock will prevent other
+    /// processes from acquiring a exclusive lock, but does not prevent
+    /// other process from getting their own shared locks.
+    ///
+    /// The lock is advisory, except on Linux in very specific circumstances[1].
+    /// This means that a process that does not respect the locking API can still get access
+    /// to the file, despite the lock.
+    ///
+    /// On these operating systems, the lock is acquired atomically with
+    /// opening the file:
+    /// * Darwin
+    /// * DragonFlyBSD
+    /// * FreeBSD
+    /// * Haiku
+    /// * NetBSD
+    /// * OpenBSD
+    /// On these operating systems, the lock is acquired via a separate syscall
+    /// after opening the file:
+    /// * Linux
+    /// * Windows
+    ///
+    /// [1]: https://www.kernel.org/doc/Documentation/filesystems/mandatory-locking.txt
+    lock: File.Lock = .none,
+    /// Sets whether or not to wait until the file is locked to return. If set to true,
+    /// `error.WouldBlock` will be returned. Otherwise, the file will wait until the file
+    /// is available to proceed.
+    lock_nonblocking: bool = false,
+    /// Set this to allow the opened file to automatically become the
+    /// controlling TTY for the current process.
+    allow_ctty: bool = false,
+    follow_symlinks: bool = true,
+    /// If supported by the operating system, attempted path resolution that
+    /// would escape the directory instead returns `error.AccessDenied`. If
+    /// unsupported, this option is ignored.
+    resolve_beneath: bool = false,
+
+    pub const Mode = enum { read_only, write_only, read_write };
+
+    pub fn isRead(self: OpenFileOptions) bool {
+        return self.mode != .write_only;
+    }
+
+    pub fn isWrite(self: OpenFileOptions) bool {
+        return self.mode != .read_only;
+    }
+};
+
 /// Opens a file for reading or writing, without attempting to create a new file.
 ///
 /// To create a new file, see `createFile`.
@@ -504,14 +577,59 @@ pub fn closeMany(io: Io, dirs: []const Dir) void {
 /// On Windows, `sub_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `sub_path` should be encoded as valid UTF-8.
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
-pub fn openFile(dir: Dir, io: Io, sub_path: []const u8, flags: File.OpenFlags) File.OpenError!File {
-    return io.vtable.dirOpenFile(io.userdata, dir, sub_path, flags);
+pub fn openFile(dir: Dir, io: Io, sub_path: []const u8, options: OpenFileOptions) File.OpenError!File {
+    return io.vtable.dirOpenFile(io.userdata, dir, sub_path, options);
 }
 
-pub fn openFileAbsolute(io: Io, absolute_path: []const u8, flags: File.OpenFlags) File.OpenError!File {
+pub fn openFileAbsolute(io: Io, absolute_path: []const u8, options: OpenFileOptions) File.OpenError!File {
     assert(path.isAbsolute(absolute_path));
-    return openFile(.cwd(), io, absolute_path, flags);
+    return openFile(.cwd(), io, absolute_path, options);
 }
+
+pub const CreateFileOptions = struct {
+    /// Whether the file will be created with read access.
+    read: bool = false,
+    /// If the file already exists, and is a regular file, and the access
+    /// mode allows writing, it will be truncated to length 0.
+    truncate: bool = true,
+    /// Ensures that this open call creates the file, otherwise causes
+    /// `error.PathAlreadyExists` to be returned.
+    exclusive: bool = false,
+    /// Open the file with an advisory lock to coordinate with other processes
+    /// accessing it at the same time. An exclusive lock will prevent other
+    /// processes from acquiring a lock. A shared lock will prevent other
+    /// processes from acquiring a exclusive lock, but does not prevent
+    /// other process from getting their own shared locks.
+    ///
+    /// The lock is advisory, except on Linux in very specific circumstances[1].
+    /// This means that a process that does not respect the locking API can still get access
+    /// to the file, despite the lock.
+    ///
+    /// On these operating systems, the lock is acquired atomically with
+    /// opening the file:
+    /// * Darwin
+    /// * DragonFlyBSD
+    /// * FreeBSD
+    /// * Haiku
+    /// * NetBSD
+    /// * OpenBSD
+    /// On these operating systems, the lock is acquired via a separate syscall
+    /// after opening the file:
+    /// * Linux
+    /// * Windows
+    ///
+    /// [1]: https://www.kernel.org/doc/Documentation/filesystems/mandatory-locking.txt
+    lock: File.Lock = .none,
+    /// Sets whether or not to wait until the file is locked to return. If set to true,
+    /// `error.WouldBlock` will be returned. Otherwise, the file will wait until the file
+    /// is available to proceed.
+    lock_nonblocking: bool = false,
+    permissions: Permissions = .default_file,
+    /// If supported by the operating system, attempted path resolution that
+    /// would escape the directory instead returns `error.AccessDenied`. If
+    /// unsupported, this option is ignored.
+    resolve_beneath: bool = false,
+};
 
 /// Creates, opens, or overwrites a file with write access.
 ///
@@ -520,11 +638,11 @@ pub fn openFileAbsolute(io: Io, absolute_path: []const u8, flags: File.OpenFlags
 /// On Windows, `sub_path` should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// On WASI, `sub_path` should be encoded as valid UTF-8.
 /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
-pub fn createFile(dir: Dir, io: Io, sub_path: []const u8, flags: File.CreateFlags) File.OpenError!File {
+pub fn createFile(dir: Dir, io: Io, sub_path: []const u8, flags: CreateFileOptions) File.OpenError!File {
     return io.vtable.dirCreateFile(io.userdata, dir, sub_path, flags);
 }
 
-pub fn createFileAbsolute(io: Io, absolute_path: []const u8, flags: File.CreateFlags) File.OpenError!File {
+pub fn createFileAbsolute(io: Io, absolute_path: []const u8, flags: CreateFileOptions) File.OpenError!File {
     return createFile(.cwd(), io, absolute_path, flags);
 }
 
@@ -534,7 +652,7 @@ pub const WriteFileOptions = struct {
     /// On other platforms, `sub_path` is an opaque sequence of bytes with no particular encoding.
     sub_path: []const u8,
     data: []const u8,
-    flags: File.CreateFlags = .{},
+    flags: CreateFileOptions = .{},
 };
 
 pub const WriteFileError = File.Writer.Error || File.OpenError;
@@ -829,7 +947,7 @@ pub const RealPathFileAllocError = RealPathFileError || Allocator.Error;
 pub fn realPathFileAlloc(dir: Dir, io: Io, sub_path: []const u8, allocator: Allocator) RealPathFileAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
     const n = try realPathFile(dir, io, sub_path, &buffer);
-    return allocator.dupeZ(u8, buffer[0..n]);
+    return allocator.dupeSentinel(u8, buffer[0..n], 0);
 }
 
 /// Same as `realPathFile` except `absolute_path` is asserted to be an absolute
@@ -859,7 +977,7 @@ pub fn realPathFileAbsolute(io: Io, absolute_path: []const u8, out_buffer: []u8)
 pub fn realPathFileAbsoluteAlloc(io: Io, absolute_path: []const u8, allocator: Allocator) RealPathFileAllocError![:0]u8 {
     var buffer: [max_path_bytes]u8 = undefined;
     const n = try realPathFileAbsolute(io, absolute_path, &buffer);
-    return allocator.dupeZ(u8, buffer[0..n]);
+    return allocator.dupeSentinel(u8, buffer[0..n], 0);
 }
 
 pub const DeleteFileError = error{
@@ -1008,9 +1126,6 @@ pub const RenamePreserveError = error{
 /// Change the name or location of a file or directory.
 ///
 /// If `new_sub_path` already exists, `error.PathAlreadyExists` will be returned.
-///
-/// Renaming a file over an existing directory or a directory over an existing
-/// file will fail with `error.IsDir` or `error.NotDir`
 ///
 /// * On Windows, both paths should be encoded as [WTF-8](https://wtf-8.codeberg.page/).
 /// * On WASI, both paths should be encoded as valid UTF-8.
@@ -1878,7 +1993,7 @@ pub fn setFileOwner(
     owner: ?File.Uid,
     group: ?File.Gid,
     options: SetFileOwnerOptions,
-) SetOwnerError!void {
+) SetFileOwnerError!void {
     return io.vtable.dirSetFileOwner(io.userdata, dir, sub_path, owner, group, options);
 }
 
@@ -1917,9 +2032,14 @@ pub fn setTimestampsNow(
     sub_path: []const u8,
     options: SetTimestampsNowOptions,
 ) SetTimestampsError!void {
-    return io.vtable.fileSetTimestamps(io.userdata, dir, sub_path, .{
+    return io.vtable.dirSetTimestamps(io.userdata, dir, sub_path, .{
         .follow_symlinks = options.follow_symlinks,
         .access_timestamp = .now,
         .modify_timestamp = .now,
     });
+}
+
+test {
+    _ = &setFileOwner;
+    _ = &setTimestampsNow;
 }

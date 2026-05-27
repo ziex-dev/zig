@@ -400,7 +400,7 @@ pub const Reader = struct {
                         0 => return error.HttpConnectionClosing,
                         else => return error.HttpRequestTruncated,
                     },
-                    error.ReadFailed => return error.ReadFailed,
+                    error.ReadFailed => |e| return e,
                 };
                 continue;
             }
@@ -443,7 +443,7 @@ pub const Reader = struct {
             },
             .none => {
                 if (content_length) |len| {
-                    reader.state = .{ .body_remaining_content_length = len };
+                    reader.state = if (len == 0) .ready else .{ .body_remaining_content_length = len };
                     reader.interface = .{
                         .buffer = transfer_buffer,
                         .seek = 0,
@@ -509,27 +509,29 @@ pub const Reader = struct {
         limit: std.Io.Limit,
     ) std.Io.Reader.StreamError!usize {
         const reader: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+        if (reader.state == .ready) return error.EndOfStream;
         const remaining_content_length = &reader.state.body_remaining_content_length;
         const remaining = remaining_content_length.*;
-        if (remaining == 0) {
-            reader.state = .ready;
-            return error.EndOfStream;
-        }
         const n = try reader.in.stream(w, limit.min(.limited64(remaining)));
-        remaining_content_length.* = remaining - n;
+        if (n == remaining) {
+            reader.state = .ready;
+        } else {
+            remaining_content_length.* = remaining - n;
+        }
         return n;
     }
 
     fn contentLengthDiscard(io_r: *std.Io.Reader, limit: std.Io.Limit) std.Io.Reader.Error!usize {
         const reader: *Reader = @alignCast(@fieldParentPtr("interface", io_r));
+        if (reader.state == .ready) return error.EndOfStream;
         const remaining_content_length = &reader.state.body_remaining_content_length;
         const remaining = remaining_content_length.*;
-        if (remaining == 0) {
-            reader.state = .ready;
-            return error.EndOfStream;
-        }
         const n = try reader.in.discard(limit.min(.limited64(remaining)));
-        remaining_content_length.* = remaining - n;
+        if (n == remaining) {
+            reader.state = .ready;
+        } else {
+            remaining_content_length.* = remaining - n;
+        }
         return n;
     }
 
@@ -541,8 +543,7 @@ pub const Reader = struct {
             else => unreachable,
         };
         return chunkedReadEndless(reader, w, limit, chunk_len_ptr) catch |err| switch (err) {
-            error.ReadFailed => return error.ReadFailed,
-            error.WriteFailed => return error.WriteFailed,
+            error.ReadFailed, error.WriteFailed => |e| return e,
             error.EndOfStream => {
                 reader.body_err = error.HttpChunkTruncated;
                 return error.ReadFailed;
@@ -611,7 +612,7 @@ pub const Reader = struct {
             else => unreachable,
         };
         return chunkedDiscardEndless(reader, limit, chunk_len_ptr) catch |err| switch (err) {
-            error.ReadFailed => return error.ReadFailed,
+            error.ReadFailed => |e| return e,
             error.EndOfStream => {
                 reader.body_err = error.HttpChunkTruncated;
                 return error.ReadFailed;
@@ -748,7 +749,7 @@ pub const BodyWriter = struct {
     /// How many zeroes to reserve for hex-encoded chunk length.
     const chunk_len_digits = 8;
     const max_chunk_len: usize = std.math.pow(u64, 16, chunk_len_digits) - 1;
-    const chunk_header_template = ("0" ** chunk_len_digits) ++ "\r\n";
+    const chunk_header_template = @as([chunk_len_digits]u8, @splat('0')) ++ "\r\n";
 
     comptime {
         assert(max_chunk_len == std.math.maxInt(u32));

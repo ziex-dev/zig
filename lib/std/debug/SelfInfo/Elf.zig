@@ -30,7 +30,15 @@ pub fn deinit(si: *SelfInfo, io: Io) void {
     if (si.unwind_cache) |cache| gpa.free(cache);
 }
 
-pub fn getSymbol(si: *SelfInfo, io: Io, address: usize) Error!std.debug.Symbol {
+pub fn getSymbols(
+    si: *SelfInfo,
+    io: Io,
+    symbol_allocator: Allocator,
+    text_arena: Allocator,
+    address: usize,
+    resolve_inline_callers: bool,
+    symbols: *std.ArrayList(std.debug.Symbol),
+) Error!void {
     const gpa = std.debug.getDebugInfoAllocator();
     const module = try si.findModule(gpa, io, address, .exclusive);
     defer si.rwlock.unlock(io);
@@ -53,28 +61,21 @@ pub fn getSymbol(si: *SelfInfo, io: Io, address: usize) Error!std.debug.Symbol {
             };
             loaded_elf.scanned_dwarf = true;
         }
-        if (dwarf.getSymbol(gpa, native_endian, vaddr)) |sym| {
-            return sym;
-        } else |err| switch (err) {
-            error.MissingDebugInfo => {},
-
-            error.InvalidDebugInfo,
-            error.OutOfMemory,
-            => |e| return e,
-
-            error.ReadFailed,
-            error.EndOfStream,
-            error.Overflow,
-            error.StreamTooLong,
-            => return error.InvalidDebugInfo,
-        }
+        return dwarf.getSymbols(
+            symbol_allocator,
+            text_arena,
+            native_endian,
+            vaddr,
+            resolve_inline_callers,
+            symbols,
+        );
     }
     // When DWARF is unavailable, fall back to searching the symtab.
-    return loaded_elf.file.searchSymtab(gpa, vaddr) catch |err| switch (err) {
+    try symbols.append(symbol_allocator, loaded_elf.file.searchSymtab(gpa, vaddr) catch |err| switch (err) {
         error.NoSymtab, error.NoStrtab => return error.MissingDebugInfo,
         error.BadSymtab => return error.InvalidDebugInfo,
         error.OutOfMemory => |e| return e,
-    };
+    });
 }
 pub fn getModuleName(si: *SelfInfo, io: Io, address: usize) Error![]const u8 {
     const gpa = std.debug.getDebugInfoAllocator();
@@ -107,15 +108,19 @@ pub const can_unwind: bool = s: {
         // Not supported yet: arm
         .haiku => &.{
             .aarch64,
-            .m68k,
             .riscv64,
             .x86,
             .x86_64,
         },
-        // Not supported yet: arm/armeb/thumb/thumbeb, xtensa/xtensaeb
+        .illumos => &.{
+            .x86,
+            .x86_64,
+        },
+        // Not supported yet: arm/armeb/thumb/thumbeb, hppa, hppa64, microblaze/microblazeel, xtensa/xtensaeb
         .linux => &.{
             .aarch64,
             .aarch64_be,
+            .alpha,
             .arc,
             .csky,
             .loongarch32,
@@ -145,29 +150,29 @@ pub const can_unwind: bool = s: {
         .freebsd => &.{
             .aarch64,
             .riscv64,
-            .x86_64,
-        },
-        // Not supported yet: arm/armeb, mips64/mips64el
-        .netbsd => &.{
-            .aarch64,
-            .aarch64_be,
-            .m68k,
-            .mips,
-            .mipsel,
             .x86,
             .x86_64,
         },
-        // Not supported yet: arm
-        .openbsd => &.{
+        // Not supported yet: arm/armeb, hppa, mips64/mips64el, sh/sheb
+        .netbsd => &.{
             .aarch64,
-            .mips64,
-            .mips64el,
+            .aarch64_be,
+            .alpha,
+            .m68k,
+            .mips,
+            .mipsel,
+            .riscv32,
             .riscv64,
             .x86,
             .x86_64,
         },
-
-        .illumos => &.{
+        // Not supported yet: arm, hppa, sh
+        .openbsd => &.{
+            .aarch64,
+            .m88k,
+            .mips64,
+            .mips64el,
+            .riscv64,
             .x86,
             .x86_64,
         },

@@ -123,7 +123,7 @@ pub fn valueMaxDepth(self: *Serializer, val: anytype, options: ValueOptions, dep
 
 /// Serialize a value, similar to `serializeArbitraryDepth`.
 pub fn valueArbitraryDepth(self: *Serializer, val: anytype, options: ValueOptions) Error!void {
-    comptime assert(canSerializeType(@TypeOf(val)));
+    comptime assertCanSerializeType(@TypeOf(val));
     switch (@typeInfo(@TypeOf(val))) {
         .int, .comptime_int => if (options.emit_codepoint_literals.emitAsCodepoint(val)) |c| {
             self.codePoint(c, .{ .escape_non_ascii = options.escape_non_ascii }) catch |err| switch (err) {
@@ -335,7 +335,7 @@ pub fn tupleArbitraryDepth(
 }
 
 fn tupleImpl(self: *Serializer, val: anytype, options: ValueOptions) Error!void {
-    comptime assert(canSerializeType(@TypeOf(val)));
+    comptime assertCanSerializeType(@TypeOf(val));
     switch (@typeInfo(@TypeOf(val))) {
         .@"struct" => {
             var container = try self.beginTuple(.{ .whitespace_style = .{ .fields = val.len } });
@@ -922,6 +922,10 @@ test checkValueDepth {
 
     try expectValueDepthEquals(2, @as([]const u8, &.{ 1, 2, 3 }));
     try expectValueDepthEquals(3, @as([]const []const u8, &.{&.{ 1, 2, 3 }}));
+}
+
+inline fn assertCanSerializeType(T: type) void {
+    if (!canSerializeType(T)) @compileError("cannot serialize: " ++ @typeName(T));
 }
 
 inline fn canSerializeType(T: type) bool {

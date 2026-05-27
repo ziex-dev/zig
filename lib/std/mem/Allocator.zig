@@ -23,6 +23,8 @@ pub const VTable = struct {
     /// Return a pointer to `len` bytes with specified `alignment`, or return
     /// `null` indicating the allocation failed.
     ///
+    /// `new_len` must be greater than zero.
+    ///
     /// `ret_addr` is optionally provided as the first return address of the
     /// allocation call stack. If the value is `0` it means no return address
     /// has been provided.
@@ -167,7 +169,7 @@ pub fn create(a: Allocator, comptime T: type) Error!*T {
         const ptr = comptime std.mem.alignBackward(usize, math.maxInt(usize), @alignOf(T));
         return @ptrFromInt(ptr);
     }
-    const ptr: *T = @ptrCast(try a.allocBytesWithAlignment(.of(T), @sizeOf(T), @returnAddress()));
+    const ptr: *T = @ptrCast(try a.allocBytesAligned(.of(T), @sizeOf(T), @returnAddress()));
     return ptr;
 }
 
@@ -283,10 +285,10 @@ fn allocWithSizeAndAlignment(
     return_address: usize,
 ) Error![*]align(alignment.toByteUnits()) u8 {
     const byte_count = math.mul(usize, size, n) catch return error.OutOfMemory;
-    return self.allocBytesWithAlignment(alignment, byte_count, return_address);
+    return self.allocBytesAligned(alignment, byte_count, return_address);
 }
 
-fn allocBytesWithAlignment(
+pub fn allocBytesAligned(
     self: Allocator,
     comptime alignment: Alignment,
     byte_count: usize,
@@ -322,7 +324,7 @@ pub fn resize(self: Allocator, allocation: anytype, new_len: usize) bool {
     if (allocation.len == 0) {
         return false;
     }
-    const old_memory = mem.sliceAsBytes(allocation);
+    const old_memory: []u8 = @ptrCast(@constCast(mem.absorbSentinel(allocation)));
     // I would like to use saturating multiplication here, but LLVM cannot lower it
     // on WebAssembly: https://github.com/ziglang/zig/issues/9660
     //const new_len_bytes = new_len *| @sizeOf(T);
@@ -368,7 +370,7 @@ pub fn remap(self: Allocator, allocation: anytype, new_len: usize) ?@TypeOf(allo
         new_memory.len = new_len;
         return new_memory;
     }
-    const old_memory = mem.sliceAsBytes(allocation);
+    const old_memory: []u8 = @ptrCast(@constCast(mem.absorbSentinel(allocation)));
     // I would like to use saturating multiplication here, but LLVM cannot lower it
     // on WebAssembly: https://github.com/ziglang/zig/issues/9660
     //const new_len_bytes = new_len *| @sizeOf(T);
@@ -420,7 +422,7 @@ pub fn reallocAdvanced(
         return ptr;
     }
 
-    const old_byte_slice = mem.sliceAsBytes(old_mem);
+    const old_byte_slice: []u8 = @ptrCast(@constCast(mem.absorbSentinel(old_mem)));
     const byte_count = math.mul(usize, @sizeOf(T), new_n) catch return error.OutOfMemory;
     // Note: can't set shrunk memory to undefined as memory shouldn't be modified on realloc failure
     if (self.rawRemap(old_byte_slice, .fromByteUnits(slice_info.alignment orelse @alignOf(T)), byte_count, return_address)) |p| {
@@ -443,8 +445,7 @@ pub fn reallocAdvanced(
 pub fn free(self: Allocator, memory: anytype) void {
     const slice_info = @typeInfo(@TypeOf(memory)).pointer;
     comptime assert(slice_info.size == .slice);
-    const mem_with_sent = memory[0 .. memory.len + @intFromBool(slice_info.sentinel() != null)];
-    const bytes: []u8 = @ptrCast(@constCast(mem_with_sent));
+    const bytes: []u8 = @ptrCast(@constCast(mem.absorbSentinel(memory)));
     if (bytes.len == 0) return;
     @memset(bytes, undefined);
     self.rawFree(bytes, .fromByteUnits(slice_info.alignment orelse @alignOf(slice_info.child)), @returnAddress());
@@ -455,12 +456,6 @@ pub fn dupe(allocator: Allocator, comptime T: type, m: []const T) Error![]T {
     const new_buf = try allocator.alloc(T, m.len);
     @memcpy(new_buf, m);
     return new_buf;
-}
-
-/// Deprecated in favor of `dupeSentinel`
-/// Copies `m` to newly allocated memory, with a null-terminated element. Caller owns the memory.
-pub fn dupeZ(allocator: Allocator, comptime T: type, m: []const T) Error![:0]T {
-    return allocator.dupeSentinel(T, m, 0);
 }
 
 /// Copies `m` to newly allocated memory, with a null-terminated element. Caller owns the memory.

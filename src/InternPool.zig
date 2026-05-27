@@ -486,12 +486,12 @@ pub const AnalUnit = packed struct(u64) {
 pub const MemoizedStateStage = enum(u32) {
     /// Everything other than panics and `VaList`.
     main,
-    /// Everything within `std.builtin.Panic`.
+    /// Everything within `std.lang.Panic`.
     /// Since the panic handler is user-provided, this must be able to reference the other memoized state.
     panic,
-    /// Specifically `std.builtin.VaList`. See `Zcu.BuiltinDecl.stage`.
+    /// Specifically `std.lang.VaList`. See `Zcu.StdLangDecl.stage`.
     va_list,
-    /// Everything within `std.builtin.assembly`. See `Zcu.BuiltinDecl.stage`.
+    /// Everything within `std.lang.assembly`. See `Zcu.StdLangDecl.stage`.
     assembly,
 };
 
@@ -566,7 +566,7 @@ pub const Nav = struct {
         type: InternPool.Index,
         @"align": Alignment,
         @"linksection": OptionalNullTerminatedString,
-        @"addrspace": std.builtin.AddressSpace,
+        @"addrspace": std.lang.AddressSpace,
         @"const": bool,
         @"threadlocal": bool,
         /// This field is whether this `Nav` is a literal `extern` definition.
@@ -678,7 +678,7 @@ pub const Nav = struct {
 
         const Bits = packed struct(u16) {
             @"align": Alignment,
-            @"addrspace": std.builtin.AddressSpace,
+            @"addrspace": std.lang.AddressSpace,
             @"const": bool,
             @"threadlocal": bool,
             is_extern_decl: bool,
@@ -1084,7 +1084,7 @@ const Local = struct {
                     }
                 }
                 fn PtrElem(comptime opts: struct {
-                    size: std.builtin.Type.Pointer.Size,
+                    size: std.lang.Type.Pointer.Size,
                     is_const: bool = false,
                 }) type {
                     const elem_info = @typeInfo(Elem).@"struct";
@@ -2029,7 +2029,7 @@ pub const Key = union(enum) {
         val: Index,
     };
 
-    pub const IntType = std.builtin.Type.Int;
+    pub const IntType = std.lang.Type.Int;
 
     /// Extern for hashing via memory reinterpretation.
     pub const ErrorUnionType = extern struct {
@@ -2090,8 +2090,8 @@ pub const Key = union(enum) {
             bit_offset: u16,
         };
 
-        pub const Size = std.builtin.Type.Pointer.Size;
-        pub const AddressSpace = std.builtin.AddressSpace;
+        pub const Size = std.lang.Type.Pointer.Size;
+        pub const AddressSpace = std.lang.AddressSpace;
     };
 
     /// Extern so that hashing can be done via memory reinterpreting.
@@ -2160,7 +2160,7 @@ pub const Key = union(enum) {
         /// Tells whether a parameter is noalias. See `paramIsNoalias` helper
         /// method for accessing this.
         noalias_bits: u32,
-        cc: std.builtin.CallingConvention,
+        cc: std.lang.CallingConvention,
         is_var_args: bool,
         is_noinline: bool,
 
@@ -2207,15 +2207,15 @@ pub const Key = union(enum) {
         /// For example `extern "c" fn write(...) usize` would have 'c' as library name.
         /// Index into the string table bytes.
         lib_name: OptionalNullTerminatedString,
-        linkage: std.builtin.GlobalLinkage,
-        visibility: std.builtin.SymbolVisibility,
+        linkage: std.lang.GlobalLinkage,
+        visibility: std.lang.SymbolVisibility,
         is_threadlocal: bool,
         is_dll_import: bool,
-        relocation: std.builtin.ExternOptions.Relocation,
-        decoration: ?std.builtin.ExternOptions.Decoration,
+        relocation: std.lang.ExternOptions.Relocation,
+        decoration: ?std.lang.ExternOptions.Decoration,
         is_const: bool,
         alignment: Alignment,
-        @"addrspace": std.builtin.AddressSpace,
+        @"addrspace": std.lang.AddressSpace,
         /// The ZIR instruction which created this extern; used only for source locations.
         /// This is a `declaration`.
         zir_index: TrackedInst.Index,
@@ -2289,7 +2289,7 @@ pub const Key = union(enum) {
             return @atomicLoad(FuncAnalysis, func.analysisPtr(ip), .unordered);
         }
 
-        pub fn setBranchHint(func: Func, ip: *InternPool, io: Io, hint: std.builtin.BranchHint) void {
+        pub fn setBranchHint(func: Func, ip: *InternPool, io: Io, hint: std.lang.BranchHint) void {
             const extra_mutex = &ip.getLocal(func.tid).mutate.extra.mutex;
             extra_mutex.lockUncancelable(io);
             defer extra_mutex.unlock(io);
@@ -2660,7 +2660,7 @@ pub const Key = union(enum) {
                 switch (float.storage) {
                     inline else => |val| std.hash.autoHash(
                         &hasher,
-                        @as(std.meta.Int(.unsigned, @bitSizeOf(@TypeOf(val))), @bitCast(val)),
+                        @as(@Int(.unsigned, @bitSizeOf(@TypeOf(val))), @bitCast(val)),
                     ),
                 }
                 return hasher.final();
@@ -3012,7 +3012,7 @@ pub const Key = union(enum) {
 
                 switch (a_info.storage) {
                     inline else => |val, tag| {
-                        const Bits = std.meta.Int(.unsigned, @bitSizeOf(@TypeOf(val)));
+                        const Bits = @Int(.unsigned, @bitSizeOf(@TypeOf(val)));
                         const a_bits: Bits = @bitCast(val);
                         const b_bits: Bits = @bitCast(@field(b_info.storage, @tagName(tag)));
                         return a_bits == b_bits;
@@ -3186,7 +3186,7 @@ pub const LoadedStructType = struct {
     name_nav: Nav.Index.Optional,
     namespace: NamespaceIndex,
 
-    layout: std.builtin.Type.ContainerLayout,
+    layout: std.lang.Type.ContainerLayout,
     /// May be `undefined` if `layout != .@"packed"`.
     packed_backing_mode: BackingTypeMode,
 
@@ -3369,7 +3369,7 @@ pub const LoadedUnionType = struct {
     name_nav: Nav.Index.Optional,
     namespace: NamespaceIndex,
 
-    layout: std.builtin.Type.ContainerLayout,
+    layout: std.lang.Type.ContainerLayout,
     enum_tag_mode: BackingTypeMode,
     /// May be `undefined` if `layout != .@"packed"`.
     packed_backing_mode: BackingTypeMode,
@@ -3902,7 +3902,6 @@ pub const Index = enum(u32) {
     pub const last_value: Index = .empty_tuple;
 
     u0_type,
-    i0_type,
     u1_type,
     u8_type,
     i8_type,
@@ -4347,11 +4346,6 @@ pub const Index = enum(u32) {
 pub const static_keys: [static_len]Key = .{
     .{ .int_type = .{
         .signedness = .unsigned,
-        .bits = 0,
-    } },
-
-    .{ .int_type = .{
-        .signedness = .signed,
         .bits = 0,
     } },
 
@@ -5374,10 +5368,10 @@ pub const Tag = enum(u8) {
         descriptor_binding: u32,
 
         pub const Flags = packed struct(u32) {
-            linkage: std.builtin.GlobalLinkage,
-            visibility: std.builtin.SymbolVisibility,
+            linkage: std.lang.GlobalLinkage,
+            visibility: std.lang.SymbolVisibility,
             is_dll_import: bool,
-            relocation: std.builtin.ExternOptions.Relocation,
+            relocation: std.lang.ExternOptions.Relocation,
             source: Source,
             decoration_type: DecorationType,
             _: u23 = 0,
@@ -5386,13 +5380,13 @@ pub const Tag = enum(u8) {
             pub const DecorationType = enum(u2) { none, location, descriptor };
         };
 
-        pub fn decoration(self: Extern) ?std.builtin.ExternOptions.Decoration {
+        pub fn decoration(self: Extern) ?std.lang.ExternOptions.Decoration {
             return switch (self.flags.decoration_type) {
                 .none => null,
-                .location => std.builtin.ExternOptions.Decoration{
+                .location => std.lang.ExternOptions.Decoration{
                     .location = self.location_or_descriptor_set,
                 },
-                .descriptor => std.builtin.ExternOptions.Decoration{ .descriptor = .{ .set = self.location_or_descriptor_set, .binding = self.descriptor_binding } },
+                .descriptor => std.lang.ExternOptions.Decoration{ .descriptor = .{ .set = self.location_or_descriptor_set, .binding = self.descriptor_binding } },
             };
         }
     };
@@ -5717,7 +5711,7 @@ pub const BackingTypeMode = enum(u1) {
 /// to be part of the type of the function.
 pub const FuncAnalysis = packed struct(u32) {
     want_runtime_analysis: bool,
-    branch_hint: std.builtin.BranchHint,
+    branch_hint: std.lang.BranchHint,
     is_noinline: bool,
     has_error_trace: bool,
     /// True if this function has an inferred error set.
@@ -5886,6 +5880,12 @@ pub const Alignment = enum(u6) {
         assert(lhs != .none);
         assert(rhs != .none);
         return @enumFromInt(@min(@intFromEnum(lhs), @intFromEnum(rhs)));
+    }
+
+    /// Given a base address known to be aligned to `a`,
+    /// computes the known alignment of base address plus `off`.
+    pub fn offset(a: Alignment, off: u64) Alignment {
+        return .fromLog2Units(@min(a.toLog2Units(), @ctz(off)));
     }
 
     /// Align an address forwards to this alignment.
@@ -7201,6 +7201,7 @@ pub fn get(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.PerThread.Id, key: 
     try items.ensureUnusedCapacity(1);
     switch (key) {
         .int_type => |int_type| {
+            if (int_type.signedness == .signed) assert(int_type.bits > 0);
             const t: Tag = switch (int_type.signedness) {
                 .signed => .type_int_signed,
                 .unsigned => .type_int_unsigned,
@@ -7979,7 +7980,7 @@ pub fn getDeclaredStructType(
         // InternPool, so that it is possible for their backing storage to be "reallocated" as needed
         // during type resolution.
         fields_len: u32,
-        layout: std.builtin.Type.ContainerLayout,
+        layout: std.lang.Type.ContainerLayout,
         any_comptime_fields: bool,
         any_field_defaults: bool,
         any_field_aligns: bool,
@@ -8123,7 +8124,7 @@ pub fn getReifiedStructType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Pe
     zir_index: TrackedInst.Index,
     type_hash: u64,
     fields_len: u32,
-    layout: std.builtin.Type.ContainerLayout,
+    layout: std.lang.Type.ContainerLayout,
     any_comptime_fields: bool,
     any_field_defaults: bool,
     any_field_aligns: bool,
@@ -8299,7 +8300,7 @@ pub fn getDeclaredUnionType(
         // InternPool, so that it is possible for their backing storage to be "reallocated" as needed
         // during type resolution.
         fields_len: u32,
-        layout: std.builtin.Type.ContainerLayout,
+        layout: std.lang.Type.ContainerLayout,
         any_field_aligns: bool,
         tag_usage: LoadedUnionType.TagUsage,
         enum_tag_mode: BackingTypeMode,
@@ -8420,7 +8421,7 @@ pub fn getReifiedUnionType(ip: *InternPool, gpa: Allocator, io: Io, tid: Zcu.Per
     zir_index: TrackedInst.Index,
     type_hash: u64,
     fields_len: u32,
-    layout: std.builtin.Type.ContainerLayout,
+    layout: std.lang.Type.ContainerLayout,
     any_field_aligns: bool,
     tag_usage: LoadedUnionType.TagUsage,
     /// Explicitly specified enum tag type. `.none` if `tag_usage != .tagged`.
@@ -8968,7 +8969,7 @@ pub const GetFuncTypeKey = struct {
     comptime_bits: u32 = 0,
     noalias_bits: u32 = 0,
     /// `null` means generic.
-    cc: ?std.builtin.CallingConvention = .auto,
+    cc: ?std.lang.CallingConvention = .auto,
     is_var_args: bool = false,
     is_noinline: bool = false,
 };
@@ -9116,7 +9117,7 @@ pub const GetFuncDeclKey = struct {
     rbrace_line: u32,
     lbrace_column: u32,
     rbrace_column: u32,
-    cc: ?std.builtin.CallingConvention,
+    cc: ?std.lang.CallingConvention,
     is_noinline: bool,
 };
 
@@ -9192,7 +9193,7 @@ pub const GetFuncDeclIesKey = struct {
     comptime_bits: u32,
     bare_return_type: Index,
     /// null means generic.
-    cc: ?std.builtin.CallingConvention,
+    cc: ?std.lang.CallingConvention,
     is_var_args: bool,
     is_noinline: bool,
     zir_body_inst: TrackedInst.Index,
@@ -10552,7 +10553,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
         count: usize = 0,
         bytes: usize = 0,
     };
-    var counts = std.AutoArrayHashMap(Tag, TagStats).init(arena);
+    var counts: std.array_hash_map.Auto(Tag, TagStats) = .empty;
     for (ip.locals) |*local| {
         // Early check for length 0, because `view()` is invalid if capacity is 0
         if (local.mutate.items.len == 0) continue;
@@ -10563,7 +10564,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
             items.items(.tag)[0..local.mutate.items.len],
             items.items(.data)[0..local.mutate.items.len],
         ) |tag, data| {
-            const gop = try counts.getOrPut(tag);
+            const gop = try counts.getOrPut(arena, tag);
             if (!gop.found_existing) gop.value_ptr.* = .{};
             gop.value_ptr.count += 1;
             gop.value_ptr.bytes += 1 + 4 + @as(usize, switch (tag) {
@@ -10799,7 +10800,7 @@ fn dumpStatsFallible(ip: *const InternPool, w: *Io.Writer, arena: Allocator) !vo
         }
     }
     const SortContext = struct {
-        map: *std.AutoArrayHashMap(Tag, TagStats),
+        map: *std.array_hash_map.Auto(Tag, TagStats),
         pub fn lessThan(ctx: @This(), a_index: usize, b_index: usize) bool {
             const values = ctx.map.values();
             return values[a_index].bytes > values[b_index].bytes;
@@ -11441,7 +11442,6 @@ pub fn typeOf(ip: *const InternPool, index: Index) Index {
     // mean that the range of type indices would not be dense.
     return switch (index) {
         .u0_type,
-        .i0_type,
         .u1_type,
         .u8_type,
         .i8_type,
@@ -11763,10 +11763,9 @@ pub fn getBackingAddrTag(ip: *const InternPool, val: Index) ?Key.Ptr.BaseAddr.Ta
 /// This is a particularly hot function, so we operate directly on encodings
 /// rather than the more straightforward implementation of calling `indexToKey`.
 /// Asserts `index` is not `.generic_poison_type`.
-pub fn zigTypeTag(ip: *const InternPool, index: Index) std.builtin.TypeId {
+pub fn zigTypeTag(ip: *const InternPool, index: Index) std.lang.TypeId {
     return switch (index) {
         .u0_type,
-        .i0_type,
         .u1_type,
         .u8_type,
         .i8_type,
@@ -12408,13 +12407,13 @@ pub fn getErrorValueIfExists(ip: *const InternPool, name: NullTerminatedString) 
 }
 
 const PackedCallingConvention = packed struct(u18) {
-    tag: std.builtin.CallingConvention.Tag,
+    tag: std.lang.CallingConvention.Tag,
     /// May be ignored depending on `tag`.
     incoming_stack_alignment: Alignment,
     /// Interpretation depends on `tag`.
     extra: u4,
 
-    fn pack(cc: std.builtin.CallingConvention) PackedCallingConvention {
+    fn pack(cc: std.lang.CallingConvention) PackedCallingConvention {
         return switch (cc) {
             inline else => |pl, tag| switch (@TypeOf(pl)) {
                 void => .{
@@ -12422,42 +12421,42 @@ const PackedCallingConvention = packed struct(u18) {
                     .incoming_stack_alignment = .none, // unused
                     .extra = 0, // unused
                 },
-                std.builtin.CallingConvention.CommonOptions => .{
+                std.lang.CallingConvention.CommonOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = 0, // unused
                 },
-                std.builtin.CallingConvention.X86RegparmOptions => .{
+                std.lang.CallingConvention.X86RegparmOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = pl.register_params,
                 },
-                std.builtin.CallingConvention.ArcInterruptOptions => .{
+                std.lang.CallingConvention.ArcInterruptOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = @intFromEnum(pl.type),
                 },
-                std.builtin.CallingConvention.ArmInterruptOptions => .{
+                std.lang.CallingConvention.ArmInterruptOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = @intFromEnum(pl.type),
                 },
-                std.builtin.CallingConvention.MicroblazeInterruptOptions => .{
+                std.lang.CallingConvention.MicroblazeInterruptOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = @intFromEnum(pl.type),
                 },
-                std.builtin.CallingConvention.MipsInterruptOptions => .{
+                std.lang.CallingConvention.MipsInterruptOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = @intFromEnum(pl.mode),
                 },
-                std.builtin.CallingConvention.RiscvInterruptOptions => .{
+                std.lang.CallingConvention.RiscvInterruptOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = @intFromEnum(pl.mode),
                 },
-                std.builtin.CallingConvention.ShInterruptOptions => .{
+                std.lang.CallingConvention.ShInterruptOptions => .{
                     .tag = tag,
                     .incoming_stack_alignment = .fromByteUnits(pl.incoming_stack_alignment orelse 0),
                     .extra = @intFromEnum(pl.save),
@@ -12467,41 +12466,41 @@ const PackedCallingConvention = packed struct(u18) {
         };
     }
 
-    fn unpack(cc: PackedCallingConvention) std.builtin.CallingConvention {
+    fn unpack(cc: PackedCallingConvention) std.lang.CallingConvention {
         return switch (cc.tag) {
             inline else => |tag| @unionInit(
-                std.builtin.CallingConvention,
+                std.lang.CallingConvention,
                 @tagName(tag),
-                switch (@FieldType(std.builtin.CallingConvention, @tagName(tag))) {
+                switch (@FieldType(std.lang.CallingConvention, @tagName(tag))) {
                     void => {},
-                    std.builtin.CallingConvention.CommonOptions => .{
+                    std.lang.CallingConvention.CommonOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                     },
-                    std.builtin.CallingConvention.X86RegparmOptions => .{
+                    std.lang.CallingConvention.X86RegparmOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .register_params = @intCast(cc.extra),
                     },
-                    std.builtin.CallingConvention.ArcInterruptOptions => .{
+                    std.lang.CallingConvention.ArcInterruptOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .type = @enumFromInt(cc.extra),
                     },
-                    std.builtin.CallingConvention.ArmInterruptOptions => .{
+                    std.lang.CallingConvention.ArmInterruptOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .type = @enumFromInt(cc.extra),
                     },
-                    std.builtin.CallingConvention.MicroblazeInterruptOptions => .{
+                    std.lang.CallingConvention.MicroblazeInterruptOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .type = @enumFromInt(cc.extra),
                     },
-                    std.builtin.CallingConvention.MipsInterruptOptions => .{
+                    std.lang.CallingConvention.MipsInterruptOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .mode = @enumFromInt(cc.extra),
                     },
-                    std.builtin.CallingConvention.RiscvInterruptOptions => .{
+                    std.lang.CallingConvention.RiscvInterruptOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .mode = @enumFromInt(cc.extra),
                     },
-                    std.builtin.CallingConvention.ShInterruptOptions => .{
+                    std.lang.CallingConvention.ShInterruptOptions => .{
                         .incoming_stack_alignment = cc.incoming_stack_alignment.toByteUnits(),
                         .save = @enumFromInt(cc.extra),
                     },

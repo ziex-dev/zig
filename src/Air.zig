@@ -538,12 +538,6 @@ pub const Inst = struct {
         /// Result type is always bool.
         /// Uses the `un_op` field.
         is_non_err_ptr,
-        /// Result type is always bool.
-        /// Uses the `bin_op` field.
-        bool_and,
-        /// Result type is always bool.
-        /// Uses the `bin_op` field.
-        bool_or,
         /// Read a value from a pointer.
         /// Uses the `ty_op` field.
         load,
@@ -870,14 +864,20 @@ pub const Inst = struct {
         /// Uses the `pl_op` field, payload represents the index of the target memory.
         wasm_memory_grow,
 
-        /// Returns `true` if and only if the operand, an integer with
-        /// the same size as the error integer type, is less than the
-        /// total number of errors in the Module.
+        /// Returns `true` if and only if the operand, an integer with the same
+        /// size as the error integer type, is less than *or equal to* the total
+        /// number of errors in the Zcu. The "or equal to" is a consequence of
+        /// value 0 being reserved for the "non-error" status in error unions.
+        ///
+        /// This instruction exists (as opposed to just using `cmp_lte` against
+        /// a constant) because the number of errors in the Zcu is not known
+        /// until `Compilation.flush`. Before then, semantic analysis could
+        /// discover new errors at any time.
+        ///
         /// Result type is always `bool`.
+        ///
         /// Uses the `un_op` field.
-        /// Note that the number of errors in the Module cannot be considered stable until
-        /// flush().
-        cmp_lt_errors_len,
+        cmp_lte_errors_len,
 
         /// Returns pointer to current error return trace.
         err_return_trace,
@@ -1032,7 +1032,6 @@ pub const Inst = struct {
     /// The ref `none` is an exception: it has the tag bit set but refers to the InternPool.
     pub const Ref = enum(u32) {
         u0_type = @intFromEnum(InternPool.Index.u0_type),
-        i0_type = @intFromEnum(InternPool.Index.i0_type),
         u1_type = @intFromEnum(InternPool.Index.u1_type),
         u8_type = @intFromEnum(InternPool.Index.u8_type),
         i8_type = @intFromEnum(InternPool.Index.i8_type),
@@ -1261,17 +1260,17 @@ pub const Inst = struct {
         },
         atomic_load: struct {
             ptr: Ref,
-            order: std.builtin.AtomicOrder,
+            order: std.lang.AtomicOrder,
         },
         prefetch: struct {
             ptr: Ref,
-            rw: std.builtin.PrefetchOptions.Rw,
+            rw: std.lang.PrefetchOptions.Rw,
             locality: u2,
-            cache: std.builtin.PrefetchOptions.Cache,
+            cache: std.lang.PrefetchOptions.Cache,
         },
         reduce: struct {
             operand: Ref,
-            operation: std.builtin.ReduceOp,
+            operation: std.lang.ReduceOp,
         },
         ty_nav: struct {
             ty: InternPool.Index,
@@ -1333,8 +1332,8 @@ pub const CondBr = struct {
     else_body_len: u32,
     branch_hints: BranchHints,
     pub const BranchHints = packed struct(u32) {
-        true: std.builtin.BranchHint = .none,
-        false: std.builtin.BranchHint = .none,
+        true: std.lang.BranchHint = .none,
+        false: std.lang.BranchHint = .none,
         then_cov: CoveragePoint = .none,
         else_cov: CoveragePoint = .none,
         _: u24 = 0,
@@ -1482,7 +1481,7 @@ pub const Asm = struct {
     /// Length of the assembly source in bytes.
     source_len: u32,
     inputs_len: u32,
-    /// A comptime `std.builtin.assembly.Clobbers` value for the target architecture.
+    /// A comptime `std.lang.assembly.Clobbers` value for the target architecture.
     clobbers: InternPool.Index,
     flags: Flags,
 
@@ -1500,11 +1499,11 @@ pub const Cmpxchg = struct {
     /// 0b00000000000000000000000000XXX000 - failure_order
     flags: u32,
 
-    pub fn successOrder(self: Cmpxchg) std.builtin.AtomicOrder {
+    pub fn successOrder(self: Cmpxchg) std.lang.AtomicOrder {
         return @enumFromInt(@as(u3, @truncate(self.flags)));
     }
 
-    pub fn failureOrder(self: Cmpxchg) std.builtin.AtomicOrder {
+    pub fn failureOrder(self: Cmpxchg) std.lang.AtomicOrder {
         return @enumFromInt(@as(u3, @intCast(self.flags >> 3)));
     }
 };
@@ -1515,11 +1514,11 @@ pub const AtomicRmw = struct {
     /// 0b0000000000000000000000000XXXX000 - op
     flags: u32,
 
-    pub fn ordering(self: AtomicRmw) std.builtin.AtomicOrder {
+    pub fn ordering(self: AtomicRmw) std.lang.AtomicOrder {
         return @enumFromInt(@as(u3, @truncate(self.flags)));
     }
 
-    pub fn op(self: AtomicRmw) std.builtin.AtomicRmwOp {
+    pub fn op(self: AtomicRmw) std.lang.AtomicRmwOp {
         return @enumFromInt(@as(u4, @intCast(self.flags >> 3)));
     }
 };
@@ -1574,8 +1573,6 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .shl_sat,
         .min,
         .max,
-        .bool_and,
-        .bool_or,
         .add_optimized,
         .sub_optimized,
         .mul_optimized,
@@ -1616,7 +1613,7 @@ pub fn typeOfIndex(air: *const Air, inst: Air.Inst.Index, ip: *const InternPool)
         .cmp_gte_optimized,
         .cmp_gt_optimized,
         .cmp_neq_optimized,
-        .cmp_lt_errors_len,
+        .cmp_lte_errors_len,
         .is_null,
         .is_non_null,
         .is_null_ptr,
@@ -1836,15 +1833,6 @@ pub fn internedToRef(ip_index: InternPool.Index) Inst.Ref {
     return .fromIntern(ip_index);
 }
 
-/// Returns `null` if runtime-known.
-pub fn value(air: Air, inst: Inst.Ref, pt: Zcu.PerThread) !?Value {
-    if (inst.toInterned()) |ip_index| {
-        return .fromInterned(ip_index);
-    }
-    const index = inst.toIndex().?;
-    return air.typeOfIndex(index, &pt.zcu.intern_pool).onePossibleValue(pt);
-}
-
 pub const NullTerminatedString = enum(u32) {
     none = std.math.maxInt(u32),
     _,
@@ -2013,8 +2001,6 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .is_non_null,
         .is_err,
         .is_non_err,
-        .bool_and,
-        .bool_or,
         .fptrunc,
         .fpext,
         .intcast,
@@ -2061,7 +2047,7 @@ pub fn mustLower(air: Air, inst: Air.Inst.Index, ip: *const InternPool) bool {
         .mul_add,
         .field_parent_ptr,
         .wasm_memory_size,
-        .cmp_lt_errors_len,
+        .cmp_lte_errors_len,
         .err_return_trace,
         .addrspace_cast,
         .save_err_return_trace_index,
@@ -2091,14 +2077,14 @@ pub const UnwrappedSwitch = struct {
     cases_start: u32,
 
     /// Asserts that `case_idx < us.cases_len`.
-    pub fn getHint(us: UnwrappedSwitch, case_idx: u32) std.builtin.BranchHint {
+    pub fn getHint(us: UnwrappedSwitch, case_idx: u32) std.lang.BranchHint {
         assert(case_idx < us.cases_len);
         return us.getHintInner(case_idx);
     }
-    pub fn getElseHint(us: UnwrappedSwitch) std.builtin.BranchHint {
+    pub fn getElseHint(us: UnwrappedSwitch) std.lang.BranchHint {
         return us.getHintInner(us.cases_len);
     }
-    fn getHintInner(us: UnwrappedSwitch, idx: u32) std.builtin.BranchHint {
+    fn getHintInner(us: UnwrappedSwitch, idx: u32) std.lang.BranchHint {
         const bag = us.air.extra.items[us.branch_hints_start..][idx / 10];
         const bits: u3 = @truncate(bag >> @intCast(3 * (idx % 10)));
         return @enumFromInt(bits);
@@ -2644,7 +2630,7 @@ pub const CompilerRtFunc = enum(u32) {
         };
     }
 
-    pub fn @"callconv"(f: CompilerRtFunc, target: *const std.Target) std.builtin.CallingConvention {
+    pub fn @"callconv"(f: CompilerRtFunc, target: *const std.Target) std.lang.CallingConvention {
         const use_gnu_f16_abi = switch (target.cpu.arch) {
             .wasm32,
             .wasm64,

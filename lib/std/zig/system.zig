@@ -28,6 +28,8 @@ pub const Executor = union(enum) {
 };
 
 pub const GetExternalExecutorOptions = struct {
+    host_cpu_arch: std.Target.Cpu.Arch,
+    host_os_tag: std.Target.Os.Tag,
     allow_darling: bool = true,
     allow_qemu: bool = true,
     allow_rosetta: bool = true,
@@ -39,24 +41,21 @@ pub const GetExternalExecutorOptions = struct {
 
 /// Return whether or not the given host is capable of running executables of
 /// the other target.
-pub fn getExternalExecutor(
-    io: Io,
-    host: *const std.Target,
-    candidate: *const std.Target,
-    options: GetExternalExecutorOptions,
-) Executor {
-    const os_match = host.os.tag == candidate.os.tag;
+pub fn getExternalExecutor(io: Io, candidate: *const std.Target, options: GetExternalExecutorOptions) Executor {
+    const host_os_tag = options.host_os_tag;
+    const host_cpu_arch = options.host_cpu_arch;
+    const os_match = host_os_tag == candidate.os.tag;
     const cpu_ok = cpu_ok: {
-        if (host.cpu.arch == candidate.cpu.arch)
+        if (host_cpu_arch == candidate.cpu.arch)
             break :cpu_ok true;
 
-        if (host.cpu.arch == .x86_64 and candidate.cpu.arch == .x86)
+        if (host_cpu_arch == .x86_64 and candidate.cpu.arch == .x86)
             break :cpu_ok true;
 
-        if (host.cpu.arch == .aarch64 and candidate.cpu.arch == .arm)
+        if (host_cpu_arch == .aarch64 and candidate.cpu.arch == .arm)
             break :cpu_ok true;
 
-        if (host.cpu.arch == .aarch64_be and candidate.cpu.arch == .armeb)
+        if (host_cpu_arch == .aarch64_be and candidate.cpu.arch == .armeb)
             break :cpu_ok true;
 
         // TODO additionally detect incompatible CPU features.
@@ -83,7 +82,7 @@ pub fn getExternalExecutor(
     // If the OS match and OS is macOS and CPU is arm64, we can use Rosetta 2
     // to emulate the foreign architecture.
     if (options.allow_rosetta and os_match and
-        (host.os.tag == .maccatalyst or host.os.tag == .macos) and host.cpu.arch == .aarch64)
+        (host_os_tag == .maccatalyst or host_os_tag == .macos) and host_cpu_arch == .aarch64)
     {
         switch (candidate.cpu.arch) {
             .x86_64 => return .rosetta,
@@ -173,13 +172,13 @@ pub fn getExternalExecutor(
         .windows => {
             if (options.allow_wine) {
                 const wine_supported = switch (candidate.cpu.arch) {
-                    .thumb => switch (host.cpu.arch) {
+                    .thumb => switch (host_cpu_arch) {
                         .arm, .thumb, .aarch64 => true,
                         else => false,
                     },
-                    .aarch64 => host.cpu.arch == .aarch64,
-                    .x86 => host.cpu.arch.isX86(),
-                    .x86_64 => host.cpu.arch == .x86_64,
+                    .aarch64 => host_cpu_arch == .aarch64,
+                    .x86 => host_cpu_arch.isX86(),
+                    .x86_64 => host_cpu_arch == .x86_64,
                     else => false,
                 };
                 return if (wine_supported) .{ .wine = "wine" } else bad_result;
@@ -191,7 +190,7 @@ pub fn getExternalExecutor(
                 // This check can be loosened once darling adds a QEMU-based emulation
                 // layer for non-host architectures:
                 // https://github.com/darlinghq/darling/issues/863
-                if (candidate.cpu.arch != host.cpu.arch) {
+                if (candidate.cpu.arch != host_cpu_arch) {
                     return bad_result;
                 }
                 return .{ .darling = "darling" };
@@ -423,6 +422,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         error.ConnectionResetByPeer => return error.Unexpected,
         error.NotOpenForReading => return error.Unexpected,
         error.SocketUnconnected => return error.Unexpected,
+        error.ReadOnlyFileSystem => return error.Unexpected,
 
         error.AccessDenied,
         error.SymLinkLoop,
@@ -460,14 +460,8 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
             result.cpu.features.removeFeature(@intFromEnum(Target.arm.Feature.vfp2));
         }
 
-        // https://github.com/llvm/llvm-project/issues/135283
-        if (result.cpu.arch.isMIPS() and result.abi.float() == .soft) {
-            result.cpu.features.addFeature(@intFromEnum(Target.mips.Feature.soft_float));
-        }
-
-        // https://github.com/llvm/llvm-project/issues/168992
-        if (result.cpu.arch == .s390x) {
-            result.cpu.features.removeFeature(@intFromEnum(Target.s390x.Feature.vector));
+        if (result.cpu.arch.isXtensa() and result.abi == .call0) {
+            result.cpu.features.removeFeature(@intFromEnum(Target.xtensa.Feature.windowed));
         }
     }
 
@@ -853,6 +847,7 @@ fn glibcVerFromRPath(io: Io, rpath: []const u8) !std.SemanticVersion {
         error.PathAlreadyExists => return error.Unexpected, // read-only
         error.DeviceBusy => return error.Unexpected, // read-only
         error.FileBusy => return error.Unexpected, // read-only
+        error.ReadOnlyFileSystem => return error.Unexpected, // read-only
         error.NoDevice => return error.Unexpected, // not asking for a special device
         error.FileTooBig => return error.Unexpected,
         error.WouldBlock => return error.Unexpected, // not opened in non-blocking
@@ -1183,11 +1178,25 @@ fn detectAndroidApiLevel(io: Io) !u32 {
         return error.ApiLevelQueryFailed;
     };
 
-    const term = try child.wait(io);
-    if (term != .exited or term.exited != 0) {
-        std.log.err("getprop terminated abnormally: {}", .{term});
-        return error.ApiLevelQueryFailed;
+    switch (try child.wait(io)) {
+        .exited => |code| if (code != 0) {
+            std.log.err("getprop terminated abnormally with exit code: {d}", .{code});
+            return error.ApiLevelQueryFailed;
+        },
+        .signal => |sig| {
+            std.log.err("getprop terminated abnormally with signal: {t}", .{sig});
+            return error.ApiLevelQueryFailed;
+        },
+        .stopped => |sig| {
+            std.log.err("getprop stopped abnormally with signal: {t}", .{sig});
+            return error.ApiLevelQueryFailed;
+        },
+        .unknown => {
+            std.log.err("getprop terminated abnormally", .{});
+            return error.ApiLevelQueryFailed;
+        },
     }
+
     return api_level;
 }
 

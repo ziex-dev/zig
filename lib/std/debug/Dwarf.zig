@@ -22,7 +22,9 @@ const cast = std.math.cast;
 const maxInt = std.math.maxInt;
 const ArrayList = std.ArrayList;
 const Endian = std.builtin.Endian;
-const Reader = std.Io.Reader;
+const Io = std.Io;
+const Reader = Io.Reader;
+const Error = std.debug.SelfInfoError;
 
 const Dwarf = @This();
 
@@ -877,16 +879,16 @@ fn parseAbbrevTable(di: *Dwarf, gpa: Allocator, offset: u64) !Abbrev.Table {
     var fr: Reader = .fixed(di.section(.debug_abbrev).?);
     fr.seek = cast(usize, offset) orelse return bad();
 
-    var abbrevs = std.array_list.Managed(Abbrev).init(gpa);
+    var abbrevs: std.ArrayList(Abbrev) = .empty;
     defer {
         for (abbrevs.items) |*abbrev| {
             abbrev.deinit(gpa);
         }
-        abbrevs.deinit();
+        abbrevs.deinit(gpa);
     }
 
-    var attrs = std.array_list.Managed(Abbrev.Attr).init(gpa);
-    defer attrs.deinit();
+    var attrs: std.ArrayList(Abbrev.Attr) = .empty;
+    defer attrs.deinit(gpa);
 
     while (true) {
         const code = try fr.takeLeb128(u64);
@@ -898,7 +900,7 @@ fn parseAbbrevTable(di: *Dwarf, gpa: Allocator, offset: u64) !Abbrev.Table {
             const attr_id = try fr.takeLeb128(u64);
             const form_id = try fr.takeLeb128(u64);
             if (attr_id == 0 and form_id == 0) break;
-            try attrs.append(.{
+            try attrs.append(gpa, .{
                 .id = attr_id,
                 .form_id = form_id,
                 .payload = switch (form_id) {
@@ -907,18 +909,18 @@ fn parseAbbrevTable(di: *Dwarf, gpa: Allocator, offset: u64) !Abbrev.Table {
                 },
             });
         }
-
-        try abbrevs.append(.{
+        try abbrevs.ensureUnusedCapacity(gpa, 1);
+        abbrevs.appendAssumeCapacity(.{
             .code = code,
             .tag_id = tag_id,
             .has_children = has_children,
-            .attrs = try attrs.toOwnedSlice(),
+            .attrs = try attrs.toOwnedSlice(gpa),
         });
     }
 
     return .{
         .offset = offset,
-        .abbrevs = try abbrevs.toOwnedSlice(),
+        .abbrevs = try abbrevs.toOwnedSlice(gpa),
     };
 }
 
@@ -1202,10 +1204,13 @@ fn runLineNumberProgram(d: *Dwarf, gpa: Allocator, endian: Endian, compile_unit:
         }
     }{ .keys = line_table.keys() });
 
+    try directories.shrinkToLen(gpa);
+    try file_entries.shrinkToLen(gpa);
+
     return .{
         .line_table = line_table,
-        .directories = try directories.toOwnedSlice(gpa),
-        .files = try file_entries.toOwnedSlice(gpa),
+        .directories = directories.toOwnedSliceAssert(),
+        .files = file_entries.toOwnedSliceAssert(),
         .version = version,
     };
 }
@@ -1218,6 +1223,7 @@ pub fn populateSrcLocCache(d: *Dwarf, gpa: Allocator, endian: Endian, cu: *Compi
 pub fn getLineNumberInfo(
     d: *Dwarf,
     gpa: Allocator,
+    text_arena: Allocator,
     endian: Endian,
     compile_unit: *CompileUnit,
     target_address: u64,
@@ -1230,7 +1236,7 @@ pub fn getLineNumberInfo(
     const file_entry = &slc.files[file_index];
     if (file_entry.dir_index >= slc.directories.len) return bad();
     const dir_name = slc.directories[file_entry.dir_index].path;
-    const file_name = try std.fs.path.join(gpa, &.{ dir_name, file_entry.path });
+    const file_name = try std.fs.path.join(text_arena, &.{ dir_name, file_entry.path });
     return .{
         .line = entry.line,
         .column = entry.column,
@@ -1340,7 +1346,7 @@ const FileEntry = struct {
     dir_index: u32 = 0,
     mtime: u64 = 0,
     size: u64 = 0,
-    md5: [16]u8 = [1]u8{0} ** 16,
+    md5: [16]u8 = @splat(0),
 };
 
 const LineNumberProgram = struct {
@@ -1430,6 +1436,7 @@ pub fn compactUnwindToDwarfRegNumber(unwind_reg_number: u3) !u16 {
 pub fn ipRegNum(arch: std.Target.Cpu.Arch) ?u16 {
     return switch (arch) {
         .aarch64, .aarch64_be => 32,
+        .alpha => 64,
         .arc, .arceb => 160,
         .arm, .armeb, .thumb, .thumbeb => 15,
         .csky => 64,
@@ -1438,6 +1445,7 @@ pub fn ipRegNum(arch: std.Target.Cpu.Arch) ?u16 {
         .lanai => 2,
         .loongarch32, .loongarch64 => 64,
         .m68k => 26,
+        .m88k => 64,
         .mips, .mipsel, .mips64, .mips64el => 66,
         .or1k => 35,
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => 67,
@@ -1454,6 +1462,7 @@ pub fn ipRegNum(arch: std.Target.Cpu.Arch) ?u16 {
 pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
     return switch (arch) {
         .aarch64, .aarch64_be => 29,
+        .alpha => 15,
         .arc, .arceb => 27,
         .arm, .armeb, .thumb, .thumbeb => 11,
         .csky => 14,
@@ -1462,6 +1471,7 @@ pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
         .lanai => 5,
         .loongarch32, .loongarch64 => 22,
         .m68k => 14,
+        .m88k => 30,
         .mips, .mipsel, .mips64, .mips64el => 30,
         .or1k => 2,
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => 1,
@@ -1478,6 +1488,7 @@ pub fn fpRegNum(arch: std.Target.Cpu.Arch) u16 {
 pub fn spRegNum(arch: std.Target.Cpu.Arch) u16 {
     return switch (arch) {
         .aarch64, .aarch64_be => 31,
+        .alpha => 30,
         .arc, .arceb => 28,
         .arm, .armeb, .thumb, .thumbeb => 13,
         .csky => 14,
@@ -1486,6 +1497,7 @@ pub fn spRegNum(arch: std.Target.Cpu.Arch) u16 {
         .lanai => 4,
         .loongarch32, .loongarch64 => 3,
         .m68k => 15,
+        .m88k => 31,
         .mips, .mipsel, .mips64, .mips64el => 29,
         .or1k => 1,
         .powerpc, .powerpcle, .powerpc64, .powerpc64le => 1,
@@ -1543,21 +1555,38 @@ fn getStringGeneric(opt_str: ?[]const u8, offset: u64) ![:0]const u8 {
     return str[casted_offset..last :0];
 }
 
-pub fn getSymbol(di: *Dwarf, gpa: Allocator, endian: Endian, address: u64) !std.debug.Symbol {
+pub fn getSymbols(
+    di: *Dwarf,
+    symbol_allocator: Allocator,
+    text_arena: Allocator,
+    endian: Endian,
+    address: u64,
+    resolve_inline_callers: bool,
+    symbols: *std.ArrayList(std.debug.Symbol),
+) std.debug.SelfInfoError!void {
+    _ = resolve_inline_callers;
+    const gpa = std.debug.getDebugInfoAllocator();
+
     const compile_unit = di.findCompileUnit(endian, address) catch |err| switch (err) {
-        error.MissingDebugInfo, error.InvalidDebugInfo => return .unknown,
-        else => return err,
+        error.EndOfStream => return error.MissingDebugInfo,
+        error.Overflow => return error.InvalidDebugInfo,
+        error.ReadFailed, error.InvalidDebugInfo, error.MissingDebugInfo => |e| return e,
     };
-    return .{
+    try symbols.append(symbol_allocator, .{
         .name = di.getSymbolName(address),
         .compile_unit_name = compile_unit.die.getAttrString(di, endian, std.dwarf.AT.name, di.section(.debug_str), compile_unit) catch |err| switch (err) {
             error.MissingDebugInfo, error.InvalidDebugInfo => null,
         },
-        .source_location = di.getLineNumberInfo(gpa, endian, compile_unit, address) catch |err| switch (err) {
+        .source_location = di.getLineNumberInfo(gpa, text_arena, endian, compile_unit, address) catch |err| switch (err) {
             error.MissingDebugInfo, error.InvalidDebugInfo => null,
-            else => return err,
+            error.ReadFailed,
+            error.EndOfStream,
+            error.Overflow,
+            error.StreamTooLong,
+            => return error.InvalidDebugInfo,
+            else => |e| return e,
         },
-    };
+    });
 }
 
 /// DWARF5 7.4: "In the 32-bit DWARF format, all values that represent lengths of DWARF sections and

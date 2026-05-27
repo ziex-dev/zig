@@ -50,6 +50,7 @@ pub const Node = extern union {
         break_val,
         @"return",
         field_access,
+        field_builtin,
         array_access,
         call,
         var_decl,
@@ -241,7 +242,7 @@ pub const Node = extern union {
 
         /// array_type{}
         empty_array,
-        /// [1]type{val} ** count
+        /// @as([count]type, @splat(val))
         array_filler,
 
         /// comptime { if (!(lhs)) @compileError(rhs); }
@@ -371,6 +372,7 @@ pub const Node = extern union {
                 .div_exact,
                 .offset_of,
                 .static_assert,
+                .field_builtin,
                 => Payload.BinOp,
 
                 .integer_literal,
@@ -455,14 +457,14 @@ pub const Node = extern union {
         return .{ .ptr_otherwise = payload };
     }
 
-    pub fn isNoreturn(node: Node, break_counts: bool) bool {
-        switch (node.tag()) {
+    pub fn isNoreturn(node: Node) bool {
+        return switch (node.tag()) {
             .block => {
                 const block_node = node.castTag(.block).?;
                 if (block_node.data.stmts.len == 0) return false;
 
                 const last = block_node.data.stmts[block_node.data.stmts.len - 1];
-                return last.isNoreturn(break_counts);
+                return last.isNoreturn();
             },
             .@"switch" => {
                 const switch_node = node.castTag(.@"switch").?;
@@ -475,15 +477,16 @@ pub const Node = extern union {
                     else
                         unreachable;
 
-                    if (!body.isNoreturn(break_counts)) return false;
+                    if (!body.isNoreturn()) return false;
                 }
                 return true;
             },
-            .@"return", .return_void => return true,
-            .@"break" => if (break_counts) return true,
-            else => {},
-        }
-        return false;
+            .@"return", .return_void => true,
+            .@"break" => true,
+            .@"continue" => true,
+            .@"unreachable" => true,
+            else => false,
+        };
     }
 
     pub fn isBoolRes(res: Node) bool {
@@ -860,11 +863,14 @@ pub fn render(gpa: Allocator, nodes: []const Node) !std.zig.Ast {
         .start = @as(u32, @intCast(ctx.buf.items.len)),
     });
 
+    try ctx.buf.shrinkToLenSentinel(gpa);
+    try ctx.extra_data.shrinkToLen(gpa);
+
     return .{
-        .source = try ctx.buf.toOwnedSliceSentinel(gpa, 0),
+        .source = ctx.buf.toOwnedSliceSentinelAssert(0),
         .tokens = ctx.tokens.toOwnedSlice(),
         .nodes = ctx.nodes.toOwnedSlice(),
-        .extra_data = try ctx.extra_data.toOwnedSlice(gpa),
+        .extra_data = ctx.extra_data.toOwnedSliceAssert(),
         .errors = &.{},
         .mode = .zig,
     };
@@ -1970,28 +1976,18 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
         .array_filler => {
             const payload = node.castTag(.array_filler).?.data;
 
-            const type_expr = try renderArrayType(c, 1, payload.type);
-            const l_brace = try c.addToken(.l_brace, "{");
-            const val = try renderNode(c, payload.filler);
-            _ = try c.addToken(.r_brace, "}");
+            const as_tok = try c.addToken(.builtin, "@as");
+            _ = try c.addToken(.l_paren, "(");
+            const type_node = try renderArrayType(c, payload.count, payload.type);
+            _ = try c.addToken(.comma, ",");
+            const splat_node = try renderBuiltinCall(c, "@splat", &.{payload.filler});
+            _ = try c.addToken(.r_paren, ")");
 
-            const init = try c.addNode(.{
-                .tag = .array_init_one,
-                .main_token = l_brace,
-                .data = .{ .node_and_node = .{
-                    type_expr, val,
-                } },
-            });
             return c.addNode(.{
-                .tag = .array_cat,
-                .main_token = try c.addToken(.asterisk_asterisk, "**"),
-                .data = .{ .node_and_node = .{
-                    init,
-                    try c.addNode(.{
-                        .tag = .number_literal,
-                        .main_token = try c.addTokenFmt(.number_literal, "{d}", .{payload.count}),
-                        .data = undefined,
-                    }),
+                .tag = .builtin_call_two,
+                .main_token = as_tok,
+                .data = .{ .opt_node_and_opt_node = .{
+                    .fromOptional(type_node), .fromOptional(splat_node),
                 } },
             });
         },
@@ -2014,6 +2010,10 @@ fn renderNode(c: *Context, node: Node) Allocator.Error!NodeIndex {
             const payload = node.castTag(.field_access).?.data;
             const lhs = try renderNodeGrouped(c, payload.lhs);
             return renderFieldAccess(c, lhs, payload.field_name);
+        },
+        .field_builtin => {
+            const payload = node.castTag(.field_builtin).?.data;
+            return renderBuiltinCall(c, "@field", &.{ payload.lhs, payload.rhs });
         },
         .@"struct", .@"union", .@"opaque" => return renderContainer(c, node),
         .enum_constant => {
@@ -2424,7 +2424,7 @@ fn renderNullSentinelArrayType(c: *Context, len: u64, elem_type: Node) !NodeInde
 fn addSemicolonIfNeeded(c: *Context, node: Node) !void {
     switch (node.tag()) {
         .warning => unreachable,
-        .var_decl, .var_simple, .arg_redecl, .alias, .block, .empty_block, .block_single, .@"switch", .wrapped_local, .mut_str => {},
+        .static_assert, .var_decl, .var_simple, .arg_redecl, .alias, .block, .empty_block, .block_single, .@"switch", .wrapped_local, .mut_str => {},
         .while_true => {
             const payload = node.castTag(.while_true).?.data;
             return addSemicolonIfNotBlock(c, payload);
@@ -2532,6 +2532,8 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .trunc,
         .floor,
         .root_ref,
+        .field_builtin,
+        .@"switch",
         => {
             // no grouping needed
             return renderNode(c, node);
@@ -2594,7 +2596,6 @@ fn renderNodeGrouped(c: *Context, node: Node) !NodeIndex {
         .pub_var_simple,
         .enum_constant,
         .@"while",
-        .@"switch",
         .@"break",
         .break_val,
         .pub_inline_fn,

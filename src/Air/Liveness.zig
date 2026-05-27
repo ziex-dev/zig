@@ -301,7 +301,7 @@ pub fn iterateBigTomb(l: Liveness, inst: Air.Inst.Index) BigTomb {
 
 /// How many tomb bits per AIR instruction.
 pub const bpi = 4;
-pub const Bpi = std.meta.Int(.unsigned, bpi);
+pub const Bpi = @Int(.unsigned, bpi);
 pub const OperandInt = std.math.Log2Int(Bpi);
 
 /// Useful for decoders of Liveness information.
@@ -436,8 +436,6 @@ fn analyzeInst(
         .cmp_gt_optimized,
         .cmp_neq,
         .cmp_neq_optimized,
-        .bool_and,
-        .bool_or,
         .store,
         .store_safe,
         .array_elem_val,
@@ -565,7 +563,7 @@ fn analyzeInst(
         .trunc_float,
         .neg,
         .neg_optimized,
-        .cmp_lt_errors_len,
+        .cmp_lte_errors_len,
         .set_err_return_trace,
         .c_va_end,
         => {
@@ -613,7 +611,7 @@ fn analyzeInst(
             const call = a.air.unwrapCall(inst);
             const args = call.args;
             if (args.len + 1 <= bpi - 1) {
-                var buf = [1]Air.Inst.Ref{.none} ** (bpi - 1);
+                var buf: [bpi - 1]Air.Inst.Ref = @splat(.none);
                 buf[0] = call.callee;
                 @memcpy(buf[1..][0..args.len], args);
                 return analyzeOperands(a, pass, data, inst, buf);
@@ -657,7 +655,7 @@ fn analyzeInst(
             const elements = @as([]const Air.Inst.Ref, @ptrCast(a.air.extra.items[ty_pl.payload..][0..len]));
 
             if (elements.len <= bpi - 1) {
-                var buf = [1]Air.Inst.Ref{.none} ** (bpi - 1);
+                var buf: [bpi - 1]Air.Inst.Ref = @splat(.none);
                 @memcpy(buf[0..elements.len], elements);
                 return analyzeOperands(a, pass, data, inst, buf);
             }
@@ -713,7 +711,7 @@ fn analyzeInst(
             const inputs = unwrapped_asm.inputs;
 
             const num_operands = simple: {
-                var buf = [1]Air.Inst.Ref{.none} ** (bpi - 1);
+                var buf: [bpi - 1]Air.Inst.Ref = @splat(.none);
                 var buf_index: usize = 0;
                 for (unwrapped_asm.outputs) |output| {
                     if (output != .none) {
@@ -1423,7 +1421,7 @@ fn AnalyzeBigOperands(comptime pass: LivenessPass) type {
         inst: Air.Inst.Index,
 
         operands_remaining: u32,
-        small: [bpi - 1]Air.Inst.Ref = .{.none} ** (bpi - 1),
+        small: [bpi - 1]Air.Inst.Ref = @splat(.none),
         extra_tombs: []u32,
 
         // Only used in `LivenessPass.main_analysis`

@@ -294,13 +294,6 @@ test "string concatenation simple" {
     try expect(mem.eql(u8, "OK" ++ " IT " ++ "WORKED", "OK IT WORKED"));
 }
 
-test "array mult operator" {
-    if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
-    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
-
-    try expect(mem.eql(u8, "ab" ** 5, "ababababab"));
-}
-
 const global_a: i32 = 1234;
 const global_b: *const i32 = &global_a;
 const global_c: *const f32 = @as(*const f32, @ptrCast(global_b));
@@ -465,7 +458,7 @@ fn testPointerToVoidReturnType() anyerror!void {
     const a = testPointerToVoidReturnType2();
     return a.*;
 }
-const test_pointer_to_void_return_type_x = void{};
+const test_pointer_to_void_return_type_x = {};
 fn testPointerToVoidReturnType2() *const void {
     return &test_pointer_to_void_return_type_x;
 }
@@ -1041,7 +1034,7 @@ test "const alloc with comptime-known initializer is made comptime-known" {
             positive: bool,
         };
         const biggest: Const = .{
-            .limbs = &([1]usize{comptime std.math.maxInt(usize)} ** 128),
+            .limbs = &@as([128]usize, @splat(comptime std.math.maxInt(usize))),
             .positive = false,
         };
         if (biggest.positive) @compileError("bad");
@@ -1147,7 +1140,6 @@ test "arrays and vectors with big integers" {
     if (builtin.zig_backend == .stage2_aarch64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest;
-    if (builtin.zig_backend == .stage2_wasm) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_llvm and (builtin.abi == .gnuabin32 or builtin.abi == .muslabin32)) return error.SkipZigTest; // https://github.com/ziglang/zig/issues/23805
@@ -1243,6 +1235,20 @@ test "integer compare <= 128 bits" {
         try comptime testUnsignedCmp(T);
     }
     inline for (.{ i65, i96, i127, i128 }) |T| {
+        try testSignedCmp(T);
+        try comptime testSignedCmp(T);
+    }
+}
+
+test "integer compare > 128 bits" {
+    if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
+    if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
+
+    inline for (.{ u129, u255, u512, u800 }) |T| {
+        try testUnsignedCmp(T);
+        try comptime testUnsignedCmp(T);
+    }
+    inline for (.{ i129, i255, i512, i800 }) |T| {
         try testSignedCmp(T);
         try comptime testSignedCmp(T);
     }
@@ -1394,11 +1400,7 @@ test "allocation and looping over 3-byte integer" {
     if (builtin.zig_backend == .stage2_sparc64) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
-
-    if (builtin.zig_backend == .stage2_llvm and builtin.os.tag.isDarwin()) {
-        return error.SkipZigTest; // TODO
-    }
-    if (builtin.cpu.arch == .s390x and builtin.zig_backend == .stage2_llvm) return error.SkipZigTest; // TODO
+    if (builtin.zig_backend == .stage2_llvm and builtin.os.tag.isDarwin()) return error.SkipZigTest; // TODO
 
     try expect(@sizeOf(u24) == 4);
     try expect(@sizeOf([1]u24) == 4);

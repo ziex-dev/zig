@@ -245,13 +245,12 @@ pub fn toBool(val: Value) bool {
 ///
 /// Asserts that buffer.len >= ty.abiSize(). The buffer is allowed to extend past
 /// the end of the value in memory.
-pub fn writeToMemory(val: Value, pt: Zcu.PerThread, buffer: []u8) error{
+pub fn writeToMemory(val: Value, zcu: *const Zcu, buffer: []u8) error{
     ReinterpretDeclRef,
     IllDefinedMemoryLayout,
     Unimplemented,
     OutOfMemory,
 }!void {
-    const zcu = pt.zcu;
     const target = zcu.getTarget();
     const endian = target.cpu.arch.endian();
     const ip = &zcu.intern_pool;
@@ -289,14 +288,18 @@ pub fn writeToMemory(val: Value, pt: Zcu.PerThread, buffer: []u8) error{
             else => unreachable,
         },
         .array => {
+            const aggregate = ip.indexToKey(val.toIntern()).aggregate;
             const len = ty.arrayLen(zcu);
             const elem_ty = ty.childType(zcu);
             const elem_size: usize = @intCast(elem_ty.abiSize(zcu));
             var elem_i: usize = 0;
             var buf_off: usize = 0;
             while (elem_i < len) : (elem_i += 1) {
-                const elem_val = try val.elemValue(pt, elem_i);
-                try elem_val.writeToMemory(pt, buffer[buf_off..]);
+                switch (aggregate.storage) {
+                    .bytes => |bytes| buffer[buf_off] = bytes.at(elem_i, ip),
+                    .elems => |elems| try Value.fromInterned(elems[elem_i]).writeToMemory(zcu, buffer[buf_off..]),
+                    .repeated_elem => |elem| try Value.fromInterned(elem).writeToMemory(zcu, buffer[buf_off..]),
+                }
                 buf_off += elem_size;
             }
         },
@@ -304,7 +307,7 @@ pub fn writeToMemory(val: Value, pt: Zcu.PerThread, buffer: []u8) error{
             // We use byte_count instead of abi_size here, so that any padding bytes
             // follow the data bytes, on both big- and little-endian systems.
             const byte_count = (@as(usize, @intCast(ty.bitSize(zcu))) + 7) / 8;
-            return writeToPackedMemory(val, pt, buffer[0..byte_count], 0);
+            return writeToPackedMemory(val, zcu, buffer[0..byte_count], 0);
         },
         .@"struct" => {
             const struct_type = zcu.typeToStruct(ty) orelse return error.IllDefinedMemoryLayout;
@@ -320,42 +323,33 @@ pub fn writeToMemory(val: Value, pt: Zcu.PerThread, buffer: []u8) error{
                         .elems => |elems| elems[field_index],
                         .repeated_elem => |elem| elem,
                     });
-                    try writeToMemory(field_val, pt, buffer[off..]);
+                    try writeToMemory(field_val, zcu, buffer[off..]);
                 },
                 .@"packed" => {
                     const int_index = ip.indexToKey(val.toIntern()).bitpack.backing_int_val;
-                    return Value.fromInterned(int_index).writeToMemory(pt, buffer);
+                    return Value.fromInterned(int_index).writeToMemory(zcu, buffer);
                 },
             }
         },
         .@"union" => switch (ty.containerLayout(zcu)) {
             .auto => return error.IllDefinedMemoryLayout, // Sema is supposed to have emitted a compile error already
             .@"extern" => {
-                if (val.unionTag(zcu)) |union_tag| {
-                    const union_obj = zcu.typeToUnion(ty).?;
-                    const field_index = zcu.unionTagFieldIndex(union_obj, union_tag).?;
-                    const field_type = Type.fromInterned(union_obj.field_types.get(ip)[field_index]);
-                    const field_val = try val.fieldValue(pt, field_index);
-                    const byte_count: usize = @intCast(field_type.abiSize(zcu));
-                    return writeToMemory(field_val, pt, buffer[0..byte_count]);
-                } else {
-                    const backing_ty = try ty.externUnionBackingType(pt);
-                    const byte_count: usize = @intCast(backing_ty.abiSize(zcu));
-                    return writeToMemory(val.unionPayload(zcu), pt, buffer[0..byte_count]);
-                }
+                const payload_val = val.unionPayload(zcu);
+                return writeToMemory(payload_val, zcu, buffer);
             },
             .@"packed" => {
                 const int_val: Value = .fromInterned(ip.indexToKey(val.toIntern()).bitpack.backing_int_val);
-                return writeToMemory(int_val, pt, buffer);
+                return writeToMemory(int_val, zcu, buffer);
             },
         },
         .optional => {
             if (!ty.isPtrLikeOptional(zcu)) return error.IllDefinedMemoryLayout;
             const opt_val = val.optionalValue(zcu);
             if (opt_val) |some| {
-                return some.writeToMemory(pt, buffer);
+                return some.writeToMemory(zcu, buffer);
             } else {
-                return writeToMemory(try pt.intValue(Type.usize, 0), pt, buffer);
+                const byte_count = Type.usize.abiSize(zcu);
+                @memset(buffer[0..@intCast(byte_count)], 0); // null pointer
             }
         },
         else => return error.Unimplemented,
@@ -368,11 +362,10 @@ pub fn writeToMemory(val: Value, pt: Zcu.PerThread, buffer: []u8) error{
 /// big-endian packed memory layouts start at the end of the buffer.
 pub fn writeToPackedMemory(
     val: Value,
-    pt: Zcu.PerThread,
+    zcu: *const Zcu,
     buffer: []u8,
     bit_offset: usize,
 ) error{ ReinterpretDeclRef, OutOfMemory }!void {
-    const zcu = pt.zcu;
     const ip = &zcu.intern_pool;
     const target = zcu.getTarget();
     const endian = target.cpu.arch.endian();
@@ -399,7 +392,7 @@ pub fn writeToPackedMemory(
         },
         .@"enum" => {
             const int_val = val.intFromEnum(zcu);
-            return int_val.writeToPackedMemory(pt, buffer, bit_offset);
+            return int_val.writeToPackedMemory(zcu, buffer, bit_offset);
         },
         .pointer => {
             assert(!ty.isSlice(zcu)); // No well defined layout.
@@ -430,25 +423,29 @@ pub fn writeToPackedMemory(
 
             var bits: u16 = 0;
             var elem_i: usize = 0;
+            const aggregate = ip.indexToKey(val.toIntern()).aggregate;
             while (elem_i < len) : (elem_i += 1) {
                 // On big-endian systems, LLVM reverses the element order of vectors by default
                 const tgt_elem_i = if (endian == .big) len - elem_i - 1 else elem_i;
-                const elem_val = try val.elemValue(pt, tgt_elem_i);
-                try elem_val.writeToPackedMemory(pt, buffer, bit_offset + bits);
+                switch (aggregate.storage) {
+                    .bytes => |bytes| std.mem.writePackedInt(u8, buffer, bit_offset + bits, bytes.at(tgt_elem_i, ip), endian),
+                    .elems => |elems| try Value.fromInterned(elems[tgt_elem_i]).writeToPackedMemory(zcu, buffer, bit_offset + bits),
+                    .repeated_elem => |elem| try Value.fromInterned(elem).writeToPackedMemory(zcu, buffer, bit_offset + bits),
+                }
                 bits += elem_bit_size;
             }
         },
         .@"struct", .@"union" => {
             assert(ty.containerLayout(zcu) == .@"packed");
             const int_val: Value = .fromInterned(ip.indexToKey(val.toIntern()).bitpack.backing_int_val);
-            return int_val.writeToPackedMemory(pt, buffer, bit_offset);
+            return int_val.writeToPackedMemory(zcu, buffer, bit_offset);
         },
         .optional => {
             assert(ty.isPtrLikeOptional(zcu));
             if (val.optionalValue(zcu)) |ptr_val| {
-                return ptr_val.writeToPackedMemory(pt, buffer, bit_offset);
+                return ptr_val.writeToPackedMemory(zcu, buffer, bit_offset);
             } else {
-                return Value.zero_usize.writeToPackedMemory(pt, buffer, bit_offset);
+                return Value.zero_usize.writeToPackedMemory(zcu, buffer, bit_offset);
             }
         },
         else => @panic("TODO implement writeToPackedMemory for more types"),
@@ -521,9 +518,9 @@ pub fn readFromPackedMemory(
         },
         .int => {
             if (buffer.len == 0) return pt.intValue(ty, 0);
+            if (ty.toIntern() == .u0_type) return pt.intValue(ty, 0);
             const int_info = ty.intInfo(zcu);
             const bits = int_info.bits;
-            if (bits == 0) return pt.intValue(ty, 0);
 
             // Fast path for integers <= u64
             if (bits <= 64) switch (int_info.signedness) {
@@ -885,15 +882,16 @@ pub fn fieldValue(val: Value, pt: Zcu.PerThread, index: usize) !Value {
                 else => unreachable,
             };
             // Avoid hitting gpa for accesses to small packed structs
-            var sfba_state = std.heap.stackFallback(128, zcu.comp.gpa);
-            const sfba = sfba_state.get();
-            const buf = try sfba.alloc(u8, @intCast((ty.bitSize(zcu) + 7) / 8));
-            defer sfba.free(buf);
-            int_val.writeToPackedMemory(pt, buf, 0) catch |err| switch (err) {
+            var bfa_buf: [128]u8 = undefined;
+            var bfa_state: std.heap.BufferFirstAllocator = .init(&bfa_buf, zcu.comp.gpa);
+            const bfa = bfa_state.allocator();
+            const buf = try bfa.alloc(u8, @intCast((ty.bitSize(zcu) + 7) / 8));
+            defer bfa.free(buf);
+            int_val.writeToPackedMemory(zcu, buf, 0) catch |err| switch (err) {
                 error.ReinterpretDeclRef => unreachable, // it's an integer
                 error.OutOfMemory => |e| return e,
             };
-            return Value.readFromPackedMemory(field_ty, pt, buf, field_bit_offset, sfba) catch |err| switch (err) {
+            return Value.readFromPackedMemory(field_ty, pt, buf, field_bit_offset, bfa) catch |err| switch (err) {
                 error.IllDefinedMemoryLayout => unreachable, // it's a bitpack
                 error.OutOfMemory => |e| return e,
             };
@@ -902,7 +900,7 @@ pub fn fieldValue(val: Value, pt: Zcu.PerThread, index: usize) !Value {
     };
 }
 
-pub fn unionTag(val: Value, zcu: *Zcu) ?Value {
+pub fn unionTag(val: Value, zcu: *const Zcu) ?Value {
     return switch (zcu.intern_pool.indexToKey(val.toIntern())) {
         .undef, .enum_tag => val,
         .un => |un| if (un.tag != .none) Value.fromInterned(un.tag) else return null,
@@ -910,7 +908,7 @@ pub fn unionTag(val: Value, zcu: *Zcu) ?Value {
     };
 }
 
-pub fn unionPayload(val: Value, zcu: *Zcu) Value {
+pub fn unionPayload(val: Value, zcu: *const Zcu) Value {
     return switch (zcu.intern_pool.indexToKey(val.toIntern())) {
         .un => |un| Value.fromInterned(un.val),
         else => unreachable,
@@ -1605,16 +1603,15 @@ pub fn mulAddScalar(
 
 /// If the value is represented in-memory as a series of bytes that all
 /// have the same value, return that byte value, otherwise null.
-pub fn hasRepeatedByteRepr(val: Value, pt: Zcu.PerThread) !?u8 {
-    const zcu = pt.zcu;
+pub fn hasRepeatedByteRepr(val: Value, zcu: *const Zcu) !?u8 {
     const ty = val.typeOf(zcu);
     const abi_size = std.math.cast(usize, ty.abiSize(zcu)) orelse return null;
     assert(abi_size >= 1);
     const byte_buffer = try zcu.gpa.alloc(u8, abi_size);
     defer zcu.gpa.free(byte_buffer);
 
-    writeToMemory(val, pt, byte_buffer) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+    writeToMemory(val, zcu, byte_buffer) catch |err| switch (err) {
+        error.OutOfMemory => |e| return e,
         error.ReinterpretDeclRef => return null,
         // TODO: The writeToMemory function was originally created for the purpose
         // of comptime pointer casting. However, it is now additionally being used
@@ -1848,7 +1845,7 @@ pub fn ptrElem(orig_parent_ptr: Value, field_idx: u64, pt: Zcu.PerThread) !Value
     } }));
 }
 
-fn canonicalizeBasePtr(base_ptr: Value, want_size: std.builtin.Type.Pointer.Size, want_child: Type, pt: Zcu.PerThread) !Value {
+fn canonicalizeBasePtr(base_ptr: Value, want_size: std.lang.Type.Pointer.Size, want_child: Type, pt: Zcu.PerThread) !Value {
     const ptr_ty = base_ptr.typeOf(pt.zcu);
     const ptr_info = ptr_ty.ptrInfo(pt.zcu);
 
@@ -2202,19 +2199,19 @@ pub fn pointerDerivation(ptr_val: Value, arena: Allocator, pt: Zcu.PerThread, op
 const InterpretMode = enum {
     /// In this mode, types are assumed to match what the compiler was built with in terms of field
     /// order, field types, etc. This improves compiler performance. However, it means that certain
-    /// modifications to `std.builtin` will result in compiler crashes.
+    /// modifications to `std.lang` will result in compiler crashes.
     direct,
     /// In this mode, various details of the type are allowed to differ from what the compiler was built
     /// with. Fields are matched by name rather than index; added struct fields are ignored, and removed
     /// struct fields use their default value if one exists. This is slower than `.direct`, but permits
-    /// making certain changes to `std.builtin` (in particular reordering/adding/removing fields), so it
-    /// is useful when applying breaking changes.
+    /// making certain changes to `std.lang` (in particular reordering/adding/removing fields), so it is
+    /// useful when applying breaking changes.
     by_name,
 };
 const interpret_mode: InterpretMode = @field(InterpretMode, @tagName(build_options.value_interpret_mode));
 
 /// Given a `Value` representing a comptime-known value of type `T`, unwrap it into an actual `T` known to the compiler.
-/// This is useful for accessing `std.builtin` structures received from comptime logic.
+/// This is useful for accessing `std.lang` structures received from comptime logic.
 pub fn interpret(val: Value, comptime T: type, pt: Zcu.PerThread) error{ OutOfMemory, UndefinedValue, TypeMismatch }!T {
     const zcu = pt.zcu;
     const io = zcu.comp.io;
@@ -2316,7 +2313,7 @@ pub fn interpret(val: Value, comptime T: type, pt: Zcu.PerThread) error{ OutOfMe
 }
 
 /// Given any `val` and a `Type` corresponding `@TypeOf(val)`, construct a `Value` representing it which can be used
-/// within the compilation. This is useful for passing `std.builtin` structures in the compiler back to the compilation.
+/// within the compilation. This is useful for passing `std.lang` structures in the compiler back to the compilation.
 /// This is the inverse of `interpret`.
 pub fn uninterpret(val: anytype, ty: Type, pt: Zcu.PerThread) error{ OutOfMemory, TypeMismatch }!Value {
     const T = @TypeOf(val);

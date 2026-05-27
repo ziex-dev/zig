@@ -1,7 +1,7 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Target = std.Target;
-const Signedness = std.builtin.Signedness;
+const Signedness = std.lang.Signedness;
 const assert = std.debug.assert;
 const log = std.log.scoped(.codegen);
 
@@ -387,13 +387,12 @@ fn importExtendedSet(cg: *CodeGen) !Id {
 
 /// Fetch the result-id for a previously generated instruction or constant.
 fn resolve(cg: *CodeGen, inst: Air.Inst.Ref) !Id {
-    const pt = cg.pt;
     const zcu = cg.module.zcu;
     const ip = &zcu.intern_pool;
-    if (try cg.air.value(inst, pt)) |val| {
+    if (inst.toInterned()) |val_ip_index| {
         const ty = cg.typeOf(inst);
         if (ty.zigTypeTag(zcu) == .@"fn") {
-            const fn_nav = switch (zcu.intern_pool.indexToKey(val.ip_index)) {
+            const fn_nav = switch (zcu.intern_pool.indexToKey(val_ip_index)) {
                 .@"extern" => |@"extern"| @"extern".owner_nav,
                 .func => |func| func.owner_nav,
                 else => unreachable,
@@ -403,7 +402,7 @@ fn resolve(cg: *CodeGen, inst: Air.Inst.Ref) !Id {
             return cg.module.declPtr(spv_decl_index).result_id;
         }
 
-        return try cg.constant(ty, val, .direct);
+        return try cg.constant(ty, .fromInterned(val_ip_index), .direct);
     }
     const index = inst.toIndex().?;
     return cg.inst_results.get(index).?; // Assertion means instruction does not dominate usage.
@@ -570,7 +569,7 @@ const ArithmeticTypeInfo = struct {
     /// Null if this type is a scalar, or the length of the vector otherwise.
     vector_len: ?u32,
     /// Whether the inner type is signed. Only relevant for integers.
-    signedness: std.builtin.Signedness,
+    signedness: std.lang.Signedness,
 };
 
 fn arithmeticTypeInfo(cg: *CodeGen, ty: Type) ArithmeticTypeInfo {
@@ -1328,12 +1327,12 @@ fn resolveType(cg: *CodeGen, ty: Type, repr: Repr) Error!Id {
             .indirect => return try cg.resolveType(.u1, .indirect),
         },
         .int => {
-            const int_info = ty.intInfo(zcu);
-            if (int_info.bits == 0) {
+            if (ty.toIntern() == .u0_type) {
                 assert(repr == .indirect);
                 if (target.os.tag != .opencl) return cg.fail("cannot generate opaque type", .{});
                 return try cg.module.opaqueType("u0");
             }
+            const int_info = ty.intInfo(zcu);
             return try cg.module.intType(int_info.signedness, int_info.bits);
         },
         .@"enum" => return try cg.resolveType(ty.intTagType(zcu), repr),
@@ -2252,7 +2251,7 @@ fn buildBinary(cg: *CodeGen, opcode: Opcode, lhs: Temporary, rhs: Temporary) !Te
 /// or OpIMul and s_mul_hi or u_mul_hi on OpenCL.
 fn buildWideMul(
     cg: *CodeGen,
-    signedness: std.builtin.Signedness,
+    signedness: std.lang.Signedness,
     lhs: Temporary,
     rhs: Temporary,
 ) !struct { Temporary, Temporary } {
@@ -2359,7 +2358,7 @@ fn buildWideMul(
 /// The SPIR-V backend is not yet advanced enough to support the std testing infrastructure.
 /// In order to be able to run tests, we "temporarily" lower test kernels into separate entry-
 /// points. The test executor will then be able to invoke these to run the tests.
-/// Note that tests are lowered according to std.builtin.TestFn, which is `fn () anyerror!void`.
+/// Note that tests are lowered according to std.lang.TestFn, which is `fn () anyerror!void`.
 /// (anyerror!void has the same layout as anyerror).
 /// Each test declaration generates a function like.
 ///   %anyerror = OpTypeInt 0 16
@@ -2694,8 +2693,6 @@ fn genInst(cg: *CodeGen, inst: Air.Inst.Index) Error!void {
             .bit_and  => try cg.airBinOpSimple(inst, .OpBitwiseAnd),
             .bit_or   => try cg.airBinOpSimple(inst, .OpBitwiseOr),
             .xor      => try cg.airBinOpSimple(inst, .OpBitwiseXor),
-            .bool_and => try cg.airBinOpSimple(inst, .OpLogicalAnd),
-            .bool_or  => try cg.airBinOpSimple(inst, .OpLogicalOr),
 
             .shl, .shl_exact => try cg.airShift(inst, .OpShiftLeftLogical, .OpShiftLeftLogical),
             .shr, .shr_exact => try cg.airShift(inst, .OpShiftRightLogical, .OpShiftRightArithmetic),
@@ -4832,7 +4829,7 @@ fn structuredBreak(cg: *CodeGen, target_block: Id) !void {
     assert(cg.control_flow == .structured);
 
     const gpa = cg.module.gpa;
-    const sblock = cg.control_flow.structured.block_stack.getLast();
+    const sblock = cg.control_flow.structured.block_stack.getLast().?;
     const merge_block = switch (sblock.*) {
         .selection => |*merge| blk: {
             const merge_label = cg.module.allocId();
@@ -5047,7 +5044,7 @@ fn lowerBlock(cg: *CodeGen, inst: Air.Inst.Index, body: []const Air.Inst.Index) 
         .operand_2 = this_block,
     });
 
-    const sblock = cf.block_stack.getLast();
+    const sblock = cf.block_stack.getLast().?;
 
     if (ty.isNoReturn(zcu)) {
         // If this block is noreturn, this instruction is the last of a block,
@@ -5657,7 +5654,6 @@ fn airWrapOptional(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
 
 fn airSwitchBr(cg: *CodeGen, inst: Air.Inst.Index) !void {
     const gpa = cg.module.gpa;
-    const pt = cg.pt;
     const zcu = cg.module.zcu;
     const target = cg.module.zcu.getTarget();
     const switch_br = cg.air.unwrapSwitch(inst);
@@ -5732,7 +5728,7 @@ fn airSwitchBr(cg: *CodeGen, inst: Air.Inst.Index) !void {
             const label = case_labels.at(case.idx);
 
             for (case.items) |item| {
-                const value = (try cg.air.value(item, pt)) orelse unreachable;
+                const value: Value = .fromInterned(item.toInterned().?);
                 const int_val: u64 = switch (cond_ty.zigTypeTag(zcu)) {
                     .bool, .int => if (cond_ty.isSignedInt(zcu)) @bitCast(value.toSignedInt(zcu)) else value.toUnsignedInt(zcu),
                     .@"enum" => blk: {
@@ -5875,9 +5871,9 @@ fn airAssembly(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
 
         if (std.mem.eql(u8, in.constraint, "c")) {
             // constant
-            const val = (try cg.air.value(in.operand, cg.pt)) orelse {
+            const val: Value = .fromInterned(in.operand.toInterned() orelse {
                 return cg.fail("assembly inputs with 'c' constraint have to be compile-time known", .{});
-            };
+            });
 
             // TODO: This entire function should be handled a bit better...
             const ip = &zcu.intern_pool;
@@ -5911,8 +5907,7 @@ fn airAssembly(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
             if (input_ty.zigTypeTag(zcu) == .type) {
                 // This assembly input is a type instead of a value.
                 // That's fine for now, just make sure to resolve it as such.
-                const val = (try cg.air.value(in.operand, cg.pt)).?;
-                const ty_id = try cg.resolveType(val.toType(), .direct);
+                const ty_id = try cg.resolveType(in.operand.toType(), .direct);
                 try ass.value_map.put(gpa, in.name, .{ .ty = ty_id });
             } else {
                 const ty_id = try cg.resolveType(input_ty, .direct);
@@ -5981,7 +5976,7 @@ fn airAssembly(cg: *CodeGen, inst: Air.Inst.Index) !?Id {
     return null;
 }
 
-fn airCall(cg: *CodeGen, inst: Air.Inst.Index, modifier: std.builtin.CallModifier) !?Id {
+fn airCall(cg: *CodeGen, inst: Air.Inst.Index, modifier: std.lang.CallModifier) !?Id {
     _ = modifier;
 
     const gpa = cg.module.gpa;

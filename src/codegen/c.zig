@@ -248,7 +248,9 @@ const reserved_idents = std.StaticStringMap(void).initComptime(.{
     .{ "inline", {} },
     .{ "int", {} },
     .{ "int16_t", {} },
+    .{ "int24_t", {} },
     .{ "int32_t", {} },
+    .{ "int48_t", {} },
     .{ "int64_t", {} },
     .{ "int8_t", {} },
     .{ "intptr_t", {} },
@@ -270,7 +272,9 @@ const reserved_idents = std.StaticStringMap(void).initComptime(.{
     .{ "typedef", {} },
     .{ "typeof", {} },
     .{ "uint16_t", {} },
+    .{ "uint24_t", {} },
     .{ "uint32_t", {} },
+    .{ "uint48_t", {} },
     .{ "uint64_t", {} },
     .{ "uint8_t", {} },
     .{ "uintptr_t", {} },
@@ -435,14 +439,13 @@ pub const Function = struct {
     fn resolveInst(f: *Function, ref: Air.Inst.Ref) !CValue {
         const gop = try f.value_map.getOrPut(ref);
         if (!gop.found_existing) {
-            const val = try f.air.value(ref, f.dg.pt);
-            gop.value_ptr.* = .{ .constant = val.? };
+            gop.value_ptr.* = .{ .constant = .fromInterned(ref.toInterned().?) };
         }
         return gop.value_ptr.*;
     }
 
     fn wantSafety(f: *Function) bool {
-        return switch (f.dg.pt.zcu.optimizeMode()) {
+        return switch (f.dg.mod.optimize_mode) {
             .Debug, .ReleaseSafe => true,
             .ReleaseFast, .ReleaseSmall => false,
         };
@@ -1298,7 +1301,7 @@ pub const DeclGen = struct {
             else => .initializer,
         };
 
-        const safety_on = switch (zcu.optimizeMode()) {
+        const safety_on = switch (dg.mod.optimize_mode) {
             .Debug, .ReleaseSafe => true,
             .ReleaseFast, .ReleaseSmall => false,
         };
@@ -1626,7 +1629,7 @@ pub const DeclGen = struct {
             if (func_analysis.branch_hint == .cold)
                 try w.writeAll("zig_cold ");
 
-            if (kind == .definition and func_analysis.disable_intrinsics or dg.mod.no_builtin)
+            if (kind == .definition and (func_analysis.disable_intrinsics or dg.mod.no_builtin))
                 try w.writeAll("zig_no_builtin ");
         }
 
@@ -1994,7 +1997,7 @@ pub const DeclGen = struct {
             .bits => {},
         }
 
-        const int_info: std.builtin.Type.Int = if (ty.isAbiInt(zcu)) ty.intInfo(zcu) else .{
+        const int_info: std.lang.Type.Int = if (ty.isAbiInt(zcu)) ty.intInfo(zcu) else .{
             .signedness = .unsigned,
             .bits = @intCast(ty.bitSize(zcu)),
         };
@@ -2723,11 +2726,10 @@ fn genBodyInner(f: *Function, body: []const Air.Inst.Index) Error!void {
                 const extra = f.air.extraData(Air.VectorCmp, ty_pl.payload).data;
                 break :blk try airCmpOp(f, inst, extra, extra.compareOperator());
             },
-            .cmp_lt_errors_len => try airCmpLtErrorsLen(f, inst),
+            .cmp_lte_errors_len => try airCmpLteErrorsLen(f, inst),
 
-            // bool_and and bool_or are non-short-circuit operations
-            .bool_and, .bit_and => try airBinOp(f, inst, "&",  "and", .none),
-            .bool_or,  .bit_or  => try airBinOp(f, inst, "|",  "or",  .none),
+            .bit_and => try airBinOp(f, inst, "&",  "and", .none),
+            .bit_or  => try airBinOp(f, inst, "|",  "or",  .none),
             .xor                => try airBinOp(f, inst, "^",  "xor", .none),
             .shr, .shr_exact    => try airBinBuiltinCall(f, inst, "shr", .none),
             .shl,               => try airBinBuiltinCall(f, inst, "shlw", .bits),
@@ -3389,7 +3391,7 @@ fn airStore(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
     const ptr_val = try f.resolveInst(bin_op.lhs);
     const src_ty = f.typeOf(bin_op.rhs);
 
-    const val_is_undef = if (try f.air.value(bin_op.rhs, pt)) |v| v.isUndef(zcu) else false;
+    const val_is_undef = if (bin_op.rhs.toInterned()) |ip_index| Value.fromInterned(ip_index).isUndef(zcu) else false;
 
     const w = &f.code.writer;
     if (val_is_undef) {
@@ -3495,9 +3497,27 @@ fn airOverflow(f: *Function, inst: Air.Inst.Index, operation: []const u8, info: 
     try w.writeAll(operation);
     try w.writeAll("o_");
     try f.dg.renderTypeForBuiltinFnName(w, scalar_ty);
-    try w.writeAll("(&");
+    try w.writeByte('(');
+
+    // '&dest', possibly preceded by a cast
+    switch (zcu.intern_pool.indexToKey(scalar_ty.toIntern())) {
+        .int_type => {}, // we already have a '[u]intX_t *'
+        .simple_type => {
+            // '&dest' will be something like a 'uintptr_t *', which might be a different C type to
+            // the equivalent sized integer (e.g. 'uint64_t *'), so we need a cast. We don't need a
+            // cast on the *operands* because they are passed by value (except for big integers,
+            // where this issue doesn't exist because no "simple" int type needs bigint repr).
+            try w.print("({s}int{d}_t *)", .{
+                if (scalar_ty.isUnsignedInt(zcu)) "u" else "",
+                scalar_ty.abiSize(zcu) * 8,
+            });
+        },
+        else => unreachable,
+    }
+    try w.writeByte('&');
     try f.writeCValueMember(w, local, .{ .field = 0 });
     try v.elem(f, w);
+
     try w.writeAll(", ");
     if (ref_arg) try w.writeByte('&');
     try f.writeCValue(w, lhs, .other);
@@ -3729,7 +3749,7 @@ fn airEquality(
     return local;
 }
 
-fn airCmpLtErrorsLen(f: *Function, inst: Air.Inst.Index) !CValue {
+fn airCmpLteErrorsLen(f: *Function, inst: Air.Inst.Index) !CValue {
     const un_op = f.air.instructions.items(.data)[@intFromEnum(inst)].un_op;
 
     const operand = try f.resolveInst(un_op);
@@ -3858,7 +3878,7 @@ fn airSlice(f: *Function, inst: Air.Inst.Index) !CValue {
 fn airCall(
     f: *Function,
     inst: Air.Inst.Index,
-    modifier: std.builtin.CallModifier,
+    modifier: std.lang.CallModifier,
 ) !CValue {
     const pt = f.dg.pt;
     const zcu = pt.zcu;
@@ -3922,8 +3942,8 @@ fn airCall(
 
     callee: {
         known: {
-            const callee_val = (try f.air.value(call.callee, pt)) orelse break :known;
-            const fn_nav, const need_cast = switch (ip.indexToKey(callee_val.toIntern())) {
+            const callee_ip_index = call.callee.toInterned() orelse break :known;
+            const fn_nav, const need_cast = switch (ip.indexToKey(callee_ip_index)) {
                 .@"extern" => |@"extern"| .{ @"extern".owner_nav, false },
                 .func => |func| .{ func.owner_nav, Type.fromInterned(func.ty).fnCallingConvention(zcu) != .naked and
                     Type.fromInterned(func.uncoerced_ty).fnCallingConvention(zcu) == .naked },
@@ -4027,7 +4047,7 @@ fn airDbgVar(f: *Function, inst: Air.Inst.Index) !CValue {
     const tag = f.air.instructions.items(.tag)[@intFromEnum(inst)];
     const pl_op = f.air.instructions.items(.data)[@intFromEnum(inst)].pl_op;
     const name: Air.NullTerminatedString = @enumFromInt(pl_op.payload);
-    const operand_is_undef = if (try f.air.value(pl_op.operand, pt)) |v| v.isUndef(zcu) else false;
+    const operand_is_undef = if (pl_op.operand.toInterned()) |ip_index| Value.fromInterned(ip_index).isUndef(zcu) else false;
     if (!operand_is_undef) _ = try f.resolveInst(pl_op.operand);
 
     try reap(f, inst, &.{pl_op.operand});
@@ -4204,7 +4224,8 @@ fn airSwitchDispatch(f: *Function, inst: Air.Inst.Index) !void {
     const br = f.air.instructions.items(.data)[@intFromEnum(inst)].br;
     const w = &f.code.writer;
 
-    if (try f.air.value(br.operand, pt)) |cond_val| {
+    if (br.operand.toInterned()) |cond_ip_index| {
+        const cond_val: Value = .fromInterned(cond_ip_index);
         // Comptime-known dispatch. Iterate the cases to find the correct
         // one, and branch directly to the corresponding case.
         const switch_br = f.air.unwrapSwitch(br.block_inst);
@@ -4539,12 +4560,12 @@ fn airSwitchBr(f: *Function, inst: Air.Inst.Index, is_dispatch_loop: bool) !void
                 try f.writeCValue(w, cond_val, .other);
                 try w.writeAll(", ");
             }
-            const item_value = try f.air.value(item, pt);
+            const item_value: Value = .fromInterned(item.toInterned().?);
             // If `item_value` is a pointer with a known integer address, print the address
             // with no cast to avoid a warning.
             write_val: {
                 if (cond_ty.zigTypeTag(zcu) == .pointer) {
-                    if (item_value.?.getUnsignedInt(zcu)) |item_int| {
+                    if (item_value.getUnsignedInt(zcu)) |item_int| {
                         try w.print("{f}", .{try f.fmtIntLiteralDec(try pt.intValue(lowered_cond_ty, item_int))});
                         break :write_val;
                     }
@@ -4552,7 +4573,7 @@ fn airSwitchBr(f: *Function, inst: Air.Inst.Index, is_dispatch_loop: bool) !void
                     try f.renderType(w, .usize);
                     try w.writeByte(')');
                 }
-                try f.dg.renderValue(w, (try f.air.value(item, pt)).?, .other);
+                try f.dg.renderValue(w, .fromInterned(item.toInterned().?), .other);
             }
             switch (cond_cint) {
                 .zig_u128, .zig_i128 => try w.writeByte(')'),
@@ -4710,7 +4731,7 @@ fn lowerSwitchCmp(
     try f.writeCValue(w, cond_val, .other);
     try w.writeAll(if (use_builtin) ", " else compareOperatorC(operator));
     if (class == .big) try w.writeByte('&');
-    try f.dg.renderValue(w, (try f.air.value(case_inst, pt)).?, .other);
+    try f.dg.renderValue(w, .fromInterned(case_inst.toInterned().?), .other);
     if (use_builtin) {
         try f.dg.renderBuiltinInfo(w, ty, if (class == .big) .bits else .none);
         try w.writeByte(')');
@@ -4837,8 +4858,9 @@ fn airAsm(f: *Function, inst: Air.Inst.Index) !CValue {
         {
             const asm_source = unwrapped_asm.source;
 
-            var stack = std.heap.stackFallback(256, f.dg.gpa);
-            const allocator = stack.get();
+            var bfa_buf: [256]u8 = undefined;
+            var bfa: std.heap.BufferFirstAllocator = .init(&bfa_buf, f.dg.gpa);
+            const allocator = bfa.allocator();
             const fixed_asm_source = try allocator.alloc(u8, asm_source.len);
             defer allocator.free(fixed_asm_source);
 
@@ -6100,7 +6122,7 @@ fn airMemset(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
     const value = try f.resolveInst(bin_op.rhs);
     const elem_ty = f.typeOf(bin_op.rhs);
     const elem_abi_size = elem_ty.abiSize(zcu);
-    const val_is_undef = if (try f.air.value(bin_op.rhs, pt)) |val| val.isUndef(zcu) else false;
+    const val_is_undef = if (bin_op.rhs.toInterned()) |ip_index| Value.fromInterned(ip_index).isUndef(zcu) else false;
     const w = &f.code.writer;
 
     if (val_is_undef) {
@@ -6889,7 +6911,7 @@ fn airCVaCopy(f: *Function, inst: Air.Inst.Index) !CValue {
     return local;
 }
 
-fn toMemoryOrder(order: std.builtin.AtomicOrder) [:0]const u8 {
+fn toMemoryOrder(order: std.lang.AtomicOrder) [:0]const u8 {
     return switch (order) {
         // Note: unordered is actually even less atomic than relaxed
         .unordered, .monotonic => "zig_memory_order_relaxed",
@@ -6900,11 +6922,11 @@ fn toMemoryOrder(order: std.builtin.AtomicOrder) [:0]const u8 {
     };
 }
 
-fn writeMemoryOrder(w: *Writer, order: std.builtin.AtomicOrder) !void {
+fn writeMemoryOrder(w: *Writer, order: std.lang.AtomicOrder) !void {
     return w.writeAll(toMemoryOrder(order));
 }
 
-fn toCallingConvention(cc: std.builtin.CallingConvention, zcu: *Zcu) ?[]const u8 {
+fn toCallingConvention(cc: std.lang.CallingConvention, zcu: *Zcu) ?[]const u8 {
     if (zcu.getTarget().cCallingConvention()) |ccc| {
         if (cc.eql(ccc)) {
             return null;
@@ -6992,11 +7014,14 @@ fn toCallingConvention(cc: std.builtin.CallingConvention, zcu: *Zcu) ?[]const u8
         .x86_64_interrupt,
         => "interrupt",
 
+        .ez80_tiflags,
+        => "__tiflags__",
+
         else => unreachable, // `Zcu.callconvSupported`
     };
 }
 
-fn toAtomicRmwSuffix(order: std.builtin.AtomicRmwOp) []const u8 {
+fn toAtomicRmwSuffix(order: std.lang.AtomicRmwOp) []const u8 {
     return switch (order) {
         .Xchg => "xchg",
         .Add => "add",
@@ -7019,7 +7044,7 @@ fn toCIntBits(zig_bits: u32) ?u32 {
     return null;
 }
 
-fn signAbbrev(signedness: std.builtin.Signedness) u8 {
+fn signAbbrev(signedness: std.lang.Signedness) u8 {
     return switch (signedness) {
         .signed => 'i',
         .unsigned => 'u',
@@ -7196,7 +7221,7 @@ fn fmtStringLiteral(str: []const u8, sentinel: ?u8) std.fmt.Alt(FormatStringCont
 
 fn undefPattern(comptime IntType: type) IntType {
     const int_info = @typeInfo(IntType).int;
-    const UnsignedType = std.meta.Int(.unsigned, int_info.bits);
+    const UnsignedType = @Int(.unsigned, int_info.bits);
     return @bitCast(@as(UnsignedType, (1 << (int_info.bits | 1)) / 3));
 }
 
@@ -7285,7 +7310,9 @@ const FormatInt128 = struct {
         switch (data.int_cty) {
             .uint8_t,
             .uint16_t,
+            .uint24_t,
             .uint32_t,
+            .uint48_t,
             .uint64_t,
             .@"unsigned short",
             .@"unsigned int",
@@ -7298,6 +7325,8 @@ const FormatInt128 = struct {
 
             .int8_t,
             .int16_t,
+            .int24_t,
+            .int48_t,
             .int32_t,
             .int64_t,
             .char,
@@ -7443,13 +7472,17 @@ fn minMaxMacroPrefix(int_cty: CType.Int) []const u8 {
 
         .uint8_t  => "UINT8",
         .uint16_t => "UINT16",
+        .uint24_t => "UINT24",
         .uint32_t => "UINT32",
+        .uint48_t => "UINT48",
         .uint64_t => "UINT64",
         .zig_u128 => unreachable,
 
         .int8_t   => "INT8",
         .int16_t  => "INT16",
+        .int24_t  => "INT24",
         .int32_t  => "INT32",
+        .int48_t  => "INT48",
         .int64_t  => "INT64",
         .zig_i128 => unreachable,
 
@@ -7475,13 +7508,17 @@ fn intLiteralPrefix(cty: CType.Int, is_global: bool) []const u8 {
 
         .uint8_t  =>  "UINT8_C(",
         .uint16_t => "UINT16_C(",
+        .uint24_t => "UINT24_C(",
         .uint32_t => "UINT32_C(",
+        .uint48_t => "UINT48_C(",
         .uint64_t => "UINT64_C(",
         .zig_u128 => unreachable,
 
         .int8_t   =>  "INT8_C(",
         .int16_t  => "INT16_C(",
+        .int24_t  => "INT24_C(",
         .int32_t  => "INT32_C(",
+        .int48_t  => "INT48_C(",
         .int64_t  => "INT64_C(",
         .zig_i128 => unreachable,
 
@@ -7507,13 +7544,17 @@ fn intLiteralSuffix(cty: CType.Int) []const u8 {
 
         .uint8_t  => ")",
         .uint16_t => ")",
+        .uint24_t => ")",
         .uint32_t => ")",
+        .uint48_t => ")",
         .uint64_t => ")",
         .zig_u128 => unreachable,
 
         .int8_t   => ")",
         .int16_t  => ")",
+        .int24_t  => ")",
         .int32_t  => ")",
+        .int48_t  => ")",
         .int64_t  => ")",
         .zig_i128 => unreachable,
 

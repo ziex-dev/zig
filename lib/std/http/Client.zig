@@ -4,8 +4,6 @@
 //!
 //! TLS support may be disabled via `std.options.http_disable_tls`.
 //!
-//! TODO all the lockUncancelable in this file should be changed to regular lock and
-//! `error.Canceled` added to more error sets.
 const Client = @This();
 
 const builtin = @import("builtin");
@@ -84,8 +82,8 @@ pub const ConnectionPool = struct {
     /// If no connection is found, null is returned.
     ///
     /// Threadsafe.
-    pub fn findConnection(pool: *ConnectionPool, io: Io, criteria: Criteria) ?*Connection {
-        pool.mutex.lockUncancelable(io);
+    pub fn findConnection(pool: *ConnectionPool, io: Io, criteria: Criteria) Io.Cancelable!?*Connection {
+        try pool.mutex.lock(io);
         defer pool.mutex.unlock(io);
 
         var next = pool.free.last;
@@ -113,8 +111,8 @@ pub const ConnectionPool = struct {
     }
 
     /// Acquires an existing connection from the connection pool. This function is threadsafe.
-    pub fn acquire(pool: *ConnectionPool, io: Io, connection: *Connection) void {
-        pool.mutex.lockUncancelable(io);
+    pub fn acquire(pool: *ConnectionPool, io: Io, connection: *Connection) Io.Cancelable!void {
+        try pool.mutex.lock(io);
         defer pool.mutex.unlock(io);
 
         return pool.acquireUnsafe(connection);
@@ -150,8 +148,8 @@ pub const ConnectionPool = struct {
     }
 
     /// Adds a newly created node to the pool of used connections. This function is threadsafe.
-    pub fn addUsed(pool: *ConnectionPool, io: Io, connection: *Connection) void {
-        pool.mutex.lockUncancelable(io);
+    pub fn addUsed(pool: *ConnectionPool, io: Io, connection: *Connection) Io.Cancelable!void {
+        try pool.mutex.lock(io);
         defer pool.mutex.unlock(io);
 
         pool.used.append(&connection.pool_node);
@@ -162,18 +160,15 @@ pub const ConnectionPool = struct {
     /// If the new size is smaller than the current size, then idle connections will be closed until the pool is the new size.
     ///
     /// Threadsafe.
-    pub fn resize(pool: *ConnectionPool, io: Io, allocator: Allocator, new_size: usize) void {
-        pool.mutex.lockUncancelable(io);
+    pub fn resize(pool: *ConnectionPool, io: Io, new_size: usize) Io.Cancelable!void {
+        try pool.mutex.lock(io);
         defer pool.mutex.unlock(io);
 
-        const next = pool.free.first;
-        _ = next;
         while (pool.free_len > new_size) {
-            const popped = pool.free.popFirst() orelse unreachable;
+            const popped: *Connection = @alignCast(@fieldParentPtr("pool_node", pool.free.popFirst().?));
             pool.free_len -= 1;
 
-            popped.data.close(allocator);
-            allocator.destroy(popped);
+            popped.destroy(io);
         }
 
         pool.free_size = new_size;
@@ -1126,14 +1121,23 @@ pub const Request = struct {
     /// `redirect_buffer` must outlive accesses to `Request.uri`. If this
     /// buffer capacity would be exceeded, `error.HttpRedirectLocationOversize`
     /// is returned instead. This buffer may be empty if no redirects are to be
-    /// handled.
+    /// handled. RFC 9110 recommends making this at least 8000 bytes.
     ///
     /// If this fails with `error.ReadFailed` then the `Connection.getReadError`
     /// method of `r.connection` can be used to get more detailed information.
     pub fn receiveHead(r: *Request, redirect_buffer: []u8) ReceiveHeadError!Response {
         var aux_buf = redirect_buffer;
         while (true) {
-            const head_buffer = try r.reader.receiveHead();
+            // This while loop is for handling redirects, which means the request's
+            // connection may be different than the previous iteration. However, it
+            // is still guaranteed to be non-null with each iteration of this loop.
+            const connection = r.connection.?;
+
+            const head_buffer = r.reader.receiveHead() catch |err| {
+                // Failure here means the connection can no longer be reused.
+                connection.closing = true;
+                return err;
+            };
             const response: Response = .{
                 .request = r,
                 .head = Response.Head.parse(head_buffer) catch return error.HttpHeadersInvalid,
@@ -1146,11 +1150,6 @@ pub const Request = struct {
                 r.response_content_length = head.content_length;
                 return response; // we're not handling the 100-continue
             }
-
-            // This while loop is for handling redirects, which means the request's
-            // connection may be different than the previous iteration. However, it
-            // is still guaranteed to be non-null with each iteration of this loop.
-            const connection = r.connection.?;
 
             if (r.method == .CONNECT and head.status.class() == .success) {
                 // This connection is no longer doing HTTP.
@@ -1319,7 +1318,7 @@ pub fn initDefaultProxies(client: *Client, arena: Allocator, environ_map: *const
     const io = client.io;
 
     // Prevent any new connections from being created.
-    client.connection_pool.mutex.lockUncancelable(io);
+    try client.connection_pool.mutex.lock(io);
     defer client.connection_pool.mutex.unlock(io);
 
     assert(client.connection_pool.used.first == null); // There are active requests.
@@ -1414,7 +1413,7 @@ pub const basic_authorization = struct {
 
 pub const ConnectTcpError = error{
     TlsInitializationFailed,
-} || Allocator.Error || HostName.ConnectError;
+} || Allocator.Error || HostName.ConnectError || Io.Cancelable;
 
 /// Reuses a `Connection` if one matching `host` and `port` is already open.
 ///
@@ -1447,7 +1446,7 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
     const proxied_host = options.proxied_host orelse host;
     const proxied_port = options.proxied_port orelse port;
 
-    if (client.connection_pool.findConnection(io, .{
+    if (try client.connection_pool.findConnection(io, .{
         .host = proxied_host,
         .port = proxied_port,
         .protocol = protocol,
@@ -1465,18 +1464,20 @@ pub fn connectTcpOptions(client: *Client, options: ConnectTcpOptions) ConnectTcp
                 error.Canceled => |e| return e,
                 else => return error.TlsInitializationFailed,
             };
-            client.connection_pool.addUsed(io, &tc.connection);
+            errdefer tc.destroy();
+            try client.connection_pool.addUsed(io, &tc.connection);
             return &tc.connection;
         },
         .plain => {
             const pc = try Connection.Plain.create(client, proxied_host, proxied_port, stream);
-            client.connection_pool.addUsed(io, &pc.connection);
+            errdefer pc.destroy();
+            try client.connection_pool.addUsed(io, &pc.connection);
             return &pc.connection;
         },
     }
 }
 
-pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError;
+pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{NameTooLong} || std.posix.ConnectError || Io.Cancelable;
 
 /// Connect to `path` as a unix domain socket. This will reuse a connection if one is already open.
 ///
@@ -1484,7 +1485,7 @@ pub const ConnectUnixError = Allocator.Error || std.posix.SocketError || error{N
 pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connection {
     const io = client.io;
 
-    if (client.connection_pool.findConnection(io, .{
+    if (try client.connection_pool.findConnection(io, .{
         .host = path,
         .port = 0,
         .protocol = .plain,
@@ -1508,7 +1509,7 @@ pub fn connectUnix(client: *Client, path: []const u8) ConnectUnixError!*Connecti
     };
     errdefer client.allocator.free(conn.data.host);
 
-    client.connection_pool.addUsed(conn);
+    try client.connection_pool.addUsed(conn);
 
     return &conn.data;
 }
@@ -1526,7 +1527,7 @@ pub fn connectProxied(
     const io = client.io;
     if (!proxy.supports_connect) return error.TunnelNotSupported;
 
-    if (client.connection_pool.findConnection(io, .{
+    if (try client.connection_pool.findConnection(io, .{
         .host = proxied_host,
         .port = proxied_port,
         .protocol = proxy.protocol,
@@ -1748,7 +1749,8 @@ pub fn request(
 }
 
 pub const FetchOptions = struct {
-    /// `null` means it will be heap-allocated.
+    /// `null` means it will be heap-allocated. RFC 9110 recommends at least
+    /// 8000 bytes.
     redirect_buffer: ?[]u8 = null,
     /// `null` means it will be heap-allocated.
     decompress_buffer: ?[]u8 = null,
