@@ -538,7 +538,7 @@ pub const Os = struct {
 
                             break :blk default_min;
                         },
-                        .max = .{ .major = 10, .minor = 1, .patch = 0 },
+                        .max = .{ .major = 11, .minor = 0, .patch = 0 },
                     },
                 },
                 .openbsd => .{
@@ -1668,13 +1668,13 @@ pub const Cpu = struct {
             };
         }
 
-        pub fn parseCpuModel(arch: Arch, cpu_name: []const u8) !*const Cpu.Model {
+        pub fn parseCpuModel(arch: Arch, cpu_name: []const u8) ?*const Cpu.Model {
             for (arch.allCpuModels()) |cpu| {
                 if (std.mem.eql(u8, cpu_name, cpu.name)) {
                     return cpu;
                 }
             }
-            return error.UnknownCpuModel;
+            return null;
         }
 
         pub fn endian(arch: Arch) std.builtin.Endian {
@@ -2802,6 +2802,8 @@ pub const DynamicLinker = struct {
                 .mips64,
                 .mips64el,
                 .powerpc,
+                .riscv32,
+                .riscv64,
                 .sh,
                 .sheb,
                 .sparc,

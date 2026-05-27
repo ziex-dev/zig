@@ -1980,6 +1980,8 @@ const signal_ucontext_t = switch (native_os) {
         .thumbeb,
         .csky,
         .hexagon,
+        .hppa,
+        .hppa64,
         .m68k,
         .mips,
         .mipsel,
@@ -2051,19 +2053,19 @@ const signal_ucontext_t = switch (native_os) {
                     pc: u32,
                 },
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/parisc/include/uapi/asm/sigcontext.h
-                .hppa => extern struct {
-                    _flags: u32,
-                    _psw: u32,
-                    r1_19: [19]u32,
-                    r20: u32,
-                    r21: u32,
-                    r22: u32,
-                    r23_29: [7]u32,
-                    r30: u32,
-                    r31: u32,
+                .hppa, .hppa64 => extern struct {
+                    _flags: usize,
+                    _psw: usize,
+                    r1_19: [19]usize,
+                    r20: usize,
+                    r21: usize,
+                    r22: usize,
+                    r23_29: [7]usize,
+                    r30: usize,
+                    r31: usize,
                     _fr: [32]f64,
-                    _iasq: [2]u32,
-                    iaoq: [2]u32,
+                    _iasq: [2]usize,
+                    iaoq: [2]usize,
                 },
                 // https://github.com/torvalds/linux/blob/cd5a0afbdf8033dc83786315d63f8b325bdba2fd/arch/m68k/include/asm/ucontext.h
                 .m68k => extern struct {
@@ -2259,8 +2261,30 @@ const signal_ucontext_t = switch (native_os) {
                 pc: u64,
             },
             // https://github.com/freebsd/freebsd-src/blob/55c28005f544282b984ae0e15dacd0c108d8ab12/sys/x86/include/ucontext.h
+            .x86 => extern struct {
+                _onstack: i32 align(16),
+                _gs: i32,
+                _fs: i32,
+                _es: i32,
+                _ds: i32,
+                edi: u32,
+                esi: u32,
+                ebp: u32,
+                _isp: i32,
+                ebx: u32,
+                edx: u32,
+                ecx: u32,
+                eax: u32,
+                _trapno: i32,
+                _err: i32,
+                eip: u32,
+                _cs: i32,
+                _eflags: i32,
+                esp: u32,
+            },
+            // https://github.com/freebsd/freebsd-src/blob/55c28005f544282b984ae0e15dacd0c108d8ab12/sys/x86/include/ucontext.h
             .x86_64 => extern struct {
-                _onstack: i64,
+                _onstack: i64 align(16),
                 rdi: u64,
                 rsi: u64,
                 rdx: u64,
@@ -2492,7 +2516,7 @@ const signal_ucontext_t = switch (native_os) {
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/sparc64/include/signal.h
         .sparc64 => @compileError("sparc64-openbsd ucontext_t missing"),
         // https://github.com/openbsd/src/blob/42468faed8369d07ae49ae02dd71ec34f59b66cd/sys/arch/sh/include/signal.h
-        .sh, .sheb => extern struct {
+        .sh => extern struct {
             pc: u32,
             _sr: i32,
             _gbr: i32,
@@ -2579,6 +2603,20 @@ const signal_ucontext_t = switch (native_os) {
                 r: [15]u32 align(8),
                 pc: u32,
             },
+            // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/hppa/include/mcontext.h
+            .hppa => extern struct {
+                r1_19: [19]u32 align(8),
+                r20: u32,
+                r21: u32,
+                r22: u32,
+                r23_29: [7]u32,
+                r30: u32,
+                r31: u32,
+                _sar: u32,
+                _pcsqh: u32,
+                _pcsqt: u32,
+                iaoq: [2]u32,
+            },
             // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/m68k/include/mcontext.h
             .m68k => extern struct {
                 d: [8]u32,
@@ -2601,6 +2639,16 @@ const signal_ucontext_t = switch (native_os) {
                 _cr: i32,
                 lr: u32,
                 pc: u32,
+            },
+            // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/riscv/include/mcontext.h
+            .riscv32, .riscv64 => extern struct {
+                ra_sp_gp_tp: [4]usize align(8),
+                t0_2: [3]usize,
+                s0_1: [2]usize,
+                a: [8]usize,
+                s2_11: [10]usize,
+                t3_6: [4]usize,
+                pc: usize,
             },
             // https://github.com/NetBSD/src/blob/861008c62187bf7bc0aac4d81e52ed6eee4d0c74/sys/arch/sparc/include/mcontext.h
             .sparc => @compileError("sparc-netbsd mcontext_t missing"),
