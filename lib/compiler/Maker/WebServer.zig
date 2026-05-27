@@ -169,10 +169,26 @@ pub fn start(ws: *WebServer) error{AlreadyReported}!void {
     const maker = ws.maker;
     const io = maker.graph.io;
 
-    ws.tcp_server = ws.listen_address.listen(io, .{ .reuse_address = true }) catch |err| {
-        log.err("failed to listen to port {d}: {t}", .{ ws.listen_address.getPort(), err });
-        return error.AlreadyReported;
+	// If the WerbServer can't bind an address using an IpV6 address, we retry
+	// using an IpV4 address.
+    ws.tcp_server = blk: {
+        break :blk ws.listen_address.listen(io, .{ .reuse_address = true }) catch |err1| switch (err1) {
+            error.AddressUnavailable => {
+                log.err("failed to listen to ipv6 port {d}: {t}", .{ ws.listen_address.getPort(), err1 });
+                ws.listen_address = .{ .ip4 = .loopback(0) };
+                log.info("trying ipv4", .{});
+                break :blk ws.listen_address.listen(io, .{ .reuse_address = true }) catch |err2| {
+                    log.err("failed to listen to ipv4 port {d}: {t}", .{ ws.listen_address.getPort(), err2 });
+                    return error.AlreadyReported;
+                };
+            },
+            else => {
+                log.err("failed to listen to port {d}: {t}", .{ ws.listen_address.getPort(), err1 });
+                return error.AlreadyReported;
+            },
+        };
     };
+
     ws.serve_task = io.concurrent(serve, .{ws}) catch |err| {
         log.err("unable to spawn web server thread: {t}", .{err});
         ws.tcp_server.?.deinit(io);
