@@ -72,6 +72,8 @@ const InstallPaths = struct {
     lib: Path,
     bin: Path,
     include: Path,
+    data: Path,
+    doc: Path,
 };
 
 const PrintNode = struct {
@@ -188,6 +190,8 @@ pub fn main(init: process.Init.Minimal) !void {
     var override_lib_dir: ?[]const u8 = null;
     var override_bin_dir: ?[]const u8 = null;
     var override_include_dir: ?[]const u8 = null;
+    var override_data_dir: ?[]const u8 = null;
+    var override_doc_dir: ?[]const u8 = null;
     var error_style: ErrorStyle = .verbose;
     var multiline_errors: MultilineErrors = .indent;
     var summary: ?Summary = null;
@@ -230,6 +234,10 @@ pub fn main(init: process.Init.Minimal) !void {
                 override_bin_dir = nextArgOrFatal(args, &arg_idx);
             } else if (mem.eql(u8, arg, "--prefix-include-dir")) {
                 override_include_dir = nextArgOrFatal(args, &arg_idx);
+            } else if (mem.eql(u8, arg, "--prefix-data-dir")) {
+                override_data_dir = nextArgOrFatal(args, &arg_idx);
+            } else if (mem.eql(u8, arg, "--prefix-doc-dir")) {
+                override_doc_dir = nextArgOrFatal(args, &arg_idx);
             } else if (mem.eql(u8, arg, "--sysroot")) {
                 graph.sysroot = nextArgOrFatal(args, &arg_idx);
             } else if (mem.eql(u8, arg, "--maxrss")) {
@@ -563,6 +571,16 @@ pub fn main(init: process.Init.Minimal) !void {
         .sub_path = cwd_relative,
     } else try install_prefix_path.join(arena, "include");
 
+    const install_data_path: Path = if (override_data_dir) |cwd_relative| .{
+        .root_dir = .cwd(),
+        .sub_path = cwd_relative,
+    } else try install_prefix_path.join(arena, "share");
+
+    const install_doc_path: Path = if (override_doc_dir) |cwd_relative| .{
+        .root_dir = .cwd(),
+        .sub_path = cwd_relative,
+    } else try install_prefix_path.join(arena, "doc");
+
     var maker: Maker = .{
         .gpa = gpa,
         .graph = &graph,
@@ -572,6 +590,8 @@ pub fn main(init: process.Init.Minimal) !void {
             .lib = install_lib_path,
             .bin = install_bin_path,
             .include = install_include_path,
+            .data = install_data_path,
+            .doc = install_doc_path,
         },
 
         .steps = try arena.alloc(Step, scanned_config.configuration.steps.len),
@@ -1847,6 +1867,8 @@ pub fn relativePath(maker: *const Maker, arena: Allocator, relative: Configurati
         .install_lib => maker.install_paths.lib,
         .install_bin => maker.install_paths.bin,
         .install_include => maker.install_paths.include,
+        .install_data => maker.install_paths.data,
+        .install_doc => maker.install_paths.doc,
     };
 }
 
@@ -1861,6 +1883,8 @@ pub fn resolveInstallDir(
         .lib => maker.install_paths.lib,
         .bin => maker.install_paths.bin,
         .header => maker.install_paths.include,
+        .data => maker.install_paths.data,
+        .doc => maker.install_paths.doc,
         .sub_path => |s| try maker.install_paths.prefix.join(arena, s.slice(c)),
     };
 }
