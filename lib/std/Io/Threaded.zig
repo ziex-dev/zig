@@ -956,7 +956,7 @@ const Thread = struct {
             comptime assert(builtin.cpu.has(.wasm, .atomics));
             // TODO implement cancelation for WASM futex waits by signaling the futex
             if (!uncancelable) try Thread.checkCancel();
-            const to: i64 = if (timeout_ns) |ns| ns else -1;
+            const to: i64 = if (timeout_ns) |ns| std.math.cast(i64, ns) orelse std.math.maxInt(i64) else -1;
             const signed_expect: i32 = @bitCast(expect);
             const result = asm volatile (
                 \\local.get %[ptr]
@@ -12409,7 +12409,7 @@ fn openSocketPosix(
 
     if (options.ip6_only) {
         if (posix.IPV6 == void) return error.OptionUnsupported;
-        try setSocketOptionPosix(socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 0);
+        try setSocketOptionPosix(socket_fd, posix.IPPROTO.IPV6, posix.IPV6.V6ONLY, 1);
     }
 
     return socket_fd;
@@ -13851,7 +13851,7 @@ fn netLookupFallible(
         const name_c = name_buffer[0..name.len :0];
 
         var port_buffer: [8]u8 = undefined;
-        const port_c = std.fmt.bufPrintZ(&port_buffer, "{d}", .{options.port}) catch unreachable;
+        const port_c = std.fmt.bufPrintSentinel(&port_buffer, "{d}", .{options.port}, 0) catch unreachable;
 
         const hints: posix.addrinfo = .{
             .flags = .{ .CANONNAME = options.canonical_name_buffer != null, .NUMERICSERV = true },
@@ -14401,7 +14401,7 @@ pub fn setTimestampToPosix(set_ts: File.SetTimestamp) posix.timespec {
 }
 
 pub fn pathToPosix(file_path: []const u8, buffer: *[posix.PATH_MAX]u8) Dir.PathNameError![:0]u8 {
-    if (std.mem.containsAtLeastScalar2(u8, file_path, 0, 1)) return error.BadPathName;
+    if (std.mem.containsAtLeastScalar(u8, file_path, 0, 1)) return error.BadPathName;
     // >= rather than > to make room for the null byte
     if (file_path.len >= buffer.len) return error.NameTooLong;
     @memcpy(buffer[0..file_path.len], file_path);
@@ -14954,7 +14954,7 @@ fn processReplace(userdata: ?*anyopaque, options: process.ReplaceOptions) proces
     const arena = arena_allocator.allocator();
 
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
-    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeSentinel(u8, arg, 0)).ptr;
 
     const env_block = env_block: {
         const prog_fd: i32 = -1;
@@ -15061,7 +15061,7 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     // Therefore, we do all the allocation for the execve() before the fork().
     // This means we must do the null-termination of argv and env vars here.
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
-    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeZ(u8, arg)).ptr;
+    for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeSentinel(u8, arg, 0)).ptr;
 
     const prog_fileno = 3;
     comptime assert(@max(posix.STDIN_FILENO, posix.STDOUT_FILENO, posix.STDERR_FILENO) + 1 == prog_fileno);
@@ -15574,7 +15574,7 @@ fn readIntFd(fd: posix.fd_t) !ErrInt {
     return @intCast(std.mem.readInt(u64, &buffer, .little));
 }
 
-const ErrInt = std.meta.Int(.unsigned, @sizeOf(anyerror) * 8);
+const ErrInt = @Int(.unsigned, @sizeOf(anyerror) * 8);
 
 fn destroyPipe(pipe: [2]posix.fd_t) void {
     if (pipe[0] != -1) closeFd(pipe[0]);

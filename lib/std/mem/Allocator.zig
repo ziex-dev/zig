@@ -23,6 +23,8 @@ pub const VTable = struct {
     /// Return a pointer to `len` bytes with specified `alignment`, or return
     /// `null` indicating the allocation failed.
     ///
+    /// `new_len` must be greater than zero.
+    ///
     /// `ret_addr` is optionally provided as the first return address of the
     /// allocation call stack. If the value is `0` it means no return address
     /// has been provided.
@@ -167,7 +169,7 @@ pub fn create(a: Allocator, comptime T: type) Error!*T {
         const ptr = comptime std.mem.alignBackward(usize, math.maxInt(usize), @alignOf(T));
         return @ptrFromInt(ptr);
     }
-    const ptr: *T = @ptrCast(try a.allocBytesWithAlignment(.of(T), @sizeOf(T), @returnAddress()));
+    const ptr: *T = @ptrCast(try a.allocBytesAligned(.of(T), @sizeOf(T), @returnAddress()));
     return ptr;
 }
 
@@ -283,10 +285,10 @@ fn allocWithSizeAndAlignment(
     return_address: usize,
 ) Error![*]align(alignment.toByteUnits()) u8 {
     const byte_count = math.mul(usize, size, n) catch return error.OutOfMemory;
-    return self.allocBytesWithAlignment(alignment, byte_count, return_address);
+    return self.allocBytesAligned(alignment, byte_count, return_address);
 }
 
-fn allocBytesWithAlignment(
+pub fn allocBytesAligned(
     self: Allocator,
     comptime alignment: Alignment,
     byte_count: usize,
@@ -454,12 +456,6 @@ pub fn dupe(allocator: Allocator, comptime T: type, m: []const T) Error![]T {
     const new_buf = try allocator.alloc(T, m.len);
     @memcpy(new_buf, m);
     return new_buf;
-}
-
-/// Deprecated in favor of `dupeSentinel`
-/// Copies `m` to newly allocated memory, with a null-terminated element. Caller owns the memory.
-pub fn dupeZ(allocator: Allocator, comptime T: type, m: []const T) Error![:0]T {
-    return allocator.dupeSentinel(T, m, 0);
 }
 
 /// Copies `m` to newly allocated memory, with a null-terminated element. Caller owns the memory.

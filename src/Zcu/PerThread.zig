@@ -1083,13 +1083,13 @@ pub fn ensureMemoizedStateUpToDate(
     } else {
         if (prev_failed) return error.AnalysisFail;
         // We use an arbitrary element to check if the state has been resolved yet.
-        const to_check: Zcu.BuiltinDecl = switch (stage) {
+        const to_check: Zcu.StdLangDecl = switch (stage) {
             .main => .Type,
             .panic => .panic,
             .va_list => .VaList,
             .assembly => .assembly,
         };
-        if (zcu.builtin_decl_values.get(to_check) != .none) return;
+        if (zcu.std_lang_decl_values.get(to_check) != .none) return;
     }
 
     if (zcu.comp.debugIncremental()) {
@@ -1872,15 +1872,22 @@ fn analyzeNavVal(
     // that case and invalidate the dependee right now.
     if (zcu.clearOutdatedState(.wrap(.{ .nav_ty = nav_id }))) {
         assert(zir_decl.type_body == null); // otherwise we already resolved it with `Sema.ensureNavResolved`
-        zcu.resetUnit(.wrap(.{ .nav_ty = nav_id }));
-        try pt.addDependency(.wrap(.{ .nav_ty = nav_id }), .{ .nav_val = nav_id }); // inferred type depends on the value (that's us!)
+        const type_unit: AnalUnit = .wrap(.{ .nav_ty = nav_id });
+        const prev_type_failed = zcu.failed_analysis.contains(type_unit) or
+            zcu.transitive_failed_analysis.contains(type_unit);
+        zcu.resetUnit(type_unit);
+        try pt.addDependency(type_unit, .{ .nav_val = nav_id }); // inferred type depends on the value (that's us!)
         if (comp.debugIncremental()) {
-            const info = try zcu.incremental_debug_state.getUnitInfo(gpa, .wrap(.{ .nav_ty = nav_id }));
+            const info = try zcu.incremental_debug_state.getUnitInfo(gpa, type_unit);
             info.last_update_gen = zcu.generation;
             info.deps.clearRetainingCapacity();
         }
-        const type_changed: bool = if (old_nav.resolved) |r| r.type != nav_ty.toIntern() else true;
-        if (type_changed) {
+        const type_outdated: bool = type_outdated: {
+            if (prev_type_failed) break :type_outdated true;
+            const r = old_nav.resolved orelse break :type_outdated true;
+            break :type_outdated r.type != nav_ty.toIntern();
+        };
+        if (type_outdated) {
             try zcu.markDependeeOutdated(.marked_po, .{ .nav_ty = nav_id });
         } else {
             try zcu.markPoDependeeUpToDate(.{ .nav_ty = nav_id });
@@ -3751,7 +3758,7 @@ pub fn populateTestFunctions(pt: Zcu.PerThread) Allocator.Error!void {
 
     // Our job is to correctly set the value of the `test_functions` declaration if it has been
     // analyzed and sent to codegen, It usually will have been, because the test runner will
-    // reference it, and `std.builtin` shouldn't have type errors. However, if it hasn't been
+    // reference it, and `std.lang` shouldn't have type errors. However, if it hasn't been
     // analyzed, we will just terminate early, since clearly the test runner hasn't referenced
     // `test_functions` so there's no point populating it. More to the the point, we potentially
     // *can't* populate it without doing some type resolution, and... let's try to leave Sema in
@@ -3965,7 +3972,7 @@ pub fn getCoerced(pt: Zcu.PerThread, val: Value, new_ty: Type) Allocator.Error!V
     return .fromInterned(try ip.getCoerced(gpa, io, pt.tid, val.toIntern(), new_ty.toIntern()));
 }
 
-pub fn intType(pt: Zcu.PerThread, signedness: std.builtin.Signedness, bits: u16) Allocator.Error!Type {
+pub fn intType(pt: Zcu.PerThread, signedness: std.lang.Signedness, bits: u16) Allocator.Error!Type {
     return Type.fromInterned(try pt.intern(.{ .int_type = .{
         .signedness = signedness,
         .bits = bits,

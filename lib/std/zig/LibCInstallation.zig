@@ -13,6 +13,7 @@ const Target = std.Target;
 const fs = std.fs;
 const Allocator = std.mem.Allocator;
 const Path = std.Build.Cache.Path;
+const Cache = std.Build.Cache;
 const log = std.log.scoped(.libc_installation);
 const Environ = std.process.Environ;
 
@@ -70,7 +71,7 @@ pub fn parse(allocator: Allocator, io: Io, libc_file: []const u8, target: *const
                 if (value.len == 0) {
                     @field(self, field.name) = null;
                 } else {
-                    found_keys[i].allocated = try allocator.dupeZ(u8, value);
+                    found_keys[i].allocated = try allocator.dupeSentinel(u8, value, 0);
                     @field(self, field.name) = found_keys[i].allocated;
                 }
                 break;
@@ -708,8 +709,8 @@ pub const CrtBasenames = struct {
     pub const GetArgs = struct {
         target: *const std.Target,
         link_libc: bool,
-        output_mode: std.builtin.OutputMode,
-        link_mode: std.builtin.LinkMode,
+        output_mode: std.lang.OutputMode,
+        link_mode: std.lang.LinkMode,
         pie: bool,
     };
 
@@ -990,7 +991,7 @@ pub fn resolveCrtPaths(
     target: *const std.Target,
 ) error{ OutOfMemory, LibCInstallationMissingCrtDir }!CrtPaths {
     const crt_dir_path: Path = .{
-        .root_dir = std.Build.Cache.Directory.cwd(),
+        .root_dir = Cache.Directory.cwd(),
         .sub_path = lci.crt_dir orelse return error.LibCInstallationMissingCrtDir,
     };
     switch (target.os.tag) {
@@ -1016,7 +1017,7 @@ pub fn resolveCrtPaths(
         },
         .haiku, .serenity => {
             const gcc_dir_path: Path = .{
-                .root_dir = std.Build.Cache.Directory.cwd(),
+                .root_dir = Cache.Directory.cwd(),
                 .sub_path = lci.gcc_dir orelse return error.LibCInstallationMissingCrtDir,
             };
             return .{
@@ -1036,5 +1037,18 @@ pub fn resolveCrtPaths(
                 .crtn = if (crt_basenames.crtn) |basename| try crt_dir_path.join(arena, basename) else null,
             };
         },
+    }
+}
+
+pub fn addToHash(opt_lci: ?*const LibCInstallation, hh: *Cache.HashHelper, abi: std.Target.Abi) void {
+    const lci = opt_lci orelse return hh.add(false);
+    hh.add(true);
+    hh.addOptionalBytes(lci.crt_dir);
+    switch (abi) {
+        .msvc, .itanium => {
+            hh.addOptionalBytes(lci.msvc_lib_dir);
+            hh.addOptionalBytes(lci.kernel32_lib_dir);
+        },
+        else => {},
     }
 }

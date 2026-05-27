@@ -782,7 +782,7 @@ fn runResource(
         f.package_root = try ls.pkg_root.join(arena, computed_package_hash.toSlice());
         renameTmpIntoCache(io, package_sub_path, f.package_root) catch |err| {
             try eb.addRootErrorMessage(.{ .msg = try eb.printString(
-                "unable to rename temporary directory {f} into package cache directory {f}: {t}",
+                "failed renaming temporary directory {f} into package cache directory {f}: {t}",
                 .{ package_sub_path, f.package_root, err },
             ) });
             return error.FetchFailed;
@@ -802,7 +802,7 @@ fn runResource(
     if (!package_sub_path.eql(tmp_directory_path)) {
         tmp_directory_path.root_dir.handle.deleteDir(io, tmp_directory_path.sub_path) catch |err| switch (err) {
             error.Canceled => |e| return e,
-            else => |e| log.warn("failed to delete temporary directory {f}: {t}", .{ tmp_directory_path, e }),
+            else => |e| log.warn("failed deleting temporary directory {f}: {t}", .{ tmp_directory_path, e }),
         };
     }
 
@@ -1151,10 +1151,10 @@ const FileType = enum {
 
     /// Parameter is a content-disposition header value.
     fn fromContentDisposition(cd_header: []const u8) ?FileType {
-        const attach_end = ascii.indexOfIgnoreCase(cd_header, "attachment;") orelse
+        const attach_end = ascii.findIgnoreCase(cd_header, "attachment;") orelse
             return null;
 
-        var value_start = ascii.indexOfIgnoreCasePos(cd_header, attach_end + 1, "filename") orelse
+        var value_start = ascii.findIgnoreCasePos(cd_header, attach_end + 1, "filename") orelse
             return null;
         value_start += "filename".len;
         if (cd_header[value_start] == '*') {

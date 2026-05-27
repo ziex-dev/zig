@@ -11,14 +11,18 @@ const Alignment = std.mem.Alignment;
 
 pub const ArenaAllocator = @import("heap/ArenaAllocator.zig");
 pub const SmpAllocator = @import("heap/SmpAllocator.zig");
+pub const SafeAllocator = @import("heap/SafeAllocator.zig");
 pub const FixedBufferAllocator = @import("heap/FixedBufferAllocator.zig");
 pub const BufferFirstAllocator = @import("heap/BufferFirstAllocator.zig");
 pub const PageAllocator = @import("heap/PageAllocator.zig");
 pub const WasmAllocator = if (builtin.single_threaded) BrkAllocator else @compileError("unimplemented");
 pub const BrkAllocator = @import("heap/BrkAllocator.zig");
 
+/// Deprecated; use `SafeAllocator.Options`.
 pub const DebugAllocatorConfig = @import("heap/debug_allocator.zig").Config;
+/// Deprecated; use `SafeAllocator`.
 pub const DebugAllocator = @import("heap/debug_allocator.zig").DebugAllocator;
+/// Deprecated.
 pub const Check = enum { ok, leak };
 
 /// A memory pool that can allocate objects of a single type very quickly.
@@ -378,6 +382,17 @@ test smp_allocator {
     try testAllocatorAlignedShrink(smp_allocator);
 }
 
+test SafeAllocator {
+    var instance: SafeAllocator = .init(page_allocator, .{});
+    defer _ = instance.deinit();
+    const allocator = instance.allocator();
+
+    try testAllocator(allocator);
+    try testAllocatorAligned(allocator);
+    try testAllocatorLargeAlignment(allocator);
+    try testAllocatorAlignedShrink(allocator);
+}
+
 test PageAllocator {
     const allocator = page_allocator;
     try testAllocator(allocator);
@@ -608,6 +623,7 @@ const page_size_min_default: ?usize = switch (builtin.os.tag) {
         .hppa => 4 << 10,
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb, .aarch64, .aarch64_be => 4 << 10,
+        .m88k => 4 << 10,
         .mips64, .mips64el => 4 << 10,
         .powerpc, .powerpc64, .powerpc64le, .powerpcle => 4 << 10,
         .riscv64 => 4 << 10,
@@ -771,6 +787,7 @@ const page_size_max_default: ?usize = switch (builtin.os.tag) {
         .hppa => 4 << 10,
         .x86, .x86_64 => 4 << 10,
         .thumb, .thumbeb, .arm, .armeb, .aarch64, .aarch64_be => 4 << 10,
+        .m88k => 4 << 10,
         .mips64, .mips64el => 16 << 10,
         .powerpc, .powerpc64, .powerpc64le, .powerpcle => 4 << 10,
         .riscv64 => 4 << 10,
@@ -878,6 +895,7 @@ test {
     _ = @import("heap/memory_pool.zig");
     _ = ArenaAllocator;
     _ = DebugAllocator(.{});
+    _ = SafeAllocator;
     _ = FixedBufferAllocator;
     _ = BufferFirstAllocator;
     if (builtin.single_threaded) {

@@ -792,25 +792,6 @@ const module_test_targets = blk: {
             .skip_modules = &.{"std"},
             .extra_target = true,
         },
-        .{
-            .target = .{
-                .cpu_arch = .powerpc,
-                .os_tag = .linux,
-                .abi = .gnueabi,
-            },
-            .link_libc = true,
-            .extra_target = true,
-        },
-        .{
-            .target = .{
-                .cpu_arch = .powerpc,
-                .os_tag = .linux,
-                .abi = .gnueabihf,
-            },
-            .link_libc = true,
-            // https://github.com/ziglang/zig/issues/2256
-            .skip_modules = &.{"std"},
-        },
 
         .{
             .target = .{
@@ -1013,6 +994,23 @@ const module_test_targets = blk: {
             },
             .link_libc = true,
         },
+
+        .{
+            .target = .{
+                .cpu_arch = .sparc64,
+                .os_tag = .linux,
+                .abi = .none,
+            },
+        },
+        // SPARC linking support is currently incomplete.
+        // .{
+        //     .target = .{
+        //         .cpu_arch = .sparc64,
+        //         .os_tag = .linux,
+        //         .abi = .gnu,
+        //     },
+        //     .link_libc = true,
+        // },
 
         // Calls are normally lowered to branch instructions that only support +/- 16 MB range when
         // targeting Thumb. This easily becomes insufficient for our test binaries, so use long
@@ -1359,16 +1357,25 @@ const module_test_targets = blk: {
             .target = .{
                 .cpu_arch = .powerpc,
                 .os_tag = .netbsd,
-                .abi = .eabi,
+                .abi = .eabihf,
             },
             .link_libc = true,
-            .extra_target = true,
         },
+
         .{
             .target = .{
-                .cpu_arch = .powerpc,
+                .cpu_arch = .riscv32,
                 .os_tag = .netbsd,
-                .abi = .eabihf,
+                .abi = .none,
+            },
+            .link_libc = true,
+        },
+
+        .{
+            .target = .{
+                .cpu_arch = .riscv64,
+                .os_tag = .netbsd,
+                .abi = .none,
             },
             .link_libc = true,
         },
@@ -2435,8 +2442,10 @@ pub fn addCliTests(b: *std.Build) *Step {
         });
         run_test.addArg("--build-file");
         run_test.addFileArg(b.path("test/cli/options/build.zig"));
+
         run_test.addArg("--cache-dir");
-        run_test.addFileArg(.{ .cwd_relative = b.cache_root.join(b.allocator, &.{}) catch @panic("OOM") });
+        run_test.addFileArg(.cache_root);
+
         run_test.setName("test build options");
 
         step.dependOn(&run_test.step);
@@ -2467,7 +2476,7 @@ pub const ModuleTestOptions = struct {
     skip_linux: bool,
     skip_llvm: bool,
     skip_libc: bool,
-    max_rss: usize = 0,
+    max_rss: u64 = 0,
     no_builtin: bool = false,
     sanitize_thread: ?bool = null,
     build_options: ?*Step.Options = null,
@@ -2614,6 +2623,10 @@ fn addOneModuleTest(
     if (mem.eql(u8, options.name, "compiler-rt") or mem.eql(u8, options.name, "libc")) {
         these_tests.root_module.stack_protector = false;
     }
+    // https://github.com/llvm/llvm-project/issues/195561
+    if (target.cpu.arch.isPowerPC()) {
+        these_tests.root_module.stack_protector = false;
+    }
     if (options.build_options) |build_options| {
         these_tests.root_module.addOptions("build_options", build_options);
     }
@@ -2741,6 +2754,10 @@ fn addOneModuleTest(
         // Don't run spirv binaries
         _ = these_tests.getEmittedBin();
         step.dependOn(&these_tests.step);
+    } else if (target.cpu.arch == .x86_64 and target.os.tag.isDarwin()) {
+        // https://codeberg.org/ziglang/zig/issues/35267
+        _ = these_tests.getEmittedBin();
+        step.dependOn(&these_tests.step);
     } else {
         const run = b.addRunArtifact(these_tests);
         run.skip_foreign_checks = true;
@@ -2787,7 +2804,7 @@ const CAbiTestOptions = struct {
     skip_darwin: bool,
     skip_linux: bool,
     skip_llvm: bool,
-    max_rss: usize = 0,
+    max_rss: u64 = 0,
 };
 
 pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
@@ -2855,6 +2872,11 @@ pub fn addCAbiTests(b: *std.Build, options: CAbiTestOptions) *Step {
                 .max_rss = options.max_rss,
             });
 
+            // https://github.com/llvm/llvm-project/issues/195561
+            if (target.cpu.arch.isPowerPC()) {
+                test_step.root_module.stack_protector = false;
+            }
+
             // This test is intentionally trying to check if the external ABI is
             // done properly. LTO would be a hindrance to this.
             test_step.lto = .none;
@@ -2879,7 +2901,7 @@ pub fn addCases(
 
     var cases = @import("src/Cases.zig").init(gpa, arena, io);
 
-    var dir = try b.build_root.handle.openDir(io, "test/cases", .{ .iterate = true });
+    var dir = try b.root.openDir(io, "test/cases", .{ .iterate = true });
     defer dir.close(io);
 
     cases.addFromDir(dir, b);
@@ -2937,7 +2959,7 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
         }),
     });
 
-    var dir = try b.build_root.handle.openDir(io, "test/incremental", .{ .iterate = true });
+    var dir = try b.root.openDir(io, "test/incremental", .{ .iterate = true });
     defer dir.close(io);
 
     var it = try dir.walk(b.graph.arena);
@@ -2955,10 +2977,11 @@ pub fn addIncrementalTests(b: *std.Build, test_step: *Step, test_filters: []cons
 
             run.addArg(b.graph.zig_exe);
             run.addFileArg(b.path("test/incremental/").path(b, entry.path));
-            run.addArgs(&.{
-                "--zig-lib-dir", b.graph.zig_lib_directory.path orelse ".",
-                "--target",      target_str,
-            });
+
+            run.addArg("--zig-lib-dir");
+            run.addDirectoryArg(.zig_lib);
+
+            run.addArgs(&.{ "--target", target_str });
 
             run.addArg("--quiet"); // don't fill stderr telling us about skipped tests etc
 

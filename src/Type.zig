@@ -19,7 +19,7 @@ const Type = @This();
 
 ip_index: InternPool.Index,
 
-pub fn zigTypeTag(ty: Type, zcu: *const Zcu) std.builtin.TypeId {
+pub fn zigTypeTag(ty: Type, zcu: *const Zcu) std.lang.TypeId {
     return zcu.intern_pool.zigTypeTag(ty.toIntern());
 }
 
@@ -903,7 +903,7 @@ pub fn ptrAlignment(ptr_ty: Type, zcu: *Zcu) Alignment {
     return Type.fromInterned(ptr_key.child).abiAlignment(zcu);
 }
 
-pub fn ptrAddressSpace(ty: Type, zcu: *const Zcu) std.builtin.AddressSpace {
+pub fn ptrAddressSpace(ty: Type, zcu: *const Zcu) std.lang.AddressSpace {
     return switch (zcu.intern_pool.indexToKey(ty.toIntern())) {
         .ptr_type => |ptr_type| ptr_type.flags.address_space,
         .opt_type => |child| zcu.intern_pool.indexToKey(child).ptr_type.flags.address_space,
@@ -1094,13 +1094,18 @@ pub fn abiSize(ty: Type, zcu: *const Zcu) u64 {
         },
         .opt_type => |child_ty_ip| {
             const child_ty: Type = .fromInterned(child_ty_ip);
-            if (child_ty.classify(zcu) == .no_possible_value) return 0;
-            if (ty.optionalReprIsPayload(zcu)) return child_ty.abiSize(zcu);
-            // Optional types are represented as a struct with the child type as the first
-            // field and a boolean as the second. Since the child type's abi alignment is
-            // guaranteed to be >= that of bool's (1 byte) the added size is exactly equal
-            // to the child type's ABI alignment.
-            return child_ty.abiSize(zcu) + child_ty.abiAlignment(zcu).toByteUnits().?;
+            switch (child_ty.classify(zcu)) {
+                .no_possible_value => return 0, // we are OPV
+                .fully_comptime => return 0, // we are also fully_comptime (same justification as error unions, see below)
+                .one_possible_value, .partially_comptime, .runtime => {
+                    if (ty.optionalReprIsPayload(zcu)) return child_ty.abiSize(zcu);
+                    // Optional types are represented as a struct with the child type as the first
+                    // field and a boolean as the second. Since the child type's abi alignment is
+                    // guaranteed to be >= that of bool's (1 byte) the added size is exactly equal
+                    // to the child type's ABI alignment.
+                    return child_ty.abiSize(zcu) + child_ty.abiAlignment(zcu).toByteUnits().?;
+                },
+            }
         },
         .error_set_type, .inferred_error_set_type => errorAbiSize(zcu),
         .error_union_type => |error_union| {
@@ -1337,12 +1342,12 @@ pub fn isSinglePointer(ty: Type, zcu: *const Zcu) bool {
 }
 
 /// Asserts `ty` is a pointer.
-pub fn ptrSize(ty: Type, zcu: *const Zcu) std.builtin.Type.Pointer.Size {
+pub fn ptrSize(ty: Type, zcu: *const Zcu) std.lang.Type.Pointer.Size {
     return ty.ptrSizeOrNull(zcu).?;
 }
 
 /// Returns `null` if `ty` is not a pointer.
-pub fn ptrSizeOrNull(ty: Type, zcu: *const Zcu) ?std.builtin.Type.Pointer.Size {
+pub fn ptrSizeOrNull(ty: Type, zcu: *const Zcu) ?std.lang.Type.Pointer.Size {
     return switch (zcu.intern_pool.indexToKey(ty.toIntern())) {
         .ptr_type => |ptr_info| ptr_info.flags.size,
         else => null,
@@ -1627,7 +1632,7 @@ pub fn unionGetLayout(ty: Type, zcu: *const Zcu) Zcu.UnionLayout {
     return Type.getUnionLayout(union_obj, zcu);
 }
 
-pub fn containerLayout(ty: Type, zcu: *const Zcu) std.builtin.Type.ContainerLayout {
+pub fn containerLayout(ty: Type, zcu: *const Zcu) std.lang.Type.ContainerLayout {
     const ip = &zcu.intern_pool;
     return switch (ip.indexToKey(ty.toIntern())) {
         .tuple_type => .auto,
@@ -1949,7 +1954,7 @@ pub fn fnReturnType(ty: Type, zcu: *const Zcu) Type {
 }
 
 /// Asserts the type is a function.
-pub fn fnCallingConvention(ty: Type, zcu: *const Zcu) std.builtin.CallingConvention {
+pub fn fnCallingConvention(ty: Type, zcu: *const Zcu) std.lang.CallingConvention {
     return zcu.intern_pool.indexToKey(ty.toIntern()).func_type.cc;
 }
 
@@ -2477,7 +2482,7 @@ pub fn explicitFieldAlignment(ty: Type, index: usize, zcu: *const Zcu) Alignment
 /// Asserts that the layout of `field_ty` is resolved. Asserts that `layout` is not `.@"packed"`.
 pub fn defaultStructFieldAlignment(
     field_ty: Type,
-    layout: std.builtin.Type.ContainerLayout,
+    layout: std.lang.Type.ContainerLayout,
     zcu: *const Zcu,
 ) Alignment {
     const overalign_big_int = switch (layout) {
@@ -3227,7 +3232,7 @@ pub fn validateExtern(ty: Type, position: ExternPosition, zcu: *const Zcu) bool 
         .optional => ty.isPtrLikeOptional(zcu),
     };
 }
-fn validateExternCallconv(cc: std.builtin.CallingConvention) bool {
+fn validateExternCallconv(cc: std.lang.CallingConvention) bool {
     return switch (cc) {
         // For now we want to authorize PTX kernel to use zig objects, even if we end up exposing the ABI.
         // The goal is to experiment with more integrated CPU/GPU code.
