@@ -518,7 +518,7 @@ fn expandVariablesCmake(
                     }
 
                     const key = contents[curr + 1 .. close_pos];
-                    const index = value_map.getIndex(key) orelse return error.MissingValue;
+                    const index = value_map.getIndex(key) orelse .undef;
                     value_map.values()[index] = true; // Mark as used.
                     const value = value_pairs[index].index;
                     const missing = contents[source_offset..curr];
@@ -569,12 +569,14 @@ fn expandVariablesCmake(
 
                 const key_start = open_pos.target + open_var.len;
                 const key = result.items[key_start..];
-                if (key.len == 0) {
-                    return error.MissingKey;
-                }
-                const index = value_map.getIndex(key) orelse return error.MissingValue;
-                value_map.values()[index] = true; // Mark as used.
-                const value = value_pairs[index].index;
+                const index = value_map.getIndex(key) orelse null;
+                const value = value_blk: {
+                    if (index) |value_index| {
+                        value_map.values()[value_index] = true; // Mark as used.
+                        break :value_blk value_pairs[index].index orelse .undef;
+                    }
+                    break :value_blk .undef;
+                };
                 result.shrinkRetainingCapacity(result.items.len - key.len - open_var.len);
                 switch (value.unpack(conf)) {
                     .undef, .defined => {},
