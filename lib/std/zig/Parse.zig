@@ -1571,7 +1571,7 @@ const PrecClass = struct {
     assoc: Assoc = Assoc.left,
 
     const Group = enum {
-        const num_distinct = std.meta.fields(Group).len;
+        const num_distinct = std.meta.fieldNames(Group).len;
 
         arithmetic_product_chainable,
         arithmetic_product_nonchainable,
@@ -1747,7 +1747,7 @@ const operTable = std.enums.directEnumArrayDefault(Token.Tag, OperInfo, .{ .prec
     .asterisk_percent = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .mul_wrap },
     .asterisk_pipe = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .mul_sat },
 
-    .asterisk_asterisk = .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .array_mult },
+    //.asterisk_asterisk = .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .array_mult },
     .percent = .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .mod },
     //zig-fmt: on
 });
