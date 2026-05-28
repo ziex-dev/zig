@@ -2659,6 +2659,25 @@ test "resize with clamp" {
     try testing.expect(ring.cq.cqes.len < entries); // 64k
 }
 
+test "set_iowait" {
+    var ring = IoUring.init(1, 0) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
+    defer ring.deinit();
+    if (ring.features & linux.IORING_FEAT_NO_IOWAIT == 0) return error.SkipZigTest;
+
+    try testing.expectEqual(0, ring.enter_flags);
+    try ring.set_iowait(false);
+    try testing.expectEqual(linux.IORING_ENTER_NO_IOWAIT, ring.enter_flags);
+    _ = try ring.nop(0xaaaaaaaa);
+    try testing.expectEqual(1, try ring.submit());
+    try testing.expectEqual(0, (try ring.copy_cqe()).res);
+    try ring.set_iowait(true);
+    try testing.expectEqual(0, ring.enter_flags);
+}
+
 // Prepare, submit recv and get cqe using buffer group.
 fn buf_grp_recv_submit_get_cqe(
     ring: *IoUring,

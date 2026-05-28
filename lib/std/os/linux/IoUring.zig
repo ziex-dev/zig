@@ -17,6 +17,7 @@ sq: SubmissionQueue,
 cq: CompletionQueue,
 flags: u32,
 features: u32,
+enter_flags: u8 = 0,
 
 /// A friendly way to setup an io_uring, with default linux.io_uring_params.
 /// `entries` must be a power of two between 1 and 32768, although the kernel will make the final
@@ -175,7 +176,7 @@ pub fn submit(self: *IoUring) !u32 {
 /// Matches the implementation of io_uring_submit_and_wait() in liburing.
 pub fn submit_and_wait(self: *IoUring, wait_nr: u32) !u32 {
     const submitted = self.flush_sq();
-    var flags: u32 = 0;
+    var flags: u32 = self.enter_flags;
     if (self.sq_ring_needs_enter(&flags) or wait_nr > 0) {
         if (wait_nr > 0 or (self.flags & linux.IORING_SETUP_IOPOLL) != 0) {
             flags |= linux.IORING_ENTER_GETEVENTS;
@@ -245,7 +246,6 @@ pub fn flush_sq(self: *IoUring) u32 {
 /// For the latter case, we set the SQ thread wakeup flag.
 /// Matches the implementation of sq_ring_needs_enter() in liburing.
 pub fn sq_ring_needs_enter(self: *IoUring, flags: *u32) bool {
-    assert(flags.* == 0);
     if ((self.flags & linux.IORING_SETUP_SQPOLL) == 0) return true;
     if ((@atomicLoad(u32, self.sq.flags, .unordered) & linux.IORING_SQ_NEED_WAKEUP) != 0) {
         flags.* |= linux.IORING_ENTER_SQ_WAKEUP;
@@ -285,7 +285,7 @@ pub fn copy_cqes(self: *IoUring, cqes: []linux.io_uring_cqe, wait_nr: u32) !u32 
     const count = self.copy_cqes_ready(cqes);
     if (count > 0) return count;
     if (self.cq_ring_needs_flush() or wait_nr > 0) {
-        _ = try self.enter(0, wait_nr, linux.IORING_ENTER_GETEVENTS);
+        _ = try self.enter(0, wait_nr, self.enter_flags | linux.IORING_ENTER_GETEVENTS);
         return self.copy_cqes_ready(cqes);
     }
     return 0;
@@ -341,6 +341,24 @@ pub fn cq_advance(self: *IoUring, count: u32) void {
     if (count > 0) {
         // Ensure the kernel only sees the new head value after the CQEs have been read.
         @atomicStore(u32, self.cq.head, self.cq.head.* +% count, .release);
+    }
+}
+
+/// Toggle of iowait usage when waiting on CQEs. Enabled by default when a ring
+/// is created marking a waiting task as being in iowait if it's sleeping
+/// waiting on events and there are pending requests. This isn't necessarily
+/// always useful, and may be confusing on non-storage setups where iowait isn't
+/// expected. It can also cause extra power usage by preventing the CPU from
+/// entering lower sleep states.
+/// Available since 6.15
+pub fn set_iowait(self: *IoUring, enable: bool) !void {
+    if (self.features & linux.IORING_FEAT_NO_IOWAIT == 0) {
+        return error.SystemOutdated;
+    }
+    if (enable) {
+        self.enter_flags &= ~@as(u8, linux.IORING_ENTER_NO_IOWAIT);
+    } else {
+        self.enter_flags |= linux.IORING_ENTER_NO_IOWAIT;
     }
 }
 
