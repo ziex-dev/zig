@@ -6,9 +6,10 @@
 //! https://git.musl-libc.org/cgit/musl/tree/src/math/sqrtl.c
 
 const std = @import("std");
+const math = std.math;
 const builtin = @import("builtin");
 const arch = builtin.cpu.arch;
-const math = std.math;
+
 const compiler_rt = @import("../compiler_rt.zig");
 const symbol = compiler_rt.symbol;
 
@@ -508,15 +509,15 @@ const rsqrt_tab: [128]u16 = .{
 };
 
 inline fn mul16(a: u16, b: u16) u16 {
-    return @intCast(@as(u32, a) * b >> 16);
+    return @intCast((@as(u32, a) * b) >> 16);
 }
 
 inline fn mul32(a: u32, b: u32) u32 {
-    return @intCast(@as(u64, a) * b >> 32);
+    return @intCast((@as(u64, a) * b) >> 32);
 }
 
 inline fn mul64(a: u64, b: u64) u64 {
-    return @intCast(@as(u128, a) * b >> 64);
+    return @intCast((@as(u128, a) * b) >> 64);
 }
 
 inline fn mul80(a: u80, b: u80) u80 {
@@ -524,7 +525,7 @@ inline fn mul80(a: u80, b: u80) u80 {
     const alo = a & 0xFF_FFFF_FFFF;
     const bhi = b >> 40;
     const blo = b & 0xFF_FFFF_FFFF;
-    return ahi * bhi + (ahi * blo >> 40) + (alo * bhi >> 40);
+    return ahi * bhi + ((ahi * blo) >> 40) + ((alo * bhi) >> 40);
 }
 
 inline fn mul128(a: u128, b: u128) u128 {
@@ -532,7 +533,7 @@ inline fn mul128(a: u128, b: u128) u128 {
     const alo = a & 0xFFFF_FFFF_FFFF_FFFF;
     const bhi = b >> 64;
     const blo = b & 0xFFFF_FFFF_FFFF_FFFF;
-    return ahi * bhi + (ahi * blo >> 64) + (alo * bhi >> 64);
+    return ahi * bhi + ((ahi * blo) >> 64) + ((alo * bhi) >> 64);
 }
 
 inline fn mul80_tail(a: u80, b: u80) u80 {
