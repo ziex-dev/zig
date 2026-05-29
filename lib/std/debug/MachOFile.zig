@@ -37,48 +37,7 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
     const all_mapped_memory = try mapDebugInfoFile(io, path);
     errdefer posix.munmap(all_mapped_memory);
 
-    // In most cases, the file we just mapped is a Mach-O binary. However, it could be a "universal
-    // binary": a simple file format which contains Mach-O binaries for multiple targets. For
-    // instance, `/usr/lib/dyld` is currently distributed as a universal binary containing images
-    // for both ARM64 macOS and x86_64 macOS.
-    if (all_mapped_memory.len < 4) return error.InvalidMachO;
-    const magic = std.mem.readInt(u32, all_mapped_memory.ptr[0..4], .little);
-
-    // The contents of a Mach-O file, which may or may not be the whole of `all_mapped_memory`.
-    const mapped_macho = switch (magic) {
-        macho.MH_MAGIC_64 => all_mapped_memory,
-
-        macho.FAT_CIGAM => mapped_macho: {
-            // This is the universal binary format (aka a "fat binary").
-            var fat_r: Io.Reader = .fixed(all_mapped_memory);
-            const hdr = fat_r.takeStruct(macho.fat_header, .big) catch |err| switch (err) {
-                error.ReadFailed => unreachable,
-                error.EndOfStream => return error.InvalidMachO,
-            };
-            const want_cpu_type = switch (arch) {
-                .x86_64 => macho.CPU_TYPE_X86_64,
-                .aarch64 => macho.CPU_TYPE_ARM64,
-                else => unreachable,
-            };
-            for (0..hdr.nfat_arch) |_| {
-                const fat_arch = fat_r.takeStruct(macho.fat_arch, .big) catch |err| switch (err) {
-                    error.ReadFailed => unreachable,
-                    error.EndOfStream => return error.InvalidMachO,
-                };
-                if (fat_arch.cputype != want_cpu_type) continue;
-                if (fat_arch.offset + fat_arch.size > all_mapped_memory.len) return error.InvalidMachO;
-                break :mapped_macho all_mapped_memory[fat_arch.offset..][0..fat_arch.size];
-            }
-            // `arch` was not present in the fat binary.
-            return error.MissingDebugInfo;
-        },
-
-        // Even on modern 64-bit targets, this format doesn't seem to be too extensively used. It
-        // will be fairly easy to add support here if necessary; it's very similar to above.
-        macho.FAT_CIGAM_64 => return error.UnsupportedDebugInfo,
-
-        else => return error.InvalidMachO,
-    };
+    const mapped_macho = try selectMachOSlice(all_mapped_memory, arch);
 
     var r: Io.Reader = .fixed(mapped_macho);
     const hdr = r.takeStruct(macho.mach_header_64, .little) catch |err| switch (err) {
@@ -553,6 +512,55 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
         .symtab_raw = symtab_raw,
         .symbols_by_name = symbols_by_name.move(),
     };
+}
+
+fn selectMachOSlice(
+    all_mapped_memory: []align(std.heap.page_size_min) const u8,
+    arch: std.Target.Cpu.Arch,
+) Error![]const u8 {
+    // In most cases, the file we just mapped is a Mach-O binary. However, it could be a "universal
+    // binary": a simple file format which contains Mach-O binaries for multiple targets. For
+    // instance, `/usr/lib/dyld` is currently distributed as a universal binary containing images
+    // for both ARM64 macOS and x86_64 macOS.
+    if (all_mapped_memory.len < 4) return error.InvalidMachO;
+    const magic = std.mem.readInt(u32, all_mapped_memory.ptr[0..4], .little);
+
+    // The contents of a Mach-O file, which may or may not be the whole of `all_mapped_memory`.
+    const mapped_macho = switch (magic) {
+        macho.MH_MAGIC_64 => all_mapped_memory,
+
+        macho.FAT_CIGAM => mapped_macho: {
+            // This is the universal binary format (aka a "fat binary").
+            var fat_r: Io.Reader = .fixed(all_mapped_memory);
+            const hdr = fat_r.takeStruct(macho.fat_header, .big) catch |err| switch (err) {
+                error.ReadFailed => unreachable,
+                error.EndOfStream => return error.InvalidMachO,
+            };
+            const want_cpu_type = switch (arch) {
+                .x86_64 => macho.CPU_TYPE_X86_64,
+                .aarch64 => macho.CPU_TYPE_ARM64,
+                else => unreachable,
+            };
+            for (0..hdr.nfat_arch) |_| {
+                const fat_arch = fat_r.takeStruct(macho.fat_arch, .big) catch |err| switch (err) {
+                    error.ReadFailed => unreachable,
+                    error.EndOfStream => return error.InvalidMachO,
+                };
+                if (fat_arch.cputype != want_cpu_type) continue;
+                if (fat_arch.offset + fat_arch.size > all_mapped_memory.len) return error.InvalidMachO;
+                break :mapped_macho all_mapped_memory[fat_arch.offset..][0..fat_arch.size];
+            }
+            // `arch` was not present in the fat binary.
+            return error.MissingDebugInfo;
+        },
+
+        // Even on modern 64-bit targets, this format doesn't seem to be too extensively used. It
+        // will be fairly easy to add support here if necessary; it's very similar to above.
+        macho.FAT_CIGAM_64 => return error.UnsupportedDebugInfo,
+
+        else => return error.InvalidMachO,
+    };
+    return mapped_macho;
 }
 
 /// Uses `mmap` to map the file at `path` into memory.
