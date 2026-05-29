@@ -1764,7 +1764,7 @@ pub fn chmod(path: [*:0]const u8, mode: mode_t) usize {
     if (@hasField(SYS, "chmod")) {
         return syscall2(.chmod, @intFromPtr(path), mode);
     } else {
-        return fchmodat(AT.FDCWD, path, mode);
+        return syscall3(.fchmodat, @as(u32, @bitCast(@as(i32, AT.FDCWD))), @intFromPtr(path), mode);
     }
 }
 
