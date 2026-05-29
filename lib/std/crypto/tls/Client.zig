@@ -1675,7 +1675,7 @@ else
         .ECDHE_RSA_WITH_AES_256_GCM_SHA384,
     });
 
-fn testReadError(input_buf: []const u8, cipher: tls.ApplicationCipher) ReadError {
+fn testReadError(input_buf: []const u8, tls_version: tls.ProtocolVersion, cipher: tls.ApplicationCipher) ReadError {
     var input_reader: Reader = .fixed(input_buf);
     var read_buf: [tls.max_ciphertext_record_len]u8 = undefined;
     var c: Client = .{
@@ -1688,34 +1688,7 @@ fn testReadError(input_buf: []const u8, cipher: tls.ApplicationCipher) ReadError
         },
         .output = undefined,
         .writer = undefined,
-        .tls_version = .tls_1_3,
-        .read_seq = 0,
-        .write_seq = 0,
-        .received_close_notify = false,
-        .allow_truncation_attacks = false,
-        .application_cipher = cipher,
-        .ssl_key_log = null,
-    };
-    var w: Writer = .failing;
-    std.testing.expectError(error.ReadFailed, c.reader.stream(&w, .unlimited)) catch
-        @panic("expected ReadFailed");
-    return c.read_err.?;
-}
-
-fn testReadErrorTls12(input_buf: []const u8, cipher: tls.ApplicationCipher) ReadError {
-    var input_reader: Reader = .fixed(input_buf);
-    var read_buf: [tls.max_ciphertext_record_len]u8 = undefined;
-    var c: Client = .{
-        .input = &input_reader,
-        .reader = .{
-            .buffer = &read_buf,
-            .vtable = &.{ .stream = stream, .readVec = readVec },
-            .seek = 0,
-            .end = 0,
-        },
-        .output = undefined,
-        .writer = undefined,
-        .tls_version = .tls_1_2,
+        .tls_version = tls_version,
         .read_seq = 0,
         .write_seq = 0,
         .received_close_notify = false,
@@ -1743,6 +1716,7 @@ test "empty inner plaintext" {
 
     try std.testing.expectEqual(error.TlsDecodeError, testReadError(
         &record_header ++ ciphertext ++ tag,
+        .tls_1_3,
         .{ .CHACHA20_POLY1305_SHA256 = .{ .tls_1_3 = .{
             .server_key = key,
             .server_iv = iv,
@@ -1762,6 +1736,7 @@ test "record shorter than tag" {
 
     try std.testing.expectEqual(error.TlsRecordOverflow, testReadError(
         &wire,
+        .tls_1_3,
         .{ .CHACHA20_POLY1305_SHA256 = .{ .tls_1_3 = .{
             .server_key = undefined,
             .server_iv = undefined,
@@ -1778,8 +1753,9 @@ test "TLS 1.2 record shorter than IV plus tag" {
     const record_len: u16 = P.record_iv_length + P.mac_length - 1;
     const header = [_]u8{ 0x17, 0x03, 0x03 } ++ mem.toBytes(big(record_len));
 
-    try std.testing.expectEqual(error.TlsRecordOverflow, testReadErrorTls12(
+    try std.testing.expectEqual(error.TlsRecordOverflow, testReadError(
         &(header ++ @as([record_len]u8, @splat(0))),
+        .tls_1_2,
         .{ .AES_128_GCM_SHA256 = .{ .tls_1_2 = mem.zeroes(P.Tls_1_2) } },
     ));
 }
