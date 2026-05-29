@@ -1136,7 +1136,7 @@ pub fn mknod(path: [*:0]const u8, mode: mode_t, dev: dev_t) usize {
     if (@hasField(SYS, "mknod")) {
         return syscall3(.mknod, @intFromPtr(path), mode, dev);
     } else {
-        return mknodat(AT.FDCWD, path, mode, dev);
+        return syscall4(.mknodat, @as(u32, @bitCast(@as(i32, AT.FDCWD))), @intFromPtr(path), mode, dev);
     }
 }
 
