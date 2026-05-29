@@ -1769,6 +1769,7 @@ fn fileReadStreamingLimit(
             .BADF => |err| return errnoBug(err), // File descriptor used after closed
             .IO => return error.InputOutput,
             .ISDIR => return error.IsDir,
+            .SRCH => return error.FileNotFound,
             .NOBUFS => return error.SystemResources,
             .NOMEM => return error.SystemResources,
             .NOTCONN => return error.SocketUnconnected,
@@ -2640,6 +2641,7 @@ fn dirOpenFile(
             .NFILE => return error.SystemFdQuotaExceeded,
             .NODEV => return error.NoDevice,
             .NOENT => return error.FileNotFound,
+            .SRCH => return error.FileNotFound,
             .NOMEM => return error.SystemResources,
             .NOSPC => return error.NoSpaceLeft,
             .NOTDIR => return error.NotDir,
@@ -3544,6 +3546,7 @@ fn fileReadPositional(
             .AGAIN => return error.WouldBlock,
             .IO => return error.InputOutput,
             .ISDIR => return error.IsDir,
+            .SRCH => return error.FileNotFound,
             .NOTCONN => |err| return errnoBug(err), // not a socket
             .CONNRESET => |err| return errnoBug(err), // not a socket
             .INVAL => |err| return errnoBug(err),

@@ -434,6 +434,7 @@ pub fn resolveTargetQuery(io: Io, query: Target.Query) DetectError!Target {
         error.InputOutput,
         error.LockViolation,
         error.FileSystem,
+        error.FileNotFound,
 
         error.UnableToOpenElfFile,
         error.UnhelpfulFile,
@@ -579,6 +580,7 @@ pub const AbiAndDynamicLinkerFromFileError = error{
     SocketUnconnected,
     LockViolation,
     FileSystem,
+    FileNotFound,
 };
 
 fn abiAndDynamicLinkerFromFile(

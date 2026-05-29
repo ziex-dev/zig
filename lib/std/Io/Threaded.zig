@@ -9781,6 +9781,7 @@ fn fileReadStreamingPosix(file: File, data: []const []u8) File.ReadStreamingErro
             .AGAIN => return syscall.fail(error.WouldBlock),
             .IO => return syscall.fail(error.InputOutput),
             .ISDIR => return syscall.fail(error.IsDir),
+            .SRCH => return syscall.fail(error.FileNotFound),
             .NOBUFS => return syscall.fail(error.SystemResources),
             .NOMEM => return syscall.fail(error.SystemResources),
             .NOTCONN => return syscall.fail(error.SocketUnconnected),
@@ -9928,6 +9929,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
                 .AGAIN => |err| return syscall.errnoBug(err),
                 .IO => return syscall.fail(error.InputOutput),
                 .ISDIR => return syscall.fail(error.IsDir),
+                .SRCH => return syscall.fail(error.FileNotFound),
                 .BADF => return syscall.fail(error.IsDir),
                 .NOBUFS => return syscall.fail(error.SystemResources),
                 .NOMEM => return syscall.fail(error.SystemResources),
@@ -9964,6 +9966,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
                 .AGAIN => return syscall.fail(error.WouldBlock),
                 .IO => return syscall.fail(error.InputOutput),
                 .ISDIR => return syscall.fail(error.IsDir),
+                .SRCH => return syscall.fail(error.FileNotFound),
                 .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
                 .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
                 .INVAL => |err| return syscall.errnoBug(err),
@@ -9998,6 +10001,7 @@ fn fileReadPositionalPosix(file: File, data: []const []u8, offset: u64) File.Rea
             .AGAIN => return syscall.fail(error.WouldBlock),
             .IO => return syscall.fail(error.InputOutput),
             .ISDIR => return syscall.fail(error.IsDir),
+            .SRCH => return syscall.fail(error.FileNotFound),
             .NOTCONN => |err| return syscall.errnoBug(err), // not a socket
             .CONNRESET => |err| return syscall.errnoBug(err), // not a socket
             .INVAL => |err| return syscall.errnoBug(err),

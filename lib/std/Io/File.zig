@@ -480,6 +480,8 @@ pub const ReadPositionalError = error{
     SystemResources,
     /// Trying to read a directory file descriptor as if it were a file.
     IsDir,
+    // The file may disappear while being read from, or some other I/O error occurs mid-read.
+    FileNotFound,
     /// Non-blocking has been enabled, and reading from the file descriptor
     /// would block.
     WouldBlock,

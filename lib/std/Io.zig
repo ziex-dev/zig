@@ -271,6 +271,8 @@ pub const Operation = union(enum) {
             /// File was not opened with read capability.
             NotOpenForReading,
             SocketUnconnected,
+            // The file may disappear while being read from, or some other I/O error occurs mid-read.
+            FileNotFound,
             /// Non-blocking has been enabled, and reading from the file descriptor
             /// would block.
             WouldBlock,
