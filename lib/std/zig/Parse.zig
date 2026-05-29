@@ -1747,7 +1747,6 @@ const operTable = std.enums.directEnumArrayDefault(Token.Tag, OperInfo, .{ .prec
     .asterisk_percent = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .mul_wrap },
     .asterisk_pipe = .{ .prec = .{ .group = .arithmetic_product_chainable }, .tag = .mul_sat },
 
-    //.asterisk_asterisk = .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .array_mult },
     .percent = .{ .prec = .{ .group = .arithmetic_product_nonchainable, .assoc = Assoc.none }, .tag = .mod },
     //zig-fmt: on
 });

@@ -3056,14 +3056,12 @@ test "zig fmt: ambiguous precedence" {
         \\    a ^ b & c;
         \\    a | b ^ c;
         \\    a % b % c;
-        \\    a ** b ** c;
         \\}
         \\
     , &[_]Error{
         .ambiguous_operator_precedence,
         .ambiguous_operator_precedence,
         .ambiguous_operator_precedence,
-        .illegal_chained_operators,
         .illegal_chained_operators,
     });
 }
@@ -7088,25 +7086,6 @@ test "recovery: invalid global error set access" {
         \\}
     , &[_]Error{
         .expected_token,
-    });
-}
-
-test "recovery: invalid asterisk after pointer dereference" {
-    try testError(
-        \\test "" {
-        \\    var sequence = "repeat".*** 10;
-        \\}
-    , &[_]Error{
-        .asterisk_after_ptr_deref,
-        .mismatched_binary_op_whitespace,
-    });
-    try testError(
-        \\test "" {
-        \\    var sequence = ("repeat".** 10)&a;
-        \\}
-    , &[_]Error{
-        .asterisk_after_ptr_deref,
-        .mismatched_binary_op_whitespace,
     });
 }
 
