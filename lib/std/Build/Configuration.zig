@@ -1359,6 +1359,7 @@ pub const Step = extern struct {
         generated_file: GeneratedFileIndex,
         contents: Bytes,
         args: Storage.FlagLengthPrefixedList(.flags, .args, Arg),
+        args_pure: Storage.FlagLengthPrefixedList(.flags, .args_pure, Arg),
 
         pub const Arg = extern struct {
             name: String,
@@ -1368,7 +1369,8 @@ pub const Step = extern struct {
         pub const Flags = packed struct(u32) {
             tag: Tag = .options,
             args: bool,
-            _: u26 = 0,
+            args_pure: bool,
+            _: u25 = 0,
         };
     };
 

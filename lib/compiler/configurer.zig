@@ -1211,13 +1211,21 @@ fn serialize(b: *std.Build, wc: *Configuration.Wip, writer: *Io.Writer) !void {
                             .path = try s.addLazyPath(src.path),
                         };
 
+                        const args_pure = try arena.alloc(Configuration.Step.Options.Arg, so.args_pure.items.len);
+                        for (args_pure, so.args_pure.items) |*dest, src| dest.* = .{
+                            .name = src.name,
+                            .path = try s.addLazyPath(src.path),
+                        };
+
                         break :e try wc.addExtraErased(Configuration.Step.Options, .{
                             .flags = .{
                                 .args = so.args.items.len != 0,
+                                .args_pure = so.args_pure.items.len != 0,
                             },
                             .generated_file = so.generated_file,
                             .contents = try wc.addBytes(so.contents.items),
                             .args = .{ .slice = args },
+                            .args_pure = .{ .slice = args_pure },
                         });
                     },
                 }),
