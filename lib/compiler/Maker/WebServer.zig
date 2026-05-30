@@ -225,9 +225,21 @@ pub fn updateStepStatus(
 ) void {
     const maker = ws.maker;
     const all_steps = maker.step_stack.keys();
-    const step_idx: u32 = for (all_steps, 0..) |s, i| {
-        if (s == step_index) break @intCast(i);
+
+    var low: usize, var high: usize = .{0, all_steps.len - 1};
+
+    const step_idx: u32 = while (low <= high) {
+        const mid = low + (high - low) / 2;
+
+        if (all_steps[mid] == step_index) {
+            break @intCast(mid);
+        } else if (@intFromEnum(all_steps[mid]) < @intFromEnum(step_index)) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
     } else unreachable;
+
     const ptr = &ws.step_status_bits[step_idx / 4];
     const bit_offset: u3 = @intCast((step_idx % 4) * 2);
     const old_bits: u2 = @truncate(@atomicLoad(u8, ptr, .monotonic) >> bit_offset);
@@ -788,8 +800,18 @@ pub fn updateTimeReportCompile(ws: *WebServer, opts: struct {
     const io = maker.graph.io;
     const all_steps = maker.step_stack.keys();
 
-    const step_idx: u32 = for (all_steps, 0..) |s, i| {
-        if (s == opts.compile_step) break @intCast(i);
+    var low: usize, var high: usize = .{0, all_steps.len - 1};
+
+    const step_idx: u32 = while (low <= high) {
+        const mid = low + (high - low) / 2;
+
+        if (all_steps[mid] == opts.compile_step) {
+            break @intCast(mid);
+        } else if (@intFromEnum(all_steps[mid]) < @intFromEnum(opts.compile_step)) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
     } else unreachable;
 
     const old_buf = old: {
@@ -831,8 +853,18 @@ pub fn updateTimeReportGeneric(ws: *WebServer, step_index: Configuration.Step.In
     const io = maker.graph.io;
     const all_steps = maker.step_stack.keys();
 
-    const step_idx: u32 = for (all_steps, 0..) |s, i| {
-        if (s == step_index) break @intCast(i);
+    var low: usize, var high: usize = .{0, all_steps.len - 1};
+
+    const step_idx: u32 = while (low <= high) {
+        const mid = low + (high - low) / 2;
+
+        if (all_steps[mid] == step_index) {
+            break @intCast(mid);
+        } else if (@intFromEnum(all_steps[mid]) < @intFromEnum(step_index)) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
     } else unreachable;
 
     const old_buf = old: {
@@ -869,8 +901,18 @@ pub fn updateTimeReportRunTest(
     const io = maker.graph.io;
     const all_steps = maker.step_stack.keys();
 
-    const step_idx: u32 = for (all_steps, 0..) |s, i| {
-        if (s == run_step_index) break @intCast(i);
+    var low: usize, var high: usize = .{0, all_steps.len - 1};
+
+    const step_idx: u32 = while (low <= high) {
+        const mid = low + (high - low) / 2;
+
+        if (all_steps[mid] == run_step_index) {
+            break @intCast(mid);
+        } else if (@intFromEnum(all_steps[mid]) < @intFromEnum(run_step_index)) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
     } else unreachable;
 
     assert(tests.names.len == ns_per_test.len);
