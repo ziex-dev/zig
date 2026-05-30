@@ -828,6 +828,7 @@ const Thread = struct {
     /// Always released when `Status.cancelation` is set to `.parked`.
     futex_waiter: if (use_parking_futex) ?*parking_futex.Waiter else ?noreturn,
     unpark_flag: UnparkFlag,
+    park_tid: if (ParkTid == std.Thread.Id) void else ParkTid,
 
     csprng: Csprng,
 
@@ -1219,7 +1220,7 @@ const Thread = struct {
                         parking_futex.removeCanceledWaiter(futex_waiter);
                     }
                     if (need_unpark_flag) setUnparkFlag(&thread.unpark_flag);
-                    unpark(&.{thread.id}, null);
+                    unpark(&.{if (ParkTid == std.Thread.Id) thread.id else thread.park_tid}, null);
                     return false;
                 },
 
@@ -1748,6 +1749,7 @@ fn worker(t: *Threaded) void {
         .cancel_protection = .unblocked,
         .futex_waiter = undefined,
         .unpark_flag = unpark_flag_init,
+        .park_tid = if (ParkTid == std.Thread.Id) {} else getParkTid(),
         .csprng = .uninitialized,
     };
     Thread.current = &thread;
@@ -17376,6 +17378,7 @@ const use_parking_futex = switch (native_os) {
     .windows => true, // RtlWaitOnAddress is a userland implementation anyway
     .netbsd => true, // NetBSD has `futex(2)`, but it's historically been quite buggy. TODO: evaluate whether it's okay to use now.
     .illumos => true, // Illumos has no futex mechanism
+    .haiku => true, // Haiku has no futex mechanism
     else => false,
 };
 const use_parking_sleep = switch (native_os) {
@@ -17421,7 +17424,7 @@ const parking_futex = struct {
     const Waiter = struct {
         node: std.DoublyLinkedList.Node,
         address: usize,
-        tid: std.Thread.Id,
+        tid: ParkTid,
         /// `thread_status.cancelation` is `.parked` while the thread is waiting. The single thread
         /// which atomically updates it (to `.none` or `.canceling`) is responsible for:
         ///
@@ -17461,8 +17464,7 @@ const parking_futex = struct {
         const bucket = bucketForAddress(@intFromPtr(ptr));
 
         // Put the threadlocal access outside of the critical section.
-        const opt_thread = Thread.current;
-        const self_tid = if (opt_thread) |thread| thread.id else std.Thread.getCurrentId();
+        const self_tid = getParkTid();
 
         var waiter: Waiter = .{
             .node = undefined, // populated by list append
@@ -17491,7 +17493,7 @@ const parking_futex = struct {
             waiter.thread_status, waiter.unpark_flag = status: {
                 cancelable: {
                     if (uncancelable) break :cancelable;
-                    const thread = opt_thread orelse break :cancelable;
+                    const thread = Thread.current orelse break :cancelable;
                     switch (thread.cancel_protection) {
                         .blocked => break :cancelable,
                         .unblocked => {},
@@ -17711,6 +17713,7 @@ const parking_sleep = struct {
             }
         }
         // Uncancelable sleep; we expect not to be manually unparked.
+        _ = getParkTid();
         var dummy_flag: UnparkFlag = unpark_flag_init;
         if (park(timeout, null, if (need_unpark_flag) &dummy_flag)) {
             unreachable; // unexpected unpark
@@ -17749,7 +17752,7 @@ const ParkingMutex = struct {
         /// Never modified once the `Waiter` is in the linked list.
         next: ?*Waiter,
         /// Never modified once the `Waiter` is in the linked list.
-        tid: std.Thread.Id,
+        tid: ParkTid,
     };
     fn lock(m: *ParkingMutex) void {
         state: switch (State.unlocked) { // assume 'unlocked' to optimize for uncontended case
@@ -17765,7 +17768,7 @@ const ParkingMutex = struct {
 
             .locked_once, _ => |last_state| {
                 const old_waiter = last_state.waiter();
-                const self_tid = if (Thread.current) |t| t.id else std.Thread.getCurrentId();
+                const self_tid = getParkTid();
                 var waiter: Waiter = .{
                     .next = old_waiter,
                     .unpark_flag = unpark_flag_init,
@@ -17893,8 +17896,35 @@ fn setUnparkFlag(f: *UnparkFlag) void {
 /// but it seems that someone at Microsoft forgot how big their TIDs are supposed to be.
 const UnparkTid = switch (native_os) {
     .windows => usize,
+    else => ParkTid,
+};
+
+const ParkTid = switch (native_os) {
+    .haiku => std.c.sem_id,
     else => std.Thread.Id,
 };
+
+threadlocal var park_sem: std.c.sem_id = -1;
+
+fn getParkTid() ParkTid {
+    switch (native_os) {
+        .haiku => {
+            if (park_sem == -1) {
+                park_sem = std.c._kern_create_sem(0, null);
+                if (park_sem < 0) @panic("_kern_create_sem failed");
+                _ = std.c.on_exit_thread(destroyParkSem, null);
+            }
+            return park_sem;
+        },
+        else => {
+            return if (Thread.current) |thread| thread.id else std.Thread.getCurrentId();
+        },
+    }
+}
+
+fn destroyParkSem(_: ?*anyopaque) callconv(.c) void {
+    _ = std.c._kern_delete_sem(park_sem);
+}
 
 fn park(
     timeout: Io.Timeout,
@@ -17961,6 +17991,21 @@ fn park(
             }
         },
         .illumos => @panic("TODO: illumos lwp_park"),
+        .haiku => {
+            const timeout_us = switch (timeout) {
+                .none => std.c.B_INFINITE_TIMEOUT,
+                .deadline => |deadline| deadline.raw.toMicroseconds(),
+                .duration => |duration| nowPosix(duration.clock).addDuration(duration.raw).toMicroseconds(),
+            };
+            while (true) {
+                switch (std.c._kern_acquire_sem_etc(park_sem, 1, std.c.B_ABSOLUTE_TIMEOUT, timeout_us)) {
+                    0 => return,
+                    std.c.E.B_TIMED_OUT => return error.Timeout,
+                    std.c.E.B_INTERRUPTED => {},
+                    else => unreachable,
+                }
+            }
+        },
         else => comptime unreachable,
     }
 }
@@ -18003,6 +18048,14 @@ fn unpark(tids: []const UnparkTid, addr_hint: ?*const anyopaque) void {
             }
         },
         .illumos => @panic("TODO: illumos lwp_unpark"),
+        .haiku => {
+            for (tids) |tid| {
+                switch (std.c._kern_release_sem_etc(tid, 1, 0)) {
+                    0 => {},
+                    else => unreachable,
+                }
+            }
+        },
         else => comptime unreachable,
     }
 }
