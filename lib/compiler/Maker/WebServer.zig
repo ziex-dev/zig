@@ -226,7 +226,7 @@ pub fn updateStepStatus(
     const maker = ws.maker;
     const all_steps = maker.step_stack.keys();
 
-    var low: usize, var high: usize = .{0, all_steps.len - 1};
+    var low: usize, var high: usize = .{ 0, all_steps.len - 1 };
 
     const step_idx: u32 = while (low <= high) {
         const mid = low + (high - low) / 2;
@@ -800,7 +800,7 @@ pub fn updateTimeReportCompile(ws: *WebServer, opts: struct {
     const io = maker.graph.io;
     const all_steps = maker.step_stack.keys();
 
-    var low: usize, var high: usize = .{0, all_steps.len - 1};
+    var low: usize, var high: usize = .{ 0, all_steps.len - 1 };
 
     const step_idx: u32 = while (low <= high) {
         const mid = low + (high - low) / 2;
@@ -853,7 +853,7 @@ pub fn updateTimeReportGeneric(ws: *WebServer, step_index: Configuration.Step.In
     const io = maker.graph.io;
     const all_steps = maker.step_stack.keys();
 
-    var low: usize, var high: usize = .{0, all_steps.len - 1};
+    var low: usize, var high: usize = .{ 0, all_steps.len - 1 };
 
     const step_idx: u32 = while (low <= high) {
         const mid = low + (high - low) / 2;
@@ -901,7 +901,7 @@ pub fn updateTimeReportRunTest(
     const io = maker.graph.io;
     const all_steps = maker.step_stack.keys();
 
-    var low: usize, var high: usize = .{0, all_steps.len - 1};
+    var low: usize, var high: usize = .{ 0, all_steps.len - 1 };
 
     const step_idx: u32 = while (low <= high) {
         const mid = low + (high - low) / 2;
