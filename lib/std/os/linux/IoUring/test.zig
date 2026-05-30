@@ -2678,6 +2678,34 @@ test "set_iowait" {
     try testing.expectEqual(0, ring.enter_flags);
 }
 
+test "submit_and_wait_timeout" {
+    var ring = IoUring.init(1, 0) catch |err| switch (err) {
+        error.SystemOutdated => return error.SkipZigTest,
+        error.PermissionDenied => return error.SkipZigTest,
+        else => return err,
+    };
+    defer ring.deinit();
+    if (ring.features & linux.IORING_FEAT_EXT_ARG == 0) return error.SkipZigTest;
+
+    _ = try ring.nop(0xa);
+    try testing.expectEqual(1, try ring.submit_and_wait_timeout(1, &.{ .sec = 0, .nsec = 1 }));
+    try testing.expectEqual(0xa, (try ring.copy_cqe()).user_data);
+    try testing.expectError(error.TimeoutExpired, ring.submit_and_wait_timeout(1, &.{ .sec = 0, .nsec = 1 }));
+
+    _ = try ring.nop(0xb);
+    try testing.expectEqual(1, try ring.submit_and_wait_timeout(2, &.{ .sec = 0, .nsec = 1 }));
+    try testing.expectEqual(0xb, (try ring.copy_cqe()).user_data);
+
+    if (ring.features & linux.IORING_FEAT_MIN_TIMEOUT != 0) {
+        _ = try ring.nop(0xc);
+        // 1 usec wait for full batch (2 cqes), after that returns as soon as single completion is posted
+        // 10 sec is timeout for any completion
+        try testing.expectEqual(1, try ring.submit_and_wait_min_timeout(2, &.{ .sec = 10, .nsec = 0 }, 1));
+        try testing.expectEqual(0xc, (try ring.copy_cqe()).user_data);
+        try testing.expectError(error.TimeoutExpired, ring.submit_and_wait_min_timeout(1, null, 1));
+    }
+}
+
 // Prepare, submit recv and get cqe using buffer group.
 fn buf_grp_recv_submit_get_cqe(
     ring: *IoUring,

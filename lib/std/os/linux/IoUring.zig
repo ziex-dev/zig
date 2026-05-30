@@ -168,29 +168,95 @@ pub fn get_sqe(self: *IoUring) !*linux.io_uring_sqe {
 /// or lower, including 0, may be returned.
 /// Matches the implementation of io_uring_submit() in liburing.
 pub fn submit(self: *IoUring) !u32 {
-    return self.submit_and_wait(0);
+    return self.submit_and_wait_min_timeout(0, null, 0);
 }
 
 /// Like submit(), but allows waiting for events as well.
-/// Returns the number of SQEs submitted.
+/// Returns the number of SQEs submitted, if not used alongside IORING_SETUP_SQPOLL.
 /// Matches the implementation of io_uring_submit_and_wait() in liburing.
 pub fn submit_and_wait(self: *IoUring, wait_nr: u32) !u32 {
-    const submitted = self.flush_sq();
+    return self.submit_and_wait_min_timeout(wait_nr, null, 0);
+}
+
+/// Like submit_and_wait(), but waits for `wait_nr` completion events OR until
+/// the `wait_timeout` expires.
+/// Returns error.TimeoutExpired if no completions are posted until `wait_timeout`.
+/// Returns the number of SQEs submitted, if not used alongside IORING_SETUP_SQPOLL.
+pub fn submit_and_wait_timeout(self: *IoUring, wait_nr: u32, wait_timeout: ?*const linux.kernel_timespec) !u32 {
+    return self.submit_and_wait_min_timeout(wait_nr, wait_timeout, 0);
+}
+
+/// Same as io_uring_submit_and_wait_timeout() if `min_wait_usec` is zero.
+///
+/// If `wait_nr` number of completions have been received within `min_wait_usec`
+/// number of microseconds, then the function returns successfully. If that
+/// isn't the case, once min_wait_usec time has passed, control is returned if
+/// any completions have been posted. If no completions have been posted, the
+/// kernel switches to a normal wait of up to `wait_timeout`, subtracting the
+/// time already waited. If any completions are posted after this happens,
+/// control is returned immediately to the application.
+///
+/// Returns error.TimeoutExpired if no completions are posted until `wait_timeout`.
+/// Returns the number of SQEs submitted, if not used alongside IORING_SETUP_SQPOLL.
+pub fn submit_and_wait_min_timeout(
+    self: *IoUring,
+    /// Number of completions to wait for.
+    wait_nr: u32,
+    /// Timeout to wait:
+    ///   - when min_wait_usec == 0 for `wait_nr` completions
+    ///   - when min_wait_usec > 0  for any number of completions
+    /// Requires IORING_FEAT_EXT_ARG set in features.
+    /// Available since kernel 5.11.
+    wait_timeout: ?*const linux.kernel_timespec,
+    /// Number of microseconds to wait for the full completions batch.
+    /// Requires IORING_FEAT_MIN_TIMEOUT set in features.
+    /// Available since kernel 6.12.
+    min_wait_usec: u32,
+) !u32 {
+    const pending_sqes = self.flush_sq();
     var flags: u32 = self.enter_flags;
     if (self.sq_ring_needs_enter(&flags) or wait_nr > 0) {
         if (wait_nr > 0 or (self.flags & linux.IORING_SETUP_IOPOLL) != 0) {
             flags |= linux.IORING_ENTER_GETEVENTS;
         }
-        return try self.enter(submitted, wait_nr, flags);
+
+        if (wait_nr == 0 or (wait_timeout == null and min_wait_usec == 0)) {
+            return try self.enter(pending_sqes, wait_nr, flags, null);
+        }
+
+        if (self.features & linux.IORING_FEAT_EXT_ARG == 0)
+            return error.SystemOutdated;
+        if (min_wait_usec > 0 and (self.features & linux.IORING_FEAT_MIN_TIMEOUT == 0))
+            return error.SystemOutdated;
+
+        const arg = std.mem.zeroInit(linux.io_uring_getevents_arg, .{
+            .sigmask_sz = linux.NSIG / 8,
+            .ts = @intFromPtr(wait_timeout),
+            .min_wait_usec = min_wait_usec,
+        });
+        return try self.enter(pending_sqes, wait_nr, flags, &arg);
     }
-    return submitted;
+    return pending_sqes;
 }
 
 /// Tell the kernel we have submitted SQEs and/or want to wait for CQEs.
 /// Returns the number of SQEs submitted.
-pub fn enter(self: *IoUring, to_submit: u32, min_complete: u32, flags: u32) !u32 {
+pub fn enter(
+    self: *IoUring,
+    to_submit: u32,
+    min_complete: u32,
+    flags: u32,
+    arg: ?*const linux.io_uring_getevents_arg,
+) !u32 {
     assert(self.fd >= 0);
-    const res = linux.io_uring_enter(self.fd, to_submit, min_complete, flags, null);
+    const res = linux.io_uring_enter(
+        self.fd,
+        to_submit,
+        min_complete,
+        if (arg != null) flags | linux.IORING_ENTER_EXT_ARG else flags,
+        arg,
+        if (arg != null) @sizeOf(linux.io_uring_getevents_arg) else linux.NSIG / 8,
+    );
     switch (linux.errno(res)) {
         .SUCCESS => {},
         // The kernel was unable to allocate memory or ran out of resources for the request.
@@ -221,6 +287,8 @@ pub fn enter(self: *IoUring, to_submit: u32, min_complete: u32, flags: u32) !u32
         // The operation was interrupted by a delivery of a signal before it could complete.
         // This can happen while waiting for events with IORING_ENTER_GETEVENTS:
         .INTR => return error.SignalInterrupt,
+        // Timeout specified in `arg.ts` has expired.
+        .TIME => return error.TimeoutExpired,
         else => |errno| return posix.unexpectedErrno(errno),
     }
     return @as(u32, @intCast(res));
@@ -285,7 +353,7 @@ pub fn copy_cqes(self: *IoUring, cqes: []linux.io_uring_cqe, wait_nr: u32) !u32 
     const count = self.copy_cqes_ready(cqes);
     if (count > 0) return count;
     if (self.cq_ring_needs_flush() or wait_nr > 0) {
-        _ = try self.enter(0, wait_nr, self.enter_flags | linux.IORING_ENTER_GETEVENTS);
+        _ = try self.enter(0, wait_nr, self.enter_flags | linux.IORING_ENTER_GETEVENTS, null);
         return self.copy_cqes_ready(cqes);
     }
     return 0;

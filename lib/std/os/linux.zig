@@ -2876,8 +2876,8 @@ pub fn io_uring_setup(entries: u32, p: *io_uring_params) usize {
     return syscall2(.io_uring_setup, entries, @intFromPtr(p));
 }
 
-pub fn io_uring_enter(fd: fd_t, to_submit: u32, min_complete: u32, flags: u32, sig: ?*sigset_t) usize {
-    return syscall6(.io_uring_enter, @as(u32, @bitCast(fd)), to_submit, min_complete, flags, @intFromPtr(sig), NSIG / 8);
+pub fn io_uring_enter(fd: fd_t, to_submit: u32, min_complete: u32, flags: u32, arg: ?*const anyopaque, sz: u32) usize {
+    return syscall6(.io_uring_enter, @as(u32, @bitCast(fd)), to_submit, min_complete, flags, @intFromPtr(arg), sz);
 }
 
 pub fn io_uring_register(fd: fd_t, opcode: IORING_REGISTER, arg: ?*const anyopaque, nr_args: u32) usize {
@@ -7780,7 +7780,7 @@ pub const io_uring_buf_reg = extern struct {
 pub const io_uring_getevents_arg = extern struct {
     sigmask: u64,
     sigmask_sz: u32,
-    pad: u32,
+    min_wait_usec: u32,
     ts: u64,
 };
 
