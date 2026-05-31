@@ -1,10 +1,10 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const assert = std.debug.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 const testing = std.testing;
+const builtin = @import("builtin");
 
 /// A MultiArrayList stores a list of a struct or tagged union type.
 /// Instead of storing a single list of items, MultiArrayList
@@ -107,14 +107,14 @@ pub fn MultiArrayList(comptime T: type) type {
                     else => unreachable,
                 };
                 inline for (field_names, 0..) |field_name, i| {
-                    self.items(@as(Field, @enumFromInt(i)))[index] = @field(e, field_name);
+                    self.items(@enumFromInt(i))[index] = @field(e, field_name);
                 }
             }
 
             pub fn get(self: Slice, index: usize) T {
                 var result: Elem = undefined;
                 inline for (field_names, 0..) |field_name, i| {
-                    @field(result, field_name) = self.items(@as(Field, @enumFromInt(i)))[index];
+                    @field(result, field_name) = self.items(@enumFromInt(i))[index];
                 }
                 return switch (@typeInfo(T)) {
                     .@"struct" => result,
@@ -132,7 +132,7 @@ pub fn MultiArrayList(comptime T: type) type {
 
             pub fn toMultiArrayList(self: Slice) Self {
                 if (self.ptrs.len == 0 or self.capacity == 0) {
-                    return .{};
+                    return .empty;
                 }
                 return .{
                     .bytes = self.ptrs[sizes.fields[0]],
@@ -178,43 +178,51 @@ pub fn MultiArrayList(comptime T: type) type {
         const field_names = @typeInfo(Elem).@"struct".field_names;
         const field_types = @typeInfo(Elem).@"struct".field_types;
         const field_attrs = @typeInfo(Elem).@"struct".field_attrs;
-        /// `sizes.bytes` is an array of @sizeOf each T field. Sorted by alignment, descending.
-        /// `sizes.fields` is an array mapping from `sizes.bytes` array index to field index.
-        /// `sizes.big_align` is the overall alignment of the allocation, which equals the maximum field alignment.
+
+        /// Describes the memory layout of the MultiArrayList.
+        /// `sizes.big_align`: the overall alignment of the allocation, equal to the maximum field alignment.
+        /// `sizes.bytes_per_capacity`: the unaligned sum of `T`'s field sizes.
+        /// `sizes.fields`: array of field ids.  a mapping from alignment-sorted order to declaration order.
+        /// `sizes.offsets`: array of field offsets.
+        ///
+        /// When iterating over the different sub-slices of the storage,
+        /// Visit fields in the order of `size.fields` to make the memory access more predictable.
         const sizes = blk: {
             const Data = struct {
                 size: usize,
-                size_index: usize,
+                field_index: usize,
                 alignment: usize,
             };
             var data: [field_names.len]Data = undefined;
-            var big_align: usize = 1;
             for (field_types, field_attrs, 0..) |f_type, f_attrs, i| {
                 data[i] = .{
                     .size = @sizeOf(f_type),
-                    .size_index = i,
+                    .field_index = i,
                     .alignment = f_attrs.@"align" orelse @alignOf(f_type),
                 };
-                big_align = @max(big_align, data[i].alignment);
             }
             const Sort = struct {
-                fn lessThan(context: void, lhs: Data, rhs: Data) bool {
-                    _ = context;
-                    return lhs.alignment > rhs.alignment;
+                fn bigAlignmentFirst(_: void, lhs: Data, rhs: Data) bool {
+                    return (lhs.alignment > rhs.alignment) or (lhs.alignment == rhs.alignment and lhs.size > rhs.size);
                 }
             };
             @setEvalBranchQuota(3 * field_names.len * std.math.log2(field_names.len));
-            mem.sort(Data, &data, {}, Sort.lessThan);
-            var sizes_bytes: [field_names.len]usize = undefined;
+            mem.sort(Data, &data, {}, Sort.bigAlignmentFirst);
             var field_indexes: [field_names.len]usize = undefined;
+            var field_offsets: [field_names.len]usize = undefined;
+            var bytes_per_capacity: usize = 0;
+
             for (data, 0..) |elem, i| {
-                sizes_bytes[i] = elem.size;
-                field_indexes[i] = elem.size_index;
+                field_indexes[i] = elem.field_index;
+                field_offsets[elem.field_index] = bytes_per_capacity;
+                bytes_per_capacity += elem.size;
             }
+
             break :blk .{
-                .bytes = sizes_bytes,
+                .big_align = mem.Alignment.fromByteUnits(data[0].alignment),
+                .bytes_per_capacity = bytes_per_capacity,
                 .fields = field_indexes,
-                .big_align = mem.Alignment.fromByteUnits(big_align),
+                .offsets = field_offsets,
             };
         };
 
@@ -227,32 +235,34 @@ pub fn MultiArrayList(comptime T: type) type {
         /// The caller owns the returned memory. Empties this MultiArrayList.
         pub fn toOwnedSlice(self: *Self) Slice {
             const result = self.slice();
-            self.* = .{};
+            self.* = .empty;
             return result;
         }
 
         /// Compute pointers to the start of each field of the array.
-        /// If you need to access multiple fields, calling this may
-        /// be more efficient than calling `items()` multiple times.
         pub fn slice(self: Self) Slice {
             var result: Slice = .{
                 .ptrs = undefined,
                 .len = self.len,
                 .capacity = self.capacity,
             };
-            var ptr: [*]u8 = self.bytes;
-            for (sizes.bytes, sizes.fields) |field_size, i| {
-                result.ptrs[i] = ptr;
-                ptr += field_size * self.capacity;
+            inline for (result.ptrs[0..], sizes.offsets) |*p, offset| {
+                p.* = self.bytes[offset * self.capacity ..];
             }
             return result;
         }
 
         /// Get the slice of values for a specified field.
-        /// If you need multiple fields, consider calling slice()
-        /// instead.
         pub fn items(self: Self, comptime field: Field) []FieldType(field) {
-            return self.slice().items(field);
+            if (comptime @sizeOf(FieldType(field)) == 0) {
+                return @as([*]FieldType(field), undefined)[0..self.len];
+            }
+
+            // Step-by-step computation to remove all @alignCast
+            const offset: comptime_int = sizes.offsets[@intFromEnum(field)];
+            const group: [*]align(@alignOf(FieldType(field))) [offset]u8 = @ptrCast(self.allocatedBytes().ptr);
+            const ptr: [*]FieldType(field) = @ptrCast(&group[self.capacity]);
+            return ptr[0..self.len];
         }
 
         /// Overwrite one array element with new data.
@@ -350,23 +360,22 @@ pub fn MultiArrayList(comptime T: type) type {
         /// sets the given index to the specified element.
         ///
         /// Asserts that capacity is sufficient to hold an additional item.
-        pub fn insertAssumeCapacity(self: *Self, index: usize, elem: T) void {
+        pub fn insertAssumeCapacity(self: *Self, i: usize, elem: T) void {
             assert(self.len < self.capacity);
-            assert(index <= self.len);
+            assert(i <= self.len);
             self.len += 1;
             const entry = switch (@typeInfo(T)) {
                 .@"struct" => elem,
                 .@"union" => Elem.fromT(elem),
                 else => unreachable,
             };
-            const slices = self.slice();
-            inline for (field_names, 0..) |field_name, field_index| {
-                const field_slice = slices.items(@as(Field, @enumFromInt(field_index)));
-                var i: usize = self.len - 1;
-                while (i > index) : (i -= 1) {
-                    field_slice[i] = field_slice[i - 1];
+
+            inline for (sizes.fields) |field_index| {
+                if (@sizeOf(field_types[field_index]) != 0) {
+                    const field_slice = self.items(@enumFromInt(field_index));
+                    @memmove(field_slice[i + 1 .. self.len], field_slice[i .. self.len - 1]);
+                    field_slice[i] = @field(entry, field_names[field_index]);
                 }
-                field_slice[index] = @field(entry, field_name);
             }
         }
 
@@ -385,9 +394,8 @@ pub fn MultiArrayList(comptime T: type) type {
         /// item in the list into its position. Fast, but does not
         /// retain list ordering.
         pub fn swapRemove(self: *Self, index: usize) void {
-            const slices = self.slice();
-            inline for (field_names, 0..) |_, i| {
-                const field_slice = slices.items(@as(Field, @enumFromInt(i)));
+            inline for (sizes.fields) |field_index| {
+                const field_slice = self.items(@enumFromInt(field_index));
                 field_slice[index] = field_slice[self.len - 1];
                 field_slice[self.len - 1] = undefined;
             }
@@ -397,9 +405,8 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Remove the specified item from the list, shifting items
         /// after it to preserve order.
         pub fn orderedRemove(self: *Self, index: usize) void {
-            const slices = self.slice();
-            inline for (field_names, 0..) |_, field_index| {
-                const field_slice = slices.items(@as(Field, @enumFromInt(field_index)));
+            inline for (sizes.fields) |field_index| {
+                const field_slice = self.items(@enumFromInt(field_index));
                 var i = index;
                 while (i < self.len - 1) : (i += 1) {
                     field_slice[i] = field_slice[i + 1];
@@ -423,14 +430,13 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Invalidates element pointers beyond the first deleted index.
         pub fn orderedRemoveMany(self: *Self, sorted_indexes: []const usize) void {
             if (sorted_indexes.len == 0) return;
-            const slices = self.slice();
             var shift: usize = 1;
             for (sorted_indexes[0 .. sorted_indexes.len - 1], sorted_indexes[1..]) |removed, end| {
                 if (removed == end) continue; // allows duplicates in `sorted_indexes`
                 const start = removed + 1;
                 const len = end - start; // safety checks `sorted_indexes` are sorted
-                inline for (field_names, 0..) |_, field_index| {
-                    const field_slice = slices.items(@enumFromInt(field_index));
+                inline for (sizes.fields) |field_index| {
+                    const field_slice = self.items(@enumFromInt(field_index));
                     @memmove(field_slice[start - shift ..][0..len], field_slice[start..][0..len]); // safety checks initial `sorted_indexes` are in range
                 }
                 shift += 1;
@@ -438,8 +444,8 @@ pub fn MultiArrayList(comptime T: type) type {
             const start = sorted_indexes[sorted_indexes.len - 1] + 1;
             const end = self.len;
             const len = end - start; // safety checks final `sorted_indexes` are in range
-            inline for (field_names, 0..) |_, field_index| {
-                const field_slice = slices.items(@enumFromInt(field_index));
+            inline for (sizes.fields) |field_index| {
+                const field_slice = self.items(@enumFromInt(field_index));
                 @memmove(field_slice[start - shift ..][0..len], field_slice[start..][0..len]);
             }
             self.len = end - shift;
@@ -462,11 +468,9 @@ pub fn MultiArrayList(comptime T: type) type {
             assert(new_len <= self.len);
 
             const other_bytes = gpa.alignedAlloc(u8, sizes.big_align, capacityInBytes(new_len)) catch {
-                const self_slice = self.slice();
                 inline for (field_types, 0..) |field_type, i| {
                     if (@sizeOf(field_type) != 0) {
-                        const field = @as(Field, @enumFromInt(i));
-                        const dest_slice = self_slice.items(field)[new_len..];
+                        const dest_slice = self.items(@enumFromInt(i))[new_len..];
                         // We use memset here for more efficient codegen in safety-checked,
                         // valgrind-enabled builds. Otherwise the valgrind client request
                         // will be repeated for every element.
@@ -482,12 +486,10 @@ pub fn MultiArrayList(comptime T: type) type {
                 .len = new_len,
             };
             self.len = new_len;
-            const self_slice = self.slice();
-            const other_slice = other.slice();
-            inline for (field_types, 0..) |field_type, i| {
-                if (@sizeOf(field_type) != 0) {
-                    const field = @as(Field, @enumFromInt(i));
-                    @memcpy(other_slice.items(field), self_slice.items(field));
+            inline for (sizes.fields) |i| {
+                if (@sizeOf(field_types[i]) != 0) {
+                    const field: Field = @enumFromInt(i);
+                    @memcpy(other.items(field), self.items(field));
                 }
             }
             gpa.free(self.allocatedBytes());
@@ -496,7 +498,7 @@ pub fn MultiArrayList(comptime T: type) type {
 
         pub fn clearAndFree(self: *Self, gpa: Allocator) void {
             gpa.free(self.allocatedBytes());
-            self.* = .{};
+            self.* = .empty;
         }
 
         /// Reduce length to `new_len`.
@@ -554,12 +556,9 @@ pub fn MultiArrayList(comptime T: type) type {
                 .capacity = new_capacity,
                 .len = self.len,
             };
-            const self_slice = self.slice();
-            const other_slice = other.slice();
-            inline for (field_types, 0..) |field_type, i| {
-                if (@sizeOf(field_type) != 0) {
-                    const field = @as(Field, @enumFromInt(i));
-                    @memcpy(other_slice.items(field), self_slice.items(field));
+            inline for (sizes.fields) |i| {
+                if (@sizeOf(field_types[i]) != 0) {
+                    @memcpy(other.items(@enumFromInt(i)), self.items(@enumFromInt(i)));
                 }
             }
             gpa.free(self.allocatedBytes());
@@ -569,16 +568,13 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Create a copy of this list with a new backing store,
         /// using the specified allocator.
         pub fn clone(self: Self, gpa: Allocator) Allocator.Error!Self {
-            var result = Self{};
+            var result: Self = .empty;
             errdefer result.deinit(gpa);
             try result.ensureTotalCapacity(gpa, self.len);
             result.len = self.len;
-            const self_slice = self.slice();
-            const result_slice = result.slice();
-            inline for (field_types, 0..) |field_type, i| {
-                if (@sizeOf(field_type) != 0) {
-                    const field = @as(Field, @enumFromInt(i));
-                    @memcpy(result_slice.items(field), self_slice.items(field));
+            inline for (sizes.fields) |i| {
+                if (@sizeOf(field_types[i]) != 0) {
+                    @memcpy(result.items(@enumFromInt(i)), self.items(@enumFromInt(i)));
                 }
             }
             return result;
@@ -589,14 +585,13 @@ pub fn MultiArrayList(comptime T: type) type {
         fn sortInternal(self: Self, a: usize, b: usize, ctx: anytype, comptime mode: std.sort.Mode) void {
             const sort_context: struct {
                 sub_ctx: @TypeOf(ctx),
-                slice: Slice,
+                list: Self,
 
                 pub fn swap(sc: @This(), a_index: usize, b_index: usize) void {
-                    inline for (field_types, 0..) |field_type, i| {
-                        if (@sizeOf(field_type) != 0) {
-                            const field: Field = @enumFromInt(i);
-                            const ptr = sc.slice.items(field);
-                            mem.swap(field_type, &ptr[a_index], &ptr[b_index]);
+                    inline for (sizes.fields) |i| {
+                        if (@sizeOf(field_types[i]) != 0) {
+                            const ptr = sc.list.items(@enumFromInt(i));
+                            mem.swap(field_types[i], &ptr[a_index], &ptr[b_index]);
                         }
                     }
                 }
@@ -606,7 +601,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 }
             } = .{
                 .sub_ctx = ctx,
-                .slice = self.slice(),
+                .list = self,
             };
 
             switch (mode) {
@@ -654,12 +649,18 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         pub fn capacityInBytes(capacity: usize) usize {
-            comptime var elem_bytes: usize = 0;
-            inline for (sizes.bytes) |size| elem_bytes += size;
-            return elem_bytes * capacity;
+            return sizes.bytes_per_capacity * capacity;
         }
 
         fn allocatedBytes(self: Self) []align(sizes.big_align.toByteUnits()) u8 {
+            // If the list is empty, self.bytes is undefined and alignCast crashes.
+            // To avoid this, do an explicit check for empty list in debug mode.
+            // In release mode skip the alignment check altogether.
+            // The alignment of self.bytes is guaranteed in `setCapacity`.
+            @setRuntimeSafety(builtin.mode == .Debug);
+            if (builtin.mode == .Debug) {
+                if (self.capacity == 0) return &.{};
+            }
             return @alignCast(self.bytes[0..capacityInBytes(self.capacity)]);
         }
 
@@ -711,7 +712,7 @@ test "basic usage" {
     var list: MultiArrayList(Foo) = .empty;
     defer list.deinit(ally);
 
-    try testing.expectEqual(@as(usize, 0), list.items(.a).len);
+    try testing.expectEqual(0, list.items(.a).len);
 
     try list.ensureTotalCapacity(ally, 2);
 
@@ -727,10 +728,10 @@ test "basic usage" {
         .c = 'b',
     });
 
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b' });
+    try testing.expectEqualSlices(u32, list.items(.a), &.{ 1, 2 });
+    try testing.expectEqualSlices(u8, list.items(.c), &.{ 'a', 'b' });
 
-    try testing.expectEqual(@as(usize, 2), list.items(.b).len);
+    try testing.expectEqual(2, list.items(.b).len);
     try testing.expectEqualStrings("foobar", list.items(.b)[0]);
     try testing.expectEqualStrings("zigzag", list.items(.b)[1]);
 
@@ -740,10 +741,10 @@ test "basic usage" {
         .c = 'c',
     });
 
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
+    try testing.expectEqualSlices(u32, list.items(.a), &.{ 1, 2, 3 });
+    try testing.expectEqualSlices(u8, list.items(.c), &.{ 'a', 'b', 'c' });
 
-    try testing.expectEqual(@as(usize, 3), list.items(.b).len);
+    try testing.expectEqual(3, list.items(.b).len);
     try testing.expectEqualStrings("foobar", list.items(.b)[0]);
     try testing.expectEqualStrings("zigzag", list.items(.b)[1]);
     try testing.expectEqualStrings("fizzbuzz", list.items(.b)[2]);
@@ -752,42 +753,42 @@ test "basic usage" {
     var i: usize = 0;
     while (i < 6) : (i += 1) {
         try list.append(ally, .{
-            .a = @as(u32, @intCast(4 + i)),
+            .a = @intCast(4 + i),
             .b = "whatever",
-            .c = @as(u8, @intCast('d' + i)),
+            .c = @intCast('d' + i),
         });
     }
 
     try testing.expectEqualSlices(
         u32,
-        &[_]u32{ 1, 2, 3, 4, 5, 6, 7, 8, 9 },
+        &.{ 1, 2, 3, 4, 5, 6, 7, 8, 9 },
         list.items(.a),
     );
     try testing.expectEqualSlices(
         u8,
-        &[_]u8{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i' },
+        &.{ 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i' },
         list.items(.c),
     );
 
     list.shrinkAndFree(ally, 3);
 
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
+    try testing.expectEqualSlices(u32, list.items(.a), &.{ 1, 2, 3 });
+    try testing.expectEqualSlices(u8, list.items(.c), &.{ 'a', 'b', 'c' });
 
     list.swap(0, 2);
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 3, 2, 1 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'c', 'b', 'a' });
+    try testing.expectEqualSlices(u32, list.items(.a), &.{ 3, 2, 1 });
+    try testing.expectEqualSlices(u8, list.items(.c), &.{ 'c', 'b', 'a' });
     list.swap(2, 1);
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 3, 1, 2 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'c', 'a', 'b' });
+    try testing.expectEqualSlices(u32, list.items(.a), &.{ 3, 1, 2 });
+    try testing.expectEqualSlices(u8, list.items(.c), &.{ 'c', 'a', 'b' });
     list.swap(2, 0);
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 2, 1, 3 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'b', 'a', 'c' });
+    try testing.expectEqualSlices(u32, list.items(.a), &.{ 2, 1, 3 });
+    try testing.expectEqualSlices(u8, list.items(.c), &.{ 'b', 'a', 'c' });
     list.swap(0, 1);
-    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
-    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
+    try testing.expectEqualSlices(u32, list.items(.a), &.{ 1, 2, 3 });
+    try testing.expectEqualSlices(u8, list.items(.c), &.{ 'a', 'b', 'c' });
 
-    try testing.expectEqual(@as(usize, 3), list.items(.b).len);
+    try testing.expectEqual(3, list.items(.b).len);
     try testing.expectEqualStrings("foobar", list.items(.b)[0]);
     try testing.expectEqualStrings("zigzag", list.items(.b)[1]);
     try testing.expectEqualStrings("fizzbuzz", list.items(.b)[2]);
@@ -800,10 +801,10 @@ test "basic usage" {
         .c = 'd',
     });
     try testing.expectEqualStrings("xnopyt", list.pop().?.b);
-    try testing.expectEqual(@as(?u8, 'c'), if (list.pop()) |elem| elem.c else null);
-    try testing.expectEqual(@as(u32, 2), list.pop().?.a);
-    try testing.expectEqual(@as(u8, 'a'), list.pop().?.c);
-    try testing.expectEqual(@as(?Foo, null), list.pop());
+    try testing.expectEqual('c', if (list.pop()) |elem| elem.c else null);
+    try testing.expectEqual(2, list.pop().?.a);
+    try testing.expectEqual('a', list.pop().?.c);
+    try testing.expectEqual(null, list.pop());
 
     list.clearRetainingCapacity();
     try testing.expectEqual(0, list.len);
@@ -903,20 +904,22 @@ test "ensure capacity on empty list" {
 
     var list: MultiArrayList(Foo) = .empty;
     defer list.deinit(ally);
+    try testing.expectEqualSlices(u32, &.{}, list.items(.a));
+    try testing.expectEqualSlices(u8, &.{}, list.items(.b));
 
     try list.ensureTotalCapacity(ally, 2);
     list.appendAssumeCapacity(.{ .a = 1, .b = 2 });
     list.appendAssumeCapacity(.{ .a = 3, .b = 4 });
 
-    try testing.expectEqualSlices(u32, &[_]u32{ 1, 3 }, list.items(.a));
-    try testing.expectEqualSlices(u8, &[_]u8{ 2, 4 }, list.items(.b));
+    try testing.expectEqualSlices(u32, &.{ 1, 3 }, list.items(.a));
+    try testing.expectEqualSlices(u8, &.{ 2, 4 }, list.items(.b));
 
     list.len = 0;
     list.appendAssumeCapacity(.{ .a = 5, .b = 6 });
     list.appendAssumeCapacity(.{ .a = 7, .b = 8 });
 
-    try testing.expectEqualSlices(u32, &[_]u32{ 5, 7 }, list.items(.a));
-    try testing.expectEqualSlices(u8, &[_]u8{ 6, 8 }, list.items(.b));
+    try testing.expectEqualSlices(u32, &.{ 5, 7 }, list.items(.a));
+    try testing.expectEqualSlices(u8, &.{ 6, 8 }, list.items(.b));
 
     list.len = 0;
     try list.ensureTotalCapacity(ally, 16);
@@ -924,8 +927,8 @@ test "ensure capacity on empty list" {
     list.appendAssumeCapacity(.{ .a = 9, .b = 10 });
     list.appendAssumeCapacity(.{ .a = 11, .b = 12 });
 
-    try testing.expectEqualSlices(u32, &[_]u32{ 9, 11 }, list.items(.a));
-    try testing.expectEqualSlices(u8, &[_]u8{ 10, 12 }, list.items(.b));
+    try testing.expectEqualSlices(u32, &.{ 9, 11 }, list.items(.a));
+    try testing.expectEqualSlices(u8, &.{ 10, 12 }, list.items(.b));
 }
 
 test "insert elements" {
@@ -943,8 +946,8 @@ test "insert elements" {
     list.insertAssumeCapacity(1, .{ .a = 2, .b = 3 });
     try list.insert(ally, 0, .{ .a = 3, .b = 4 });
 
-    try testing.expectEqualSlices(u8, &[_]u8{ 3, 1, 2 }, list.items(.a));
-    try testing.expectEqualSlices(u32, &[_]u32{ 4, 2, 3 }, list.items(.b));
+    try testing.expectEqualSlices(u8, &.{ 3, 1, 2 }, list.items(.a));
+    try testing.expectEqualSlices(u32, &.{ 4, 2, 3 }, list.items(.b));
 }
 
 test "initCapacity" {
