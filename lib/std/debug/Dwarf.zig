@@ -246,14 +246,6 @@ pub const Die = struct {
         return form_value.getUInt(u64);
     }
 
-    fn getAttrUnsignedLe(self: *const Die, id: u64) !u64 {
-        const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
-        return switch (form_value.*) {
-            .Const => |value| value.asUnsignedLe(),
-            else => bad(),
-        };
-    }
-
     fn getAttrRef(self: *const Die, id: u64, unit_offset: u64, unit_len: u64) !u64 {
         const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
         return switch (form_value.*) {
