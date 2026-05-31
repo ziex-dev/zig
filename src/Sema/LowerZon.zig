@@ -129,84 +129,73 @@ fn lowerExprAnonResTy(self: *LowerZon, node: Zoir.Node.Index) CompileError!Inter
             for (0..init.names.len) |i| {
                 elems[i] = try self.lowerExprAnonResTy(init.vals.at(@intCast(i)));
             }
-            const struct_ty = switch (try ip.getStructType(
-                gpa,
-                io,
-                pt.tid,
-                .{
-                    .layout = .auto,
-                    .fields_len = @intCast(init.names.len),
-                    .known_non_opv = false,
-                    .requires_comptime = .no,
-                    .any_comptime_fields = true,
-                    .any_default_inits = true,
-                    .inits_resolved = true,
-                    .any_aligned_fields = false,
-                    .key = .{ .reified = .{
-                        .zir_index = self.base_node_inst,
-                        .type_hash = hash: {
-                            var hasher: std.hash.Wyhash = .init(0);
-                            hasher.update(std.mem.asBytes(&node));
-                            hasher.update(std.mem.sliceAsBytes(elems));
-                            hasher.update(std.mem.sliceAsBytes(init.names));
-                            break :hash hasher.final();
-                        },
-                    } },
+            const struct_ty: Type = switch (try ip.getReifiedStructType(gpa, io, pt.tid, .{
+                .zir_index = self.base_node_inst,
+                .type_hash = hash: {
+                    var hasher: std.hash.Wyhash = .init(0);
+                    hasher.update(std.mem.asBytes(&node));
+                    hasher.update(std.mem.sliceAsBytes(elems));
+                    hasher.update(std.mem.sliceAsBytes(init.names));
+                    break :hash hasher.final();
                 },
-                false,
-            )) {
+                .fields_len = @intCast(init.names.len),
+                .layout = .auto,
+                .any_comptime_fields = true,
+                .any_field_defaults = true,
+                .any_field_aligns = false,
+                .packed_backing_int_type = .none,
+            })) {
+                .existing => |ty| .fromInterned(ty),
                 .wip => |wip| ty: {
                     errdefer wip.cancel(ip, pt.tid);
-                    const type_name = try self.sema.createTypeName(
-                        self.block,
-                        .anon,
-                        "struct",
-                        self.base_node_inst.resolve(ip),
-                        wip.index,
-                    );
-                    wip.setName(ip, type_name.name, type_name.nav);
+                    const block = self.block;
+                    const zcu = pt.zcu;
+                    try self.sema.setTypeName(block, &wip, .anon, "struct", self.base_node_inst.resolve(ip).?);
 
-                    const struct_type = ip.loadStructType(wip.index);
-
-                    for (init.names, 0..) |name, field_idx| {
-                        const name_interned = try ip.getOrPutString(
+                    // Reified structs have field information populated immediately.
+                    @memcpy(wip.field_values.get(ip), elems);
+                    if (init.names.len > 0) {
+                        // All fields are comptime, but unused bits remain zeroed.
+                        const unused_bits = switch (init.names.len % 32) {
+                            0 => 0,
+                            else => |n| 32 - n,
+                        };
+                        const comptime_bits = wip.field_is_comptime_bits.getAll(ip);
+                        @memset(comptime_bits[0 .. comptime_bits.len - 1], std.math.maxInt(u32));
+                        comptime_bits[comptime_bits.len - 1] = @as(u32, std.math.maxInt(u32)) >> @intCast(unused_bits);
+                    }
+                    for (
+                        init.names,
+                        wip.field_names.get(ip),
+                        wip.field_types.get(ip),
+                        wip.field_values.get(ip),
+                    ) |zoir_name, *field_name, *field_ty, field_val| {
+                        field_name.* = try ip.getOrPutString(
                             gpa,
                             io,
                             pt.tid,
-                            name.get(self.file.zoir.?),
+                            zoir_name.get(self.file.zoir.?),
                             .no_embedded_nulls,
                         );
-                        assert(struct_type.addFieldName(ip, name_interned) == null);
-                        struct_type.setFieldComptime(ip, field_idx);
-                    }
-
-                    @memcpy(struct_type.field_inits.get(ip), elems);
-                    const types = struct_type.field_types.get(ip);
-                    for (0..init.names.len) |i| {
-                        types[i] = Value.fromInterned(elems[i]).typeOf(pt.zcu).toIntern();
+                        field_ty.* = ip.typeOf(field_val);
                     }
 
                     const new_namespace_index = try pt.createNamespace(.{
-                        .parent = self.block.namespace.toOptional(),
+                        .parent = block.namespace.toOptional(),
                         .owner_type = wip.index,
-                        .file_scope = self.block.getFileScopeIndex(pt.zcu),
-                        .generation = pt.zcu.generation,
+                        .file_scope = block.getFileScopeIndex(zcu),
+                        .generation = zcu.generation,
                     });
-                    try pt.zcu.comp.queueJob(.{ .resolve_type_fully = wip.index });
-                    codegen_type: {
-                        if (pt.zcu.comp.config.use_llvm) break :codegen_type;
-                        if (self.block.ownerModule().strip) break :codegen_type;
-                        pt.zcu.comp.link_prog_node.increaseEstimatedTotalItems(1);
-                        try pt.zcu.comp.queueJob(.{ .link_type = wip.index });
-                    }
-                    break :ty wip.finish(ip, new_namespace_index);
+                    errdefer pt.destroyNamespace(new_namespace_index);
+                    if (zcu.comp.debugIncremental()) try zcu.incremental_debug_state.newType(zcu, wip.index);
+                    break :ty .fromInterned(wip.finish(ip, new_namespace_index));
                 },
-                .existing => |ty| ty,
             };
-            try self.sema.declareDependency(.{ .interned = struct_ty });
             try self.sema.addTypeReferenceEntry(self.nodeSrc(node), struct_ty);
+            // No need for `ensureNamespaceUpToDate` because this type's namespace is always empty.
+            try self.sema.ensureLayoutResolved(struct_ty, self.nodeSrc(node), .init);
 
-            return (try pt.aggregateValue(.fromInterned(struct_ty), elems)).toIntern();
+            return (try pt.aggregateValue(struct_ty, elems)).toIntern();
         },
     }
 }
@@ -299,7 +288,7 @@ fn checkTypeInner(
         } else {
             const gop = try visited.getOrPut(sema.arena, ty.toIntern());
             if (gop.found_existing) return;
-            try ty.resolveFields(pt);
+            try sema.ensureLayoutResolved(ty, self.import_loc, .init);
             const struct_info = zcu.typeToStruct(ty).?;
             for (struct_info.field_types.get(ip)) |field_type| {
                 try self.checkTypeInner(.fromInterned(field_type), null, visited);
@@ -308,7 +297,7 @@ fn checkTypeInner(
         .@"union" => {
             const gop = try visited.getOrPut(sema.arena, ty.toIntern());
             if (gop.found_existing) return;
-            try ty.resolveFields(pt);
+            try sema.ensureLayoutResolved(ty, self.import_loc, .init);
             const union_info = zcu.typeToUnion(ty).?;
             for (union_info.field_types.get(ip)) |field_type| {
                 if (field_type != .void_type) {
@@ -459,16 +448,12 @@ fn lowerInt(
                     // If lhs has less than the 32 bits rhs can hold, we need to check the max and
                     // min values
                     if (std.math.cast(u5, lhs_info.bits)) |bits| {
-                        const min_int: i32 = if (lhs_info.signedness == .unsigned or bits == 0) b: {
-                            break :b 0;
-                        } else b: {
-                            break :b -(@as(i32, 1) << (bits - 1));
+                        const unsigned_bits = bits - @intFromBool(lhs_info.signedness == .signed);
+                        const min_int: i32 = switch (lhs_info.signedness) {
+                            .unsigned => 0,
+                            .signed => -(@as(i32, 1) << unsigned_bits),
                         };
-                        const max_int: i32 = if (bits == 0) b: {
-                            break :b 0;
-                        } else b: {
-                            break :b (@as(i32, 1) << (bits - @intFromBool(lhs_info.signedness == .signed))) - 1;
-                        };
+                        const max_int: i32 = (@as(i32, 1) << unsigned_bits) - 1;
                         if (rhs < min_int or rhs > max_int) {
                             return self.fail(
                                 node,
@@ -645,6 +630,7 @@ fn lowerEnum(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.I
     const gpa = comp.gpa;
     const io = comp.io;
     const ip = &pt.zcu.intern_pool;
+    try self.sema.ensureLayoutResolved(res_ty, self.import_loc, .init);
     switch (node.get(self.file.zoir.?)) {
         .enum_literal => |field_name| {
             const field_name_interned = try ip.getOrPutString(
@@ -762,13 +748,14 @@ fn lowerTuple(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
 
 fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {
     const pt = self.sema.pt;
-    const comp = pt.zcu.comp;
+    const zcu = pt.zcu;
+    const comp = zcu.comp;
     const gpa = comp.gpa;
     const io = comp.io;
     const ip = &pt.zcu.intern_pool;
 
-    try res_ty.resolveFields(self.sema.pt);
-    try res_ty.resolveStructFieldInits(self.sema.pt);
+    try self.sema.ensureLayoutResolved(res_ty, self.import_loc, .init);
+    try self.sema.ensureStructDefaultsResolved(res_ty, self.import_loc);
     const struct_info = self.sema.pt.zcu.typeToStruct(res_ty).?;
 
     const fields: @FieldType(Zoir.Node, "struct_literal") = switch (node.get(self.file.zoir.?)) {
@@ -779,7 +766,7 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
 
     const field_values = try self.sema.arena.alloc(InternPool.Index, struct_info.field_names.len);
 
-    const field_defaults = struct_info.field_inits.get(ip);
+    const field_defaults = struct_info.field_defaults.get(ip);
     if (field_defaults.len > 0) {
         @memcpy(field_values, field_defaults);
     } else {
@@ -803,7 +790,7 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
         const field_type: Type = .fromInterned(struct_info.field_types.get(ip)[name_index]);
         field_values[name_index] = try self.lowerExprKnownResTy(field_node, field_type);
 
-        if (struct_info.comptime_bits.getBit(ip, name_index)) {
+        if (struct_info.field_is_comptime_bits.get(ip, name_index)) {
             const val = ip.indexToKey(field_values[name_index]);
             const default = ip.indexToKey(field_defaults[name_index]);
             if (!val.eql(default, ip)) {
@@ -821,7 +808,28 @@ fn lowerStruct(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool
         if (value.* == .none) return self.fail(node, "missing field '{f}'", .{name.fmt(ip)});
     }
 
-    return (try self.sema.pt.aggregateValue(res_ty, field_values)).toIntern();
+    const result: Value = switch (struct_info.layout) {
+        .auto, .@"extern" => try pt.aggregateValue(res_ty, field_values),
+        .@"packed" => result: {
+            const arena = self.sema.arena;
+            const buf = try arena.alloc(u8, @intCast((res_ty.bitSize(zcu) + 7) / 8));
+            var bit_offset: u16 = 0;
+            for (field_values) |field_ip| {
+                const field_val: Value = .fromInterned(field_ip);
+                field_val.writeToPackedMemory(zcu, buf, bit_offset) catch |err| switch (err) {
+                    error.ReinterpretDeclRef => unreachable, // bitpack fields cannot be pointers
+                    error.OutOfMemory => |e| return e,
+                };
+                bit_offset += @intCast(field_val.typeOf(zcu).bitSize(zcu));
+            }
+            assert(bit_offset == res_ty.bitSize(zcu));
+            break :result Value.readFromPackedMemory(res_ty, pt, buf, 0, arena) catch |err| switch (err) {
+                error.IllDefinedMemoryLayout => unreachable, // bitpacks have well-defined layout
+                error.OutOfMemory => |e| return e,
+            };
+        },
+    };
+    return result.toIntern();
 }
 
 fn lowerSlice(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {
@@ -918,9 +926,9 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     const gpa = comp.gpa;
     const io = comp.io;
     const ip = &pt.zcu.intern_pool;
-    try res_ty.resolveFields(self.sema.pt);
-    const union_info = self.sema.pt.zcu.typeToUnion(res_ty).?;
-    const enum_tag_info = union_info.loadTagType(ip);
+    try self.sema.ensureLayoutResolved(res_ty, self.import_loc, .init);
+    const union_info = pt.zcu.typeToUnion(res_ty).?;
+    const enum_tag_info = ip.loadEnumType(union_info.enum_tag_type);
 
     const field_name, const maybe_field_node = switch (node.get(self.file.zoir.?)) {
         .enum_literal => |name| b: {
@@ -956,24 +964,26 @@ fn lowerUnion(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.
     const name_index = enum_tag_info.nameIndex(ip, field_name) orelse {
         return error.WrongType;
     };
-    const tag = try self.sema.pt.enumValueFieldIndex(.fromInterned(union_info.enum_tag_ty), name_index);
+    const tag = try self.sema.pt.enumValueFieldIndex(.fromInterned(union_info.enum_tag_type), name_index);
     const field_type: Type = .fromInterned(union_info.field_types.get(ip)[name_index]);
-    const val = if (maybe_field_node) |field_node| b: {
+    const val: Value = if (maybe_field_node) |field_node| b: {
         if (field_type.toIntern() == .void_type) {
             return self.fail(field_node, "expected type 'void'", .{});
         }
-        break :b try self.lowerExprKnownResTy(field_node, field_type);
+        break :b .fromInterned(try self.lowerExprKnownResTy(field_node, field_type));
     } else b: {
         if (field_type.toIntern() != .void_type) {
             return error.WrongType;
         }
-        break :b .void_value;
+        break :b .void;
     };
-    return ip.getUnion(gpa, io, self.sema.pt.tid, .{
-        .ty = res_ty.toIntern(),
-        .tag = tag.toIntern(),
-        .val = val,
-    });
+    const result: Value = switch (union_info.layout) {
+        .auto, .@"extern" => try pt.unionValue(res_ty, tag, val),
+        .@"packed" => try self.sema.bitCastVal(val, res_ty, 0, 0, 0) orelse {
+            unreachable; // `null` is only possible if the input value contains a pointer, which a packed union cannot.
+        },
+    };
+    return result.toIntern();
 }
 
 fn lowerVector(self: *LowerZon, node: Zoir.Node.Index, res_ty: Type) !InternPool.Index {

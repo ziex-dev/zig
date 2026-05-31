@@ -26,7 +26,7 @@ fn cName(ty: std.Target.CType) []const u8 {
     };
 }
 
-var general_purpose_allocator: std.heap.GeneralPurposeAllocator(.{}) = .init;
+var general_purpose_allocator: std.heap.DebugAllocator(.{}) = .init;
 
 pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
@@ -43,8 +43,8 @@ pub fn main(init: std.process.Init) !void {
     var buffer: [2000]u8 = undefined;
     var stdout_writer = Io.File.stdout().writerStreaming(io, &buffer);
     const w = &stdout_writer.interface;
-    inline for (@typeInfo(std.Target.CType).@"enum".fields) |field| {
-        const c_type: std.Target.CType = @enumFromInt(field.value);
+    inline for (@typeInfo(std.Target.CType).@"enum".field_values) |field_value| {
+        const c_type: std.Target.CType = @enumFromInt(field_value);
         try w.print("_Static_assert(sizeof({0s}) == {1d}, \"sizeof({0s}) == {1d}\");\n", .{
             cName(c_type),
             target.cTypeByteSize(c_type),

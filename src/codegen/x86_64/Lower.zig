@@ -3,7 +3,7 @@
 target: *const std.Target,
 allocator: std.mem.Allocator,
 mir: Mir,
-cc: std.builtin.CallingConvention,
+cc: std.lang.CallingConvention,
 err_msg: ?*Zcu.ErrorMsg = null,
 src_loc: Zcu.LazySrcLoc,
 result_insts_len: ResultInstIndex = undefined,
@@ -374,9 +374,7 @@ pub fn imm(lower: *const Lower, ops: Mir.Inst.Ops, i: u32) Immediate {
         .ri_u,
         .i_u,
         .mi_u,
-        .rmi,
         .rmi_u,
-        .mri,
         .rrm,
         .rrmi,
         .pseudo_dbg_arg_i_u,
@@ -427,8 +425,8 @@ fn encode(lower: *Lower, prefix: Prefix, mnemonic: Mnemonic, ops: []const Operan
     lower.result_insts_len += 1;
 }
 
-const inst_tags_len = @typeInfo(Mir.Inst.Tag).@"enum".fields.len;
-const inst_fixes_len = @typeInfo(Mir.Inst.Fixes).@"enum".fields.len;
+const inst_tags_len = @typeInfo(Mir.Inst.Tag).@"enum".field_names.len;
+const inst_fixes_len = @typeInfo(Mir.Inst.Fixes).@"enum".field_names.len;
 /// Lookup table, indexed by `@intFromEnum(inst.tag) * inst_fixes_len + @intFromEnum(fixes)`.
 /// The value is the resulting `Mnemonic`, or `null` if the combination is not valid.
 const mnemonic_table: [inst_tags_len * inst_fixes_len]?Mnemonic = table: {
@@ -567,7 +565,7 @@ fn generic(lower: *Lower, inst: Mir.Inst) Error!void {
         .rmi => &.{
             .{ .reg = inst.data.rix.r1 },
             .{ .mem = lower.mem(1, inst.data.rix.payload) },
-            .{ .imm = lower.imm(inst.ops, inst.data.rix.i) },
+            .{ .imm = .s(inst.data.rix.i) },
         },
         .rmi_s, .rmi_u => &.{
             .{ .reg = inst.data.rx.r1 },
@@ -589,7 +587,7 @@ fn generic(lower: *Lower, inst: Mir.Inst) Error!void {
         .mri => &.{
             .{ .mem = lower.mem(0, inst.data.rix.payload) },
             .{ .reg = inst.data.rix.r1 },
-            .{ .imm = lower.imm(inst.ops, inst.data.rix.i) },
+            .{ .imm = .u(@as(u8, @intCast(inst.data.rix.i))) },
         },
         .rrm => &.{
             .{ .reg = inst.data.rrx.r1 },

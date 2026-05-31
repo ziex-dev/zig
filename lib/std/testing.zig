@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 
 const std = @import("std.zig");
 const Io = std.Io;
+const Environ = std.process.Environ;
 const assert = std.debug.assert;
 const math = std.math;
 
@@ -16,22 +17,16 @@ var failing_allocator_instance = FailingAllocator.init(base_allocator_instance.a
 });
 var base_allocator_instance = std.heap.FixedBufferAllocator.init("");
 
-/// This should only be used in temporary test programs.
-pub const allocator = allocator_instance.allocator();
-pub var allocator_instance: std.heap.GeneralPurposeAllocator(.{
-    .stack_trace_frames = if (std.debug.sys_can_stack_trace) 10 else 0,
-    .resize_stack_traces = true,
-    // A unique value so that when a default-constructed
-    // GeneralPurposeAllocator is incorrectly passed to testing allocator, or
-    // vice versa, panic occurs.
-    .canary = @truncate(0x2731e675c3a701ba),
-}) = b: {
-    if (!builtin.is_test) @compileError("testing allocator used when not testing");
-    break :b .init;
-};
+pub var allocator_instance: std.heap.SafeAllocator = undefined;
+pub const allocator = if (builtin.is_test)
+    allocator_instance.allocator()
+else
+    @compileError("not testing");
 
 pub var io_instance: Io.Threaded = undefined;
 pub const io = if (builtin.is_test) io_instance.io() else @compileError("not testing");
+
+pub var environ: Environ = if (builtin.is_test) undefined else @compileError("not testing");
 
 /// TODO https://github.com/ziglang/zig/issues/5738
 pub var log_level = std.log.Level.warn;
@@ -146,21 +141,21 @@ fn expectEqualInner(comptime T: type, expected: T, actual: T) !void {
         },
 
         .@"struct" => |structType| {
-            inline for (structType.fields) |field| {
-                try expectEqual(@field(expected, field.name), @field(actual, field.name));
+            inline for (structType.field_names) |field_name| {
+                try expectEqual(@field(expected, field_name), @field(actual, field_name));
             }
         },
 
         .@"union" => |union_info| {
             if (union_info.tag_type == null) {
-                const first_size = @bitSizeOf(union_info.fields[0].type);
-                inline for (union_info.fields) |field| {
-                    if (@bitSizeOf(field.type) != first_size) {
+                const first_size = @bitSizeOf(union_info.field_types[0]);
+                inline for (union_info.field_types) |field_type| {
+                    if (@bitSizeOf(field_type) != first_size) {
                         @compileError("Unable to compare untagged unions with varying field sizes for type " ++ @typeName(@TypeOf(actual)));
                     }
                 }
 
-                const BackingInt = std.meta.Int(.unsigned, @bitSizeOf(T));
+                const BackingInt = @Int(.unsigned, @bitSizeOf(T));
                 return expectEqual(
                     @as(BackingInt, @bitCast(expected)),
                     @as(BackingInt, @bitCast(actual)),
@@ -498,7 +493,7 @@ const BytesDiffer = struct {
         var row: usize = 0;
         while (expected_iterator.next()) |chunk| {
             // to avoid having to calculate diffs twice per chunk
-            var diffs: std.bit_set.IntegerBitSet(16) = .{ .mask = 0 };
+            var diffs: std.bit_set.Integer(16) = .{ .mask = 0 };
             for (chunk, 0..) |byte, col| {
                 const absolute_byte_index = col + row * 16;
                 const diff = if (absolute_byte_index < self.actual.len) self.actual[absolute_byte_index] != byte else true;
@@ -845,9 +840,9 @@ fn expectEqualDeepInner(comptime T: type, expected: T, actual: T) error{TestExpe
         },
 
         .@"struct" => |structType| {
-            inline for (structType.fields) |field| {
-                expectEqualDeep(@field(expected, field.name), @field(actual, field.name)) catch |e| {
-                    print("Field {s} incorrect. expected {any}, found {any}\n", .{ field.name, @field(expected, field.name), @field(actual, field.name) });
+            inline for (structType.field_names) |field_name| {
+                expectEqualDeep(@field(expected, field_name), @field(actual, field_name)) catch |e| {
+                    print("Field {s} incorrect. expected {any}, found {any}\n", .{ field_name, @field(expected, field_name), @field(actual, field_name) });
                     return e;
                 };
             }
@@ -947,9 +942,8 @@ test "expectEqualDeep primitive type" {
 }
 
 test "expectEqualDeep pointer" {
-    const a = 1;
-    const b = 1;
-    try expectEqualDeep(&a, &b);
+    try comptime expectEqualDeep(&1, &1);
+    try expectEqualDeep(&@as(u32, 1), &@as(u32, 1));
 }
 
 test "expectEqualDeep composite type" {
@@ -1110,48 +1104,16 @@ test {
 ///     defer allocator.free(bar);
 /// }
 /// ```
-pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime test_fn: anytype, extra_args: anytype) !void {
-    switch (@typeInfo(@typeInfo(@TypeOf(test_fn)).@"fn".return_type.?)) {
-        .error_union => |info| {
-            if (info.payload != void) {
-                @compileError("Return type must be !void");
-            }
-        },
-        else => @compileError("Return type must be !void"),
-    }
-    if (@typeInfo(@TypeOf(extra_args)) != .@"struct") {
-        @compileError("Expected tuple or struct argument, found " ++ @typeName(@TypeOf(extra_args)));
-    }
-
-    const ArgsTuple = std.meta.ArgsTuple(@TypeOf(test_fn));
-    const fn_args_fields = @typeInfo(ArgsTuple).@"struct".fields;
-    if (fn_args_fields.len == 0 or fn_args_fields[0].type != std.mem.Allocator) {
-        @compileError("The provided function must have an " ++ @typeName(std.mem.Allocator) ++ " as its first argument");
-    }
-    const expected_args_tuple_len = fn_args_fields.len - 1;
-    if (extra_args.len != expected_args_tuple_len) {
-        @compileError("The provided function expects " ++ std.fmt.comptimePrint("{d}", .{expected_args_tuple_len}) ++ " extra arguments, but the provided tuple contains " ++ std.fmt.comptimePrint("{d}", .{extra_args.len}));
-    }
-
-    // Setup the tuple that will actually be used with @call (we'll need to insert
-    // the failing allocator in field @"0" before each @call)
-    var args: ArgsTuple = undefined;
-    inline for (@typeInfo(@TypeOf(extra_args)).@"struct".fields, 0..) |field, i| {
-        const arg_i_str = comptime str: {
-            var str_buf: [100]u8 = undefined;
-            const args_i = i + 1;
-            const str_len = std.fmt.printInt(&str_buf, args_i, 10, .lower, .{});
-            break :str str_buf[0..str_len];
-        };
-        @field(args, arg_i_str) = @field(extra_args, field.name);
-    }
-
+pub fn checkAllAllocationFailures(
+    backing_allocator: std.mem.Allocator,
+    comptime test_fn: anytype,
+    extra_args: CheckAllAllocationFailuresExtraArgs(@TypeOf(test_fn)),
+) !void {
     // Try it once with unlimited memory, make sure it works
     const needed_alloc_count = x: {
         var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{});
-        args.@"0" = failing_allocator_inst.allocator();
 
-        try @call(.auto, test_fn, args);
+        try @call(.auto, test_fn, .{failing_allocator_inst.allocator()} ++ extra_args);
         break :x failing_allocator_inst.alloc_index;
     };
 
@@ -1159,9 +1121,8 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
         var failing_allocator_inst = std.testing.FailingAllocator.init(backing_allocator, .{
             .fail_index = fail_index,
         });
-        args.@"0" = failing_allocator_inst.allocator();
 
-        if (@call(.auto, test_fn, args)) |_| {
+        if (@call(.auto, test_fn, .{failing_allocator_inst.allocator()} ++ extra_args)) |_| {
             if (failing_allocator_inst.has_induced_failure) {
                 return error.SwallowedOutOfMemoryError;
             } else {
@@ -1192,28 +1153,63 @@ pub fn checkAllAllocationFailures(backing_allocator: std.mem.Allocator, comptime
     }
 }
 
+fn CheckAllAllocationFailuresExtraArgs(comptime TestFn: type) type {
+    switch (@typeInfo(@typeInfo(TestFn).@"fn".return_type.?)) {
+        .error_union => |info| {
+            if (info.payload != void) {
+                @compileError("Return type must be !void");
+            }
+        },
+        else => @compileError("Return type must be !void"),
+    }
+
+    const ArgsTuple = std.meta.ArgsTuple(TestFn);
+
+    const field_types = @typeInfo(ArgsTuple).@"struct".field_types;
+    if (field_types.len == 0 or field_types[0] != std.mem.Allocator) {
+        @compileError("The provided function must have an " ++ @typeName(std.mem.Allocator) ++ " as its first argument");
+    }
+
+    var extra_args: [field_types.len - 1]type = undefined;
+    for (&extra_args, field_types[1..]) |*arg, field_type| {
+        arg.* = field_type;
+    }
+
+    return @Tuple(&extra_args);
+}
+
+test "checkAllAllocationFailures provide result type to 'extra_args' argument" {
+    try checkAllAllocationFailures(
+        std.testing.allocator,
+        struct {
+            fn f(ally: std.mem.Allocator, params: struct {
+                foo_len: u32,
+                bar_len: u32,
+            }) !void {
+                const foo = try ally.alloc(u8, params.foo_len);
+                defer ally.free(foo);
+                const bar = try ally.alloc(u8, params.bar_len);
+                defer ally.free(bar);
+            }
+        }.f,
+        .{
+            .{
+                .foo_len = 3,
+                .bar_len = 5,
+            },
+        },
+    );
+}
+
 /// Given a type, references all the declarations inside, so that the semantic analyzer sees them.
 pub fn refAllDecls(comptime T: type) void {
     if (!builtin.is_test) return;
-    inline for (comptime std.meta.declarations(T)) |decl| {
-        _ = &@field(T, decl.name);
+    inline for (comptime std.meta.declarations(T)) |decl_name| {
+        _ = &@field(T, decl_name);
     }
 }
 
-/// Given a type, recursively references all the declarations inside, so that the semantic analyzer sees them.
-/// For deep types, you may use `@setEvalBranchQuota`.
-pub fn refAllDeclsRecursive(comptime T: type) void {
-    if (!builtin.is_test) return;
-    inline for (comptime std.meta.declarations(T)) |decl| {
-        if (@TypeOf(@field(T, decl.name)) == type) {
-            switch (@typeInfo(@field(T, decl.name))) {
-                .@"struct", .@"enum", .@"union", .@"opaque" => refAllDeclsRecursive(@field(T, decl.name)),
-                else => {},
-            }
-        }
-        _ = &@field(T, decl.name);
-    }
-}
+pub const Smith = @import("testing/Smith.zig");
 
 pub const FuzzInputOptions = struct {
     corpus: []const []const u8 = &.{},
@@ -1222,7 +1218,7 @@ pub const FuzzInputOptions = struct {
 /// Inline to avoid coverage instrumentation.
 pub inline fn fuzz(
     context: anytype,
-    comptime testOne: fn (context: @TypeOf(context), input: []const u8) anyerror!void,
+    comptime testOne: fn (context: @TypeOf(context), smith: *Smith) anyerror!void,
     options: FuzzInputOptions,
 ) anyerror!void {
     return @import("root").fuzz(context, testOne, options);
@@ -1329,3 +1325,68 @@ pub const ReaderIndirect = struct {
         };
     }
 };
+
+/// A `Io.Writer` that writes its data to another `Io.Writer`, and only
+/// writes new data to its own buffer during `drain`.
+pub const WriterIndirect = struct {
+    out: *Io.Writer,
+    interface: Io.Writer,
+
+    pub fn init(out: *Io.Writer, buffer: []u8) WriterIndirect {
+        return .{
+            .out = out,
+            .interface = .{
+                .vtable = &.{
+                    .drain = drain,
+                },
+                .buffer = buffer,
+                .end = 0,
+            },
+        };
+    }
+
+    fn drain(w: *Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
+        const w_indirect: *WriterIndirect = @alignCast(@fieldParentPtr("interface", w));
+
+        // Write all data in the buffer to `out`
+        try w_indirect.out.writeAll(w.buffer[0..w.end]);
+        w.end = 0;
+
+        // Refill buffer using data
+        {
+            const end_before_fill = w.end;
+            for (data[0 .. data.len - 1]) |bytes| {
+                const dest = w.buffer[w.end..];
+                const len = @min(bytes.len, dest.len);
+                @memcpy(dest[0..len], bytes[0..len]);
+                w.end += len;
+            }
+            const pattern = data[data.len - 1];
+            switch (pattern.len) {
+                0 => {},
+                1 => {
+                    const len = @min(w.buffer[w.end..].len, splat);
+                    @memset(w.buffer[w.end..][0..len], pattern[0]);
+                    w.end += len;
+                },
+                else => {
+                    const dest = w.buffer[w.end..];
+                    for (0..splat) |i| {
+                        const start_i = i * pattern.len;
+                        if (start_i >= dest.len) break;
+                        const remaining = dest[start_i..];
+                        const len = @min(pattern.len, remaining.len);
+                        @memcpy(remaining[0..len], pattern[0..len]);
+                        w.end += len;
+                    }
+                },
+            }
+
+            return w.end - end_before_fill;
+        }
+    }
+};
+
+test {
+    _ = &Smith;
+}

@@ -20,9 +20,6 @@ pub const Tag = enum {
     bit_reverse,
     offset_of,
     call,
-    c_define,
-    c_import,
-    c_include,
     clz,
     cmpxchg_strong,
     cmpxchg_weak,
@@ -30,7 +27,6 @@ pub const Tag = enum {
     compile_log,
     const_cast,
     ctz,
-    c_undef,
     c_va_arg,
     c_va_copy,
     c_va_end,
@@ -307,27 +303,6 @@ pub const list = list: {
             },
         },
         .{
-            "@cDefine",
-            .{
-                .tag = .c_define,
-                .param_count = 2,
-            },
-        },
-        .{
-            "@cImport",
-            .{
-                .tag = .c_import,
-                .param_count = 1,
-            },
-        },
-        .{
-            "@cInclude",
-            .{
-                .tag = .c_include,
-                .param_count = 1,
-            },
-        },
-        .{
             "@clz",
             .{
                 .tag = .clz,
@@ -377,35 +352,32 @@ pub const list = list: {
             },
         },
         .{
-            "@cUndef",
+            "@cVaArg",
             .{
-                .tag = .c_undef,
-                .param_count = 1,
-            },
-        },
-        .{
-            "@cVaArg", .{
                 .tag = .c_va_arg,
                 .param_count = 2,
                 .illegal_outside_function = true,
             },
         },
         .{
-            "@cVaCopy", .{
+            "@cVaCopy",
+            .{
                 .tag = .c_va_copy,
                 .param_count = 1,
                 .illegal_outside_function = true,
             },
         },
         .{
-            "@cVaEnd", .{
+            "@cVaEnd",
+            .{
                 .tag = .c_va_end,
                 .param_count = 1,
                 .illegal_outside_function = true,
             },
         },
         .{
-            "@cVaStart", .{
+            "@cVaStart",
+            .{
                 .tag = .c_va_start,
                 .param_count = 0,
                 .illegal_outside_function = true,
@@ -1042,7 +1014,8 @@ pub const list = list: {
             },
         },
         .{
-            "@workItemId", .{
+            "@workItemId",
+            .{
                 .tag = .work_item_id,
                 .param_count = 1,
                 .illegal_outside_function = true,

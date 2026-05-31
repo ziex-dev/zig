@@ -378,16 +378,10 @@ test endsWithIgnoreCase {
     try std.testing.expect(!endsWithIgnoreCase("BoB", "Bo"));
 }
 
-/// Deprecated in favor of `findIgnoreCase`.
-pub const indexOfIgnoreCase = findIgnoreCase;
-
 /// Finds `needle` in `haystack`, ignoring case, starting at index 0.
 pub fn findIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
     return findIgnoreCasePos(haystack, 0, needle);
 }
-
-/// Deprecated in favor of `findIgnoreCasePos`.
-pub const indexOfIgnoreCasePos = findIgnoreCasePos;
 
 /// Finds `needle` in `haystack`, ignoring case, starting at `start_index`.
 /// Uses Boyer-Moore-Horspool algorithm on large inputs; `findIgnoreCasePosLinear` on small inputs.
@@ -409,9 +403,6 @@ pub fn findIgnoreCasePos(haystack: []const u8, start_index: usize, needle: []con
 
     return null;
 }
-
-/// Deprecated in favor of `findIgnoreCaseLinear`.
-pub const indexOfIgnoreCasePosLinear = findIgnoreCasePosLinear;
 
 /// Consider using `findIgnoreCasePos` instead of this, which will automatically use a
 /// more sophisticated algorithm on larger inputs.
@@ -462,6 +453,30 @@ pub fn orderIgnoreCase(lhs: []const u8, rhs: []const u8) std.math.Order {
         }
     }
     return std.math.order(lhs.len, rhs.len);
+}
+
+/// Returns the lexicographical order of two many-item pointers with NUL-termination. O(n).
+pub fn orderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8) std.math.Order {
+    return boundedOrderIgnoreCaseZ(lhs, rhs, std.math.maxInt(usize));
+}
+
+test orderIgnoreCaseZ {
+    try std.testing.expect(orderIgnoreCaseZ("aBcD", "Bee") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("AbC", "aBc") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("abC", "aBc0") == .lt);
+    try std.testing.expect(orderIgnoreCaseZ("", "") == .eq);
+    try std.testing.expect(orderIgnoreCaseZ("", "a") == .lt);
+
+    const s: [*:0]const u8 = "Abc";
+    try std.testing.expect(orderIgnoreCaseZ(s, s) == .eq);
+}
+
+/// Returns the lexicographical order of two many-item pointers with NUL-termination until some specified bound. O(n).
+pub fn boundedOrderIgnoreCaseZ(lhs: [*:0]const u8, rhs: [*:0]const u8, bound: usize) std.math.Order {
+    if (lhs == rhs) return .eq;
+    var i: usize = 0;
+    while (i < bound and toLower(lhs[i]) == toLower(rhs[i]) and lhs[i] != 0) : (i += 1) {}
+    return if (i < bound) std.math.order(toLower(lhs[i]), toLower(rhs[i])) else .eq;
 }
 
 /// Returns whether the lexicographical order of `lhs` is lower than `rhs`.

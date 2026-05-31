@@ -1,64 +1,64 @@
-const std = @import("std");
-const common = @import("common.zig");
 const builtin = @import("builtin");
+const std = @import("std");
+const symbol = @import("../c.zig").symbol;
 
 comptime {
     if (builtin.target.isMuslLibC() or builtin.target.isWasiLibC()) {
         // Functions specific to musl and wasi-libc.
-        @export(&isalnum, .{ .name = "isalnum", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isalpha, .{ .name = "isalpha", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isblank, .{ .name = "isblank", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&iscntrl, .{ .name = "iscntrl", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isdigit, .{ .name = "isdigit", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isgraph, .{ .name = "isgraph", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&islower, .{ .name = "islower", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isprint, .{ .name = "isprint", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&ispunct, .{ .name = "ispunct", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isspace, .{ .name = "isspace", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isupper, .{ .name = "isupper", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&isxdigit, .{ .name = "isxdigit", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&tolower, .{ .name = "tolower", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&toupper, .{ .name = "toupper", .linkage = common.linkage, .visibility = common.visibility });
+        symbol(&isalnum, "isalnum");
+        symbol(&isalpha, "isalpha");
+        symbol(&isblank, "isblank");
+        symbol(&iscntrl, "iscntrl");
+        symbol(&isdigit, "isdigit");
+        symbol(&isgraph, "isgraph");
+        symbol(&islower, "islower");
+        symbol(&isprint, "isprint");
+        symbol(&ispunct, "ispunct");
+        symbol(&isspace, "isspace");
+        symbol(&isupper, "isupper");
+        symbol(&isxdigit, "isxdigit");
+        symbol(&tolower, "tolower");
+        symbol(&toupper, "toupper");
 
-        @export(&__isalnum_l, .{ .name = "__isalnum_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isalpha_l, .{ .name = "__isalpha_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isblank_l, .{ .name = "__isblank_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__iscntrl_l, .{ .name = "__iscntrl_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isdigit_l, .{ .name = "__isdigit_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isgraph_l, .{ .name = "__isgraph_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__islower_l, .{ .name = "__islower_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isprint_l, .{ .name = "__isprint_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__ispunct_l, .{ .name = "__ispunct_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isspace_l, .{ .name = "__isspace_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isupper_l, .{ .name = "__isupper_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isxdigit_l, .{ .name = "__isxdigit_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__tolower_l, .{ .name = "__tolower_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__toupper_l, .{ .name = "__toupper_l", .linkage = common.linkage, .visibility = common.visibility });
+        symbol(&__isalnum_l, "__isalnum_l");
+        symbol(&__isalpha_l, "__isalpha_l");
+        symbol(&__isblank_l, "__isblank_l");
+        symbol(&__iscntrl_l, "__iscntrl_l");
+        symbol(&__isdigit_l, "__isdigit_l");
+        symbol(&__isgraph_l, "__isgraph_l");
+        symbol(&__islower_l, "__islower_l");
+        symbol(&__isprint_l, "__isprint_l");
+        symbol(&__ispunct_l, "__ispunct_l");
+        symbol(&__isspace_l, "__isspace_l");
+        symbol(&__isupper_l, "__isupper_l");
+        symbol(&__isxdigit_l, "__isxdigit_l");
+        symbol(&__tolower_l, "__tolower_l");
+        symbol(&__toupper_l, "__toupper_l");
 
-        @export(&__isalnum_l, .{ .name = "isalnum_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isalpha_l, .{ .name = "isalpha_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isblank_l, .{ .name = "isblank_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__iscntrl_l, .{ .name = "iscntrl_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isdigit_l, .{ .name = "isdigit_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isgraph_l, .{ .name = "isgraph_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__islower_l, .{ .name = "islower_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isprint_l, .{ .name = "isprint_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__ispunct_l, .{ .name = "ispunct_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isspace_l, .{ .name = "isspace_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isupper_l, .{ .name = "isupper_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__isxdigit_l, .{ .name = "isxdigit_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__tolower_l, .{ .name = "tolower_l", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&__toupper_l, .{ .name = "toupper_l", .linkage = common.linkage, .visibility = common.visibility });
+        symbol(&__isalnum_l, "isalnum_l");
+        symbol(&__isalpha_l, "isalpha_l");
+        symbol(&__isblank_l, "isblank_l");
+        symbol(&__iscntrl_l, "iscntrl_l");
+        symbol(&__isdigit_l, "isdigit_l");
+        symbol(&__isgraph_l, "isgraph_l");
+        symbol(&__islower_l, "islower_l");
+        symbol(&__isprint_l, "isprint_l");
+        symbol(&__ispunct_l, "ispunct_l");
+        symbol(&__isspace_l, "isspace_l");
+        symbol(&__isupper_l, "isupper_l");
+        symbol(&__isxdigit_l, "isxdigit_l");
+        symbol(&__tolower_l, "tolower_l");
+        symbol(&__toupper_l, "toupper_l");
 
-        @export(&isascii, .{ .name = "isascii", .linkage = common.linkage, .visibility = common.visibility });
-        @export(&toascii, .{ .name = "toascii", .linkage = common.linkage, .visibility = common.visibility });
+        symbol(&isascii, "isascii");
+        symbol(&toascii, "toascii");
     }
 }
 
-// NOTE: If the input is not representable as an unsigned char or is not EOF the behaviour is undefined.
+// NOTE: If the input is not representable as an unsigned char or is not EOF (which is a negative integer value) the behaviour is undefined.
 
 fn isalnum(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isAlphanumeric(@intCast(c)));
+    return @intFromBool(std.ascii.isAlphanumeric(@truncate(@as(c_uint, @bitCast(c))))); // @truncate instead of @intCast as we have to handle EOF
 }
 
 fn __isalnum_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -67,7 +67,7 @@ fn __isalnum_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isalpha(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isAlphabetic(@intCast(c)));
+    return @intFromBool(std.ascii.isAlphabetic(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isalpha_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -85,7 +85,7 @@ fn __isblank_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn iscntrl(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isControl(@intCast(c)));
+    return @intFromBool(std.ascii.isControl(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __iscntrl_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -94,7 +94,7 @@ fn __iscntrl_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isdigit(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isDigit(@intCast(c)));
+    return @intFromBool(std.ascii.isDigit(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -103,7 +103,7 @@ fn __isdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isgraph(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isGraphical(@intCast(c)));
+    return @intFromBool(std.ascii.isGraphical(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isgraph_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -112,7 +112,7 @@ fn __isgraph_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn islower(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isLower(@intCast(c)));
+    return @intFromBool(std.ascii.isLower(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __islower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -121,7 +121,7 @@ fn __islower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isprint(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isPrint(@intCast(c)));
+    return @intFromBool(std.ascii.isPrint(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isprint_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -130,7 +130,7 @@ fn __isprint_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn ispunct(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isPunctuation(@intCast(c)));
+    return @intFromBool(std.ascii.isPunctuation(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __ispunct_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -139,7 +139,7 @@ fn __ispunct_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isspace(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isWhitespace(@intCast(c)));
+    return @intFromBool(std.ascii.isWhitespace(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isspace_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -148,7 +148,7 @@ fn __isspace_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isupper(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isUpper(@intCast(c)));
+    return @intFromBool(std.ascii.isUpper(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -157,7 +157,7 @@ fn __isupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isxdigit(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isHex(@intCast(c)));
+    return @intFromBool(std.ascii.isHex(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn __isxdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -166,7 +166,7 @@ fn __isxdigit_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn tolower(c: c_int) callconv(.c) c_int {
-    return std.ascii.toLower(@intCast(c));
+    return std.ascii.toLower(@truncate(@as(c_uint, @bitCast(c))));
 }
 
 fn __tolower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -175,7 +175,7 @@ fn __tolower_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn toupper(c: c_int) callconv(.c) c_int {
-    return std.ascii.toUpper(@intCast(c));
+    return std.ascii.toUpper(@truncate(@as(c_uint, @bitCast(c))));
 }
 
 fn __toupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
@@ -184,7 +184,7 @@ fn __toupper_l(c: c_int, locale: *anyopaque) callconv(.c) c_int {
 }
 
 fn isascii(c: c_int) callconv(.c) c_int {
-    return @intFromBool(std.ascii.isAscii(@intCast(c)));
+    return @intFromBool(std.ascii.isAscii(@truncate(@as(c_uint, @bitCast(c)))));
 }
 
 fn toascii(c: c_int) callconv(.c) c_int {

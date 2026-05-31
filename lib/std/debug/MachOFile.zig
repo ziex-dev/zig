@@ -158,6 +158,10 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
         }
 
         // TODO handle globals N_GSYM, and statics N_STSYM
+        //
+        // NOTE: ld64.lld and Apple's ld differ in STABS layout.
+        // Apple's ld emit N_BNSYM and N_ENSYM to mark the start and end of
+        // functions, while ld64.lld doesn't.
         switch (sym.n_type.stab) {
             .oso => switch (state) {
                 .init, .oso_close => {
@@ -178,6 +182,14 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
                 else => return error.InvalidMachO,
             },
             .fun => switch (state) {
+                .oso_open => {
+                    state = .fun_strx;
+                    last_sym = .{
+                        .strx = sym.n_strx,
+                        .addr = sym.n_value,
+                        .ofile = ofile,
+                    };
+                },
                 .bnsym => {
                     state = .fun_strx;
                     last_sym.strx = sym.n_strx;
@@ -185,20 +197,24 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
                 .fun_strx => {
                     state = .fun_size;
                 },
+                .fun_size => {
+                    if (last_sym.strx != 0) {
+                        appendStabSymbol(&symbols, &symbol_names, strings, last_sym);
+                    }
+                    last_sym = .{
+                        .strx = sym.n_strx,
+                        .addr = sym.n_value,
+                        .ofile = ofile,
+                    };
+                    state = .fun_strx;
+                },
                 else => return error.InvalidMachO,
             },
             .ensym => switch (state) {
                 .fun_size => {
                     state = .ensym;
                     if (last_sym.strx != 0) {
-                        const name = std.mem.sliceTo(strings[last_sym.strx..], 0);
-                        const gop = symbol_names.getOrPutAssumeCapacity(name);
-                        if (!gop.found_existing) {
-                            assert(gop.index == symbols.items.len);
-                            symbols.appendAssumeCapacity(last_sym);
-                        } else {
-                            symbols.items[gop.index] = last_sym;
-                        }
+                        appendStabSymbol(&symbols, &symbol_names, strings, last_sym);
                     }
                 },
                 else => return error.InvalidMachO,
@@ -207,6 +223,12 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
                 .init, .oso_close => {},
                 .oso_open, .ensym => {
                     state = .oso_close;
+                },
+                .fun_size => {
+                    state = .oso_close;
+                    if (last_sym.strx != 0) {
+                        appendStabSymbol(&symbols, &symbol_names, strings, last_sym);
+                    }
                 },
                 else => return error.InvalidMachO,
             },
@@ -356,6 +378,22 @@ test {
     _ = Symbol;
 }
 
+fn appendStabSymbol(
+    symbols: *std.ArrayList(Symbol),
+    symbol_names: *std.StringArrayHashMapUnmanaged(void),
+    strings: []const u8,
+    last_sym: Symbol,
+) void {
+    const name = std.mem.sliceTo(strings[last_sym.strx..], 0);
+    const gop = symbol_names.getOrPutAssumeCapacity(name);
+    if (!gop.found_existing) {
+        assert(gop.index == symbols.items.len);
+        symbols.appendAssumeCapacity(last_sym);
+    } else {
+        symbols.items[gop.index] = last_sym;
+    }
+}
+
 fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
     const all_mapped_memory, const mapped_ofile = map: {
         const open_paren = paren: {
@@ -466,8 +504,8 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
 
         if (!std.mem.eql(u8, "__DWARF", sect.segName())) continue;
 
-        const section_index: usize = inline for (@typeInfo(Dwarf.Section.Id).@"enum".fields, 0..) |section, i| {
-            if (mem.eql(u8, "__" ++ section.name, sect.sectName())) break i;
+        const section_index: usize = inline for (@typeInfo(Dwarf.Section.Id).@"enum".field_names, 0..) |section_name, i| {
+            if (mem.eql(u8, "__" ++ section_name, sect.sectName())) break i;
         } else continue;
 
         if (mapped_ofile.len < sect.offset + sect.size) return error.InvalidMachO;

@@ -2,18 +2,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const math = std.math;
 const arch = builtin.cpu.arch;
-const common = @import("common.zig");
+const compiler_rt = @import("../compiler_rt.zig");
+const symbol = compiler_rt.symbol;
 
 comptime {
-    @export(&__fmaxh, .{ .name = "__fmaxh", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmaxf, .{ .name = "fmaxf", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmax, .{ .name = "fmax", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__fmaxx, .{ .name = "__fmaxx", .linkage = common.linkage, .visibility = common.visibility });
-    if (common.want_ppc_abi) {
-        @export(&fmaxq, .{ .name = "fmaxf128", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&__fmaxh, "__fmaxh");
+    symbol(&fmaxf, "fmaxf");
+    symbol(&fmax, "fmax");
+    symbol(&__fmaxx, "__fmaxx");
+    if (compiler_rt.want_ppc_abi) {
+        symbol(&fmaxq, "fmaxf128");
     }
-    @export(&fmaxq, .{ .name = "fmaxq", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmaxl, .{ .name = "fmaxl", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&fmaxq, "fmaxq");
+    symbol(&fmaxl, "fmaxl");
 }
 
 pub fn __fmaxh(x: f16, y: f16) callconv(.c) f16 {
@@ -38,8 +39,6 @@ pub fn fmaxq(x: f128, y: f128) callconv(.c) f128 {
 
 pub fn fmaxl(x: c_longdouble, y: c_longdouble) callconv(.c) c_longdouble {
     switch (@typeInfo(c_longdouble).float.bits) {
-        16 => return __fmaxh(x, y),
-        32 => return fmaxf(x, y),
         64 => return fmax(x, y),
         80 => return __fmaxx(x, y),
         128 => return fmaxq(x, y),
@@ -60,7 +59,7 @@ inline fn generic_fmax(comptime T: type, x: T, y: T) T {
 test "generic_fmax" {
     inline for ([_]type{ f32, f64, c_longdouble, f80, f128 }) |T| {
         const nan_val = math.nan(T);
-        const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const Int = @Int(.unsigned, @bitSizeOf(T));
 
         try std.testing.expect(math.isNan(generic_fmax(T, nan_val, nan_val)));
         try std.testing.expectEqual(@as(T, 1.0), generic_fmax(T, nan_val, 1.0));

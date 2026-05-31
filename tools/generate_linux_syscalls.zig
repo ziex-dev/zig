@@ -28,6 +28,11 @@ const stdlib_renames = std.StaticStringMap([]const u8).initComptime(.{
     // ARM EABI/Thumb.
     .{ "arm_sync_file_range", "sync_file_range" },
     .{ "arm_fadvise64_64", "fadvise64_64" },
+    // Alpha
+    // See https://github.com/torvalds/linux/blob/8bf22c33e7a172fbc72464f4cc484d23a6b412ba/arch/alpha/include/uapi/asm/unistd.h#L10
+    .{ "getxpid", "getpid" },
+    .{ "getxuid", "getuid" },
+    .{ "getxgid", "getgid" },
 });
 
 /// Filter syscalls that aren't actually syscalls.
@@ -73,6 +78,7 @@ const Abi = enum {
     nios2,
     or1k,
     riscv,
+    hexagon,
 };
 
 const __X32_SYSCALL_BIT: u32 = 0x40000000;
@@ -155,13 +161,15 @@ const architectures: []const Arch = &.{
     .{ .@"var" = "PowerPC64", .table = .{ .specific = "arch/powerpc/kernel/syscalls/syscall.tbl" }, .abi = &.{ .common, .@"64", .nospu } },
     .{ .@"var" = "S390x", .table = .{ .specific = "arch/s390/kernel/syscalls/syscall.tbl" }, .abi = &.{ .common, .@"64" } },
     .{ .@"var" = "Xtensa", .table = .{ .specific = "arch/xtensa/kernel/syscalls/syscall.tbl" } },
+    .{ .@"var" = "Alpha", .table = .{ .specific = "arch/alpha/kernel/syscalls/syscall.tbl" } },
     .{ .@"var" = "Arm64", .table = .generic, .abi = &.{ .common, .@"64", .renameat, .rlimit, .memfd_secret } },
     .{ .@"var" = "RiscV32", .table = .generic, .abi = &.{ .common, .@"32", .riscv, .memfd_secret } },
     .{ .@"var" = "RiscV64", .table = .generic, .abi = &.{ .common, .@"64", .riscv, .rlimit, .memfd_secret } },
+    .{ .@"var" = "LoongArch32", .table = .generic, .abi = &.{ .common, .@"32" } },
     .{ .@"var" = "LoongArch64", .table = .generic, .abi = &.{ .common, .@"64" } },
     .{ .@"var" = "Arc", .table = .generic, .abi = &.{ .common, .@"32", .arc, .time32, .renameat, .stat64, .rlimit } },
     .{ .@"var" = "CSky", .table = .generic, .abi = &.{ .common, .@"32", .csky, .time32, .stat64, .rlimit } },
-    .{ .@"var" = "Hexagon", .table = .generic, .abi = &.{ .common, .@"32", .time32, .stat64, .rlimit, .renameat } },
+    .{ .@"var" = "Hexagon", .table = .generic, .abi = &.{ .common, .@"32", .hexagon, .time32, .stat64, .rlimit, .renameat } },
     .{ .@"var" = "OpenRisc", .table = .generic, .abi = &.{ .common, .@"32", .or1k, .time32, .stat64, .rlimit, .renameat } },
     // .{ .@"var" = "Nios2", .table = .generic, .abi = &.{ .common, .@"32", .nios2, .time32, .stat64, .rlimit, .renameat } },
     // .{ .@"var" = "Parisc", .table = .{ .specific = "arch/parisc/kernel/syscalls/syscall.tbl" }, .abi = &.{ .common, .@"32" } },
@@ -250,8 +258,8 @@ pub fn main(init: std.process.Init) !void {
 
 fn usage(w: *std.Io.Writer, arg0: []const u8) std.Io.Writer.Error!void {
     try w.print(
-        \\Usage: {s} /path/to/zig /path/to/linux
-        \\Alternative Usage: zig run /path/to/git/zig/tools/generate_linux_syscalls.zig -- /path/to/zig /path/to/linux
+        \\Usage: {s} /path/to/linux
+        \\Alternative Usage: zig run /path/to/git/zig/tools/generate_linux_syscalls.zig -- /path/to/linux
         \\
         \\Generates the list of Linux syscalls for each supported cpu arch, using the Linux development tree.
         \\Prints to stdout Zig code which you can use to replace the file lib/std/os/linux/syscalls.zig.

@@ -160,14 +160,25 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, mode: Mode) Allocator.Error!A
         if (token.tag == .eof) break;
     }
 
+    var tokens_slice = tokens.toOwnedSlice();
+    errdefer tokens_slice.deinit(gpa);
+    return parseTokens(gpa, source, tokens_slice, mode);
+}
+
+pub fn parseTokens(
+    gpa: Allocator,
+    source: [:0]const u8,
+    tokens: Ast.TokenList.Slice,
+    mode: Mode,
+) Allocator.Error!Ast {
     var parser: Parse = .{
         .source = source,
         .gpa = gpa,
-        .tokens = tokens.slice(),
-        .errors = .{},
-        .nodes = .{},
-        .extra_data = .{},
-        .scratch = .{},
+        .tokens = tokens,
+        .errors = .empty,
+        .nodes = .empty,
+        .extra_data = .empty,
+        .scratch = .empty,
         .tok_i = 0,
     };
     defer parser.errors.deinit(gpa);
@@ -185,19 +196,17 @@ pub fn parse(gpa: Allocator, source: [:0]const u8, mode: Mode) Allocator.Error!A
         .zon => try parser.parseZon(),
     }
 
-    const extra_data = try parser.extra_data.toOwnedSlice(gpa);
-    errdefer gpa.free(extra_data);
-    const errors = try parser.errors.toOwnedSlice(gpa);
-    errdefer gpa.free(errors);
+    try parser.extra_data.shrinkToLen(gpa);
+    try parser.errors.shrinkToLen(gpa);
 
     // TODO experiment with compacting the MultiArrayList slices here
-    return Ast{
+    return .{
         .source = source,
         .mode = mode,
-        .tokens = tokens.toOwnedSlice(),
+        .tokens = tokens,
         .nodes = parser.nodes.toOwnedSlice(),
-        .extra_data = extra_data,
-        .errors = errors,
+        .extra_data = parser.extra_data.toOwnedSliceAssert(),
+        .errors = parser.errors.toOwnedSliceAssert(),
     };
 }
 
@@ -289,17 +298,17 @@ pub fn extraDataSliceWithLen(tree: Ast, start: ExtraIndex, len: u32, comptime T:
 }
 
 pub fn extraData(tree: Ast, index: ExtraIndex, comptime T: type) T {
-    const fields = std.meta.fields(T);
+    const info = @typeInfo(T).@"struct";
     var result: T = undefined;
-    inline for (fields, 0..) |field, i| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        @field(result, field_name) = switch (field_type) {
             Node.Index,
             Node.OptionalIndex,
             OptionalTokenIndex,
             ExtraIndex,
             => @enumFromInt(tree.extra_data[@intFromEnum(index) + i]),
             TokenIndex => tree.extra_data[@intFromEnum(index) + i],
-            else => @compileError("unexpected field type: " ++ @typeName(field.type)),
+            else => @compileError("unexpected field type: " ++ @typeName(field_type)),
         };
     }
     return result;
@@ -322,11 +331,6 @@ pub fn rootDecls(tree: Ast) []const Node.Index {
 
 pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void {
     switch (parse_error.tag) {
-        .asterisk_after_ptr_deref => {
-            // Note that the token will point at the `.*` but ideally the source
-            // location would point to the `*` after the `.*`.
-            return w.writeAll("'.*' cannot be followed by '*'; are you missing a space?");
-        },
         .chained_comparison_operators => {
             return w.writeAll("comparison operators cannot be chained");
         },
@@ -492,9 +496,6 @@ pub fn renderError(tree: Ast, parse_error: Error, w: *Writer) Writer.Error!void 
         },
         .varargs_nonfinal => {
             return w.writeAll("function prototype has parameter after varargs");
-        },
-        .expected_continue_expr => {
-            return w.writeAll("expected ':' before while continue expression");
         },
 
         .expected_semi_after_decl => {
@@ -681,7 +682,6 @@ pub fn firstToken(tree: Ast, node: Node.Index) TokenIndex {
         .mul,
         .div,
         .mod,
-        .array_mult,
         .mul_wrap,
         .mul_sat,
         .add,
@@ -918,7 +918,6 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
         .mul,
         .div,
         .mod,
-        .array_mult,
         .mul_wrap,
         .mul_sat,
         .add,
@@ -946,8 +945,8 @@ pub fn lastToken(tree: Ast, node: Node.Index) TokenIndex {
         .switch_range,
         => n = tree.nodeData(n).node_and_node[1],
 
-        .test_decl, .@"errdefer" => n = tree.nodeData(n).opt_token_and_node[1],
-        .@"defer" => n = tree.nodeData(n).node,
+        .test_decl => n = tree.nodeData(n).opt_token_and_node[1],
+        .@"defer", .@"errdefer" => n = tree.nodeData(n).node,
         .anyframe_type => n = tree.nodeData(n).token_and_node[1],
 
         .switch_case_one,
@@ -2104,10 +2103,8 @@ fn fullFnProtoComponents(tree: Ast, info: full.FnProto.Components) full.FnProto 
 }
 
 fn fullPtrTypeComponents(tree: Ast, info: full.PtrType.Components) full.PtrType {
-    const size: std.builtin.Type.Pointer.Size = switch (tree.tokenTag(info.main_token)) {
-        .asterisk,
-        .asterisk_asterisk,
-        => .one,
+    const size: std.lang.Type.Pointer.Size = switch (tree.tokenTag(info.main_token)) {
+        .asterisk => .one,
         .l_bracket => switch (tree.tokenTag(info.main_token + 1)) {
             .asterisk => if (tree.tokenTag(info.main_token + 2) == .identifier) .c else .many,
             else => .slice,
@@ -2125,10 +2122,12 @@ fn fullPtrTypeComponents(tree: Ast, info: full.PtrType.Components) full.PtrType 
     // here while looking for modifiers as that could result in false
     // positives. Therefore, start after a sentinel if there is one and
     // skip over any align node and bit range nodes.
-    var i = if (info.sentinel.unwrap()) |sentinel| tree.lastToken(sentinel) + 1 else switch (size) {
-        .many, .c => info.main_token + 1,
-        else => info.main_token,
-    };
+    var i = (if (info.sentinel.unwrap()) |sentinel| tree.lastToken(sentinel) + 1 else switch (size) {
+        .one => info.main_token,
+        .slice => info.main_token + 1,
+        .many => info.main_token + 2,
+        .c => info.main_token + 3,
+    }) + 1;
     const end = tree.firstToken(info.child_type);
     while (i < end) : (i += 1) {
         switch (tree.tokenTag(i)) {
@@ -2136,15 +2135,15 @@ fn fullPtrTypeComponents(tree: Ast, info: full.PtrType.Components) full.PtrType 
             .keyword_const => result.const_token = i,
             .keyword_volatile => result.volatile_token = i,
             .keyword_align => {
-                const align_node = info.align_node.unwrap().?;
                 if (info.bit_range_end.unwrap()) |bit_range_end| {
                     assert(info.bit_range_start != .none);
                     i = tree.lastToken(bit_range_end) + 1;
-                } else {
+                } else if (info.align_node.unwrap()) |align_node| {
                     i = tree.lastToken(align_node) + 1;
-                }
+                } else unreachable;
             },
-            else => {},
+            .keyword_addrspace => i = tree.lastToken(info.addrspace_node.unwrap().?) + 1,
+            else => unreachable,
         }
     }
     return result;
@@ -2727,7 +2726,7 @@ pub const full = struct {
     };
 
     pub const PtrType = struct {
-        size: std.builtin.Type.Pointer.Size,
+        size: std.lang.Type.Pointer.Size,
         allowzero_token: ?TokenIndex,
         const_token: ?TokenIndex,
         volatile_token: ?TokenIndex,
@@ -2834,7 +2833,6 @@ pub const Error = struct {
     } = .{ .none = {} },
 
     pub const Tag = enum {
-        asterisk_after_ptr_deref,
         chained_comparison_operators,
         decl_between_fields,
         expected_block,
@@ -2875,7 +2873,6 @@ pub const Error = struct {
         test_doc_comment,
         comptime_doc_comment,
         varargs_nonfinal,
-        expected_continue_expr,
         expected_semi_after_decl,
         expected_semi_after_stmt,
         expected_comma_after_field,
@@ -3052,11 +3049,8 @@ pub const Node = struct {
         /// a `assign_destructure` node or a parsing error occured.
         aligned_var_decl,
         /// `errdefer expr`,
-        /// `errdefer |payload| expr`.
         ///
-        /// The `data` field is a `.opt_token_and_node`:
-        ///   1. a `OptionalTokenIndex` to the payload identifier, if any.
-        ///   2. a `Node.Index` to the deferred expression.
+        /// The `data` field is a `.node` to the deferred expression.
         ///
         /// The `main_token` field is the `errdefer` token.
         @"errdefer",
@@ -3064,7 +3058,7 @@ pub const Node = struct {
         ///
         /// The `data` field is a `.node` to the deferred expression.
         ///
-        /// The `main_token` field is the `defer`.
+        /// The `main_token` field is the `defer` token.
         @"defer",
         /// `lhs catch rhs`,
         /// `lhs catch |err| rhs`.
@@ -3174,8 +3168,6 @@ pub const Node = struct {
         div,
         /// `lhs % rhs`. The `main_token` field is the `%` token.
         mod,
-        /// `lhs ** rhs`. The `main_token` field is the `**` token.
-        array_mult,
         /// `lhs *% rhs`. The `main_token` field is the `*%` token.
         mul_wrap,
         /// `lhs *| rhs`. The `main_token` field is the `*|` token.
@@ -3246,8 +3238,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type_aligned,
         /// `[*:lhs]rhs`,
         /// `*rhs`,
@@ -3259,8 +3249,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type_sentinel,
         /// The `data` field is a `.extra_and_node`:
         ///   1. a `ExtraIndex` to `PtrType`.
@@ -3268,8 +3256,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type,
         /// The `data` field is a `.extra_and_node`:
         ///   1. a `ExtraIndex` to `PtrTypeBitRange`.
@@ -3277,8 +3263,6 @@ pub const Node = struct {
         ///
         /// The `main_token` is the asterisk if a single item pointer or the
         /// lbracket if a slice, many-item pointer, or C-pointer.
-        /// The `main_token` might be a ** token, which is shared with a
-        /// parent/child pointer type and may require special handling.
         ptr_type_bit_range,
         /// `lhs[rhs..]`
         ///

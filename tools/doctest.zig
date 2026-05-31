@@ -33,7 +33,7 @@ pub fn main(init: std.process.Init) !void {
     const arena = init.arena.allocator();
     const io = init.io;
     const environ_map = init.environ_map;
-    const cwd_path = try std.process.getCwdAlloc(arena);
+    const cwd_path = try std.process.currentPathAlloc(io, arena);
 
     try environ_map.put("CLICOLOR_FORCE", "1");
 
@@ -185,10 +185,6 @@ fn printOutput(
                     try shell_out.print("-fno-llvm", .{});
                 }
             }
-            if (code.verbose_cimport) {
-                try build_args.append("--verbose-cimport");
-                try shell_out.print("--verbose-cimport ", .{});
-            }
             for (code.additional_options) |option| {
                 try build_args.append(option);
                 try shell_out.print("{s} ", .{option});
@@ -199,9 +195,8 @@ fn printOutput(
             if (expected_outcome == .build_fail) {
                 const result = try process.run(arena, io, .{
                     .argv = build_args.items,
-                    .cwd = tmp_dir_path,
+                    .cwd = .{ .path = tmp_dir_path },
                     .environ_map = environ_map,
-                    .max_output_bytes = max_doc_file_size,
                 });
                 switch (result.term) {
                     .exited => |exit_code| {
@@ -224,11 +219,7 @@ fn printOutput(
             }
             const exec_result = run(arena, io, environ_map, tmp_dir_path, build_args.items) catch
                 fatal("example failed to compile", .{});
-
-            if (code.verbose_cimport) {
-                const escaped_build_stderr = try escapeHtml(arena, exec_result.stderr);
-                try shell_out.writeAll(escaped_build_stderr);
-            }
+            _ = exec_result;
 
             if (code.target_str) |triple| {
                 if (mem.startsWith(u8, triple, "wasm32") or
@@ -256,8 +247,7 @@ fn printOutput(
                 const result = try process.run(arena, io, .{
                     .argv = run_args,
                     .environ_map = environ_map,
-                    .cwd = tmp_dir_path,
-                    .max_output_bytes = max_doc_file_size,
+                    .cwd = .{ .path = tmp_dir_path },
                 });
                 switch (result.term) {
                     .exited => |exit_code| {
@@ -321,7 +311,9 @@ fn printOutput(
                     .arch_os_abi = triple,
                 });
                 const target = try std.zig.system.resolveTargetQuery(io, target_query);
-                switch (getExternalExecutor(io, &host, &target, .{
+                switch (getExternalExecutor(io, &target, .{
+                    .host_cpu_arch = host.cpu.arch,
+                    .host_os_tag = host.os.tag,
                     .link_libc = code.link_libc,
                 })) {
                     .native => {},
@@ -375,8 +367,7 @@ fn printOutput(
             const result = try process.run(arena, io, .{
                 .argv = test_args.items,
                 .environ_map = environ_map,
-                .cwd = tmp_dir_path,
-                .max_output_bytes = max_doc_file_size,
+                .cwd = .{ .path = tmp_dir_path },
             });
             switch (result.term) {
                 .exited => |exit_code| {
@@ -431,8 +422,7 @@ fn printOutput(
             const result = try process.run(arena, io, .{
                 .argv = test_args.items,
                 .environ_map = environ_map,
-                .cwd = tmp_dir_path,
-                .max_output_bytes = max_doc_file_size,
+                .cwd = .{ .path = tmp_dir_path },
             });
             switch (result.term) {
                 .exited => |exit_code| {
@@ -507,8 +497,7 @@ fn printOutput(
                 const result = try process.run(arena, io, .{
                     .argv = build_args.items,
                     .environ_map = environ_map,
-                    .cwd = tmp_dir_path,
-                    .max_output_bytes = max_doc_file_size,
+                    .cwd = .{ .path = tmp_dir_path },
                 });
                 switch (result.term) {
                     .exited => |exit_code| {
@@ -539,7 +528,10 @@ fn printOutput(
         .lib => {
             const bin_basename = try std.zig.binNameAlloc(arena, .{
                 .root_name = code_name,
-                .target = &builtin.target,
+                .cpu_arch = builtin.target.cpu.arch,
+                .os_tag = builtin.target.os.tag,
+                .ofmt = builtin.target.ofmt,
+                .abi = builtin.target.abi,
                 .output_mode = .Lib,
             });
 
@@ -620,7 +612,7 @@ fn printSourceBlock(arena: Allocator, out: *Writer, source_bytes: []const u8, na
 
 fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
     const src_non_terminated = mem.trim(u8, raw_src, " \r\n");
-    const src = try arena.dupeZ(u8, src_non_terminated);
+    const src = try arena.dupeSentinel(u8, src_non_terminated, 0);
 
     try out.writeAll("<code>");
     var tokenizer = std.zig.Tokenizer.init(src);
@@ -813,7 +805,6 @@ fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
             .minus_pipe_equal,
             .asterisk,
             .asterisk_equal,
-            .asterisk_asterisk,
             .asterisk_percent,
             .asterisk_percent_equal,
             .asterisk_pipe,
@@ -839,7 +830,7 @@ fn tokenizeAndPrint(arena: Allocator, out: *Writer, raw_src: []const u8) !void {
             .tilde,
             => try writeEscaped(out, src[token.loc.start..token.loc.end]),
 
-            .invalid, .invalid_periodasterisks => fatal("syntax error", .{}),
+            .invalid => fatal("syntax error", .{}),
         }
         index = token.loc.end;
     }
@@ -858,7 +849,6 @@ const Code = struct {
     link_libc: bool,
     link_mode: ?std.builtin.LinkMode,
     disable_cache: bool,
-    verbose_cimport: bool,
     just_check_syntax: bool,
     additional_options: []const []const u8,
     use_llvm: ?bool,
@@ -920,7 +910,6 @@ fn parseManifest(arena: Allocator, source_bytes: []const u8) !Code {
     var target_str: ?[]const u8 = null;
     var link_libc = false;
     var disable_cache = false;
-    var verbose_cimport = false;
     var use_llvm: ?bool = null;
 
     while (it.next()) |prefixed_line| {
@@ -945,8 +934,6 @@ fn parseManifest(arena: Allocator, source_bytes: []const u8) !Code {
             link_libc = true;
         } else if (mem.eql(u8, line, "disable_cache")) {
             disable_cache = true;
-        } else if (mem.eql(u8, line, "verbose_cimport")) {
-            verbose_cimport = true;
         } else {
             fatal("unrecognized manifest line: {s}", .{line});
         }
@@ -961,7 +948,6 @@ fn parseManifest(arena: Allocator, source_bytes: []const u8) !Code {
         .link_libc = link_libc,
         .link_mode = link_mode,
         .disable_cache = disable_cache,
-        .verbose_cimport = verbose_cimport,
         .just_check_syntax = just_check_syntax,
         .use_llvm = use_llvm,
     };
@@ -1131,8 +1117,7 @@ fn run(
     const result = try process.run(allocator, io, .{
         .argv = args,
         .environ_map = environ_map,
-        .cwd = cwd,
-        .max_output_bytes = max_doc_file_size,
+        .cwd = .{ .path = cwd },
     });
     switch (result.term) {
         .exited => |exit_code| {
@@ -1147,7 +1132,12 @@ fn run(
             dumpArgs(args);
             return error.ChildCrashed;
         },
-        else => {
+        .stopped => |sig| {
+            std.debug.print("{s}\nThe following command stopped with signal {t}:\n", .{ result.stderr, sig });
+            dumpArgs(args);
+            return error.ChildCrashed;
+        },
+        .unknown => {
             std.debug.print("{s}\nThe following command crashed:\n", .{result.stderr});
             dumpArgs(args);
             return error.ChildCrashed;

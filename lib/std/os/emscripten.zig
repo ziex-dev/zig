@@ -11,29 +11,13 @@ const c = std.c;
 
 pub const FILE = c.FILE;
 
-var __stack_chk_guard: usize = 0;
-fn __stack_chk_fail() callconv(.c) void {
-    std.debug.print("stack smashing detected: terminated\n", .{});
-    emscripten_force_exit(127);
-}
-
-comptime {
-    if (builtin.os.tag == .emscripten) {
-        if (builtin.mode == .Debug or builtin.mode == .ReleaseSafe) {
-            // Emscripten does not provide these symbols, so we must export our own
-            @export(&__stack_chk_guard, .{ .name = "__stack_chk_guard", .linkage = .strong });
-            @export(&__stack_chk_fail, .{ .name = "__stack_chk_fail", .linkage = .strong });
-        }
-    }
-}
-
 pub const PF = linux.PF;
 pub const AF = linux.AF;
 pub const CLOCK = linux.CLOCK;
 
 pub const CPU_SETSIZE = 128;
 pub const cpu_set_t = [CPU_SETSIZE / @sizeOf(usize)]usize;
-pub const cpu_count_t = std.meta.Int(.unsigned, std.math.log2(CPU_SETSIZE * 8));
+pub const cpu_count_t = @Int(.unsigned, std.math.log2(CPU_SETSIZE * 8));
 
 pub fn CPU_COUNT(set: cpu_set_t) cpu_count_t {
     var sum: cpu_count_t = 0;
@@ -227,8 +211,8 @@ pub const W = struct {
     pub fn TERMSIG(s: u32) SIG {
         return @enumFromInt(s & 0x7f);
     }
-    pub fn STOPSIG(s: u32) u32 {
-        return EXITSTATUS(s);
+    pub fn STOPSIG(s: u32) SIG {
+        return @enumFromInt(EXITSTATUS(s));
     }
     pub fn IFEXITED(s: u32) bool {
         return (s & 0x7f) == 0;
@@ -389,7 +373,7 @@ pub const rusage = extern struct {
     nsignals: isize,
     nvcsw: isize,
     nivcsw: isize,
-    __reserved: [16]isize = [1]isize{0} ** 16,
+    __reserved: [16]isize = @splat(0),
 
     pub const SELF = 0;
     pub const CHILDREN = -1;
@@ -483,8 +467,8 @@ pub const SHUT = struct {
 pub const SIG = linux.SIG;
 
 pub const Sigaction = extern struct {
-    pub const handler_fn = *align(1) const fn (i32) callconv(.c) void;
-    pub const sigaction_fn = *const fn (i32, *const siginfo_t, ?*anyopaque) callconv(.c) void;
+    pub const handler_fn = *align(1) const fn (SIG) callconv(.c) void;
+    pub const sigaction_fn = *const fn (SIG, *const siginfo_t, ?*anyopaque) callconv(.c) void;
 
     handler: extern union {
         handler: ?handler_fn,
@@ -497,10 +481,10 @@ pub const Sigaction = extern struct {
 
 pub const sigset_t = [1024 / 32]u32;
 pub fn sigemptyset() sigset_t {
-    return [_]u32{0} ** @typeInfo(sigset_t).array.len;
+    return @splat(0);
 }
 pub const siginfo_t = extern struct {
-    signo: i32,
+    signo: SIG,
     errno: i32,
     code: i32,
     fields: siginfo_fields_union,
@@ -729,7 +713,8 @@ pub const sockaddr = c.sockaddr;
 
 pub const blksize_t = i32;
 pub const nlink_t = u32;
-pub const time_t = i64;
+// https://github.com/emscripten-core/emscripten/blob/946ab574ae39401b51e75cd5257d894ae732ab54/system/lib/libc/musl/arch/emscripten/bits/alltypes.h#L140
+pub const time_t = c_longlong;
 pub const mode_t = u32;
 pub const off_t = i64;
 pub const ino_t = u64;
@@ -765,14 +750,22 @@ pub const stack_t = extern struct {
     size: usize,
 };
 
+/// For use with `utimensat` and `futimens`.
+// https://github.com/emscripten-core/emscripten/blob/d72d7226f4733af8ff993dec70198cf09a24142d/system/lib/libc/musl/include/sys/stat.h#L77-L78
+pub const UTIME = struct {
+    pub const NOW: timespec = .{ .sec = 0, .nsec = 0x3fffffff };
+    pub const OMIT: timespec = .{ .sec = 0, .nsec = 0x3ffffffe };
+};
+
+// https://github.com/emscripten-core/emscripten/blob/946ab574ae39401b51e75cd5257d894ae732ab54/system/lib/libc/musl/arch/emscripten/bits/alltypes.h#L284
 pub const timespec = extern struct {
     sec: time_t,
-    nsec: isize,
+    nsec: c_long,
 };
 
 pub const timezone = extern struct {
-    minuteswest: i32,
-    dsttime: i32,
+    minuteswest: c_int,
+    dsttime: c_int,
 };
 
 pub const utsname = extern struct {
@@ -889,6 +882,7 @@ pub extern "c" fn emscripten_hide_mouse() void;
 pub extern "c" fn emscripten_set_canvas_size(width: c_int, height: c_int) void;
 pub extern "c" fn emscripten_get_canvas_size(width: *c_int, height: *c_int, isFullscreen: *c_int) void;
 pub extern "c" fn emscripten_get_now() f64;
+pub extern "c" fn emscripten_num_logical_cores() c_int;
 pub extern "c" fn emscripten_random() f32;
 pub const em_idb_onload_func = ?*const fn (?*anyopaque, ?*anyopaque, c_int) callconv(.c) void;
 pub extern "c" fn emscripten_idb_async_load(db_name: [*:0]const u8, file_id: [*:0]const u8, arg: ?*anyopaque, onload: em_idb_onload_func, onerror: em_arg_callback_func) void;

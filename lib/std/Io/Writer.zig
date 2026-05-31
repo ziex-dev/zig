@@ -417,7 +417,8 @@ pub fn writableSliceGreedyPreserve(w: *Writer, preserve: usize, minimum_len: usi
     return w.buffer[w.end..];
 }
 
-/// Asserts the provided buffer has total capacity enough for `len`.
+/// Asserts the provided buffer has total capacity enough for `len`
+/// and `preserve` combined.
 ///
 /// Advances the buffer end position by `len`.
 ///
@@ -518,6 +519,17 @@ test "writeSplatAll works with a single buffer" {
     try testing.expectEqualStrings("hellohellohello", aw.writer.buffered());
 }
 
+/// Transfers `bytes` to the stream, calling `drain` at most once.
+///
+/// Returns the number of bytes transferred, which may be less than
+/// `bytes.len`, including zero.
+///
+/// A return value less than `bytes.len` does not indicate failure; a
+/// subsequent call may return nonzero, or fail with `error.WriteFailed`.
+///
+/// See also:
+/// * `writeAll`
+/// * `writeVec`
 pub fn write(w: *Writer, bytes: []const u8) Error!usize {
     if (w.end + bytes.len <= w.buffer.len) {
         @branchHint(.likely);
@@ -528,71 +540,80 @@ pub fn write(w: *Writer, bytes: []const u8) Error!usize {
     return w.vtable.drain(w, &.{bytes}, 1);
 }
 
-/// Calls `drain` as many times as necessary such that all of `bytes` are
-/// transferred.
+/// Transfers `bytes` to the stream, calling `drain` as many times as necessary
+/// such that all `bytes` are transferred.
+///
+/// See also:
+/// * `print`
+/// * `writeVecAll`
+/// * `write`
 pub fn writeAll(w: *Writer, bytes: []const u8) Error!void {
     var index: usize = 0;
     while (index < bytes.len) index += try w.write(bytes[index..]);
 }
 
-/// Renders fmt string with args, calling `writer` with slices of bytes.
-/// If `writer` returns an error, the error is returned from `format` and
-/// `writer` is not called again.
+/// Renders `fmt` string with `args`, calling `w` with slices of bytes.
 ///
-/// The format string must be comptime-known and may contain placeholders following
-/// this format:
-/// `{[argument][specifier]:[fill][alignment][width].[precision]}`
+/// The format string must be comptime-known and may contain placeholders
+/// following this format:
+/// ```
+/// {[argument][specifier]:[fill][alignment][width].[precision]}
+/// ```
 ///
-/// Above, each word including its surrounding [ and ] is a parameter which you have to replace with something:
+/// Above, each word including its surrounding [ and ] is a parameter to be replaced with:
 ///
-/// - *argument* is either the numeric index or the field name of the argument that should be inserted
-///   - when using a field name, you are required to enclose the field name (an identifier) in square
-///     brackets, e.g. {[score]...} as opposed to the numeric index form which can be written e.g. {2...}
-/// - *specifier* is a type-dependent formatting option that determines how a type should formatted (see below)
-/// - *fill* is a single byte which is used to pad formatted numbers.
-/// - *alignment* is one of the three bytes '<', '^', or '>' to make numbers
+/// - **argument** is either the numeric index or the field name of the argument that should be inserted.
+///   - When using a field name, the field name (an identifier) must be enclosed in square
+///     brackets, e.g. `{[score]...}` as opposed to the numeric index form which can be written e.g. `{2...}`.
+/// - **specifier** is a type-dependent formatting option that determines how a type should formatted (see below).
+/// - **fill** is a single byte which is used to pad formatted numbers.
+/// - **alignment** is one of the three bytes '<', '^', or '>' to make numbers
 ///   left, center, or right-aligned, respectively.
 ///   - Not all specifiers support alignment.
-///   - Alignment is not Unicode-aware; appropriate only when used with raw bytes or ASCII.
-/// - *width* is the total width of the field in bytes. This only applies to number formatting.
-/// - *precision* specifies how many decimals a formatted number should have.
+///   - Alignment is not Unicode-aware; appropriate only when used with raw
+///     bytes or ASCII.
+/// - **width** is the total size of the field in bytes, only applicable to
+///   number formatting.
+/// - **precision** specifies how many decimals a formatted number should have.
 ///
-/// Note that most of the parameters are optional and may be omitted. Also you
-/// can leave out separators like `:` and `.` when all parameters after the
-/// separator are omitted.
+/// Most of the parameters are optional and may be omitted. The separators (':'
+/// and '.') may be omitted when all parameters afterwards are omitted.
 ///
-/// Only exception is the *fill* parameter. If a non-zero *fill* character is
-/// required at the same time as *width* is specified, one has to specify
-/// *alignment* as well, as otherwise the digit following `:` is interpreted as
-/// *width*, not *fill*.
+/// The **fill** parameter is an exception. If a non-zero **fill** character is
+/// required at the same time as **width** is specified, **alignment** is
+/// required, otherwise the digit following ':' is interpreted as **width**.
 ///
-/// The *specifier* has several options for types:
-/// - `x` and `X`: output numeric value in hexadecimal notation, or string in hexadecimal bytes
+/// **specifier** supports:
+/// - `x` and `X`: numeric value in hexadecimal notation, or string in hexadecimal bytes
 /// - `s`:
 ///   - for pointer-to-many and C pointers of u8, print as a C-string using zero-termination
 ///   - for slices of u8, print the entire slice as a string without zero-termination
 /// - `t`:
 ///   - for enums and tagged unions: prints the tag name
 ///   - for error sets: prints the error name
-/// - `b64`: output string as standard base64
-/// - `e`: output floating point value in scientific notation
-/// - `d`: output numeric value in decimal notation
-/// - `b`: output integer value in binary notation
-/// - `o`: output integer value in octal notation
-/// - `c`: output integer as an ASCII character. Integer type must have 8 bits at max.
-/// - `u`: output integer as an UTF-8 sequence. Integer type must have 21 bits at max.
-/// - `D`: output nanoseconds as duration
-/// - `B`: output bytes in SI units (decimal)
-/// - `Bi`: output bytes in IEC units (binary)
-/// - `?`: output optional value as either the unwrapped value, or `null`; may be followed by a format specifier for the underlying value.
-/// - `!`: output error union value as either the unwrapped value, or the formatted error value; may be followed by a format specifier for the underlying value.
-/// - `*`: output the address of the value instead of the value itself.
-/// - `any`: output a value of any type using its default format.
-/// - `f`: delegates to a method on the type named "format" with the signature `fn (*Writer, args: anytype) Writer.Error!void`.
+/// - `b64`: string as standard base64
+/// - `e`: floating point value in scientific notation
+/// - `d`: numeric value in decimal notation
+/// - `b`: integer value in binary notation
+/// - `o`: integer value in octal notation
+/// - `c`: integer as an ASCII character. Integer type must have 8 bits at max.
+/// - `u`: integer as an UTF-8 sequence. Integer type must have 21 bits at max.
+/// - `B`: bytes in SI units (decimal)
+/// - `Bi`: bytes in IEC units (binary)
+/// - `?`: optional value as either the unwrapped value, or `null`; may be
+///   followed by a format specifier for the underlying value.
+/// - `!`: error union value as either the unwrapped value, or the formatted
+///   error value; may be followed by a format specifier for the underlying
+///   value.
+/// - `*`: the address of the value instead of the value itself.
+/// - `any`: a value of any type using its default format.
+/// - `f`: delegates to the `format` method of the type, passing `*Writer` and
+///   expecting `Error!void` returned.
 ///
-/// A user type may be a `struct`, `vector`, `union` or `enum` type.
+/// A user type may be a struct, vector, union or enum type.
 ///
-/// To print literal curly braces, escape them by writing them twice, e.g. `{{` or `}}`.
+/// Literal curly braces can be escaped in the format string via doubling, e.g.
+/// `{{` or `}}`.
 pub fn print(w: *Writer, comptime fmt: []const u8, args: anytype) Error!void {
     const ArgsType = @TypeOf(args);
     const args_type_info = @typeInfo(ArgsType);
@@ -600,14 +621,14 @@ pub fn print(w: *Writer, comptime fmt: []const u8, args: anytype) Error!void {
         @compileError("expected tuple or struct argument, found " ++ @typeName(ArgsType));
     }
 
-    const fields_info = args_type_info.@"struct".fields;
+    const field_names = args_type_info.@"struct".field_names;
     const max_format_args = @typeInfo(std.fmt.ArgSetType).int.bits;
-    if (fields_info.len > max_format_args) {
+    if (field_names.len > max_format_args) {
         @compileError("32 arguments max are supported per format call");
     }
 
     @setEvalBranchQuota(@as(comptime_int, fmt.len) * 1000); // NOTE: We're upcasting as 16-bit usize overflows.
-    comptime var arg_state: std.fmt.ArgState = .{ .args_len = fields_info.len };
+    comptime var arg_state: std.fmt.ArgState = .{ .args_len = field_names.len };
     comptime var i = 0;
     comptime var literal: []const u8 = "";
     inline while (true) {
@@ -708,7 +729,7 @@ pub fn print(w: *Writer, comptime fmt: []const u8, args: anytype) Error!void {
                 .width = width,
                 .precision = precision,
             },
-            @field(args, fields_info[arg_to_print].name),
+            @field(args, field_names[arg_to_print]),
             std.options.fmt_max_depth,
         );
     }
@@ -735,8 +756,14 @@ pub fn writeByte(w: *Writer, byte: u8) Error!void {
     }
 }
 
-/// When draining the buffer, ensures that at least `preserve` bytes
-/// remain buffered.
+/// On success, at least `preserve` bytes will remain buffered if there are
+/// enough buffered bytes to do so.
+/// The amount buffered by the writer after the call will only be less than
+/// `preserve` if `w.end + 1` is less than `preserve` before the call.
+/// The intentionally preserved bytes will include up to `preserve -| 1` bytes from
+/// the previously buffered bytes, plus the newly written byte.
+///
+/// Asserts buffer capacity is at least `preserve`.
 pub fn writeBytePreserve(w: *Writer, preserve: usize, byte: u8) Error!void {
     if (w.buffer.len - w.end != 0) {
         @branchHint(.likely);
@@ -761,9 +788,22 @@ test splatByteAll {
     defer aw.deinit();
 
     try aw.writer.splatByteAll('7', 45);
-    try testing.expectEqualStrings("7" ** 45, aw.writer.buffered());
+    try testing.expectEqualStrings(&@as([45]u8, @splat('7')), aw.writer.buffered());
 }
 
+/// Writes the same byte many times, performing the underlying write call as
+/// many times as necessary.
+///
+/// On success, at least `preserve` bytes will remain buffered if there are
+/// enough buffered bytes to do so.
+/// The amount buffered by the writer after the call will only be less than
+/// `preserve` if `w.end + n` is less than `preserve` before the call.
+/// The intentionally preserved bytes will include up to `preserve -| n` bytes from
+/// the previously buffered bytes, plus `@min(n, preserve_len)` of the newly
+/// written bytes.
+///
+/// Asserts buffer capacity is at least `preserve`.
+/// `n` can be greater than the buffer capacity.
 pub fn splatBytePreserve(w: *Writer, preserve: usize, byte: u8, n: usize) Error!void {
     const new_end = w.end + n;
     if (new_end <= w.buffer.len) {
@@ -782,12 +822,14 @@ pub fn splatBytePreserve(w: *Writer, preserve: usize, byte: u8, n: usize) Error!
             return;
         }
     }
-    // All the next bytes received must be preserved.
-    if (preserve < w.end) {
-        @memmove(w.buffer[0..preserve], w.buffer[w.end - preserve ..][0..preserve]);
-        w.end = preserve;
-    }
-    while (remaining > 0) remaining -= try w.splatByte(byte, remaining);
+    // Ensure the contract of `rebase` is upheld.
+    assert(w.end + remaining > w.buffer.len);
+    // Offset the amount preserved by the amount we have left to splat
+    // since the remaining splat is always going to be part of that
+    // preservation.
+    try w.vtable.rebase(w, preserve -| remaining, remaining);
+    @memset(w.buffer[w.end..][0..remaining], byte);
+    w.end += remaining;
 }
 
 /// Writes the same byte many times, allowing short writes.
@@ -1150,14 +1192,17 @@ pub fn printValue(
                 },
                 else => invalidFmtError(fmt, value),
             },
+            'q' => switch (@typeInfo(T)) {
+                .pointer => |info| switch (info.size) {
+                    .one, .slice => return printStringEscaped(w, value),
+                    .many, .c => return printStringEscaped(w, std.mem.span(value)),
+                },
+                .array => return printStringEscaped(w, &value),
+                else => invalidFmtError(fmt, value),
+            },
             'B' => switch (@typeInfo(T)) {
                 .int, .comptime_int => return w.printByteSize(value, .decimal, options),
                 .@"struct" => return value.formatByteSize(w, .decimal),
-                else => invalidFmtError(fmt, value),
-            },
-            'D' => switch (@typeInfo(T)) {
-                .int, .comptime_int => return w.printDuration(value, options),
-                .@"struct" => return value.formatDuration(w),
                 else => invalidFmtError(fmt, value),
             },
             'e' => switch (@typeInfo(T)) {
@@ -1265,7 +1310,7 @@ pub fn printValue(
         .@"enum" => |info| {
             if (!is_any and fmt.len != 0) invalidFmtError(fmt, value);
             optionsForbidden(options);
-            if (info.is_exhaustive) {
+            if (info.mode == .exhaustive) {
                 return printEnumExhaustive(w, value);
             } else {
                 return printEnumNonexhaustive(w, value);
@@ -1284,9 +1329,9 @@ pub fn printValue(
                 try w.writeAll(".{ .");
                 try w.writeAll(@tagName(@as(UnionTagType, value)));
                 try w.writeAll(" = ");
-                inline for (info.fields) |u_field| {
-                    if (value == @field(UnionTagType, u_field.name)) {
-                        try w.printValue(ANY, options, @field(value, u_field.name), max_depth - 1);
+                inline for (info.field_names) |u_field_name| {
+                    if (value == @field(UnionTagType, u_field_name)) {
+                        try w.printValue(ANY, options, @field(value, u_field_name), max_depth - 1);
                     }
                 }
                 try w.writeAll(" }");
@@ -1295,14 +1340,14 @@ pub fn printValue(
                     return w.writeAll(".{ ... }");
                 },
                 .@"extern", .@"packed" => {
-                    if (info.fields.len == 0) return w.writeAll(".{}");
+                    if (info.field_names.len == 0) return w.writeAll(".{}");
                     try w.writeAll(".{ ");
-                    inline for (info.fields, 1..) |field, i| {
+                    inline for (info.field_names, 1..) |field_name, i| {
                         try w.writeByte('.');
-                        try w.writeAll(field.name);
+                        try w.writeAll(field_name);
                         try w.writeAll(" = ");
-                        try w.printValue(ANY, options, @field(value, field.name), max_depth - 1);
-                        try w.writeAll(if (i < info.fields.len) ", " else " }");
+                        try w.printValue(ANY, options, @field(value, field_name), max_depth - 1);
+                        try w.writeAll(if (i < info.field_names.len) ", " else " }");
                     }
                 },
             }
@@ -1319,13 +1364,13 @@ pub fn printValue(
                     return;
                 }
                 try w.writeAll(".{");
-                inline for (info.fields, 0..) |f, i| {
+                inline for (info.field_names, 0..) |f_name, i| {
                     if (i == 0) {
                         try w.writeAll(" ");
                     } else {
                         try w.writeAll(", ");
                     }
-                    try w.printValue(ANY, options, @field(value, f.name), max_depth - 1);
+                    try w.printValue(ANY, options, @field(value, f_name), max_depth - 1);
                 }
                 try w.writeAll(" }");
                 return;
@@ -1335,15 +1380,15 @@ pub fn printValue(
                 return;
             }
             try w.writeAll(".{");
-            inline for (info.fields, 0..) |f, i| {
+            inline for (info.field_names, 0..) |f_name, i| {
                 if (i == 0) {
                     try w.writeAll(" .");
                 } else {
                     try w.writeAll(", .");
                 }
-                try w.writeAll(f.name);
+                try w.writeAll(f_name);
                 try w.writeAll(" = ");
-                try w.printValue(ANY, options, @field(value, f.name), max_depth - 1);
+                try w.printValue(ANY, options, @field(value, f_name), max_depth - 1);
             }
             try w.writeAll(" }");
         },
@@ -1431,6 +1476,14 @@ fn printEnumNonexhaustive(w: *Writer, value: anytype) Error!void {
     try w.writeByte(')');
 }
 
+/// Prints a double quote, then escapes a string according to Zig string
+/// literal rules, then a double quote.
+pub fn printStringEscaped(w: *Writer, bytes: []const u8) Error!void {
+    try w.writeByte('"');
+    try std.zig.stringEscape(bytes, w);
+    try w.writeByte('"');
+}
+
 pub fn printVector(
     w: *Writer,
     comptime fmt: []const u8,
@@ -1502,7 +1555,7 @@ pub fn printIntAny(
     // The type must have the same size as `base` or be wider in order for the
     // division to work
     const min_int_bits = comptime @max(value_info.bits, 8);
-    const MinInt = std.meta.Int(.unsigned, min_int_bits);
+    const MinInt = @Int(.unsigned, min_int_bits);
 
     const abs_value = @abs(value);
     // The worst case in terms of space needed is base 2, plus 1 for the sign
@@ -1622,7 +1675,7 @@ pub fn printFloatHex(w: *Writer, value: anytype, case: std.fmt.Case, opt_precisi
     });
 
     const T = @TypeOf(v);
-    const TU = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const TU = @Int(.unsigned, @bitSizeOf(T));
 
     const mantissa_bits = std.math.floatMantissaBits(T);
     const fractional_bits = std.math.floatFractionalBits(T);
@@ -1792,77 +1845,6 @@ pub fn invalidFmtError(comptime fmt: []const u8, value: anytype) noreturn {
     @compileError("invalid format string '" ++ fmt ++ "' for type '" ++ @typeName(@TypeOf(value)) ++ "'");
 }
 
-pub fn printDurationSigned(w: *Writer, ns: i64) Error!void {
-    if (ns < 0) try w.writeByte('-');
-    return w.printDurationUnsigned(@abs(ns));
-}
-
-pub fn printDurationUnsigned(w: *Writer, ns: u64) Error!void {
-    var ns_remaining = ns;
-    inline for (.{
-        .{ .ns = 365 * std.time.ns_per_day, .sep = 'y' },
-        .{ .ns = std.time.ns_per_week, .sep = 'w' },
-        .{ .ns = std.time.ns_per_day, .sep = 'd' },
-        .{ .ns = std.time.ns_per_hour, .sep = 'h' },
-        .{ .ns = std.time.ns_per_min, .sep = 'm' },
-    }) |unit| {
-        if (ns_remaining >= unit.ns) {
-            const units = ns_remaining / unit.ns;
-            try w.printInt(units, 10, .lower, .{});
-            try w.writeByte(unit.sep);
-            ns_remaining -= units * unit.ns;
-            if (ns_remaining == 0) return;
-        }
-    }
-
-    inline for (.{
-        .{ .ns = std.time.ns_per_s, .sep = "s" },
-        .{ .ns = std.time.ns_per_ms, .sep = "ms" },
-        .{ .ns = std.time.ns_per_us, .sep = "us" },
-    }) |unit| {
-        const kunits = ns_remaining * 1000 / unit.ns;
-        if (kunits >= 1000) {
-            try w.printInt(kunits / 1000, 10, .lower, .{});
-            const frac = kunits % 1000;
-            if (frac > 0) {
-                // Write up to 3 decimal places
-                var decimal_buf = [_]u8{ '.', 0, 0, 0 };
-                var inner: Writer = .fixed(decimal_buf[1..]);
-                inner.printInt(frac, 10, .lower, .{ .fill = '0', .width = 3 }) catch unreachable;
-                var end: usize = 4;
-                while (end > 1) : (end -= 1) {
-                    if (decimal_buf[end - 1] != '0') break;
-                }
-                try w.writeAll(decimal_buf[0..end]);
-            }
-            return w.writeAll(unit.sep);
-        }
-    }
-
-    try w.printInt(ns_remaining, 10, .lower, .{});
-    try w.writeAll("ns");
-}
-
-/// Writes number of nanoseconds according to its signed magnitude:
-/// `[#y][#w][#d][#h][#m]#[.###][n|u|m]s`
-/// `nanoseconds` must be an integer that coerces into `u64` or `i64`.
-pub fn printDuration(w: *Writer, nanoseconds: anytype, options: std.fmt.Options) Error!void {
-    // worst case: "-XXXyXXwXXdXXhXXmXX.XXXs".len = 24
-    var buf: [24]u8 = undefined;
-    var sub_writer: Writer = .fixed(&buf);
-    if (@TypeOf(nanoseconds) == comptime_int) {
-        if (nanoseconds >= 0) {
-            sub_writer.printDurationUnsigned(nanoseconds) catch unreachable;
-        } else {
-            sub_writer.printDurationSigned(nanoseconds) catch unreachable;
-        }
-    } else switch (@typeInfo(@TypeOf(nanoseconds)).int.signedness) {
-        .signed => sub_writer.printDurationSigned(nanoseconds) catch unreachable,
-        .unsigned => sub_writer.printDurationUnsigned(nanoseconds) catch unreachable,
-    }
-    return w.alignBufferOptions(sub_writer.buffered(), options);
-}
-
 pub fn printHex(w: *Writer, bytes: []const u8, case: std.fmt.Case) Error!void {
     const charset = switch (case) {
         .upper => "0123456789ABCDEF",
@@ -1980,7 +1962,6 @@ test "serialize signed LEB128" {
     try testLeb128Encoding(i128, std.math.minInt(i128), "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80\x7E");
 
     // Specific cases
-    try testLeb128Encoding(i0, 0, "\x00");
     try testLeb128Encoding(i8, 0, "\x00");
 
     try testLeb128Encoding(i2, -1, "\x7F");
@@ -2129,125 +2110,6 @@ test "printValue max_depth" {
     try testing.expectEqualStrings("{ 1, 2, 3, 4 }", w.buffered());
 }
 
-test printDuration {
-    try testDurationCase("0ns", 0);
-    try testDurationCase("1ns", 1);
-    try testDurationCase("999ns", std.time.ns_per_us - 1);
-    try testDurationCase("1us", std.time.ns_per_us);
-    try testDurationCase("1.45us", 1450);
-    try testDurationCase("1.5us", 3 * std.time.ns_per_us / 2);
-    try testDurationCase("14.5us", 14500);
-    try testDurationCase("145us", 145000);
-    try testDurationCase("999.999us", std.time.ns_per_ms - 1);
-    try testDurationCase("1ms", std.time.ns_per_ms + 1);
-    try testDurationCase("1.5ms", 3 * std.time.ns_per_ms / 2);
-    try testDurationCase("1.11ms", 1110000);
-    try testDurationCase("1.111ms", 1111000);
-    try testDurationCase("1.111ms", 1111100);
-    try testDurationCase("999.999ms", std.time.ns_per_s - 1);
-    try testDurationCase("1s", std.time.ns_per_s);
-    try testDurationCase("59.999s", std.time.ns_per_min - 1);
-    try testDurationCase("1m", std.time.ns_per_min);
-    try testDurationCase("1h", std.time.ns_per_hour);
-    try testDurationCase("1d", std.time.ns_per_day);
-    try testDurationCase("1w", std.time.ns_per_week);
-    try testDurationCase("1y", 365 * std.time.ns_per_day);
-    try testDurationCase("1y52w23h59m59.999s", 730 * std.time.ns_per_day - 1); // 365d = 52w1
-    try testDurationCase("1y1h1.001s", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + std.time.ns_per_ms);
-    try testDurationCase("1y1h1s", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + 999 * std.time.ns_per_us);
-    try testDurationCase("1y1h999.999us", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1);
-    try testDurationCase("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms);
-    try testDurationCase("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms + 1);
-    try testDurationCase("1y1m999ns", 365 * std.time.ns_per_day + std.time.ns_per_min + 999);
-    try testDurationCase("584y49w23h34m33.709s", std.math.maxInt(u64));
-
-    try testing.expectFmt("=======0ns", "{D:=>10}", .{0});
-    try testing.expectFmt("1ns=======", "{D:=<10}", .{1});
-    try testing.expectFmt("  999ns   ", "{D:^10}", .{std.time.ns_per_us - 1});
-}
-
-test printDurationSigned {
-    try testDurationCaseSigned("0ns", 0);
-    try testDurationCaseSigned("1ns", 1);
-    try testDurationCaseSigned("-1ns", -(1));
-    try testDurationCaseSigned("999ns", std.time.ns_per_us - 1);
-    try testDurationCaseSigned("-999ns", -(std.time.ns_per_us - 1));
-    try testDurationCaseSigned("1us", std.time.ns_per_us);
-    try testDurationCaseSigned("-1us", -(std.time.ns_per_us));
-    try testDurationCaseSigned("1.45us", 1450);
-    try testDurationCaseSigned("-1.45us", -(1450));
-    try testDurationCaseSigned("1.5us", 3 * std.time.ns_per_us / 2);
-    try testDurationCaseSigned("-1.5us", -(3 * std.time.ns_per_us / 2));
-    try testDurationCaseSigned("14.5us", 14500);
-    try testDurationCaseSigned("-14.5us", -(14500));
-    try testDurationCaseSigned("145us", 145000);
-    try testDurationCaseSigned("-145us", -(145000));
-    try testDurationCaseSigned("999.999us", std.time.ns_per_ms - 1);
-    try testDurationCaseSigned("-999.999us", -(std.time.ns_per_ms - 1));
-    try testDurationCaseSigned("1ms", std.time.ns_per_ms + 1);
-    try testDurationCaseSigned("-1ms", -(std.time.ns_per_ms + 1));
-    try testDurationCaseSigned("1.5ms", 3 * std.time.ns_per_ms / 2);
-    try testDurationCaseSigned("-1.5ms", -(3 * std.time.ns_per_ms / 2));
-    try testDurationCaseSigned("1.11ms", 1110000);
-    try testDurationCaseSigned("-1.11ms", -(1110000));
-    try testDurationCaseSigned("1.111ms", 1111000);
-    try testDurationCaseSigned("-1.111ms", -(1111000));
-    try testDurationCaseSigned("1.111ms", 1111100);
-    try testDurationCaseSigned("-1.111ms", -(1111100));
-    try testDurationCaseSigned("999.999ms", std.time.ns_per_s - 1);
-    try testDurationCaseSigned("-999.999ms", -(std.time.ns_per_s - 1));
-    try testDurationCaseSigned("1s", std.time.ns_per_s);
-    try testDurationCaseSigned("-1s", -(std.time.ns_per_s));
-    try testDurationCaseSigned("59.999s", std.time.ns_per_min - 1);
-    try testDurationCaseSigned("-59.999s", -(std.time.ns_per_min - 1));
-    try testDurationCaseSigned("1m", std.time.ns_per_min);
-    try testDurationCaseSigned("-1m", -(std.time.ns_per_min));
-    try testDurationCaseSigned("1h", std.time.ns_per_hour);
-    try testDurationCaseSigned("-1h", -(std.time.ns_per_hour));
-    try testDurationCaseSigned("1d", std.time.ns_per_day);
-    try testDurationCaseSigned("-1d", -(std.time.ns_per_day));
-    try testDurationCaseSigned("1w", std.time.ns_per_week);
-    try testDurationCaseSigned("-1w", -(std.time.ns_per_week));
-    try testDurationCaseSigned("1y", 365 * std.time.ns_per_day);
-    try testDurationCaseSigned("-1y", -(365 * std.time.ns_per_day));
-    try testDurationCaseSigned("1y52w23h59m59.999s", 730 * std.time.ns_per_day - 1); // 365d = 52w1d
-    try testDurationCaseSigned("-1y52w23h59m59.999s", -(730 * std.time.ns_per_day - 1)); // 365d = 52w1d
-    try testDurationCaseSigned("1y1h1.001s", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + std.time.ns_per_ms);
-    try testDurationCaseSigned("-1y1h1.001s", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + std.time.ns_per_ms));
-    try testDurationCaseSigned("1y1h1s", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + 999 * std.time.ns_per_us);
-    try testDurationCaseSigned("-1y1h1s", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_s + 999 * std.time.ns_per_us));
-    try testDurationCaseSigned("1y1h999.999us", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1);
-    try testDurationCaseSigned("-1y1h999.999us", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms - 1));
-    try testDurationCaseSigned("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms);
-    try testDurationCaseSigned("-1y1h1ms", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms));
-    try testDurationCaseSigned("1y1h1ms", 365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms + 1);
-    try testDurationCaseSigned("-1y1h1ms", -(365 * std.time.ns_per_day + std.time.ns_per_hour + std.time.ns_per_ms + 1));
-    try testDurationCaseSigned("1y1m999ns", 365 * std.time.ns_per_day + std.time.ns_per_min + 999);
-    try testDurationCaseSigned("-1y1m999ns", -(365 * std.time.ns_per_day + std.time.ns_per_min + 999));
-    try testDurationCaseSigned("292y24w3d23h47m16.854s", std.math.maxInt(i64));
-    try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.minInt(i64) + 1);
-    try testDurationCaseSigned("-292y24w3d23h47m16.854s", std.math.minInt(i64));
-
-    try testing.expectFmt("=======0ns", "{D:=>10}", .{0});
-    try testing.expectFmt("1ns=======", "{D:=<10}", .{1});
-    try testing.expectFmt("-1ns======", "{D:=<10}", .{-(1)});
-    try testing.expectFmt("  -999ns  ", "{D:^10}", .{-(std.time.ns_per_us - 1)});
-}
-
-fn testDurationCase(expected: []const u8, input: u64) !void {
-    var buf: [24]u8 = undefined;
-    var w: Writer = .fixed(&buf);
-    try w.printDurationUnsigned(input);
-    try testing.expectEqualStrings(expected, w.buffered());
-}
-
-fn testDurationCaseSigned(expected: []const u8, input: i64) !void {
-    var buf: [24]u8 = undefined;
-    var w: Writer = .fixed(&buf);
-    try w.printDurationSigned(input);
-    try testing.expectEqualStrings(expected, w.buffered());
-}
-
 test printInt {
     try testPrintIntCase("-1", @as(i1, -1), 10, .lower, .{});
 
@@ -2274,6 +2136,11 @@ test "printFloat with comptime_float" {
     try w.printFloat(@as(comptime_float, 1.0), std.fmt.Options.toNumber(.{}, .scientific, .lower));
     try testing.expectEqualStrings(w.buffered(), "1e0");
     try testing.expectFmt("1", "{}", .{1.0});
+}
+
+test "{q} format string" {
+    const data: []const u8 = "i\tlike\"cheese\x00\x05cheese";
+    try testing.expectFmt("hello \"i\\tlike\\\"cheese\\x00\\x05cheese\" world", "hello {q} world", .{data});
 }
 
 fn testPrintIntCase(expected: []const u8, value: anytype, base: u8, case: std.fmt.Case, options: std.fmt.Options) !void {
@@ -2657,15 +2524,14 @@ pub fn Hashing(comptime Hasher: type) type {
 
         fn drain(w: *Writer, data: []const []const u8, splat: usize) Error!usize {
             const this: *@This() = @alignCast(@fieldParentPtr("writer", w));
-            const hasher = &this.hasher;
-            hasher.update(w.buffered());
+            this.hasher.update(w.buffered());
             w.end = 0;
             var n: usize = 0;
             for (data[0 .. data.len - 1]) |slice| {
-                hasher.update(slice);
+                this.hasher.update(slice);
                 n += slice.len;
             }
-            for (0..splat) |_| hasher.update(data[data.len - 1]);
+            for (0..splat) |_| this.hasher.update(data[data.len - 1]);
             return n + splat * data[data.len - 1].len;
         }
     };
@@ -2906,10 +2772,14 @@ pub const Allocating = struct {
         if (limit == .nothing) return 0;
         const a: *Allocating = @fieldParentPtr("writer", w);
         const pos = file_reader.logicalPos();
-        const additional = if (file_reader.getSize()) |size| size - pos else |_| std.atomic.cache_line;
+        const additional, const exact = if (file_reader.getSize()) |size|
+            .{ size - pos, true }
+        else |_|
+            .{ std.atomic.cache_line, false };
         if (additional == 0) return error.EndOfStream;
         a.ensureUnusedCapacity(limit.minInt64(additional)) catch return error.WriteFailed;
-        const dest = limit.slice(a.writer.buffer[a.writer.end..]);
+        const buffer = a.writer.buffer[a.writer.end..];
+        const dest = if (exact) buffer[0..limit.minInt64(additional)] else limit.slice(buffer);
         const n = try file_reader.interface.readSliceShort(dest);
         if (n == 0) return error.EndOfStream;
         a.writer.end += n;
@@ -3062,4 +2932,47 @@ test "writableSlice with fixed writer" {
     var w: std.Io.Writer = .fixed(&buf);
     try w.writeByte(1);
     try std.testing.expectError(error.WriteFailed, w.writableSlice(2));
+}
+
+test splatBytePreserve {
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 5 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 9, .preserve = 5, .splat_len = 2 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 5, .splat_len = 10 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 10 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 11 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 80 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 6, .splat_len = 85 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 6 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 11 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 80 });
+    try testSplatBytePreserve(.{ .buf_len = 10, .fill_len = 5, .preserve = 10, .splat_len = 85 });
+}
+
+fn testSplatBytePreserve(options: struct { buf_len: u4, fill_len: u4, preserve: u4, splat_len: u8 }) !void {
+    assert(options.fill_len <= options.buf_len);
+    assert(options.preserve <= options.buf_len);
+
+    const fill_buf = "abcdefghijklmno";
+    const fill = fill_buf[0..options.fill_len];
+    var expected_out_buf: [256]u8 = @splat('X');
+    @memcpy(expected_out_buf[0..options.fill_len], fill);
+    const expected_out = expected_out_buf[0 .. options.fill_len + options.splat_len];
+    const expected_preserved = expected_out[expected_out.len -| options.preserve..];
+
+    var out_buf: [256]u8 = undefined;
+    var fw: Writer = .fixed(&out_buf);
+    var indirect_buffer: [16]u8 = undefined;
+    var twi: std.testing.WriterIndirect = .init(&fw, indirect_buffer[0..options.buf_len]);
+    const w = &twi.interface;
+
+    try w.writeAll(fill);
+    try w.splatBytePreserve(options.preserve, 'X', options.splat_len);
+
+    try std.testing.expectEqualStrings(expected_preserved, w.buffer[w.end -| options.preserve..w.end]);
+
+    try w.flush();
+
+    try std.testing.expectEqualStrings(expected_out, fw.buffer[0..fw.end]);
 }

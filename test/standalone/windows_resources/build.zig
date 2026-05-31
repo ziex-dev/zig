@@ -38,7 +38,7 @@ fn add(
         .file = b.path("res/zig.rc"),
         .flags = &.{"/c65001"}, // UTF-8 code page
         .include_paths = &.{
-            .{ .generated = .{ .file = &generated_h_step.generated_directory } },
+            .{ .generated = .{ .index = generated_h_step.generated_directory } },
         },
     });
     exe.rc_includes = switch (rc_includes) {
@@ -46,7 +46,10 @@ fn add(
         .gnu => .gnu,
     };
 
-    _ = exe.getEmittedBin();
+    const exe_run_step = b.addRunArtifact(exe);
+    exe_run_step.skip_foreign_checks = true;
+    exe_run_step.expectStdErrEqual("");
+    exe_run_step.expectStdOutEqual("");
 
-    test_step.dependOn(&exe.step);
+    test_step.dependOn(&exe_run_step.step);
 }

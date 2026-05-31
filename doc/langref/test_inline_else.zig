@@ -1,5 +1,5 @@
 const std = @import("std");
-const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
 
 const SliceTypeA = extern struct {
     len: usize,
@@ -18,12 +18,13 @@ const AnySlice = union(enum) {
 
 fn withFor(any: AnySlice) usize {
     const Tag = @typeInfo(AnySlice).@"union".tag_type.?;
-    inline for (@typeInfo(Tag).@"enum".fields) |field| {
+    const info = @typeInfo(Tag).@"enum";
+    inline for (info.field_names, info.field_values) |field_name, field_value| {
         // With `inline for` the function gets generated as
         // a series of `if` statements relying on the optimizer
         // to convert it to a switch.
-        if (field.value == @intFromEnum(any)) {
-            return @field(any, field.name).len;
+        if (field_value == @intFromEnum(any)) {
+            return @field(any, field_name).len;
         }
     }
     // When using `inline for` the compiler doesn't know that every
@@ -42,8 +43,8 @@ fn withSwitch(any: AnySlice) usize {
 
 test "inline for and inline else similarity" {
     const any = AnySlice{ .c = "hello" };
-    try expect(withFor(any) == 5);
-    try expect(withSwitch(any) == 5);
+    try expectEqual(5, withFor(any));
+    try expectEqual(5, withSwitch(any));
 }
 
 // test

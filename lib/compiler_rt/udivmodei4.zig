@@ -1,17 +1,21 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const common = @import("common.zig");
+const endian = builtin.cpu.arch.endian();
+
+const std = @import("std");
 const shr = std.math.shr;
 const shl = std.math.shl;
+
+const compiler_rt = @import("../compiler_rt.zig");
+const symbol = @import("../compiler_rt.zig").symbol;
 
 const max_limbs = std.math.divCeil(usize, 65535, 32) catch unreachable; // max supported type is u65535
 
 comptime {
-    @export(&__udivei4, .{ .name = "__udivei4", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__umodei4, .{ .name = "__umodei4", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&__udivei4, "__udivei4");
+    symbol(&__umodei4, "__umodei4");
+    symbol(&__udivei5, "__udivei5");
+    symbol(&__umodei5, "__umodei5");
 }
-
-const endian = builtin.cpu.arch.endian();
 
 /// Get the value of a limb.
 inline fn limb(x: []const u32, i: usize) u32 {
@@ -113,7 +117,7 @@ pub fn divmod(q: ?[]u32, r: ?[]u32, u: []const u32, v: []const u32) !void {
 }
 
 pub fn __udivei4(q_p: [*]u8, u_p: [*]const u8, v_p: [*]const u8, bits: usize) callconv(.c) void {
-    @setRuntimeSafety(common.test_safety);
+    @setRuntimeSafety(compiler_rt.test_safety);
     const byte_size = std.zig.target.intByteSize(&builtin.target, @intCast(bits));
     const q: []u32 = @ptrCast(@alignCast(q_p[0..byte_size]));
     const u: []const u32 = @ptrCast(@alignCast(u_p[0..byte_size]));
@@ -122,11 +126,37 @@ pub fn __udivei4(q_p: [*]u8, u_p: [*]const u8, v_p: [*]const u8, bits: usize) ca
 }
 
 pub fn __umodei4(r_p: [*]u8, u_p: [*]const u8, v_p: [*]const u8, bits: usize) callconv(.c) void {
-    @setRuntimeSafety(common.test_safety);
+    @setRuntimeSafety(compiler_rt.test_safety);
     const byte_size = std.zig.target.intByteSize(&builtin.target, @intCast(bits));
     const r: []u32 = @ptrCast(@alignCast(r_p[0..byte_size]));
     const u: []const u32 = @ptrCast(@alignCast(u_p[0..byte_size]));
     const v: []const u32 = @ptrCast(@alignCast(v_p[0..byte_size]));
+    @call(.always_inline, divmod, .{ null, r, u, v }) catch unreachable;
+}
+
+pub fn __udivei5(q_p: [*]u8, u_p: [*]const u8, v_p: [*]const u8, t_p: [*]u8, bits: usize) callconv(.c) void {
+    @setRuntimeSafety(compiler_rt.test_safety);
+    const byte_size = std.zig.target.intByteSize(&builtin.target, @intCast(bits));
+    const q: []u32 = @ptrCast(@alignCast(q_p[0..byte_size]));
+    const u: []const u32 = @ptrCast(@alignCast(u_p[0..byte_size]));
+    const v: []const u32 = @ptrCast(@alignCast(v_p[0..byte_size]));
+    const tu: []u32 = @ptrCast(@alignCast(t_p[0..byte_size]));
+    _ = tu;
+    const tv: []u32 = @ptrCast(@alignCast(t_p[byte_size..][0..byte_size]));
+    _ = tv;
+    @call(.always_inline, divmod, .{ q, null, u, v }) catch unreachable;
+}
+
+pub fn __umodei5(r_p: [*]u8, u_p: [*]const u8, v_p: [*]const u8, t_p: [*]u8, bits: usize) callconv(.c) void {
+    @setRuntimeSafety(compiler_rt.test_safety);
+    const byte_size = std.zig.target.intByteSize(&builtin.target, @intCast(bits));
+    const r: []u32 = @ptrCast(@alignCast(r_p[0..byte_size]));
+    const u: []const u32 = @ptrCast(@alignCast(u_p[0..byte_size]));
+    const v: []const u32 = @ptrCast(@alignCast(v_p[0..byte_size]));
+    const tu: []u32 = @ptrCast(@alignCast(t_p[0..byte_size]));
+    _ = tu;
+    const tv: []u32 = @ptrCast(@alignCast(t_p[byte_size..][0..byte_size]));
+    _ = tv;
     @call(.always_inline, divmod, .{ null, r, u, v }) catch unreachable;
 }
 

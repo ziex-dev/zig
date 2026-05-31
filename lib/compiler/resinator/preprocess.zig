@@ -14,8 +14,6 @@ pub fn preprocess(
     argv: []const []const u8,
     maybe_dependencies: ?*Dependencies,
 ) PreprocessError!void {
-    try comp.addDefaultPragmaHandlers();
-
     var driver: aro.Driver = .{ .comp = comp, .diagnostics = comp.diagnostics, .aro_name = "arocc" };
     defer driver.deinit();
 
@@ -47,7 +45,7 @@ pub fn preprocess(
     if (hasAnyErrors(comp)) return error.GeneratedSourceError;
 
     comp.generated_buf.items.len = 0;
-    var pp = aro.Preprocessor.initDefault(comp) catch |err| switch (err) {
+    var pp = aro.Preprocessor.init(comp, .{ .base_file = source.id }) catch |err| switch (err) {
         error.FatalError => return error.GeneratedSourceError,
         error.OutOfMemory => |e| return e,
     };
@@ -84,9 +82,9 @@ fn hasAnyErrors(comp: *aro.Compilation) bool {
     return comp.diagnostics.errors != 0;
 }
 
-/// `arena` is used for temporary -D argument strings and the INCLUDE environment variable.
+/// `arena` is used for temporary -D argument strings.
 /// The arena should be kept alive at least as long as `argv`.
-pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options: cli.Options, system_include_paths: []const []const u8, environ_map: *const std.process.Environ.Map) !void {
+pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options: cli.Options, system_include_paths: []const []const u8, include_env_value: ?[]const u8) !void {
     try argv.appendSlice(arena, &.{
         "-E",
         "--comments",
@@ -109,7 +107,7 @@ pub fn appendAroArgs(arena: Allocator, argv: *std.ArrayList([]const u8), options
     }
 
     if (!options.ignore_include_env_var) {
-        const INCLUDE = environ_map.get("INCLUDE") orelse "";
+        const INCLUDE = include_env_value orelse "";
 
         // The only precedence here is llvm-rc which also uses the platform-specific
         // delimiter. There's no precedence set by `rc.exe` since it's Windows-only.

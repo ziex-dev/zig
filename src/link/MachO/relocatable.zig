@@ -42,8 +42,7 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
 
     try macho_file.resolveSymbols();
     macho_file.dedupLiterals() catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.LinkFailure => return error.LinkFailure,
+        error.OutOfMemory, error.LinkFailure => |e| return e,
         else => |e| return diags.fail("failed to update ar size: {s}", .{@errorName(e)}),
     };
     markExports(macho_file);
@@ -55,7 +54,7 @@ pub fn flushObject(macho_file: *MachO, comp: *Compilation, module_obj_path: ?Pat
 
     try createSegment(macho_file);
     allocateSections(macho_file) catch |err| switch (err) {
-        error.LinkFailure => return error.LinkFailure,
+        error.LinkFailure => |e| return e,
         else => |e| return diags.fail("failed to allocate sections: {s}", .{@errorName(e)}),
     };
     allocateSegment(macho_file);
@@ -289,7 +288,9 @@ fn initOutputSections(macho_file: *MachO) !void {
     } else false;
     if (needs_eh_frame) {
         assert(needs_unwind_info);
-        macho_file.eh_frame_sect_index = try macho_file.addSection("__TEXT", "__eh_frame", .{});
+        macho_file.eh_frame_sect_index = try macho_file.addSection("__TEXT", "__eh_frame", .{
+            .flags = std.macho.S_COALESCED | std.macho.S_ATTR_NO_TOC | std.macho.S_ATTR_STRIP_STATIC_SYMS | std.macho.S_ATTR_LIVE_SUPPORT,
+        });
     }
 }
 

@@ -1,7 +1,3 @@
-pub const ArrayHashMap = array_hash_map.ArrayHashMap;
-pub const ArrayHashMapUnmanaged = array_hash_map.ArrayHashMapUnmanaged;
-pub const AutoArrayHashMap = array_hash_map.AutoArrayHashMap;
-pub const AutoArrayHashMapUnmanaged = array_hash_map.AutoArrayHashMapUnmanaged;
 pub const AutoHashMap = hash_map.AutoHashMap;
 pub const AutoHashMapUnmanaged = hash_map.AutoHashMapUnmanaged;
 pub const BitStack = @import("BitStack.zig");
@@ -13,7 +9,9 @@ pub const StaticStringMapWithEql = static_string_map.StaticStringMapWithEql;
 pub const Deque = @import("deque.zig").Deque;
 pub const DoublyLinkedList = @import("DoublyLinkedList.zig");
 pub const DynLib = @import("dynamic_library.zig").DynLib;
+/// Deprecated: use `bit_set.DynamicManaged`.
 pub const DynamicBitSet = bit_set.DynamicBitSet;
+/// Deprecated: use `bit_set.Dynamic`.
 pub const DynamicBitSetUnmanaged = bit_set.DynamicBitSetUnmanaged;
 pub const EnumArray = enums.EnumArray;
 pub const EnumMap = enums.EnumMap;
@@ -28,16 +26,22 @@ pub const Progress = @import("Progress.zig");
 pub const Random = @import("Random.zig");
 pub const SemanticVersion = @import("SemanticVersion.zig");
 pub const SinglyLinkedList = @import("SinglyLinkedList.zig");
+/// Deprecated: use `bit_set.Static`.
 pub const StaticBitSet = bit_set.StaticBitSet;
 pub const StringHashMap = hash_map.StringHashMap;
 pub const StringHashMapUnmanaged = hash_map.StringHashMapUnmanaged;
-pub const StringArrayHashMap = array_hash_map.StringArrayHashMap;
-pub const StringArrayHashMapUnmanaged = array_hash_map.StringArrayHashMapUnmanaged;
 pub const Target = @import("Target.zig");
 pub const Thread = @import("Thread.zig");
 pub const Treap = @import("treap.zig").Treap;
 pub const Tz = tz.Tz;
 pub const Uri = @import("Uri.zig");
+
+/// Deprecated; use `array_hash_map.Custom`.
+pub const ArrayHashMapUnmanaged = array_hash_map.Custom;
+/// Deprecated; use `array_hash_map.Auto`.
+pub const AutoArrayHashMapUnmanaged = array_hash_map.Auto;
+/// Deprecated; use `array_hash_map.String`.
+pub const StringArrayHashMapUnmanaged = array_hash_map.String;
 
 /// A contiguous, growable list of items in memory. This is a wrapper around a
 /// slice of `T` values.
@@ -61,7 +65,11 @@ pub const array_hash_map = @import("array_hash_map.zig");
 pub const atomic = @import("atomic.zig");
 pub const base64 = @import("base64.zig");
 pub const bit_set = @import("bit_set.zig");
-pub const builtin = @import("builtin.zig");
+/// Deprecated; use `lang`.
+///
+/// To be removed after Zig 0.17.0.
+pub const builtin = lang;
+pub const lang = @import("lang.zig");
 pub const c = @import("c.zig");
 pub const coff = @import("coff.zig");
 pub const compress = @import("compress.zig");
@@ -86,7 +94,6 @@ pub const math = @import("math.zig");
 pub const mem = @import("mem.zig");
 pub const meta = @import("meta.zig");
 pub const os = @import("os.zig");
-pub const once = @import("once.zig").once;
 pub const pdb = @import("pdb.zig");
 pub const pie = @import("pie.zig");
 pub const posix = @import("posix.zig");
@@ -114,6 +121,16 @@ pub const options: Options = if (@hasDecl(root, "std_options")) root.std_options
 pub const Options = struct {
     enable_segfault_handler: bool = debug.default_enable_segfault_handler,
 
+    /// If set, `std.start` and `std.Thread` will configure an per-thread alternative signal stack
+    /// of this size. Importantly, if `enable_segfault_handler` is set, the segfault handler will
+    /// use this alternative stack, meaning it can still print stack traces even if a segmentation
+    /// fault is caused by a stack overflow.
+    ///
+    /// On POSIX targets, the signal stack is configured using 'sigaltstack(2)'.
+    ///
+    /// On Windows, this value is currently ignored.
+    signal_stack_size: ?u64 = 1 << 18, // 1<<17 observed to be sufficient for stack tracing with self-hosted x86_64 backend
+
     /// The current log level.
     log_level: log.Level = log.default_level,
 
@@ -125,8 +142,6 @@ pub const Options = struct {
         comptime format: []const u8,
         args: anytype,
     ) void = log.defaultLog,
-
-    logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode,
 
     /// Overrides `std.heap.page_size_min`.
     page_size_min: ?usize = null,
@@ -157,6 +172,8 @@ pub const Options = struct {
     /// * `debug.dumpCurrentStackTrace`
     /// * `debug.writeStackTrace`
     /// * `debug.dumpStackTrace`
+    /// * `debug.writeErrorReturnTrace`
+    /// * `debug.dumpErrorReturnTrace`
     ///
     /// Stack traces can generally be collected and printed when debug info is stripped, but are
     /// often less useful since they usually cannot be mapped to source locations and/or have bad
@@ -166,6 +183,23 @@ pub const Options = struct {
     /// If this is `false`, then captured stack traces will always be empty, and attempts to write
     /// stack traces will just print an error to the relevant `Io.Writer` and return.
     allow_stack_tracing: bool = !@import("builtin").strip_debug_info,
+
+    /// Allows disabling networking in std.Io implementations.
+    networking: bool = true,
+
+    /// Whether or not `error.Unexpected` will print its value and a stack trace.
+    ///
+    /// If this happens the fix is to add the error code to the corresponding
+    /// switch expression, possibly introduce a new error in the error set, and
+    /// send a patch to Zig.
+    unexpected_error_tracing: bool = @import("builtin").mode == .Debug and switch (@import("builtin").zig_backend) {
+        .stage2_llvm, .stage2_x86_64 => true,
+        else => false,
+    },
+
+    /// TODO This is a separate decl instead of a field as a workaround around
+    /// compilation errors due to zig not being lazy enough.
+    pub const logTerminalMode: fn () Io.Terminal.Mode = log.defaultTerminalMode;
 
     /// TODO This is a separate decl instead of a field as a workaround around
     /// compilation errors due to zig not being lazy enough.
@@ -191,7 +225,7 @@ pub const Options = struct {
     /// implementation based on coroutines, one likely wants `std.debug.print`
     /// to directly write to stderr without trying to interact with the code
     /// being debugged.
-    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.ioBasic();
+    pub const debug_io: Io = if (@hasDecl(root, "std_options_debug_io")) root.std_options_debug_io else debug_threaded_io.?.io();
 
     /// Overrides `std.Io.File.Permissions`.
     pub const FilePermissions: ?type = if (@hasDecl(root, "std_options_FilePermissions")) root.std_options_FilePermissions else null;

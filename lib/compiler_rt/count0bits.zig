@@ -1,17 +1,17 @@
-const std = @import("std");
 const builtin = @import("builtin");
-const common = @import("common.zig");
+const std = @import("std");
+const symbol = @import("../compiler_rt.zig").symbol;
 
 comptime {
-    @export(&__clzsi2, .{ .name = "__clzsi2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__clzdi2, .{ .name = "__clzdi2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__clzti2, .{ .name = "__clzti2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__ctzsi2, .{ .name = "__ctzsi2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__ctzdi2, .{ .name = "__ctzdi2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__ctzti2, .{ .name = "__ctzti2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__ffssi2, .{ .name = "__ffssi2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__ffsdi2, .{ .name = "__ffsdi2", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__ffsti2, .{ .name = "__ffsti2", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&__clzsi2, "__clzsi2");
+    symbol(&__clzdi2, "__clzdi2");
+    symbol(&__clzti2, "__clzti2");
+    symbol(&__ctzsi2, "__ctzsi2");
+    symbol(&__ctzdi2, "__ctzdi2");
+    symbol(&__ctzti2, "__ctzti2");
+    symbol(&__ffssi2, "__ffssi2");
+    symbol(&__ffsdi2, "__ffsdi2");
+    symbol(&__ffsti2, "__ffsti2");
 }
 
 // clz - count leading zeroes
@@ -198,7 +198,7 @@ pub fn __ctzti2(a: i128) callconv(.c) i32 {
 }
 
 inline fn ffsXi2(comptime T: type, a: T) i32 {
-    var x: std.meta.Int(.unsigned, @typeInfo(T).int.bits) = @bitCast(a);
+    var x: @Int(.unsigned, @typeInfo(T).int.bits) = @bitCast(a);
     var n: T = 1;
     // adapted from Number of trailing zeroes (see ctzXi2)
     var mask: @TypeOf(x) = std.math.maxInt(@TypeOf(x));

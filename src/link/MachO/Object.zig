@@ -328,7 +328,9 @@ fn initSubsections(self: *Object, allocator: Allocator, nlists: anytype) !void {
         if (isPtrLiteral(sect)) continue;
 
         const nlist_start = for (nlists, 0..) |nlist, i| {
-            if (nlist.nlist.n_sect - 1 == n_sect) break i;
+            // We must ignore `alt_entry` (N_ALT_ENTRY) symbols here, because that flag indicates
+            // that a symbol should *not* split subsections.
+            if (nlist.nlist.n_sect - 1 == n_sect and !nlist.nlist.n_desc.alt_entry) break i;
         } else nlists.len;
         const nlist_end = for (nlists[nlist_start..], nlist_start..) |nlist, i| {
             if (nlist.nlist.n_sect - 1 != n_sect) break i;
@@ -359,9 +361,24 @@ fn initSubsections(self: *Object, allocator: Allocator, nlists: anytype) !void {
             const alias_start = idx;
             const nlist = nlists[alias_start];
 
-            while (idx < nlist_end and
-                nlists[idx].nlist.n_value == nlist.nlist.n_value) : (idx += 1)
-            {}
+            // Skip past any symbols which shouldn't terminate this subsection.
+            while (true) {
+                idx += 1;
+                if (idx == nlist_end) {
+                    // This subsection contains the full remainder of the section.
+                    break;
+                }
+                if (nlists[idx].nlist.n_value == nlist.nlist.n_value) {
+                    // Multiple symbols at the same address---don't create zero-length subsections.
+                    continue;
+                }
+                if (nlists[idx].nlist.n_desc.alt_entry) {
+                    // N_ALT_ENTRY indicates that this symbol does not split subsections, and is
+                    // instead an "alternate entry point" into an existing subsection.
+                    continue;
+                }
+                break;
+            }
 
             const size = if (idx < nlist_end)
                 nlists[idx].nlist.n_value - nlist.nlist.n_value
@@ -385,7 +402,9 @@ fn initSubsections(self: *Object, allocator: Allocator, nlists: anytype) !void {
             });
 
             for (alias_start..idx) |i| {
-                self.symtab.items(.size)[nlists[i].idx] = size;
+                if (!nlists[i].nlist.n_desc.alt_entry) {
+                    self.symtab.items(.size)[nlists[i].idx] = size;
+                }
             }
         }
 
@@ -1273,8 +1292,8 @@ fn parseUnwindRecords(self: *Object, allocator: Allocator, cpu_arch: std.Target.
 
     const Superposition = struct { atom: Atom.Index, size: u64, cu: ?UnwindInfo.Record.Index = null, fde: ?Fde.Index = null };
 
-    var superposition = std.AutoArrayHashMap(u64, Superposition).init(allocator);
-    defer superposition.deinit();
+    var superposition: std.array_hash_map.Auto(u64, Superposition) = .empty;
+    defer superposition.deinit(allocator);
 
     const slice = self.symtab.slice();
     for (slice.items(.nlist), slice.items(.atom), slice.items(.size)) |nlist, atom, size| {
@@ -1282,7 +1301,7 @@ fn parseUnwindRecords(self: *Object, allocator: Allocator, cpu_arch: std.Target.
         if (nlist.n_type.bits.type != .sect) continue;
         const sect = self.sections.items(.header)[nlist.n_sect - 1];
         if (sect.isCode() and sect.size > 0) {
-            try superposition.ensureUnusedCapacity(1);
+            try superposition.ensureUnusedCapacity(allocator, 1);
             const gop = superposition.getOrPutAssumeCapacity(nlist.n_value);
             if (gop.found_existing) {
                 assert(gop.value_ptr.atom == atom and gop.value_ptr.size == size);
@@ -1295,13 +1314,33 @@ fn parseUnwindRecords(self: *Object, allocator: Allocator, cpu_arch: std.Target.
         const rec = self.getUnwindRecord(rec_index);
         const atom = rec.getAtom(macho_file);
         const addr = atom.getInputAddress(macho_file) + rec.atom_offset;
-        superposition.getPtr(addr).?.cu = rec_index;
+
+        try superposition.ensureUnusedCapacity(allocator, 1);
+        const gop = superposition.getOrPutAssumeCapacity(addr);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{ .atom = rec.atom, .size = rec.length };
+        }
+        gop.value_ptr.cu = rec_index;
     }
+
+    const FdeRange = struct { start: u64, end: u64 };
+    var fde_ranges = try std.ArrayList(FdeRange).initCapacity(allocator, self.fdes.items.len);
+    defer fde_ranges.deinit(allocator);
 
     for (self.fdes.items, 0..) |fde, fde_index| {
         const atom = fde.getAtom(macho_file);
         const addr = atom.getInputAddress(macho_file) + fde.atom_offset;
-        superposition.getPtr(addr).?.fde = @intCast(fde_index);
+
+        try superposition.ensureUnusedCapacity(allocator, 1);
+        const gop = superposition.getOrPutAssumeCapacity(addr);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{ .atom = fde.atom, .size = fde.pc_range };
+        }
+        gop.value_ptr.fde = @intCast(fde_index);
+
+        // Build FDE range for coverage check
+        const pc_range = fde.pc_range;
+        fde_ranges.appendAssumeCapacity(.{ .start = addr, .end = addr + pc_range });
     }
 
     for (superposition.keys(), superposition.values()) |addr, meta| {
@@ -1333,15 +1372,43 @@ fn parseUnwindRecords(self: *Object, allocator: Allocator, cpu_arch: std.Target.
                 }
             }
         } else if (meta.cu == null and meta.fde == null) {
-            // Create a null record
-            const rec_index = try self.addUnwindRecord(allocator);
-            const rec = self.getUnwindRecord(rec_index);
-            const atom = self.getAtom(meta.atom).?;
-            try self.unwind_records_indexes.append(allocator, rec_index);
-            rec.length = @intCast(meta.size);
-            rec.atom = meta.atom;
-            rec.atom_offset = @intCast(addr - atom.getInputAddress(macho_file));
-            rec.file = self.index;
+            // Check if this address is covered by an existing FDE.
+            // If so, don't create a null record - let the unwinder fall back to DWARF.
+            // This is important for local labels within a function that has DWARF unwind info.
+            const is_covered_by_fde = blk: {
+                if (fde_ranges.items.len == 0) break :blk false;
+
+                // Binary search: find the last FDE where start <= addr
+                var left: usize = 0;
+                var right: usize = fde_ranges.items.len;
+                while (left < right) {
+                    const mid = left + (right - left) / 2;
+                    if (fde_ranges.items[mid].start <= addr) {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
+                }
+
+                // Check if the FDE before insertion point covers this address
+                if (left > 0) {
+                    const range = fde_ranges.items[left - 1];
+                    break :blk addr < range.end;
+                }
+                break :blk false;
+            };
+
+            if (!is_covered_by_fde) {
+                // Create a null record only if not covered by DWARF
+                const rec_index = try self.addUnwindRecord(allocator);
+                const rec = self.getUnwindRecord(rec_index);
+                const atom = self.getAtom(meta.atom).?;
+                try self.unwind_records_indexes.append(allocator, rec_index);
+                rec.length = @intCast(meta.size);
+                rec.atom = meta.atom;
+                rec.atom_offset = @intCast(addr - atom.getInputAddress(macho_file));
+                rec.file = self.index;
+            }
         }
     }
 
@@ -2411,17 +2478,17 @@ pub fn getAtoms(self: *Object) []const Atom.Index {
 }
 
 fn addAtomExtra(self: *Object, allocator: Allocator, extra: Atom.Extra) !u32 {
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
-    try self.atoms_extra.ensureUnusedCapacity(allocator, fields.len);
+    const field_count = @typeInfo(Atom.Extra).@"struct".field_names.len;
+    try self.atoms_extra.ensureUnusedCapacity(allocator, field_count);
     return self.addAtomExtraAssumeCapacity(extra);
 }
 
 fn addAtomExtraAssumeCapacity(self: *Object, extra: Atom.Extra) u32 {
     const index = @as(u32, @intCast(self.atoms_extra.items.len));
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
-    inline for (fields) |field| {
-        self.atoms_extra.appendAssumeCapacity(switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Atom.Extra).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        self.atoms_extra.appendAssumeCapacity(switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         });
     }
@@ -2429,11 +2496,11 @@ fn addAtomExtraAssumeCapacity(self: *Object, extra: Atom.Extra) u32 {
 }
 
 pub fn getAtomExtra(self: Object, index: u32) Atom.Extra {
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
+    const info = @typeInfo(Atom.Extra).@"struct";
     var i: usize = index;
     var result: Atom.Extra = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => self.atoms_extra.items[i],
             else => @compileError("bad field type"),
         };
@@ -2444,10 +2511,10 @@ pub fn getAtomExtra(self: Object, index: u32) Atom.Extra {
 
 pub fn setAtomExtra(self: *Object, index: u32, extra: Atom.Extra) void {
     assert(index > 0);
-    const fields = @typeInfo(Atom.Extra).@"struct".fields;
-    inline for (fields, 0..) |field, i| {
-        self.atoms_extra.items[index + i] = switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Atom.Extra).@"struct";
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        self.atoms_extra.items[index + i] = switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         };
     }
@@ -2472,17 +2539,17 @@ pub fn getSymbolRef(self: Object, index: Symbol.Index, macho_file: *MachO) MachO
 }
 
 pub fn addSymbolExtra(self: *Object, allocator: Allocator, extra: Symbol.Extra) !u32 {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    try self.symbols_extra.ensureUnusedCapacity(allocator, fields.len);
+    const field_count = @typeInfo(Symbol.Extra).@"struct".field_names.len;
+    try self.symbols_extra.ensureUnusedCapacity(allocator, field_count);
     return self.addSymbolExtraAssumeCapacity(extra);
 }
 
 fn addSymbolExtraAssumeCapacity(self: *Object, extra: Symbol.Extra) u32 {
     const index = @as(u32, @intCast(self.symbols_extra.items.len));
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    inline for (fields) |field| {
-        self.symbols_extra.appendAssumeCapacity(switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Symbol.Extra).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        self.symbols_extra.appendAssumeCapacity(switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         });
     }
@@ -2490,11 +2557,11 @@ fn addSymbolExtraAssumeCapacity(self: *Object, extra: Symbol.Extra) u32 {
 }
 
 pub fn getSymbolExtra(self: Object, index: u32) Symbol.Extra {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
+    const info = @typeInfo(Symbol.Extra).@"struct";
     var i: usize = index;
     var result: Symbol.Extra = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => self.symbols_extra.items[i],
             else => @compileError("bad field type"),
         };
@@ -2504,10 +2571,10 @@ pub fn getSymbolExtra(self: Object, index: u32) Symbol.Extra {
 }
 
 pub fn setSymbolExtra(self: *Object, index: u32, extra: Symbol.Extra) void {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    inline for (fields, 0..) |field, i| {
-        self.symbols_extra.items[index + i] = switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Symbol.Extra).@"struct";
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        self.symbols_extra.items[index + i] = switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         };
     }

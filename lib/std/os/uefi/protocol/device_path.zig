@@ -26,12 +26,10 @@ pub const DevicePath = extern struct {
 
     /// Returns the next DevicePath node in the sequence, if any.
     pub fn next(self: *const DevicePath) ?*const DevicePath {
+        const subtype: uefi.DevicePath.End.Subtype = @enumFromInt(self.subtype);
+        if (self.type == .end and subtype == .end_entire) return null;
         const bytes: [*]const u8 = @ptrCast(self);
-        const next_node: *const DevicePath = @ptrCast(bytes + self.length);
-        if (next_node.type == .end and @as(uefi.DevicePath.End.Subtype, @enumFromInt(self.subtype)) == .end_entire)
-            return null;
-
-        return next_node;
+        return @ptrCast(bytes + self.length);
     }
 
     /// Calculates the total length of the device path structure in bytes, including the end of device path node.
@@ -84,16 +82,17 @@ pub const DevicePath = extern struct {
     }
 
     pub fn getDevicePath(self: *const DevicePath) ?uefi.DevicePath {
-        inline for (@typeInfo(uefi.DevicePath).@"union".fields) |ufield| {
-            const enum_value = std.meta.stringToEnum(uefi.DevicePath.Type, ufield.name);
+        const u_info = @typeInfo(uefi.DevicePath).@"union";
+        inline for (u_info.field_names, u_info.field_types) |ufield_name, ufield_type| {
+            const enum_value = std.meta.stringToEnum(uefi.DevicePath.Type, ufield_name);
 
             // Got the associated union type for self.type, now
             // we need to initialize it and its subtype
             if (self.type == enum_value) {
-                const subtype = self.initSubtype(ufield.type);
+                const subtype = self.initSubtype(ufield_type);
                 if (subtype) |sb| {
                     // e.g. return .{ .hardware = .{ .pci = @ptrCast(...) } }
-                    return @unionInit(uefi.DevicePath, ufield.name, sb);
+                    return @unionInit(uefi.DevicePath, ufield_name, sb);
                 }
             }
         }
@@ -105,13 +104,13 @@ pub const DevicePath = extern struct {
         const type_info = @typeInfo(TUnion).@"union";
         const TTag = type_info.tag_type.?;
 
-        inline for (type_info.fields) |subtype| {
+        inline for (type_info.field_names, type_info.field_types) |subtype_name, subtype_type| {
             // The tag names match the union names, so just grab that off the enum
-            const tag_val: u8 = @intFromEnum(@field(TTag, subtype.name));
+            const tag_val: u8 = @intFromEnum(@field(TTag, subtype_name));
 
             if (self.subtype == tag_val) {
                 // e.g. expr = .{ .pci = @ptrCast(...) }
-                return @unionInit(TUnion, subtype.name, @as(subtype.type, @ptrCast(self)));
+                return @unionInit(TUnion, subtype_name, @as(subtype_type, @ptrCast(self)));
             }
         }
 

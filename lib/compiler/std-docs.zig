@@ -18,7 +18,7 @@ fn usage(io: Io) noreturn {
         \\                            By default, enabled unless a port is specified.
         \\
     ) catch {};
-    std.process.exit(1);
+    std.process.exit(0);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -208,6 +208,9 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
     var archiver: std.tar.Writer = .{ .underlying_writer = &response.writer };
     archiver.prefix = "std";
 
+    var path_buf: std.ArrayList(u8) = .empty;
+    defer path_buf.deinit(gpa);
+
     while (try walker.next(io)) |entry| {
         switch (entry.kind) {
             .file => {
@@ -227,7 +230,17 @@ fn serveSourcesTar(request: *std.http.Server.Request, context: *Context) !void {
             .interface = Io.File.Reader.initInterface(&.{}),
             .size = stat.size,
         };
-        try archiver.writeFileTimestamp(entry.path, &file_reader, stat.mtime);
+
+        const posix_path = if (comptime std.fs.path.sep == std.fs.path.sep_posix)
+            entry.path
+        else blk: {
+            path_buf.clearRetainingCapacity();
+            try path_buf.appendSlice(gpa, entry.path);
+            std.mem.replaceScalar(u8, path_buf.items, std.fs.path.sep, std.fs.path.sep_posix);
+            break :blk path_buf.items;
+        };
+
+        try archiver.writeFileTimestamp(posix_path, &file_reader, stat.mtime);
     }
 
     {
@@ -258,12 +271,16 @@ fn serveWasm(
     // Do the compilation every request, so that the user can edit the files
     // and see the changes without restarting the server.
     const wasm_base_path = try buildWasmBinary(arena, context, optimize_mode);
+    const target = std.zig.system.resolveTargetQuery(io, std.Build.parseTargetQuery(.{
+        .arch_os_abi = autodoc_arch_os_abi,
+        .cpu_features = autodoc_cpu_features,
+    }) catch unreachable) catch unreachable;
     const bin_name = try std.zig.binNameAlloc(arena, .{
         .root_name = autodoc_root_name,
-        .target = &(std.zig.system.resolveTargetQuery(io, std.Build.parseTargetQuery(.{
-            .arch_os_abi = autodoc_arch_os_abi,
-            .cpu_features = autodoc_cpu_features,
-        }) catch unreachable) catch unreachable),
+        .cpu_arch = target.cpu.arch,
+        .os_tag = target.os.tag,
+        .ofmt = target.ofmt,
+        .abi = target.abi,
         .output_mode = .Exe,
     });
     // std.http.Server does not have a sendfile API yet.
@@ -324,11 +341,10 @@ fn buildWasmBinary(
         .stderr = .pipe,
     });
 
-    var poller = Io.poll(gpa, enum { stdout, stderr }, .{
-        .stdout = child.stdout.?,
-        .stderr = child.stderr.?,
-    });
-    defer poller.deinit();
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
 
     try sendMessage(io, child.stdin.?, .update);
     try sendMessage(io, child.stdin.?, .exit);
@@ -336,14 +352,23 @@ fn buildWasmBinary(
     var result: ?Cache.Path = null;
     var result_error_bundle = std.zig.ErrorBundle.empty;
 
-    const stdout = poller.reader(.stdout);
+    const stdout = multi_reader.fileReader(0);
+    const MessageHeader = std.zig.Server.Message.Header;
 
-    poll: while (true) {
-        const Header = std.zig.Server.Message.Header;
-        while (stdout.buffered().len < @sizeOf(Header)) if (!try poller.poll()) break :poll;
-        const header = stdout.takeStruct(Header, .little) catch unreachable;
-        while (stdout.buffered().len < header.bytes_len) if (!try poller.poll()) break :poll;
-        const body = stdout.take(header.bytes_len) catch unreachable;
+    var eos_err: error{EndOfStream}!void = {};
+
+    while (true) {
+        const header = stdout.interface.takeStruct(MessageHeader, .little) catch |err| switch (err) {
+            error.EndOfStream => break,
+            error.ReadFailed => return stdout.err.?,
+        };
+        const body = stdout.interface.take(header.bytes_len) catch |err| switch (err) {
+            error.EndOfStream => |e| {
+                eos_err = e;
+                break;
+            },
+            error.ReadFailed => return stdout.err.?,
+        };
 
         switch (header.tag) {
             .zig_version => {
@@ -372,53 +397,39 @@ fn buildWasmBinary(
         }
     }
 
-    const stderr = poller.reader(.stderr);
-    if (stderr.bufferedLen() > 0) {
-        std.debug.print("{s}", .{stderr.buffered()});
+    try multi_reader.fillRemaining(.none);
+    const stderr = multi_reader.reader(1).buffered();
+
+    if (stderr.len > 0) {
+        std.debug.print("{s}", .{stderr});
     }
+
+    try eos_err;
 
     // Send EOF to stdin.
     child.stdin.?.close(io);
     child.stdin = null;
 
-    switch (try child.wait(io)) {
-        .exited => |code| {
-            if (code != 0) {
-                std.log.err(
-                    "the following command exited with error code {d}:\n{s}",
-                    .{ code, try std.Build.Step.allocPrintCmd(arena, null, null, argv.items) },
-                );
-                return error.WasmCompilationFailed;
-            }
-        },
-        .signal => |sig| {
-            std.log.err(
-                "the following command terminated with signal {t}:\n{s}",
-                .{ sig, try std.Build.Step.allocPrintCmd(arena, null, null, argv.items) },
-            );
-            return error.WasmCompilationFailed;
-        },
-        .stopped, .unknown => {
-            std.log.err(
-                "the following command terminated unexpectedly:\n{s}",
-                .{try std.Build.Step.allocPrintCmd(arena, null, null, argv.items)},
-            );
-            return error.WasmCompilationFailed;
-        },
+    const term = try child.wait(io);
+    if (!term.success()) {
+        std.log.err("the following command {f}:\n{s}", .{
+            term, try std.zig.allocPrintCmd(arena, argv.items, .{}),
+        });
+        return error.WasmCompilationFailed;
     }
 
     if (result_error_bundle.errorMessageCount() > 0) {
         try result_error_bundle.renderToStderr(io, .{}, .auto);
         std.log.err("the following command failed with {d} compilation errors:\n{s}", .{
             result_error_bundle.errorMessageCount(),
-            try std.Build.Step.allocPrintCmd(arena, null, null, argv.items),
+            try std.zig.allocPrintCmd(arena, argv.items, .{}),
         });
         return error.WasmCompilationFailed;
     }
 
     return result orelse {
         std.log.err("child process failed to report result\n{s}", .{
-            try std.Build.Step.allocPrintCmd(arena, null, null, argv.items),
+            try std.zig.allocPrintCmd(arena, argv.items, .{}),
         });
         return error.WasmCompilationFailed;
     };

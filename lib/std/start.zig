@@ -20,18 +20,23 @@ comptime {
     _ = root;
 
     if (builtin.output_mode == .Lib and builtin.link_mode == .dynamic) {
-        if (native_os == .windows and !@hasDecl(root, "_DllMainCRTStartup")) {
-            @export(&_DllMainCRTStartup, .{ .name = "_DllMainCRTStartup" });
+        const dll_main_crt_startup = if (builtin.abi.isGnu()) "DllMainCRTStartup" else "_DllMainCRTStartup";
+        if (native_os == .windows and !builtin.link_libc and !@hasDecl(root, dll_main_crt_startup)) {
+            @export(&DllMainCRTStartup, .{ .name = dll_main_crt_startup });
+        } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "DllMain")) {
+            if (!@typeInfo(@TypeOf(root.DllMain)).@"fn".attrs.@"callconv".eql(.winapi)) {
+                @export(&DllMain, .{ .name = "DllMain" });
+            }
         }
     } else if (builtin.output_mode == .Exe or @hasDecl(root, "main")) {
         if (builtin.link_libc and @hasDecl(root, "main")) {
             if (is_wasm) {
                 @export(&mainWithoutEnv, .{ .name = "__main_argc_argv" });
-            } else if (!@typeInfo(@TypeOf(root.main)).@"fn".calling_convention.eql(.c)) {
+            } else if (!@typeInfo(@TypeOf(root.main)).@"fn".attrs.@"callconv".eql(.c)) {
                 @export(&main, .{ .name = "main" });
             }
         } else if (native_os == .windows and builtin.link_libc and @hasDecl(root, "wWinMain")) {
-            if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".calling_convention.eql(.c)) {
+            if (!@typeInfo(@TypeOf(root.wWinMain)).@"fn".attrs.@"callconv".eql(.c)) {
                 @export(&wWinMain, .{ .name = "wWinMain" });
             }
         } else if (native_os == .windows) {
@@ -65,13 +70,13 @@ comptime {
             // case it's not required to provide an entrypoint such as main.
             if (!@hasDecl(root, start_sym_name) and @hasDecl(root, "main")) @export(&wasm_freestanding_start, .{ .name = start_sym_name });
         } else switch (native_os) {
-            .other, .freestanding, .@"3ds", .vita => {},
+            .other, .freestanding, .@"3ds", .psp, .vita => {},
             else => if (!@hasDecl(root, start_sym_name)) @export(&_start, .{ .name = start_sym_name }),
         }
     }
 }
 
-fn _DllMainCRTStartup(
+fn DllMainCRTStartup(
     hinstDLL: std.os.windows.HINSTANCE,
     fdwReason: std.os.windows.DWORD,
     lpReserved: std.os.windows.LPVOID,
@@ -81,24 +86,32 @@ fn _DllMainCRTStartup(
     }
 
     if (@hasDecl(root, "DllMain")) {
-        return root.DllMain(hinstDLL, fdwReason, lpReserved);
+        return root.DllMain(@ptrCast(hinstDLL), fdwReason, lpReserved);
     }
 
-    return std.os.windows.TRUE;
+    return .TRUE;
+}
+
+fn DllMain(
+    hinstDLL: std.os.windows.HINSTANCE,
+    fdwReason: std.os.windows.DWORD,
+    lpReserved: std.os.windows.LPVOID,
+) callconv(.winapi) std.os.windows.BOOL {
+    return root.DllMain(@ptrCast(hinstDLL), fdwReason, lpReserved);
 }
 
 fn wasm_freestanding_start() callconv(.c) void {
     // This is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
-    _ = @call(.always_inline, callMain, .{ {}, {} });
+    _ = @call(.always_inline, callMain, .{ {}, std.process.Environ.Block.global });
 }
 
 fn startWasi() callconv(.c) void {
     // The function call is marked inline because for some reason LLVM in
     // release mode fails to inline it, and we want fewer call frames in stack traces.
     switch (builtin.wasi_exec_model) {
-        .reactor => _ = @call(.always_inline, callMain, .{ {}, {} }),
-        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{ {}, {} })),
+        .reactor => _ = @call(.always_inline, callMain, .{ {}, std.process.Environ.Block.global }),
+        .command => std.os.wasi.proc_exit(@call(.always_inline, callMain, .{ {}, std.process.Environ.Block.global })),
     }
 }
 
@@ -156,6 +169,7 @@ fn _start() callconv(.naked) noreturn {
             .kvx => ".cfi_undefined r14",
             .loongarch32, .loongarch64 => ".cfi_undefined 1",
             .m68k => ".cfi_undefined %%pc",
+            .m88k => ".cfi_undefined %%r1",
             .microblaze, .microblazeel => ".cfi_undefined r15",
             .mips, .mipsel, .mips64, .mips64el => ".cfi_undefined $ra",
             .or1k => ".cfi_undefined r9",
@@ -169,6 +183,7 @@ fn _start() callconv(.naked) noreturn {
             .sparc, .sparc64 => ".cfi_undefined %%i7",
             .x86 => ".cfi_undefined %%eip",
             .x86_64 => ".cfi_undefined %%rip",
+            .xtensa, .xtensaeb => "", // No CFI support.
             else => @compileError("unsupported arch"),
         });
 
@@ -276,7 +291,15 @@ fn _start() callconv(.naked) noreturn {
             \\ ;;
             \\ goto %[posixCallMainAndExit]
             ,
-            .loongarch32, .loongarch64 =>
+            .loongarch32 =>
+            \\ move $fp, $zero
+            \\ move $ra, $zero
+            \\ move $a0, $sp
+            \\ srli.w $sp, $sp, 4
+            \\ slli.w $sp, $sp, 4
+            \\ b %[posixCallMainAndExit]
+            ,
+            .loongarch64 =>
             \\ move $fp, $zero
             \\ move $ra, $zero
             \\ move $a0, $sp
@@ -309,6 +332,16 @@ fn _start() callconv(.naked) noreturn {
             \\ move.l %%a0, -(%%sp)
             \\ lea %[posixCallMainAndExit] - . - 8, %%a0
             \\ jsr (%%pc, %%a0)
+            ,
+            .m88k =>
+            // r1 = LR, r30 = FP, r31 = SP
+            \\ or %%r0, %%r0, %%r0
+            \\ or %%r0, %%r0, %%r0
+            \\ or %%30, %%r0, %%r0
+            \\ or %%r1, %%r0, %%r0
+            \\ or %%r2, %%r31, %%r0
+            \\ clr %%r31, %%r31, 4<0>
+            \\ br.n %[posixCallMainAndExit]
             ,
             .microblaze, .microblazeel =>
             // r1 = SP, r15 = LR, r19 = FP, r20 = GP
@@ -454,6 +487,23 @@ fn _start() callconv(.naked) noreturn {
             \\ sub %%sp, 2047, %%sp
             \\ ba,a %[posixCallMainAndExit]
             ,
+            .xtensa, .xtensaeb => if (builtin.abi == .call0)
+                // a0 = LR, a15 = FP, a1 = SP
+                \\ movi a0, 0
+                \\ movi a15, 0
+                \\ mov a2, sp
+                \\ movi a8, -16
+                \\ and sp, sp, a8
+                \\ call0 %[posixCallMainAndExit]
+            else
+                // a0 = LR, a7 = FP, a1 = SP
+                \\ movi a0, 0
+                \\ movi a7, 0
+                \\ mov a6, sp
+                \\ movi a8, -16
+                \\ and sp, sp, a8
+                \\ call4 %[posixCallMainAndExit]
+            ,
             else => @compileError("unsupported arch"),
         }
         :
@@ -470,12 +520,12 @@ fn WinStartup() callconv(.withStackAlign(.c, 1)) noreturn {
         _ = @import("os/windows/tls.zig");
     }
 
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
 
-    const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
-    const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
-
-    std.os.windows.ntdll.RtlExitUserProcess(callMain(cmd_line_w, {}));
+    std.os.windows.ntdll.RtlExitUserProcess(
+        callMain(std.os.windows.peb().ProcessParameters.CommandLine.slice(), .global),
+    );
 }
 
 fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
@@ -486,6 +536,7 @@ fn wWinMainCRTStartup() callconv(.withStackAlign(.c, 1)) noreturn {
         _ = @import("os/windows/tls.zig");
     }
 
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
 
     const result: std.os.windows.INT = call_wWinMain();
@@ -618,12 +669,15 @@ fn expandStackSize(phdrs: []elf.Phdr) void {
 }
 
 inline fn callMainWithArgs(argc: usize, argv: [*][*:0]u8, envp: [:null]?[*:0]u8) u8 {
+    const env_block: std.process.Environ.Block = .{ .slice = envp };
     if (std.Options.debug_threaded_io) |t| {
         if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
-        t.environ = .{ .process_environ = .{ .block = envp } };
+        t.environ = .{ .process_environ = .{ .block = env_block } };
+        t.environ_initialized = env_block.isEmpty();
     }
+    std.Thread.maybeAttachSignalStack();
     std.debug.maybeEnableSegfaultHandler();
-    return callMain(argv[0..argc], envp);
+    return callMain(argv[0..argc], env_block);
 }
 
 fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) callconv(.c) c_int {
@@ -641,10 +695,9 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
         .windows => {
             // On Windows, we ignore libc environment and argv and get those
             // values in their intended encoding from the PEB instead.
+            std.Thread.maybeAttachSignalStack();
             std.debug.maybeEnableSegfaultHandler();
-            const cmd_line = std.os.windows.peb().ProcessParameters.CommandLine;
-            const cmd_line_w = cmd_line.Buffer.?[0..@divExact(cmd_line.Length, 2)];
-            return callMain(cmd_line_w, {});
+            return callMain(std.os.windows.peb().ProcessParameters.CommandLine.slice(), .global);
         },
         else => {},
     }
@@ -654,32 +707,43 @@ fn main(c_argc: c_int, c_argv: [*][*:0]c_char, c_envp: [*:null]?[*:0]c_char) cal
 
 fn mainWithoutEnv(c_argc: c_int, c_argv: [*][*:0]c_char) callconv(.c) c_int {
     const argv = @as([*][*:0]u8, @ptrCast(c_argv))[0..@intCast(c_argc)];
-    if (@sizeOf(std.Io.Threaded.Argv0) != 0) {
-        if (std.Options.debug_threaded_io) |t| t.argv0.value = argv[0];
+    const environ: [:null]?[*:0]u8 = switch (builtin.os.tag) {
+        .wasi, .emscripten => environ: {
+            const c_environ = std.c.environ;
+            var env_count: usize = 0;
+            while (c_environ[env_count] != null) : (env_count += 1) {}
+            break :environ c_environ[0..env_count :null];
+        },
+        else => &.{},
+    };
+    const env_block: std.process.Environ.Block = .{ .slice = environ };
+    if (std.Options.debug_threaded_io) |t| {
+        if (@sizeOf(std.Io.Threaded.Argv0) != 0) t.argv0.value = argv[0];
+        t.environ = .{ .process_environ = .{ .block = env_block } };
+        t.environ_initialized = env_block.isEmpty();
     }
-    return callMain(argv, &.{});
+    return callMain(argv, env_block);
 }
 
 /// General error message for a malformed return type
 const bad_main_ret = "expected return type of main to be 'void', '!void', 'noreturn', 'u8', or '!u8'";
 
-const use_debug_allocator = !is_wasm and switch (builtin.mode) {
-    .Debug => true,
-    .ReleaseSafe => !builtin.link_libc, // Not ideal, but the best we have for now.
+const use_safe_allocator = !is_wasm and switch (builtin.mode) {
+    .Debug, .ReleaseSafe => true,
     .ReleaseFast, .ReleaseSmall => !builtin.link_libc and builtin.single_threaded, // Also not ideal.
 };
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+var safe_allocator: std.heap.SafeAllocator = .init(std.heap.page_allocator, .{});
 
 inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.Block) u8 {
     const fn_info = @typeInfo(@TypeOf(root.main)).@"fn";
-    if (fn_info.params.len == 0) return wrapMain(root.main());
-    if (fn_info.params[0].type.? == std.process.Init.Minimal) return wrapMain(root.main(.{
+    if (fn_info.param_types.len == 0) return wrapMain(root.main());
+    if (fn_info.param_types[0].? == std.process.Init.Minimal) return wrapMain(root.main(.{
         .args = .{ .vector = args },
         .environ = .{ .block = environ },
     }));
 
-    const gpa = if (use_debug_allocator)
-        debug_allocator.allocator()
+    const gpa = if (use_safe_allocator)
+        safe_allocator.allocator()
     else if (builtin.link_libc)
         std.heap.c_allocator
     else if (is_wasm)
@@ -689,8 +753,8 @@ inline fn callMain(args: std.process.Args.Vector, environ: std.process.Environ.B
     else
         comptime unreachable;
 
-    defer if (use_debug_allocator) {
-        _ = debug_allocator.deinit(); // Leaks do not affect return code.
+    defer if (use_safe_allocator) {
+        _ = safe_allocator.deinit(); // Leaks do not affect return code.
     };
 
     const arena_backing_allocator = if (is_wasm) gpa else std.heap.page_allocator;
@@ -738,7 +802,7 @@ inline fn wrapMain(result: anytype) u8 {
         std.log.err("{t}", .{err});
         switch (native_os) {
             .freestanding, .other => {},
-            else => if (@errorReturnTrace()) |trace| std.debug.dumpStackTrace(trace),
+            else => if (@errorReturnTrace()) |trace| std.debug.dumpErrorReturnTrace(trace),
         }
         return 1;
     };
@@ -753,7 +817,7 @@ inline fn wrapMain(result: anytype) u8 {
 
 fn call_wWinMain() std.os.windows.INT {
     const peb = std.os.windows.peb();
-    const MAIN_HINSTANCE = @typeInfo(@TypeOf(root.wWinMain)).@"fn".params[0].type.?;
+    const MAIN_HINSTANCE = @typeInfo(@TypeOf(root.wWinMain)).@"fn".param_types[0].?;
     const hInstance: MAIN_HINSTANCE = @ptrCast(peb.ImageBaseAddress);
     const lpCmdLine: [*:0]u16 = @ptrCast(peb.ProcessParameters.CommandLine.Buffer);
 
@@ -771,8 +835,7 @@ fn call_wWinMain() std.os.windows.INT {
         // - With STARTF_USESHOWWINDOW unset:
         //   - nShowCmd is always SW_SHOWDEFAULT
         const SW_SHOWDEFAULT = 10;
-        const STARTF_USESHOWWINDOW = 1;
-        if (peb.ProcessParameters.dwFlags & STARTF_USESHOWWINDOW != 0) {
+        if (peb.ProcessParameters.dwFlags & std.os.windows.STARTF_USESHOWWINDOW != 0) {
             break :nShowCmd @truncate(peb.ProcessParameters.dwShowWindow);
         }
         break :nShowCmd SW_SHOWDEFAULT;

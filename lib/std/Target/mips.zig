@@ -49,12 +49,14 @@ pub const Feature = enum {
     noabicalls,
     nomadd4,
     nooddspreg,
+    notraps,
     p5600,
     ptr64,
     single_float,
     soft_float,
     strict_align,
     sym32,
+    use_compact_branches,
     use_indirect_jump_hazard,
     use_tcc_in_div,
     vfpu,
@@ -68,7 +70,7 @@ pub const featureSetHasAny = CpuFeature.FeatureSetFns(Feature).featureSetHasAny;
 pub const featureSetHasAll = CpuFeature.FeatureSetFns(Feature).featureSetHasAll;
 
 pub const all_features = blk: {
-    const len = @typeInfo(Feature).@"enum".fields.len;
+    const len = @typeInfo(Feature).@"enum".field_names.len;
     std.debug.assert(len <= CpuFeature.Set.needed_bit_count);
     var result: [len]CpuFeature = undefined;
     result[@intFromEnum(Feature.abs2008)] = .{
@@ -353,6 +355,11 @@ pub const all_features = blk: {
         .description = "Disable odd numbered single-precision registers",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@intFromEnum(Feature.notraps)] = .{
+        .llvm_name = null,
+        .description = "Disable trap instructions",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@intFromEnum(Feature.p5600)] = .{
         .llvm_name = "p5600",
         .description = "The P5600 Processor",
@@ -385,6 +392,11 @@ pub const all_features = blk: {
         .description = "Symbols are 32 bit on Mips64",
         .dependencies = featureSet(&[_]Feature{}),
     };
+    result[@intFromEnum(Feature.use_compact_branches)] = .{
+        .llvm_name = "use-compact-branches",
+        .description = "Use compact branch instructions for MIPS32R6/MIPS64R6",
+        .dependencies = featureSet(&[_]Feature{}),
+    };
     result[@intFromEnum(Feature.use_indirect_jump_hazard)] = .{
         .llvm_name = "use-indirect-jump-hazard",
         .description = "Use indirect jump guards to prevent certain speculation based attacks",
@@ -413,12 +425,21 @@ pub const all_features = blk: {
     const ti = @typeInfo(Feature);
     for (&result, 0..) |*elem, i| {
         elem.index = i;
-        elem.name = ti.@"enum".fields[i].name;
+        elem.name = ti.@"enum".field_names[i];
     }
     break :blk result;
 };
 
 pub const cpu = struct {
+    pub const allegrex: CpuModel = .{
+        .name = "allegrex",
+        .llvm_name = null,
+        .features = featureSet(&[_]Feature{
+            .mips2,
+            .notraps,
+            .single_float,
+        }),
+    };
     pub const generic: CpuModel = .{
         .name = "generic",
         .llvm_name = "generic",

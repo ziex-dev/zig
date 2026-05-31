@@ -19,7 +19,11 @@ const testing = std.testing;
 /// For unions you can call `.items(.tags)` or `.items(.data)`.
 pub fn MultiArrayList(comptime T: type) type {
     return struct {
-        bytes: [*]align(@alignOf(T)) u8 = undefined,
+        /// This pointer is always aligned to the boundary `sizes.big_align`; this is not specified
+        /// in the type to avoid `MultiArrayList(T)` depending on the alignment of `T` because this
+        /// can lead to dependency loops. See `allocatedBytes` which `@alignCast`s this pointer to
+        /// the correct type.
+        bytes: [*]u8 = undefined,
         len: usize = 0,
         capacity: usize = 0,
 
@@ -40,17 +44,7 @@ pub fn MultiArrayList(comptime T: type) type {
         const Elem = switch (@typeInfo(T)) {
             .@"struct" => T,
             .@"union" => |u| struct {
-                pub const Bare = Bare: {
-                    var field_names: [u.fields.len][]const u8 = undefined;
-                    var field_types: [u.fields.len]type = undefined;
-                    var field_attrs: [u.fields.len]std.builtin.Type.UnionField.Attributes = undefined;
-                    for (u.fields, &field_names, &field_types, &field_attrs) |field, *name, *Type, *attrs| {
-                        name.* = field.name;
-                        Type.* = field.type;
-                        attrs.* = .{ .@"align" = field.alignment };
-                    }
-                    break :Bare @Union(u.layout, null, &field_names, &field_types, &field_attrs);
-                };
+                pub const Bare = @Union(u.layout, null, u.field_names, u.field_types[0..], u.field_attrs[0..]);
                 pub const Tag =
                     u.tag_type orelse @compileError("MultiArrayList does not support untagged unions");
                 tags: Tag,
@@ -83,7 +77,7 @@ pub fn MultiArrayList(comptime T: type) type {
         pub const Slice = struct {
             /// This array is indexed by the field index which can be obtained
             /// by using @intFromEnum() on the Field enum
-            ptrs: [fields.len][*]u8,
+            ptrs: [field_names.len][*]u8,
             len: usize,
             capacity: usize,
 
@@ -112,15 +106,15 @@ pub fn MultiArrayList(comptime T: type) type {
                     .@"union" => Elem.fromT(elem),
                     else => unreachable,
                 };
-                inline for (fields, 0..) |field_info, i| {
-                    self.items(@as(Field, @enumFromInt(i)))[index] = @field(e, field_info.name);
+                inline for (field_names, 0..) |field_name, i| {
+                    self.items(@as(Field, @enumFromInt(i)))[index] = @field(e, field_name);
                 }
             }
 
             pub fn get(self: Slice, index: usize) T {
                 var result: Elem = undefined;
-                inline for (fields, 0..) |field_info, i| {
-                    @field(result, field_info.name) = self.items(@as(Field, @enumFromInt(i)))[index];
+                inline for (field_names, 0..) |field_name, i| {
+                    @field(result, field_name) = self.items(@as(Field, @enumFromInt(i)))[index];
                 }
                 return switch (@typeInfo(T)) {
                     .@"struct" => result,
@@ -129,14 +123,19 @@ pub fn MultiArrayList(comptime T: type) type {
                 };
             }
 
+            pub fn swap(self: Slice, a: usize, b: usize) void {
+                inline for (@typeInfo(Field).@"enum".field_names) |field_name| {
+                    const its = self.items(@field(Field, field_name));
+                    std.mem.swap(@FieldType(T, field_name), &its[a], &its[b]);
+                }
+            }
+
             pub fn toMultiArrayList(self: Slice) Self {
                 if (self.ptrs.len == 0 or self.capacity == 0) {
                     return .{};
                 }
-                const unaligned_ptr = self.ptrs[sizes.fields[0]];
-                const aligned_ptr: [*]align(@alignOf(Elem)) u8 = @alignCast(unaligned_ptr);
                 return .{
-                    .bytes = aligned_ptr,
+                    .bytes = self.ptrs[sizes.fields[0]],
                     .len = self.len,
                     .capacity = self.capacity,
                 };
@@ -153,9 +152,9 @@ pub fn MultiArrayList(comptime T: type) type {
             /// Asserts that `off + len <= s.len`.
             pub fn subslice(s: Slice, off: usize, len: usize) Slice {
                 assert(off + len <= s.len);
-                var ptrs: [fields.len][*]u8 = undefined;
-                inline for (s.ptrs, &ptrs, fields) |in, *out, field| {
-                    out.* = in + (off * @sizeOf(field.type));
+                var ptrs: [field_names.len][*]u8 = undefined;
+                inline for (s.ptrs, &ptrs, field_types) |in, *out, field_type| {
+                    out.* = in + (off * @sizeOf(field_type));
                 }
                 return .{
                     .ptrs = ptrs,
@@ -176,22 +175,27 @@ pub fn MultiArrayList(comptime T: type) type {
 
         const Self = @This();
 
-        const fields = meta.fields(Elem);
+        const field_names = @typeInfo(Elem).@"struct".field_names;
+        const field_types = @typeInfo(Elem).@"struct".field_types;
+        const field_attrs = @typeInfo(Elem).@"struct".field_attrs;
         /// `sizes.bytes` is an array of @sizeOf each T field. Sorted by alignment, descending.
         /// `sizes.fields` is an array mapping from `sizes.bytes` array index to field index.
+        /// `sizes.big_align` is the overall alignment of the allocation, which equals the maximum field alignment.
         const sizes = blk: {
             const Data = struct {
                 size: usize,
                 size_index: usize,
                 alignment: usize,
             };
-            var data: [fields.len]Data = undefined;
-            for (fields, 0..) |field_info, i| {
+            var data: [field_names.len]Data = undefined;
+            var big_align: usize = 1;
+            for (field_types, field_attrs, 0..) |f_type, f_attrs, i| {
                 data[i] = .{
-                    .size = @sizeOf(field_info.type),
+                    .size = @sizeOf(f_type),
                     .size_index = i,
-                    .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
+                    .alignment = f_attrs.@"align" orelse @alignOf(f_type),
                 };
+                big_align = @max(big_align, data[i].alignment);
             }
             const Sort = struct {
                 fn lessThan(context: void, lhs: Data, rhs: Data) bool {
@@ -199,10 +203,10 @@ pub fn MultiArrayList(comptime T: type) type {
                     return lhs.alignment > rhs.alignment;
                 }
             };
-            @setEvalBranchQuota(3 * fields.len * std.math.log2(fields.len));
+            @setEvalBranchQuota(3 * field_names.len * std.math.log2(field_names.len));
             mem.sort(Data, &data, {}, Sort.lessThan);
-            var sizes_bytes: [fields.len]usize = undefined;
-            var field_indexes: [fields.len]usize = undefined;
+            var sizes_bytes: [field_names.len]usize = undefined;
+            var field_indexes: [field_names.len]usize = undefined;
             for (data, 0..) |elem, i| {
                 sizes_bytes[i] = elem.size;
                 field_indexes[i] = elem.size_index;
@@ -210,6 +214,7 @@ pub fn MultiArrayList(comptime T: type) type {
             break :blk .{
                 .bytes = sizes_bytes,
                 .fields = field_indexes,
+                .big_align = mem.Alignment.fromByteUnits(big_align),
             };
         };
 
@@ -259,6 +264,10 @@ pub fn MultiArrayList(comptime T: type) type {
         /// Obtain all the data for one array element.
         pub fn get(self: Self, index: usize) T {
             return self.slice().get(index);
+        }
+
+        pub fn swap(self: Self, a: usize, b: usize) void {
+            return self.slice().swap(a, b);
         }
 
         /// Extend the list by 1 element.
@@ -351,13 +360,13 @@ pub fn MultiArrayList(comptime T: type) type {
                 else => unreachable,
             };
             const slices = self.slice();
-            inline for (fields, 0..) |field_info, field_index| {
+            inline for (field_names, 0..) |field_name, field_index| {
                 const field_slice = slices.items(@as(Field, @enumFromInt(field_index)));
                 var i: usize = self.len - 1;
                 while (i > index) : (i -= 1) {
                     field_slice[i] = field_slice[i - 1];
                 }
-                field_slice[index] = @field(entry, field_info.name);
+                field_slice[index] = @field(entry, field_name);
             }
         }
 
@@ -377,7 +386,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// retain list ordering.
         pub fn swapRemove(self: *Self, index: usize) void {
             const slices = self.slice();
-            inline for (fields, 0..) |_, i| {
+            inline for (field_names, 0..) |_, i| {
                 const field_slice = slices.items(@as(Field, @enumFromInt(i)));
                 field_slice[index] = field_slice[self.len - 1];
                 field_slice[self.len - 1] = undefined;
@@ -389,7 +398,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// after it to preserve order.
         pub fn orderedRemove(self: *Self, index: usize) void {
             const slices = self.slice();
-            inline for (fields, 0..) |_, field_index| {
+            inline for (field_names, 0..) |_, field_index| {
                 const field_slice = slices.items(@as(Field, @enumFromInt(field_index)));
                 var i = index;
                 while (i < self.len - 1) : (i += 1) {
@@ -420,7 +429,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 if (removed == end) continue; // allows duplicates in `sorted_indexes`
                 const start = removed + 1;
                 const len = end - start; // safety checks `sorted_indexes` are sorted
-                inline for (fields, 0..) |_, field_index| {
+                inline for (field_names, 0..) |_, field_index| {
                     const field_slice = slices.items(@enumFromInt(field_index));
                     @memmove(field_slice[start - shift ..][0..len], field_slice[start..][0..len]); // safety checks initial `sorted_indexes` are in range
                 }
@@ -429,7 +438,7 @@ pub fn MultiArrayList(comptime T: type) type {
             const start = sorted_indexes[sorted_indexes.len - 1] + 1;
             const end = self.len;
             const len = end - start; // safety checks final `sorted_indexes` are in range
-            inline for (fields, 0..) |_, field_index| {
+            inline for (field_names, 0..) |_, field_index| {
                 const field_slice = slices.items(@enumFromInt(field_index));
                 @memmove(field_slice[start - shift ..][0..len], field_slice[start..][0..len]);
             }
@@ -452,10 +461,10 @@ pub fn MultiArrayList(comptime T: type) type {
             assert(new_len <= self.capacity);
             assert(new_len <= self.len);
 
-            const other_bytes = gpa.alignedAlloc(u8, .of(Elem), capacityInBytes(new_len)) catch {
+            const other_bytes = gpa.alignedAlloc(u8, sizes.big_align, capacityInBytes(new_len)) catch {
                 const self_slice = self.slice();
-                inline for (fields, 0..) |field_info, i| {
-                    if (@sizeOf(field_info.type) != 0) {
+                inline for (field_types, 0..) |field_type, i| {
+                    if (@sizeOf(field_type) != 0) {
                         const field = @as(Field, @enumFromInt(i));
                         const dest_slice = self_slice.items(field)[new_len..];
                         // We use memset here for more efficient codegen in safety-checked,
@@ -475,8 +484,8 @@ pub fn MultiArrayList(comptime T: type) type {
             self.len = new_len;
             const self_slice = self.slice();
             const other_slice = other.slice();
-            inline for (fields, 0..) |field_info, i| {
-                if (@sizeOf(field_info.type) != 0) {
+            inline for (field_types, 0..) |field_type, i| {
+                if (@sizeOf(field_type) != 0) {
                     const field = @as(Field, @enumFromInt(i));
                     @memcpy(other_slice.items(field), self_slice.items(field));
                 }
@@ -512,7 +521,7 @@ pub fn MultiArrayList(comptime T: type) type {
 
         const init_capacity: comptime_int = init: {
             var max: comptime_int = 1;
-            for (fields) |field| max = @max(max, @sizeOf(field.type));
+            for (field_types) |field_type| max = @max(max, @sizeOf(field_type));
             break :init @max(1, std.atomic.cache_line / max);
         };
 
@@ -533,7 +542,7 @@ pub fn MultiArrayList(comptime T: type) type {
         /// `new_capacity` must be greater or equal to `len`.
         pub fn setCapacity(self: *Self, gpa: Allocator, new_capacity: usize) Allocator.Error!void {
             assert(new_capacity >= self.len);
-            const new_bytes = try gpa.alignedAlloc(u8, .of(Elem), capacityInBytes(new_capacity));
+            const new_bytes = try gpa.alignedAlloc(u8, sizes.big_align, capacityInBytes(new_capacity));
             if (self.len == 0) {
                 gpa.free(self.allocatedBytes());
                 self.bytes = new_bytes.ptr;
@@ -547,8 +556,8 @@ pub fn MultiArrayList(comptime T: type) type {
             };
             const self_slice = self.slice();
             const other_slice = other.slice();
-            inline for (fields, 0..) |field_info, i| {
-                if (@sizeOf(field_info.type) != 0) {
+            inline for (field_types, 0..) |field_type, i| {
+                if (@sizeOf(field_type) != 0) {
                     const field = @as(Field, @enumFromInt(i));
                     @memcpy(other_slice.items(field), self_slice.items(field));
                 }
@@ -566,8 +575,8 @@ pub fn MultiArrayList(comptime T: type) type {
             result.len = self.len;
             const self_slice = self.slice();
             const result_slice = result.slice();
-            inline for (fields, 0..) |field_info, i| {
-                if (@sizeOf(field_info.type) != 0) {
+            inline for (field_types, 0..) |field_type, i| {
+                if (@sizeOf(field_type) != 0) {
                     const field = @as(Field, @enumFromInt(i));
                     @memcpy(result_slice.items(field), self_slice.items(field));
                 }
@@ -583,11 +592,11 @@ pub fn MultiArrayList(comptime T: type) type {
                 slice: Slice,
 
                 pub fn swap(sc: @This(), a_index: usize, b_index: usize) void {
-                    inline for (fields, 0..) |field_info, i| {
-                        if (@sizeOf(field_info.type) != 0) {
+                    inline for (field_types, 0..) |field_type, i| {
+                        if (@sizeOf(field_type) != 0) {
                             const field: Field = @enumFromInt(i);
                             const ptr = sc.slice.items(field);
-                            mem.swap(field_info.type, &ptr[a_index], &ptr[b_index]);
+                            mem.swap(field_type, &ptr[a_index], &ptr[b_index]);
                         }
                     }
                 }
@@ -650,8 +659,8 @@ pub fn MultiArrayList(comptime T: type) type {
             return elem_bytes * capacity;
         }
 
-        fn allocatedBytes(self: Self) []align(@alignOf(Elem)) u8 {
-            return self.bytes[0..capacityInBytes(self.capacity)];
+        fn allocatedBytes(self: Self) []align(sizes.big_align.toByteUnits()) u8 {
+            return @alignCast(self.bytes[0..capacityInBytes(self.capacity)]);
         }
 
         fn FieldType(comptime field: Field) type {
@@ -659,18 +668,18 @@ pub fn MultiArrayList(comptime T: type) type {
         }
 
         const Entry = entry: {
-            var field_names: [fields.len][]const u8 = undefined;
-            var field_types: [fields.len]type = undefined;
-            var field_attrs: [fields.len]std.builtin.Type.StructField.Attributes = undefined;
-            for (sizes.fields, &field_names, &field_types, &field_attrs) |i, *name, *Type, *attrs| {
-                name.* = fields[i].name ++ "_ptr";
-                Type.* = *fields[i].type;
+            var entry_field_names: [field_names.len][]const u8 = undefined;
+            var entry_field_types: [field_names.len]type = undefined;
+            var entry_field_attrs: [field_names.len]std.builtin.Type.Struct.FieldAttributes = undefined;
+            for (sizes.fields, &entry_field_names, &entry_field_types, &entry_field_attrs) |i, *name, *Type, *attrs| {
+                name.* = field_names[i] ++ "_ptr";
+                Type.* = *field_types[i];
                 attrs.* = .{
-                    .@"comptime" = fields[i].is_comptime,
-                    .@"align" = fields[i].alignment,
+                    .@"comptime" = field_attrs[i].@"comptime",
+                    .@"align" = field_attrs[i].@"align",
                 };
             }
-            break :entry @Struct(.@"extern", null, &field_names, &field_types, &field_attrs);
+            break :entry @Struct(.@"extern", null, &entry_field_names, &entry_field_types, &entry_field_attrs);
         };
         /// This function is used in the debugger pretty formatters in tools/ to fetch the
         /// child field order and entry type to facilitate fancy debug printing for this type.
@@ -762,6 +771,19 @@ test "basic usage" {
 
     list.shrinkAndFree(ally, 3);
 
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
+
+    list.swap(0, 2);
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 3, 2, 1 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'c', 'b', 'a' });
+    list.swap(2, 1);
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 3, 1, 2 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'c', 'a', 'b' });
+    list.swap(2, 0);
+    try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 2, 1, 3 });
+    try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'b', 'a', 'c' });
+    list.swap(0, 1);
     try testing.expectEqualSlices(u32, list.items(.a), &[_]u32{ 1, 2, 3 });
     try testing.expectEqualSlices(u8, list.items(.c), &[_]u8{ 'a', 'b', 'c' });
 

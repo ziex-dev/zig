@@ -81,15 +81,20 @@ fn ToUnsigned(comptime T: type) type {
 }
 
 /// Constructs a [*c] pointer with the const and volatile annotations
-/// from Self for pointing to a C flexible array of Element.
-pub fn FlexibleArrayType(comptime Self: type, comptime Element: type) type {
-    return switch (@typeInfo(Self)) {
-        .pointer => |ptr| @Pointer(.c, .{
-            .@"const" = ptr.is_const,
-            .@"volatile" = ptr.is_volatile,
-        }, Element, null),
-        else => |info| @compileError("Invalid self type \"" ++ @tagName(info) ++ "\" for flexible array getter: " ++ @typeName(Self)),
-    };
+/// from SelfType for pointing to a C flexible array of ElementType.
+pub fn FlexibleArrayType(comptime SelfType: type, comptime ElementType: type) type {
+    switch (@typeInfo(SelfType)) {
+        .pointer => |ptr| {
+            return @Pointer(.c, .{
+                .@"const" = ptr.is_const,
+                .@"volatile" = ptr.is_volatile,
+                .@"allowzero" = true,
+                .@"addrspace" = .generic,
+                .@"align" = null,
+            }, ElementType, null);
+        },
+        else => |info| @compileError("Invalid self type \"" ++ @tagName(info) ++ "\" for flexible array getter: " ++ @typeName(SelfType)),
+    }
 }
 
 /// Promote the type of an integer literal until it fits as C would.
@@ -194,8 +199,8 @@ pub fn cast(comptime DestType: type, target: anytype) DestType {
             }
         },
         .@"union" => |info| {
-            inline for (info.fields) |field| {
-                if (field.type == SourceType) return @unionInit(DestType, field.name, target);
+            inline for (info.field_names, info.field_types) |field_name, field_type| {
+                if (field_type == SourceType) return @unionInit(DestType, field_name, target);
             }
 
             @compileError("cast to union type '" ++ @typeName(DestType) ++ "' from type '" ++ @typeName(SourceType) ++ "' which is not present in union");

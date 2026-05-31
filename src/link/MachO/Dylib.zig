@@ -627,17 +627,17 @@ pub fn getSymbolRef(self: Dylib, index: Symbol.Index, macho_file: *MachO) MachO.
 }
 
 pub fn addSymbolExtra(self: *Dylib, allocator: Allocator, extra: Symbol.Extra) !u32 {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    try self.symbols_extra.ensureUnusedCapacity(allocator, fields.len);
+    const field_count = @typeInfo(Symbol.Extra).@"struct".field_names.len;
+    try self.symbols_extra.ensureUnusedCapacity(allocator, field_count);
     return self.addSymbolExtraAssumeCapacity(extra);
 }
 
 fn addSymbolExtraAssumeCapacity(self: *Dylib, extra: Symbol.Extra) u32 {
     const index = @as(u32, @intCast(self.symbols_extra.items.len));
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    inline for (fields) |field| {
-        self.symbols_extra.appendAssumeCapacity(switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Symbol.Extra).@"struct";
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        self.symbols_extra.appendAssumeCapacity(switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         });
     }
@@ -645,11 +645,11 @@ fn addSymbolExtraAssumeCapacity(self: *Dylib, extra: Symbol.Extra) u32 {
 }
 
 pub fn getSymbolExtra(self: Dylib, index: u32) Symbol.Extra {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
+    const info = @typeInfo(Symbol.Extra).@"struct";
     var i: usize = index;
     var result: Symbol.Extra = undefined;
-    inline for (fields) |field| {
-        @field(result, field.name) = switch (field.type) {
+    inline for (info.field_names, info.field_types) |field_name, field_type| {
+        @field(result, field_name) = switch (field_type) {
             u32 => self.symbols_extra.items[i],
             else => @compileError("bad field type"),
         };
@@ -659,10 +659,10 @@ pub fn getSymbolExtra(self: Dylib, index: u32) Symbol.Extra {
 }
 
 pub fn setSymbolExtra(self: *Dylib, index: u32, extra: Symbol.Extra) void {
-    const fields = @typeInfo(Symbol.Extra).@"struct".fields;
-    inline for (fields, 0..) |field, i| {
-        self.symbols_extra.items[index + i] = switch (field.type) {
-            u32 => @field(extra, field.name),
+    const info = @typeInfo(Symbol.Extra).@"struct";
+    inline for (info.field_names, info.field_types, 0..) |field_name, field_type, i| {
+        self.symbols_extra.items[index + i] = switch (field_type) {
+            u32 => @field(extra, field_name),
             else => @compileError("bad field type"),
         };
     }
@@ -707,34 +707,36 @@ pub const TargetMatcher = struct {
             .cpu_arch = cpu_arch,
             .platform = platform,
         };
-        const apple_string = try targetToAppleString(allocator, cpu_arch, platform);
-        try self.target_strings.append(allocator, apple_string);
 
-        switch (platform) {
-            .IOSSIMULATOR, .TVOSSIMULATOR, .WATCHOSSIMULATOR, .VISIONOSSIMULATOR => {
-                // For Apple simulator targets, linking gets tricky as we need to link against the simulator
-                // hosts dylibs too.
-                const host_target = try targetToAppleString(allocator, cpu_arch, .MACOS);
-                try self.target_strings.append(allocator, host_target);
-            },
+        try self.addTargetStrings(cpuArchToAppleString(cpu_arch));
+        // In Xcode 26.4, Apple unified their TBD files from having separate `arm64-macos` and `arm64e-macos`
+        // entries to having just the latter, presumably because the symbol lists are identical anyway. It
+        // sure would have been nice if they settled on the former as the unified name so as not to break the
+        // world, but evidently we can't have nice things.
+        if (cpu_arch == .aarch64) try self.addTargetStrings("arm64e");
+
+        return self;
+    }
+
+    fn addTargetStrings(self: *TargetMatcher, arch: []const u8) !void {
+        try self.target_strings.append(self.allocator, try std.fmt.allocPrint(
+            self.allocator,
+            "{s}-{s}",
+            .{ arch, platformToAppleString(self.platform) },
+        ));
+
+        switch (self.platform) {
             .MACCATALYST => {
                 // Mac Catalyst is allowed to link macOS libraries in a TBD because Apple were apparently too lazy
                 // to add the proper target strings despite doing so in other places in the format???
-                try self.target_strings.append(allocator, try targetToAppleString(allocator, cpu_arch, .MACOS));
+                try self.target_strings.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{s}-macos", .{arch}));
             },
-            .MACOS => {
-                // Turns out that around 10.13/10.14 macOS release version, Apple changed the target tags in
-                // tbd files from `macosx` to `macos`. In order to be compliant and therefore actually support
-                // linking on older platforms against `libSystem.tbd`, we add `<cpu_arch>-macosx` to target_strings.
-                const fallback_target = try std.fmt.allocPrint(allocator, "{s}-macosx", .{
-                    cpuArchToAppleString(cpu_arch),
-                });
-                try self.target_strings.append(allocator, fallback_target);
+            .IOSSIMULATOR, .TVOSSIMULATOR, .WATCHOSSIMULATOR, .VISIONOSSIMULATOR => {
+                // For Apple simulator targets, we need to link against the simulator host's libraries too.
+                try self.target_strings.append(self.allocator, try std.fmt.allocPrint(self.allocator, "{s}-macos", .{arch}));
             },
             else => {},
         }
-
-        return self;
     }
 
     pub fn deinit(self: *TargetMatcher) void {
@@ -744,7 +746,7 @@ pub const TargetMatcher = struct {
         self.target_strings.deinit(self.allocator);
     }
 
-    inline fn cpuArchToAppleString(cpu_arch: std.Target.Cpu.Arch) []const u8 {
+    fn cpuArchToAppleString(cpu_arch: std.Target.Cpu.Arch) []const u8 {
         return switch (cpu_arch) {
             .aarch64 => "arm64",
             .x86_64 => "x86_64",
@@ -752,9 +754,8 @@ pub const TargetMatcher = struct {
         };
     }
 
-    pub fn targetToAppleString(allocator: Allocator, cpu_arch: std.Target.Cpu.Arch, platform: macho.PLATFORM) ![]const u8 {
-        const arch = cpuArchToAppleString(cpu_arch);
-        const plat = switch (platform) {
+    fn platformToAppleString(platform: macho.PLATFORM) []const u8 {
+        return switch (platform) {
             .MACOS => "macos",
             .IOS => "ios",
             .TVOS => "tvos",
@@ -769,7 +770,6 @@ pub const TargetMatcher = struct {
             .DRIVERKIT => "driverkit",
             else => unreachable,
         };
-        return std.fmt.allocPrint(allocator, "{s}-{s}", .{ arch, plat });
     }
 
     fn hasValue(stack: []const []const u8, needle: []const u8) bool {

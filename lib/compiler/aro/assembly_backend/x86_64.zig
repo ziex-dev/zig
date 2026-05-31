@@ -5,15 +5,14 @@ const assert = std.debug.assert;
 const aro = @import("aro");
 const Assembly = aro.Assembly;
 const Compilation = aro.Compilation;
-const Node = Tree.Node;
 const Source = aro.Source;
 const Tree = aro.Tree;
 const QualType = aro.QualType;
 const Value = aro.Value;
+const Error = aro.Compilation.Error;
+const Node = Tree.Node;
 
 const AsmCodeGen = @This();
-const Error = aro.Compilation.Error;
-
 tree: *const Tree,
 comp: *Compilation,
 text: *std.Io.Writer,
@@ -58,7 +57,7 @@ fn serializeFloat(comptime T: type, value: T, w: *std.Io.Writer) !void {
         },
         else => {
             const size = @bitSizeOf(T);
-            const storage_unit = std.enums.fromInt(StorageUnit, size).?;
+            const storage_unit = std.enums.fromInt(StorageUnit, size) orelse unreachable;
             const IntTy = @Int(.unsigned, size);
             const int_val: IntTy = @bitCast(value);
             return serializeInt(int_val, storage_unit, w);
@@ -69,8 +68,9 @@ fn serializeFloat(comptime T: type, value: T, w: *std.Io.Writer) !void {
 pub fn todo(c: *AsmCodeGen, msg: []const u8, tok: Tree.TokenIndex) Error {
     const loc: Source.Location = c.tree.tokens.items(.loc)[tok];
 
-    var sf = std.heap.stackFallback(1024, c.comp.gpa);
-    const allocator = sf.get();
+    var bfa_buf: [u8]1024 = undefined;
+    var bfa: std.heap.BufferFirstAllocator = .init(&bfa_buf, c.comp.gpa);
+    const allocator = bfa.allocator();
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(allocator);
 
@@ -150,8 +150,7 @@ pub fn genAsm(tree: *const Tree) Error!Assembly {
 
     codegen.genDecls() catch |err| switch (err) {
         error.WriteFailed => return error.OutOfMemory,
-        error.OutOfMemory => return error.OutOfMemory,
-        error.FatalError => return error.FatalError,
+        error.OutOfMemory, error.FatalError => |e| return e,
     };
 
     const text_slice = try text.toOwnedSlice();

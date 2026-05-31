@@ -106,7 +106,7 @@ pub const Condition = enum(u5) {
     }
 
     pub fn fromCompareOperator(
-        signedness: std.builtin.Signedness,
+        signedness: std.lang.Signedness,
         op: std.math.CompareOperator,
     ) Condition {
         return switch (signedness) {
@@ -178,15 +178,15 @@ pub const Condition = enum(u5) {
     }
 };
 
-/// The immediate operand of vcvtps2ph.
-pub const RoundMode = packed struct(u5) {
+/// The immediate operand of vroundss/vroundps/vcvtps2ph/round??.
+pub const RoundMode = packed struct(u4) {
     direction: Direction = .mxcsr,
     precision: enum(u1) {
         normal = 0b0,
         inexact = 0b1,
     } = .normal,
 
-    pub const Direction = enum(u4) {
+    pub const Direction = enum(u3) {
         /// Round to nearest (even)
         nearest = 0b0_00,
         /// Round down (toward -∞)
@@ -722,7 +722,7 @@ pub const FrameIndex = enum(u32) {
     // Other indices are used for local variable stack slots
     _,
 
-    pub const named_count = @typeInfo(FrameIndex).@"enum".fields.len;
+    pub const named_count = @typeInfo(FrameIndex).@"enum".field_names.len;
 
     pub fn isNamed(fi: FrameIndex) bool {
         return @intFromEnum(fi) < named_count;

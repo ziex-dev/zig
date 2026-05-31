@@ -1,5 +1,6 @@
 const std = @import("std");
 const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
 
 test "tuple" {
     const values = .{
@@ -7,15 +8,15 @@ test "tuple" {
         @as(f64, 12.34),
         true,
         "hi",
-    } ++ .{false} ** 2;
-    try expect(values[0] == 1234);
-    try expect(values[4] == false);
+    } ++ .{ false, false };
+    try expectEqual(1234, values[0]);
+    try expectEqual(false, values[4]);
     inline for (values, 0..) |v, i| {
         if (i != 2) continue;
         try expect(v);
     }
-    try expect(values.len == 6);
-    try expect(values.@"3"[0] == 'h');
+    try expectEqual(6, values.len);
+    try expectEqual('h', values.@"3"[0]);
 }
 
 // test

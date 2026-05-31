@@ -8,18 +8,19 @@
 const std = @import("std");
 const math = std.math;
 const expect = std.testing.expect;
-const common = @import("common.zig");
+const compiler_rt = @import("../compiler_rt.zig");
+const symbol = compiler_rt.symbol;
 
 comptime {
-    @export(&__fmah, .{ .name = "__fmah", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmaf, .{ .name = "fmaf", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fma, .{ .name = "fma", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__fmax, .{ .name = "__fmax", .linkage = common.linkage, .visibility = common.visibility });
-    if (common.want_ppc_abi) {
-        @export(&fmaq, .{ .name = "fmaf128", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&__fmah, "__fmah");
+    symbol(&fmaf, "fmaf");
+    symbol(&fma, "fma");
+    symbol(&__fmax, "__fmax");
+    if (compiler_rt.want_ppc_abi) {
+        symbol(&fmaq, "fmaf128");
     }
-    @export(&fmaq, .{ .name = "fmaq", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmal, .{ .name = "fmal", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&fmaq, "fmaq");
+    symbol(&fmal, "fmal");
 }
 
 pub fn __fmah(x: f16, y: f16, z: f16) callconv(.c) f16 {
@@ -150,8 +151,6 @@ pub fn fmaq(x: f128, y: f128, z: f128) callconv(.c) f128 {
 
 pub fn fmal(x: c_longdouble, y: c_longdouble, z: c_longdouble) callconv(.c) c_longdouble {
     switch (@typeInfo(c_longdouble).float.bits) {
-        16 => return __fmah(x, y, z),
-        32 => return fmaf(x, y, z),
         64 => return fma(x, y, z),
         80 => return __fmax(x, y, z),
         128 => return fmaq(x, y, z),

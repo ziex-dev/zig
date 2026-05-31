@@ -34,8 +34,8 @@ pub const Block = struct {
 
         const default: Info = .{
             .block_name = &.{},
-            .record_names = .{},
-            .abbrevs = .{ .abbrevs = .{} },
+            .record_names = .empty,
+            .abbrevs = .{ .abbrevs = .empty },
         };
 
         const set_bid_id: u32 = 1;
@@ -109,8 +109,8 @@ pub fn init(allocator: std.mem.Allocator, options: InitOptions) BitcodeReader {
         .keep_names = options.keep_names,
         .bit_buffer = 0,
         .bit_offset = 0,
-        .stack = .{},
-        .block_info = .{},
+        .stack = .empty,
+        .block_info = .empty,
     };
 }
 
@@ -278,11 +278,11 @@ fn startBlock(bc: *BitcodeReader, block_id: ?u32, new_abbrev_len: u6) !void {
     state.* = .{
         .block_id = block_id,
         .abbrev_id_width = new_abbrev_len,
-        .abbrevs = .{ .abbrevs = .{} },
+        .abbrevs = .{ .abbrevs = .empty },
     };
     try state.abbrevs.abbrevs.ensureTotalCapacity(
         bc.allocator,
-        @typeInfo(Abbrev.Builtin).@"enum".fields.len + abbrevs.len,
+        @typeInfo(Abbrev.Builtin).@"enum".field_names.len + abbrevs.len,
     );
 
     assert(state.abbrevs.abbrevs.items.len == @intFromEnum(Abbrev.Builtin.end_block));
@@ -318,7 +318,7 @@ fn startBlock(bc: *BitcodeReader, block_id: ?u32, new_abbrev_len: u6) !void {
             .{ .encoding = .{ .vbr = 6 } }, // ops
         },
     });
-    assert(state.abbrevs.abbrevs.items.len == @typeInfo(Abbrev.Builtin).@"enum".fields.len);
+    assert(state.abbrevs.abbrevs.items.len == @typeInfo(Abbrev.Builtin).@"enum".field_names.len);
     for (abbrevs) |abbrev| try state.abbrevs.addAbbrevAssumeCapacity(bc.allocator, abbrev);
 }
 
@@ -457,7 +457,7 @@ const Abbrev = struct {
         define_abbrev,
         unabbrev_record,
 
-        const first_record_id: u32 = std.math.maxInt(u32) - @typeInfo(Builtin).@"enum".fields.len + 1;
+        const first_record_id: u32 = std.math.maxInt(u32) - @typeInfo(Builtin).@"enum".field_names.len + 1;
         fn toRecordId(builtin: Builtin) u32 {
             return first_record_id + @intFromEnum(builtin);
         }

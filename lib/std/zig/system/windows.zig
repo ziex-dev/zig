@@ -60,14 +60,14 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
         @compileError("expected tuple or struct argument, found " ++ @typeName(ArgsType));
     }
 
-    const fields_info = args_type_info.@"struct".fields;
+    const fields_info = args_type_info.@"struct";
 
     // Originally, I wanted to issue a single call with a more complex table structure such that we
     // would sequentially visit each CPU#d subkey in the registry and pull the value of interest into
     // a buffer, however, NT seems to be expecting a single buffer per each table meaning we would
     // end up pulling only the last CPU core info, overwriting everything else.
     // If anyone can come up with a solution to this, please do!
-    const table_size = 1 + fields_info.len;
+    const table_size = 1 + fields_info.field_names.len;
     var table: [table_size + 1]std.os.windows.RTL_QUERY_REGISTRY_TABLE = undefined;
 
     const topkey = std.unicode.utf8ToUtf16LeStringLiteral("\\Registry\\Machine\\HARDWARE\\DESCRIPTION\\System\\CentralProcessor");
@@ -85,33 +85,33 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
         .Flags = std.os.windows.RTL_QUERY_REGISTRY_SUBKEY | std.os.windows.RTL_QUERY_REGISTRY_REQUIRED,
         .Name = subkey[0..subkey_len :0],
         .EntryContext = null,
-        .DefaultType = REG.NONE,
+        .DefaultType = .NONE,
         .DefaultData = null,
         .DefaultLength = 0,
     };
 
-    var tmp_bufs: [fields_info.len][max_value_len]u8 align(@alignOf(std.os.windows.UNICODE_STRING)) = undefined;
+    var tmp_bufs: [fields_info.field_names.len][max_value_len]u8 align(@alignOf(std.os.windows.UNICODE_STRING)) = undefined;
 
-    inline for (fields_info, 0..) |field, i| {
+    inline for (fields_info.field_names, 0..) |field_name, i| {
         const ctx: *anyopaque = blk: {
-            switch (@field(args, field.name).value_type) {
-                REG.SZ,
-                REG.EXPAND_SZ,
-                REG.MULTI_SZ,
+            switch (@field(args, field_name).value_type) {
+                .SZ,
+                .EXPAND_SZ,
+                .MULTI_SZ,
                 => {
                     comptime assert(@sizeOf(std.os.windows.UNICODE_STRING) % 2 == 0);
-                    const unicode = @as(*std.os.windows.UNICODE_STRING, @ptrCast(&tmp_bufs[i]));
+                    const unicode: *std.os.windows.UNICODE_STRING = @ptrCast(&tmp_bufs[i]);
                     unicode.* = .{
                         .Length = 0,
                         .MaximumLength = max_value_len - @sizeOf(std.os.windows.UNICODE_STRING),
-                        .Buffer = @as([*]u16, @ptrCast(tmp_bufs[i][@sizeOf(std.os.windows.UNICODE_STRING)..])),
+                        .Buffer = @ptrCast(tmp_bufs[i][@sizeOf(std.os.windows.UNICODE_STRING)..]),
                     };
                     break :blk unicode;
                 },
 
-                REG.DWORD,
-                REG.DWORD_BIG_ENDIAN,
-                REG.QWORD,
+                .DWORD,
+                .DWORD_BIG_ENDIAN,
+                .QWORD,
                 => break :blk &tmp_bufs[i],
 
                 else => unreachable,
@@ -119,7 +119,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
         };
 
         var key_buf: [max_value_len / 2 + 1]u16 = undefined;
-        const key_len = try std.unicode.utf8ToUtf16Le(&key_buf, @field(args, field.name).key);
+        const key_len = try std.unicode.utf8ToUtf16Le(&key_buf, @field(args, field_name).key);
         key_buf[key_len] = 0;
 
         table[i + 1] = .{
@@ -127,7 +127,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
             .Flags = std.os.windows.RTL_QUERY_REGISTRY_DIRECT | std.os.windows.RTL_QUERY_REGISTRY_REQUIRED,
             .Name = key_buf[0..key_len :0],
             .EntryContext = ctx,
-            .DefaultType = REG.NONE,
+            .DefaultType = .NONE,
             .DefaultData = null,
             .DefaultLength = 0,
         };
@@ -139,7 +139,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
         .Flags = 0,
         .Name = null,
         .EntryContext = null,
-        .DefaultType = 0,
+        .DefaultType = .NONE,
         .DefaultData = null,
         .DefaultLength = 0,
     };
@@ -153,28 +153,28 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
     );
     switch (res) {
         .SUCCESS => {
-            inline for (fields_info, 0..) |field, i| switch (@field(args, field.name).value_type) {
-                REG.SZ,
-                REG.EXPAND_SZ,
-                REG.MULTI_SZ,
+            inline for (fields_info.field_names, 0..) |field_name, i| switch (@field(args, field_name).value_type) {
+                .SZ,
+                .EXPAND_SZ,
+                .MULTI_SZ,
                 => {
-                    var buf = @field(args, field.name).value_buf;
-                    const entry = @as(*align(1) const std.os.windows.UNICODE_STRING, @ptrCast(table[i + 1].EntryContext));
-                    const len = try std.unicode.utf16LeToUtf8(buf, entry.Buffer.?[0 .. entry.Length / 2]);
+                    var buf = @field(args, field_name).value_buf;
+                    const entry: *const std.os.windows.UNICODE_STRING = @ptrCast(table[i + 1].EntryContext);
+                    const len = try std.unicode.utf16LeToUtf8(buf, entry.slice());
                     buf[len] = 0;
                 },
 
-                REG.DWORD,
-                REG.DWORD_BIG_ENDIAN,
-                REG.QWORD,
+                .DWORD,
+                .DWORD_BIG_ENDIAN,
+                .QWORD,
                 => {
-                    const entry = @as([*]align(1) const u8, @ptrCast(table[i + 1].EntryContext));
-                    switch (@field(args, field.name).value_type) {
-                        REG.DWORD, REG.DWORD_BIG_ENDIAN => {
-                            @memcpy(@field(args, field.name).value_buf[0..4], entry[0..4]);
+                    const entry: [*]const u8 = @ptrCast(table[i + 1].EntryContext);
+                    switch (@field(args, field_name).value_type) {
+                        .DWORD, .DWORD_BIG_ENDIAN => {
+                            @memcpy(@field(args, field_name).value_buf[0..4], entry[0..4]);
                         },
-                        REG.QWORD => {
-                            @memcpy(@field(args, field.name).value_buf[0..8], entry[0..8]);
+                        .QWORD => {
+                            @memcpy(@field(args, field_name).value_buf[0..8], entry[0..8]);
                         },
                         else => unreachable,
                     }
@@ -215,10 +215,43 @@ fn genericCpuAndNativeFeatures(arch: Target.Cpu.Arch) Target.Cpu {
             // Override any features that are either present or absent
             setFeature(Feature, &cpu, .neon, IsProcessorFeaturePresent(PF.ARM_NEON_INSTRUCTIONS_AVAILABLE));
             setFeature(Feature, &cpu, .crc, IsProcessorFeaturePresent(PF.ARM_V8_CRC32_INSTRUCTIONS_AVAILABLE));
-            setFeature(Feature, &cpu, .crypto, IsProcessorFeaturePresent(PF.ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .aes, IsProcessorFeaturePresent(PF.ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sha2, IsProcessorFeaturePresent(PF.ARM_V8_CRYPTO_INSTRUCTIONS_AVAILABLE));
             setFeature(Feature, &cpu, .lse, IsProcessorFeaturePresent(PF.ARM_V81_ATOMIC_INSTRUCTIONS_AVAILABLE));
             setFeature(Feature, &cpu, .dotprod, IsProcessorFeaturePresent(PF.ARM_V82_DP_INSTRUCTIONS_AVAILABLE));
             setFeature(Feature, &cpu, .jsconv, IsProcessorFeaturePresent(PF.ARM_V83_JSCVT_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .rcpc, IsProcessorFeaturePresent(PF.ARM_V83_LRCPC_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve, IsProcessorFeaturePresent(PF.ARM_SVE_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve2, IsProcessorFeaturePresent(PF.ARM_SVE2_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve2p1, IsProcessorFeaturePresent(PF.ARM_SVE2_1_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve_aes, IsProcessorFeaturePresent(PF.ARM_SVE_AES_INSTRUCTIONS_AVAILABLE) or IsProcessorFeaturePresent(PF.ARM_SVE_PMULL128_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve_bitperm, IsProcessorFeaturePresent(PF.ARM_SVE_BITPERM_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .bf16, IsProcessorFeaturePresent(PF.ARM_V86_BF16_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve_b16b16, IsProcessorFeaturePresent(PF.ARM_SVE_B16B16_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve_sha3, IsProcessorFeaturePresent(PF.ARM_SVE_SHA3_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sve_sm4, IsProcessorFeaturePresent(PF.ARM_SVE_SM4_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .i8mm, IsProcessorFeaturePresent(PF.ARM_V82_I8MM_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .f32mm, IsProcessorFeaturePresent(PF.ARM_SVE_F32MM_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .f64mm, IsProcessorFeaturePresent(PF.ARM_SVE_F64MM_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme, IsProcessorFeaturePresent(PF.ARM_SME_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme2, IsProcessorFeaturePresent(PF.ARM_SME2_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .lse2, IsProcessorFeaturePresent(PF.ARM_LSE2_AVAILABLE));
+            setFeature(Feature, &cpu, .sha3, IsProcessorFeaturePresent(PF.ARM_SHA3_INSTRUCTIONS_AVAILABLE) and IsProcessorFeaturePresent(PF.ARM_SHA512_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .fullfp16, IsProcessorFeaturePresent(PF.ARM_V82_FP16_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme2p1, IsProcessorFeaturePresent(PF.ARM_SME2_1_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme2p2, IsProcessorFeaturePresent(PF.ARM_SME2_2_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .ssve_aes, IsProcessorFeaturePresent(PF.ARM_SME_AES_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .ssve_bitperm, IsProcessorFeaturePresent(PF.ARM_SME_SBITPERM_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .ssve_fp8dot2, IsProcessorFeaturePresent(PF.ARM_SME_SF8DP2_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .ssve_fp8dot4, IsProcessorFeaturePresent(PF.ARM_SME_SF8DP4_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .ssve_fp8fma, IsProcessorFeaturePresent(PF.ARM_SME_SF8FMA_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme_f8f32, IsProcessorFeaturePresent(PF.ARM_SME_F8F32_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme_f8f16, IsProcessorFeaturePresent(PF.ARM_SME_F8F16_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme_b16b16, IsProcessorFeaturePresent(PF.ARM_SME_B16B16_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme_f64f64, IsProcessorFeaturePresent(PF.ARM_SME_F64F64_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme_i16i64, IsProcessorFeaturePresent(PF.ARM_SME_I16I64_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme_lutv2, IsProcessorFeaturePresent(PF.ARM_SME_LUTv2_INSTRUCTIONS_AVAILABLE));
+            setFeature(Feature, &cpu, .sme_fa64, IsProcessorFeaturePresent(PF.ARM_SME_FA64_INSTRUCTIONS_AVAILABLE));
         },
         else => {},
     }
@@ -254,18 +287,18 @@ pub fn detectNativeCpuAndFeatures() ?Target.Cpu {
                 // CP 4039 -> ID_AA64MMFR1_EL1
                 // CP 403A -> ID_AA64MMFR2_EL1
                 getCpuInfoFromRegistry(i, .{
-                    .{ .key = "CP 4000", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[0])) },
-                    .{ .key = "CP 4020", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[1])) },
-                    .{ .key = "CP 4021", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[2])) },
-                    .{ .key = "CP 4028", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[3])) },
-                    .{ .key = "CP 4029", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[4])) },
-                    .{ .key = "CP 402C", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[5])) },
-                    .{ .key = "CP 402D", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[6])) },
-                    .{ .key = "CP 4030", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[7])) },
-                    .{ .key = "CP 4031", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[8])) },
-                    .{ .key = "CP 4038", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[9])) },
-                    .{ .key = "CP 4039", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[10])) },
-                    .{ .key = "CP 403A", .value_type = REG.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[11])) },
+                    .{ .key = "CP 4000", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[0])) },
+                    .{ .key = "CP 4020", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[1])) },
+                    .{ .key = "CP 4021", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[2])) },
+                    .{ .key = "CP 4028", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[3])) },
+                    .{ .key = "CP 4029", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[4])) },
+                    .{ .key = "CP 402C", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[5])) },
+                    .{ .key = "CP 402D", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[6])) },
+                    .{ .key = "CP 4030", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[7])) },
+                    .{ .key = "CP 4031", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[8])) },
+                    .{ .key = "CP 4038", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[9])) },
+                    .{ .key = "CP 4039", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[10])) },
+                    .{ .key = "CP 403A", .value_type = REG.ValueType.QWORD, .value_buf = @as(*[8]u8, @ptrCast(&registers[11])) },
                 }) catch break :blk null;
 
                 cores[i] = @import("arm.zig").aarch64.detectNativeCpuAndFeatures(current_arch, registers) orelse

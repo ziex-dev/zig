@@ -3,18 +3,17 @@
 //! https://github.com/llvm/llvm-project/commit/d674d96bc56c0f377879d01c9d8dfdaaa7859cdb/compiler-rt/lib/builtins/divdf3.c
 
 const std = @import("std");
-const builtin = @import("builtin");
-const arch = builtin.cpu.arch;
-const common = @import("common.zig");
+const compiler_rt = @import("../compiler_rt.zig");
+const symbol = @import("../compiler_rt.zig").symbol;
 
-const normalize = common.normalize;
-const wideMultiply = common.wideMultiply;
+const normalize = compiler_rt.normalize;
+const wideMultiply = compiler_rt.wideMultiply;
 
 comptime {
-    if (common.want_aeabi) {
-        @export(&__aeabi_ddiv, .{ .name = "__aeabi_ddiv", .linkage = common.linkage, .visibility = common.visibility });
+    if (compiler_rt.want_aeabi) {
+        symbol(&__aeabi_ddiv, "__aeabi_ddiv");
     } else {
-        @export(&__divdf3, .{ .name = "__divdf3", .linkage = common.linkage, .visibility = common.visibility });
+        symbol(&__divdf3, "__divdf3");
     }
 }
 
@@ -27,8 +26,8 @@ fn __aeabi_ddiv(a: f64, b: f64) callconv(.{ .arm_aapcs = .{} }) f64 {
 }
 
 inline fn div(a: f64, b: f64) f64 {
-    const Z = std.meta.Int(.unsigned, 64);
-    const SignedZ = std.meta.Int(.signed, 64);
+    const Z = @Int(.unsigned, 64);
+    const SignedZ = @Int(.signed, 64);
 
     const significandBits = std.math.floatMantissaBits(f64);
     const exponentBits = std.math.floatExponentBits(f64);

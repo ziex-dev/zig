@@ -1,12 +1,14 @@
-mutex: std.Thread.Mutex,
+mutex: Io.Mutex,
 /// Accessed through `Module.Adapter`.
 modules: std.ArrayHashMapUnmanaged(Module, void, Module.Context, false),
 
 pub const init: SelfInfo = .{
-    .mutex = .{},
+    .mutex = .init,
     .modules = .empty,
 };
-pub fn deinit(si: *SelfInfo, gpa: Allocator) void {
+pub fn deinit(si: *SelfInfo, io: Io) void {
+    _ = io;
+    const gpa = std.debug.getDebugInfoAllocator();
     for (si.modules.keys()) |*module| {
         unwind: {
             const u = &(module.unwind orelse break :unwind catch break :unwind);
@@ -20,9 +22,20 @@ pub fn deinit(si: *SelfInfo, gpa: Allocator) void {
     si.modules.deinit(gpa);
 }
 
-pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!std.debug.Symbol {
-    const module = try si.findModule(gpa, address);
-    defer si.mutex.unlock();
+pub fn getSymbols(
+    si: *SelfInfo,
+    io: Io,
+    symbol_allocator: Allocator,
+    text_arena: Allocator,
+    address: usize,
+    resolve_inline_callers: bool,
+    symbols: *std.ArrayList(std.debug.Symbol),
+) Error!void {
+    _ = resolve_inline_callers;
+    const gpa = std.debug.getDebugInfoAllocator();
+
+    const module = try si.findModule(gpa, io, address);
+    defer si.mutex.unlock(io);
 
     const file = try module.getFile(gpa, io);
 
@@ -40,23 +53,23 @@ pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!st
 
     const ofile_dwarf, const ofile_vaddr = file.getDwarfForAddress(gpa, io, vaddr) catch {
         // Return at least the symbol name if available.
-        return .{
+        return symbols.append(symbol_allocator, .{
             .name = try file.lookupSymbolName(vaddr),
             .compile_unit_name = null,
             .source_location = null,
-        };
+        });
     };
 
     const compile_unit = ofile_dwarf.findCompileUnit(native_endian, ofile_vaddr) catch {
         // Return at least the symbol name if available.
-        return .{
+        return symbols.append(symbol_allocator, .{
             .name = try file.lookupSymbolName(vaddr),
             .compile_unit_name = null,
             .source_location = null,
-        };
+        });
     };
 
-    return .{
+    try symbols.append(symbol_allocator, .{
         .name = ofile_dwarf.getSymbolName(ofile_vaddr) orelse
             try file.lookupSymbolName(vaddr),
         .compile_unit_name = compile_unit.die.getAttrString(
@@ -70,25 +83,43 @@ pub fn getSymbol(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!st
         },
         .source_location = ofile_dwarf.getLineNumberInfo(
             gpa,
+            text_arena,
             native_endian,
             compile_unit,
             ofile_vaddr,
         ) catch null,
-    };
+    });
 }
-pub fn getModuleName(si: *SelfInfo, gpa: Allocator, address: usize) Error![]const u8 {
+pub fn getModuleName(si: *SelfInfo, io: Io, address: usize) Error![]const u8 {
     _ = si;
-    _ = gpa;
-    // This function is marked as deprecated; however, it is significantly more
-    // performant than `dladdr` (since the latter also does a very slow symbol
-    // lookup), so let's use it since it's still available.
-    return std.mem.span(std.c.dyld_image_path_containing_address(
-        @ptrFromInt(address),
-    ) orelse return error.MissingDebugInfo);
+    _ = io;
+    return getModuleNameInner(address) orelse return error.MissingDebugInfo;
 }
-pub fn getModuleSlide(si: *SelfInfo, gpa: Allocator, address: usize) Error!usize {
-    const module = try si.findModule(gpa, address);
-    defer si.mutex.unlock();
+fn getModuleNameInner(address: usize) ?[]const u8 {
+    switch (builtin.target.os.tag) {
+        .macos => {
+            // This function is marked as deprecated; however, it is significantly more performant
+            // than `dladdr` (since the latter also does a very slow symbol lookup), so let's just
+            // use it for the better performance since it's still available.
+            return std.mem.span(std.c.dyld_image_path_containing_address(
+                @ptrFromInt(address),
+            ) orelse return null);
+        },
+        else => {
+            // On other Darwin systems, the function used above is entirely unavailable, so we have
+            // no choice but to use the slow `dladdr`.
+            var info: std.c.dl_info = undefined;
+            if (std.c.dladdr(@ptrFromInt(address), &info) == 0) {
+                return null;
+            }
+            return std.mem.span(info.fname);
+        },
+    }
+}
+pub fn getModuleSlide(si: *SelfInfo, io: Io, address: usize) Error!usize {
+    const gpa = std.debug.getDebugInfoAllocator();
+    const module = try si.findModule(gpa, io, address);
+    defer si.mutex.unlock(io);
     const header: *std.macho.mach_header_64 = @ptrFromInt(module.text_base);
     const raw_macho: [*]u8 = @ptrCast(header);
     var it = macho.LoadCommandIterator.init(header, raw_macho[@sizeOf(macho.mach_header_64)..][0..header.sizeofcmds]) catch unreachable;
@@ -106,9 +137,8 @@ pub const UnwindContext = std.debug.Dwarf.SelfUnwinder;
 /// Unwind a frame using MachO compact unwind info (from `__unwind_info`).
 /// If the compact encoding can't encode a way to unwind a frame, it will
 /// defer unwinding to DWARF, in which case `__eh_frame` will be used if available.
-pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, io: Io, context: *UnwindContext) Error!usize {
-    _ = io;
-    return unwindFrameInner(si, gpa, context) catch |err| switch (err) {
+pub fn unwindFrame(si: *SelfInfo, io: Io, context: *UnwindContext) Error!usize {
+    return unwindFrameInner(si, io, context) catch |err| switch (err) {
         error.InvalidDebugInfo,
         error.MissingDebugInfo,
         error.UnsupportedDebugInfo,
@@ -134,9 +164,10 @@ pub fn unwindFrame(si: *SelfInfo, gpa: Allocator, io: Io, context: *UnwindContex
         => return error.InvalidDebugInfo,
     };
 }
-fn unwindFrameInner(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) !usize {
-    const module = try si.findModule(gpa, context.pc);
-    defer si.mutex.unlock();
+fn unwindFrameInner(si: *SelfInfo, io: Io, context: *UnwindContext) !usize {
+    const gpa = std.debug.getDebugInfoAllocator();
+    const module = try si.findModule(gpa, io, context.pc);
+    defer si.mutex.unlock(io);
 
     const unwind: *Module.Unwind = try module.getUnwindInfo(gpa);
 
@@ -393,8 +424,8 @@ fn unwindFrameInner(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) !usi
                 const ip_ptr = fp + @sizeOf(usize);
 
                 var reg_addr = fp - @sizeOf(usize);
-                inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).@"struct".fields, 0..) |field, i| {
-                    if (@field(frame.x_reg_pairs, field.name) != 0) {
+                inline for (@typeInfo(@TypeOf(frame.x_reg_pairs)).@"struct".field_names, 0..) |field_name, i| {
+                    if (@field(frame.x_reg_pairs, field_name) != 0) {
                         (try dwarfRegNative(&context.cpu_state, 19 + i)).* = @as(*const usize, @ptrFromInt(reg_addr)).*;
                         reg_addr += @sizeOf(usize);
                         (try dwarfRegNative(&context.cpu_state, 20 + i)).* = @as(*const usize, @ptrFromInt(reg_addr)).*;
@@ -430,15 +461,28 @@ fn unwindFrameInner(si: *SelfInfo, gpa: Allocator, context: *UnwindContext) !usi
 }
 
 /// Acquires the mutex on success.
-fn findModule(si: *SelfInfo, gpa: Allocator, address: usize) Error!*Module {
-    // This function is marked as deprecated; however, it is significantly more
-    // performant than `dladdr` (since the latter also does a very slow symbol
-    // lookup), so let's use it since it's still available.
-    const text_base = std.c._dyld_get_image_header_containing_address(
-        @ptrFromInt(address),
-    ) orelse return error.MissingDebugInfo;
-    si.mutex.lock();
-    errdefer si.mutex.unlock();
+fn findModule(si: *SelfInfo, gpa: Allocator, io: Io, address: usize) Error!*Module {
+    const text_base: *anyopaque = switch (builtin.target.os.tag) {
+        .macos => base: {
+            // This function is marked as deprecated; however, it is significantly more performant
+            // than `dladdr` (since the latter also does a very slow symbol lookup), so let's just
+            // use it for the better performance since it's still available.
+            break :base std.c._dyld_get_image_header_containing_address(
+                @ptrFromInt(address),
+            ) orelse return error.MissingDebugInfo;
+        },
+        else => base: {
+            // On other Darwin systems, the function used above is entirely unavailable, so we have
+            // no choice but to use the slow `dladdr`.
+            var info: std.c.dl_info = undefined;
+            if (std.c.dladdr(@ptrFromInt(address), &info) == 0) {
+                return error.MissingDebugInfo;
+            }
+            break :base info.fbase;
+        },
+    };
+    try si.mutex.lock(io);
+    errdefer si.mutex.unlock(io);
     const gop = try si.modules.getOrPutAdapted(gpa, @intFromPtr(text_base), Module.Adapter{});
     errdefer comptime unreachable;
     if (!gop.found_existing) gop.key_ptr.* = .{
@@ -548,9 +592,7 @@ const Module = struct {
 
     fn getFile(module: *Module, gpa: Allocator, io: Io) Error!*MachOFile {
         if (module.file == null) {
-            const path = std.mem.span(
-                std.c.dyld_image_path_containing_address(@ptrFromInt(module.text_base)).?,
-            );
+            const path = getModuleNameInner(module.text_base).?;
             module.file = MachOFile.load(gpa, io, path, builtin.cpu.arch) catch |err| switch (err) {
                 error.InvalidMachO, error.InvalidDwarf => error.InvalidDebugInfo,
                 error.MissingDebugInfo, error.OutOfMemory, error.UnsupportedDebugInfo, error.ReadFailed => |e| e,

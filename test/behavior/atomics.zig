@@ -143,7 +143,7 @@ test "cmpxchg on a global variable" {
     if (builtin.zig_backend == .stage2_arm) return error.SkipZigTest; // TODO
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
 
-    _ = @cmpxchgWeak(u32, &a_global_variable, 1234, 42, .acquire, .monotonic);
+    _ = @cmpxchgStrong(u32, &a_global_variable, 1234, 42, .acquire, .monotonic);
     try expect(a_global_variable == 42);
 }
 
@@ -216,11 +216,6 @@ test "atomicrmw with ints" {
     if (builtin.zig_backend == .stage2_spirv) return error.SkipZigTest;
     if (builtin.zig_backend == .stage2_riscv64) return error.SkipZigTest;
 
-    if (builtin.zig_backend == .stage2_llvm and builtin.cpu.arch.isMIPS()) {
-        // https://github.com/ziglang/zig/issues/16846
-        return error.SkipZigTest;
-    }
-
     try testAtomicRmwInts();
     try comptime testAtomicRmwInts();
 }
@@ -237,7 +232,7 @@ fn testAtomicRmwInts() !void {
 }
 
 fn testAtomicRmwInt(comptime signedness: std.builtin.Signedness, comptime N: usize) !void {
-    const int = std.meta.Int(signedness, N);
+    const int = @Int(signedness, N);
 
     var x: int = 1;
     var res = @atomicRmw(int, &x, .Xchg, 3, .seq_cst);
@@ -298,8 +293,8 @@ test "atomicrmw with 128-bit ints" {
 }
 
 fn testAtomicRmwInt128(comptime signedness: std.builtin.Signedness) !void {
-    const uint = std.meta.Int(.unsigned, 128);
-    const int = std.meta.Int(signedness, 128);
+    const uint = @Int(.unsigned, 128);
+    const int = @Int(signedness, 128);
 
     const initial: int = @as(int, @bitCast(@as(uint, 0xaaaaaaaa_bbbbbbbb_cccccccc_dddddddd)));
     const replacement: int = 0x00000000_00000005_00000000_00000003;
@@ -374,7 +369,6 @@ test "atomics with different types" {
     try testAtomicsWithType(u24, 2, 1);
 
     try testAtomicsWithType(u0, 0, 0);
-    try testAtomicsWithType(i0, 0, 0);
 
     try testAtomicsWithType(enum(u32) { x = 1234, y = 5678 }, .x, .y);
     try testAtomicsWithType(enum(u19) { x = 1234, y = 5678 }, .x, .y);

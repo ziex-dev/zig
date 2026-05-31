@@ -38,7 +38,7 @@ symtab_cmd: macho.symtab_command = .{},
 dysymtab_cmd: macho.dysymtab_command = .{},
 function_starts_cmd: macho.linkedit_data_command = .{ .cmd = .FUNCTION_STARTS },
 data_in_code_cmd: macho.linkedit_data_command = .{ .cmd = .DATA_IN_CODE },
-uuid_cmd: macho.uuid_command = .{ .uuid = [_]u8{0} ** 16 },
+uuid_cmd: macho.uuid_command = .{ .uuid = @splat(0) },
 codesig_cmd: macho.linkedit_data_command = .{ .cmd = .CODE_SIGNATURE },
 
 pagezero_seg_index: ?u8 = null,
@@ -504,7 +504,7 @@ pub fn flush(
     try self.resolveSymbols();
     try self.convertTentativeDefsAndResolveSpecialSymbols();
     self.dedupLiterals() catch |err| switch (err) {
-        error.LinkFailure => return error.LinkFailure,
+        error.LinkFailure => |e| return e,
         else => |e| return diags.fail("failed to deduplicate literals: {s}", .{@errorName(e)}),
     };
 
@@ -542,7 +542,7 @@ pub fn flush(
 
     try self.initSegments();
     self.allocateSections() catch |err| switch (err) {
-        error.LinkFailure => return error.LinkFailure,
+        error.LinkFailure => |e| return e,
         else => |e| return diags.fail("failed to allocate sections: {s}", .{@errorName(e)}),
     };
     self.allocateSegments();
@@ -567,8 +567,7 @@ pub fn flush(
     try self.writeSectionsToFile();
     try self.allocateLinkeditSegment();
     self.writeLinkeditSectionsToFile() catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.LinkFailure => return error.LinkFailure,
+        error.OutOfMemory, error.LinkFailure => |e| return e,
         else => |e| return diags.fail("failed to write linkedit sections to file: {t}", .{e}),
     };
 
@@ -595,25 +594,22 @@ pub fn flush(
 
     const ncmds, const sizeofcmds, const uuid_cmd_offset = self.writeLoadCommands() catch |err| switch (err) {
         error.WriteFailed => unreachable,
-        error.OutOfMemory => return error.OutOfMemory,
-        error.LinkFailure => return error.LinkFailure,
+        error.OutOfMemory, error.LinkFailure => |e| return e,
     };
     try self.writeHeader(ncmds, sizeofcmds);
     self.writeUuid(uuid_cmd_offset, self.requiresCodeSig()) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
-        error.LinkFailure => return error.LinkFailure,
+        error.OutOfMemory, error.LinkFailure => |e| return e,
         else => |e| return diags.fail("failed to calculate and write uuid: {s}", .{@errorName(e)}),
     };
     if (self.getDebugSymbols()) |dsym| dsym.flush(self) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
         else => |e| return diags.fail("failed to get debug symbols: {s}", .{@errorName(e)}),
     };
 
     // Code signing always comes last.
     if (codesig) |*csig| {
         self.writeCodeSignature(csig) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.LinkFailure => return error.LinkFailure,
+            error.OutOfMemory, error.LinkFailure => |e| return e,
             else => |e| return diags.fail("failed to write code signature: {s}", .{@errorName(e)}),
         };
         const emit = self.base.emit;
@@ -1707,7 +1703,9 @@ fn initSyntheticSections(self: *MachO) !void {
     } else false;
     if (needs_eh_frame) {
         assert(needs_unwind_info);
-        self.eh_frame_sect_index = try self.addSection("__TEXT", "__eh_frame", .{});
+        self.eh_frame_sect_index = try self.addSection("__TEXT", "__eh_frame", .{
+            .flags = macho.S_COALESCED | macho.S_ATTR_NO_TOC | macho.S_ATTR_STRIP_STATIC_SYMS | macho.S_ATTR_LIVE_SUPPORT,
+        });
     }
 
     if (self.getInternalObject()) |obj| {
@@ -2957,7 +2955,13 @@ fn writeLoadCommands(self: *MachO) !struct { usize, usize, u64 } {
 
 fn writeHeader(self: *MachO, ncmds: usize, sizeofcmds: usize) !void {
     var header: macho.mach_header_64 = .{};
-    header.flags = macho.MH_NOUNDEFS | macho.MH_DYLDLINK;
+    header.flags = macho.MH_DYLDLINK;
+
+    // Only set MH_NOUNDEFS if we're not allowing undefined symbols via dynamic lookup.
+    // When dynamic_lookup is enabled, undefined symbols are resolved at runtime by dyld.
+    if (self.undefined_treatment != .dynamic_lookup) {
+        header.flags |= macho.MH_NOUNDEFS;
+    }
 
     // TODO: if (self.options.namespace == .two_level) {
     header.flags |= macho.MH_TWOLEVEL;
@@ -3071,16 +3075,10 @@ pub fn updateFunc(
     func_index: InternPool.Index,
     mir: *const codegen.AnyMir,
 ) link.File.UpdateNavError!void {
-    if (build_options.skip_non_native and builtin.object_format != .macho) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
     return self.getZigObject().?.updateFunc(self, pt, func_index, mir);
 }
 
 pub fn updateNav(self: *MachO, pt: Zcu.PerThread, nav: InternPool.Nav.Index) link.File.UpdateNavError!void {
-    if (build_options.skip_non_native and builtin.object_format != .macho) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
     return self.getZigObject().?.updateNav(self, pt, nav);
 }
 
@@ -3094,9 +3092,6 @@ pub fn updateExports(
     exported: Zcu.Exported,
     export_indices: []const Zcu.Export.Index,
 ) link.File.UpdateExportsError!void {
-    if (build_options.skip_non_native and builtin.object_format != .macho) {
-        @panic("Attempted to compile for object format that was disabled by build configuration");
-    }
     return self.getZigObject().?.updateExports(self, pt, exported, export_indices);
 }
 
@@ -3759,7 +3754,7 @@ pub fn addSection(
 }
 
 pub fn makeStaticString(bytes: []const u8) [16]u8 {
-    var buf = [_]u8{0} ** 16;
+    var buf: [16]u8 = @splat(0);
     @memcpy(buf[0..bytes.len], bytes);
     return buf;
 }
@@ -5125,7 +5120,7 @@ pub fn getKernError(err: std.c.kern_return_t) KernE {
 }
 
 pub fn unexpectedKernError(err: KernE) std.posix.UnexpectedError {
-    if (std.posix.unexpected_error_tracing) {
+    if (std.options.unexpected_error_tracing) {
         std.debug.print("unexpected error: {d}\n", .{@intFromEnum(err)});
         std.debug.dumpCurrentStackTrace(.{});
     }

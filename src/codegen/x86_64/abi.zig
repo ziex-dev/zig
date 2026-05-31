@@ -300,21 +300,26 @@ pub fn classifySystemV(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
             for (result, 0..) |class, i| switch (class) {
                 .memory => return Class.stack,
                 .x87up => if (i == 0 or result[i - 1] != .x87) return Class.stack,
-                else => continue,
+                else => {},
             };
             // "If the size of the aggregate exceeds two eightbytes and the first eight-
-            // byte isn’t SSE or any other eightbyte isn’t SSEUP, the whole argument
+            // byte isn't SSE or any other eightbyte isn't SSEUP, the whole argument
             // is passed in memory."
             if (ty_size > 16 and (result[0] != .sse or
                 std.mem.indexOfNone(Class, result[1..], &.{ .sseup, .none }) != null)) return Class.stack;
 
             // "If SSEUP is not preceded by SSE or SSEUP, it is converted to SSE."
-            for (&result, 0..) |*item, i| {
-                if (item.* == .sseup) switch (result[i - 1]) {
-                    .sse, .sseup => continue,
-                    else => item.* = .sse,
-                };
-            }
+            for (&result, 0..) |*class, i| switch (class.*) {
+                .sseup => switch (result[i - 1]) {
+                    .sse, .sseup => {},
+                    else => class.* = .sse,
+                },
+                .float => if (i + 1 < result.len) switch (result[i + 1]) {
+                    .none => {},
+                    else => class.* = .float_combine,
+                },
+                else => {},
+            };
             return result;
         },
         .array => {
@@ -339,7 +344,7 @@ fn classifySystemVStruct(
     var field_it = loaded_struct.iterateRuntimeOrder(ip);
     while (field_it.next()) |field_index| {
         const field_ty = Type.fromInterned(loaded_struct.field_types.get(ip)[field_index]);
-        const field_align = loaded_struct.fieldAlign(ip, field_index);
+        const field_align = loaded_struct.field_aligns.getOrNone(ip, field_index);
         byte_offset = std.mem.alignForward(
             u64,
             byte_offset,
@@ -355,7 +360,7 @@ fn classifySystemVStruct(
                 .@"packed" => {},
             }
         } else if (zcu.typeToUnion(field_ty)) |field_loaded_union| {
-            switch (field_loaded_union.flagsUnordered(ip).layout) {
+            switch (field_loaded_union.layout) {
                 .auto => unreachable,
                 .@"extern" => {
                     byte_offset = classifySystemVUnion(result, byte_offset, field_loaded_union, zcu, target);
@@ -369,11 +374,11 @@ fn classifySystemVStruct(
             result_class.* = result_class.combineSystemV(field_class);
         byte_offset += field_ty.abiSize(zcu);
     }
-    const final_byte_offset = starting_byte_offset + loaded_struct.sizeUnordered(ip);
+    const final_byte_offset = starting_byte_offset + loaded_struct.size;
     std.debug.assert(final_byte_offset == std.mem.alignForward(
         u64,
         byte_offset,
-        loaded_struct.flagsUnordered(ip).alignment.toByteUnits().?,
+        loaded_struct.alignment.toByteUnits().?,
     ));
     return final_byte_offset;
 }
@@ -398,7 +403,7 @@ fn classifySystemVUnion(
                 .@"packed" => {},
             }
         } else if (zcu.typeToUnion(field_ty)) |field_loaded_union| {
-            switch (field_loaded_union.flagsUnordered(ip).layout) {
+            switch (field_loaded_union.layout) {
                 .auto => unreachable,
                 .@"extern" => {
                     _ = classifySystemVUnion(result, starting_byte_offset, field_loaded_union, zcu, target);
@@ -411,7 +416,7 @@ fn classifySystemVUnion(
         for (result[@intCast(starting_byte_offset / 8)..][0..field_classes.len], field_classes) |*result_class, field_class|
             result_class.* = result_class.combineSystemV(field_class);
     }
-    return starting_byte_offset + loaded_union.sizeUnordered(ip);
+    return starting_byte_offset + loaded_union.size;
 }
 
 pub const zigcc = struct {
@@ -473,7 +478,7 @@ pub const Win64 = struct {
     pub const c_abi_sse_return_regs = sse_avx_regs[0..1];
 };
 
-pub fn getCalleePreservedRegs(cc: std.builtin.CallingConvention.Tag) []const Register {
+pub fn getCalleePreservedRegs(cc: std.lang.CallingConvention.Tag) []const Register {
     return switch (cc) {
         .auto => zigcc.callee_preserved_regs,
         .x86_64_sysv => &SysV.callee_preserved_regs,
@@ -482,7 +487,7 @@ pub fn getCalleePreservedRegs(cc: std.builtin.CallingConvention.Tag) []const Reg
     };
 }
 
-pub fn getCallerPreservedRegs(cc: std.builtin.CallingConvention.Tag) []const Register {
+pub fn getCallerPreservedRegs(cc: std.lang.CallingConvention.Tag) []const Register {
     return switch (cc) {
         .auto => zigcc.caller_preserved_regs,
         .x86_64_sysv => &SysV.caller_preserved_regs,
@@ -491,7 +496,7 @@ pub fn getCallerPreservedRegs(cc: std.builtin.CallingConvention.Tag) []const Reg
     };
 }
 
-pub fn getCAbiIntParamRegs(cc: std.builtin.CallingConvention.Tag) []const Register {
+pub fn getCAbiIntParamRegs(cc: std.lang.CallingConvention.Tag) []const Register {
     return switch (cc) {
         .auto => zigcc.int_param_regs,
         .x86_64_sysv => &SysV.c_abi_int_param_regs,
@@ -500,7 +505,7 @@ pub fn getCAbiIntParamRegs(cc: std.builtin.CallingConvention.Tag) []const Regist
     };
 }
 
-pub fn getCAbiX87ParamRegs(cc: std.builtin.CallingConvention.Tag) []const Register {
+pub fn getCAbiX87ParamRegs(cc: std.lang.CallingConvention.Tag) []const Register {
     return switch (cc) {
         .auto => zigcc.x87_param_regs,
         .x86_64_sysv => SysV.c_abi_x87_param_regs,
@@ -509,7 +514,7 @@ pub fn getCAbiX87ParamRegs(cc: std.builtin.CallingConvention.Tag) []const Regist
     };
 }
 
-pub fn getCAbiSseParamRegs(cc: std.builtin.CallingConvention.Tag, target: *const std.Target) []const Register {
+pub fn getCAbiSseParamRegs(cc: std.lang.CallingConvention.Tag, target: *const std.Target) []const Register {
     return switch (cc) {
         .auto => switch (target.cpu.arch) {
             else => unreachable,
@@ -522,7 +527,7 @@ pub fn getCAbiSseParamRegs(cc: std.builtin.CallingConvention.Tag, target: *const
     };
 }
 
-pub fn getCAbiIntReturnRegs(cc: std.builtin.CallingConvention.Tag) []const Register {
+pub fn getCAbiIntReturnRegs(cc: std.lang.CallingConvention.Tag) []const Register {
     return switch (cc) {
         .auto => zigcc.int_return_regs,
         .x86_64_sysv => &SysV.c_abi_int_return_regs,
@@ -531,7 +536,7 @@ pub fn getCAbiIntReturnRegs(cc: std.builtin.CallingConvention.Tag) []const Regis
     };
 }
 
-pub fn getCAbiX87ReturnRegs(cc: std.builtin.CallingConvention.Tag) []const Register {
+pub fn getCAbiX87ReturnRegs(cc: std.lang.CallingConvention.Tag) []const Register {
     return switch (cc) {
         .auto => zigcc.x87_return_regs,
         .x86_64_sysv => SysV.c_abi_x87_return_regs,
@@ -540,7 +545,7 @@ pub fn getCAbiX87ReturnRegs(cc: std.builtin.CallingConvention.Tag) []const Regis
     };
 }
 
-pub fn getCAbiSseReturnRegs(cc: std.builtin.CallingConvention.Tag) []const Register {
+pub fn getCAbiSseReturnRegs(cc: std.lang.CallingConvention.Tag) []const Register {
     return switch (cc) {
         .auto => zigcc.sse_return_regs,
         .x86_64_sysv => SysV.c_abi_sse_return_regs,
@@ -549,7 +554,7 @@ pub fn getCAbiSseReturnRegs(cc: std.builtin.CallingConvention.Tag) []const Regis
     };
 }
 
-pub fn getCAbiLinkerScratchReg(cc: std.builtin.CallingConvention.Tag) Register {
+pub fn getCAbiLinkerScratchReg(cc: std.lang.CallingConvention.Tag) Register {
     return switch (cc) {
         .auto => zigcc.int_return_regs[zigcc.int_return_regs.len - 1],
         .x86_64_sysv => SysV.c_abi_int_return_regs[0],
@@ -575,22 +580,22 @@ pub const RegisterManager = RegisterManagerFn(@import("CodeGen.zig"), Register, 
 const RegisterBitSet = RegisterManager.RegisterBitSet;
 pub const RegisterClass = struct {
     pub const gp: RegisterBitSet = blk: {
-        var set = RegisterBitSet.initEmpty();
+        var set = RegisterBitSet.empty;
         for (allocatable_regs, 0..) |reg, index| if (reg.isClass(.general_purpose)) set.set(index);
         break :blk set;
     };
     pub const gphi: RegisterBitSet = blk: {
-        var set = RegisterBitSet.initEmpty();
+        var set = RegisterBitSet.empty;
         for (allocatable_regs, 0..) |reg, index| if (reg.isClass(.gphi)) set.set(index);
         break :blk set;
     };
     pub const x87: RegisterBitSet = blk: {
-        var set = RegisterBitSet.initEmpty();
+        var set = RegisterBitSet.empty;
         for (allocatable_regs, 0..) |reg, index| if (reg.isClass(.x87)) set.set(index);
         break :blk set;
     };
     pub const sse: RegisterBitSet = blk: {
-        var set = RegisterBitSet.initEmpty();
+        var set = RegisterBitSet.empty;
         for (allocatable_regs, 0..) |reg, index| if (reg.isClass(.sse)) set.set(index);
         break :blk set;
     };

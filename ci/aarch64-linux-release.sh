@@ -7,7 +7,7 @@ set -e
 
 TARGET="aarch64-linux-musl"
 MCPU="baseline"
-CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.16.0-dev.104+689461e31"
+CACHE_BASENAME="zig+llvm+lld+clang-$TARGET-0.17.0-dev.203+073889523"
 PREFIX="$HOME/deps/$CACHE_BASENAME"
 ZIG="$PREFIX/bin/zig"
 
@@ -64,7 +64,6 @@ stage3-release/bin/zig build \
   -Duse-zig-libcxx \
   -Dversion-string="$(stage3-release/bin/zig version)"
 
-# diff returns an error code if the files differ.
 echo "If the following command fails, it means nondeterminism has been"
 echo "introduced, making stage3 and stage4 no longer byte-for-byte identical."
 diff stage3-release/bin/zig stage4-release/bin/zig

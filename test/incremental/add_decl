@@ -1,8 +1,3 @@
-#target=x86_64-linux-selfhosted
-#target=x86_64-windows-selfhosted
-#target=x86_64-linux-cbe
-#target=x86_64-windows-cbe
-//#target=wasm32-wasi-selfhosted
 #update=initial version
 #file=main.zig
 const std = @import("std");
@@ -10,7 +5,7 @@ pub fn main() !void {
     try std.Io.File.stdout().writeStreamingAll(io, foo);
 }
 const foo = "good morning\n";
-const io = std.Io.Threaded.global_single_threaded.ioBasic();
+const io = std.Io.Threaded.global_single_threaded.io();
 #expect_stdout="good morning\n"
 
 #update=add new declaration
@@ -21,7 +16,7 @@ pub fn main() !void {
 }
 const foo = "good morning\n";
 const bar = "good evening\n";
-const io = std.Io.Threaded.global_single_threaded.ioBasic();
+const io = std.Io.Threaded.global_single_threaded.io();
 #expect_stdout="good morning\n"
 
 #update=reference new declaration
@@ -32,7 +27,7 @@ pub fn main() !void {
 }
 const foo = "good morning\n";
 const bar = "good evening\n";
-const io = std.Io.Threaded.global_single_threaded.ioBasic();
+const io = std.Io.Threaded.global_single_threaded.io();
 #expect_stdout="good evening\n"
 
 #update=reference missing declaration
@@ -43,7 +38,7 @@ pub fn main() !void {
 }
 const foo = "good morning\n";
 const bar = "good evening\n";
-const io = std.Io.Threaded.global_single_threaded.ioBasic();
+const io = std.Io.Threaded.global_single_threaded.io();
 #expect_error=main.zig:3:52: error: use of undeclared identifier 'qux'
 
 #update=add missing declaration
@@ -55,7 +50,7 @@ pub fn main() !void {
 const foo = "good morning\n";
 const bar = "good evening\n";
 const qux = "good night\n";
-const io = std.Io.Threaded.global_single_threaded.ioBasic();
+const io = std.Io.Threaded.global_single_threaded.io();
 #expect_stdout="good night\n"
 
 #update=remove unused declarations
@@ -65,5 +60,5 @@ pub fn main() !void {
     try std.Io.File.stdout().writeStreamingAll(io, qux);
 }
 const qux = "good night\n";
-const io = std.Io.Threaded.global_single_threaded.ioBasic();
+const io = std.Io.Threaded.global_single_threaded.io();
 #expect_stdout="good night\n"

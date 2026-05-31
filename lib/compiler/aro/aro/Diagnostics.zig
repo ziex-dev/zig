@@ -24,21 +24,21 @@ pub const Message = struct {
         @"fatal error",
     };
 
-    pub fn write(msg: Message, t: std.Io.Terminal, details: bool) std.Io.Terminal.SetColorError!void {
-        const w = t.writer;
-        try t.setColor(.bold);
+    pub fn write(msg: Message, term: std.Io.Terminal, details: bool) std.Io.Terminal.SetColorError!void {
+        const w = term.writer;
+        try term.setColor(.bold);
         if (msg.location) |loc| {
             try w.print("{s}:{d}:{d}: ", .{ loc.path, loc.line_no, loc.col });
         }
         switch (msg.effective_kind) {
-            .@"fatal error", .@"error" => try t.setColor(.bright_red),
-            .note => try t.setColor(.bright_cyan),
-            .warning => try t.setColor(.bright_magenta),
+            .@"fatal error", .@"error" => try term.setColor(.bright_red),
+            .note => try term.setColor(.bright_cyan),
+            .warning => try term.setColor(.bright_magenta),
             .off => unreachable,
         }
         try w.print("{s}: ", .{@tagName(msg.effective_kind)});
 
-        try t.setColor(.white);
+        try term.setColor(.white);
         try w.writeAll(msg.text);
         if (msg.opt) |some| {
             if (msg.effective_kind == .@"error" and msg.kind != .@"error") {
@@ -56,17 +56,17 @@ pub const Message = struct {
 
         if (!details or msg.location == null) {
             try w.writeAll("\n");
-            try t.setColor(.reset);
+            try term.setColor(.reset);
         } else {
             const loc = msg.location.?;
             const trailer = if (loc.end_with_splice) "\\ " else "";
-            try t.setColor(.reset);
+            try term.setColor(.reset);
             try w.print("\n{s}{s}\n", .{ loc.line, trailer });
             try w.splatByteAll(' ', loc.width);
-            try t.setColor(.bold);
-            try t.setColor(.bright_green);
+            try term.setColor(.bold);
+            try term.setColor(.bright_green);
             try w.writeAll("^\n");
-            try t.setColor(.reset);
+            try term.setColor(.reset);
         }
         try w.flush();
     }
@@ -199,6 +199,10 @@ pub const Option = enum {
     @"pragma-once-outside-header",
     @"underlying-atomic-qualifier-ignored",
     @"underlying-cv-qualifier-ignored",
+    @"bounds-attributes-redundant",
+    @"file-name-extension",
+    @"base-file-extension",
+    @"include-level-extension",
 
     /// GNU extensions
     pub const gnu = [_]Option{
@@ -329,8 +333,8 @@ pub fn deinit(d: *Diagnostics) void {
 /// Used by the __has_warning builtin macro.
 pub fn warningExists(name: []const u8) bool {
     if (std.mem.eql(u8, name, "pedantic")) return true;
-    inline for (comptime std.meta.declarations(Option)) |group| {
-        if (std.mem.eql(u8, name, group.name)) return true;
+    inline for (comptime std.meta.declarations(Option)) |group_name| {
+        if (std.mem.eql(u8, name, group_name)) return true;
     }
     return std.meta.stringToEnum(Option, name) != null;
 }
@@ -345,9 +349,9 @@ pub fn set(d: *Diagnostics, name: []const u8, to: Message.Kind) Compilation.Erro
         return;
     }
 
-    inline for (comptime std.meta.declarations(Option)) |group| {
-        if (std.mem.eql(u8, name, group.name)) {
-            for (@field(Option, group.name)) |option| {
+    inline for (comptime std.meta.declarations(Option)) |group_name| {
+        if (std.mem.eql(u8, name, group_name)) {
+            for (@field(Option, group_name)) |option| {
                 d.state.options.put(option, to);
             }
             return;
@@ -490,8 +494,8 @@ pub fn addWithLocation(
 
 pub fn formatArgs(w: *std.Io.Writer, fmt: []const u8, args: anytype) std.Io.Writer.Error!void {
     var i: usize = 0;
-    inline for (std.meta.fields(@TypeOf(args))) |arg_info| {
-        const arg = @field(args, arg_info.name);
+    inline for (comptime std.meta.fieldNames(@TypeOf(args))) |arg_name| {
+        const arg = @field(args, arg_name);
         i += switch (@TypeOf(arg)) {
             []const u8 => try formatString(w, fmt[i..], arg),
             else => switch (@typeInfo(@TypeOf(arg))) {
@@ -541,11 +545,11 @@ fn addMessage(d: *Diagnostics, msg: Message) Compilation.Error!void {
 
     switch (d.output) {
         .ignore => {},
-        .to_writer => |t| {
-            var new_mode = t.mode;
-            if (d.color == false) new_mode = .no_color;
-            if (d.color == true and new_mode == .no_color) new_mode = .escape_codes;
-            msg.write(.{ .writer = t.writer, .mode = new_mode }, d.details) catch {
+        .to_writer => |terminal| {
+            var mode = terminal.mode;
+            if (d.color == false) mode = .no_color;
+            if (d.color == true and mode == .no_color) mode = .escape_codes;
+            msg.write(.{ .mode = mode, .writer = terminal.writer }, d.details) catch {
                 return error.FatalError;
             };
         },

@@ -189,7 +189,7 @@ pub fn updateExports(
             @panic("TODO: implement Linker linker code for exporting a constant value");
         },
     };
-    const nav_ty = ip.getNav(nav_index).typeOf(ip);
+    const nav_ty = ip.getNav(nav_index).resolved.?.type;
     const target = zcu.getTarget();
     if (ip.isFunctionType(nav_ty)) {
         const spv_decl_index = try linker.module.resolveNav(ip, nav_index);
@@ -283,7 +283,7 @@ pub fn flush(
     errdefer arena.free(module);
 
     const linked_module = linkModule(arena, module, sub_prog_node) catch |err| switch (err) {
-        error.OutOfMemory => return error.OutOfMemory,
+        error.OutOfMemory => |e| return e,
         else => |other| return diags.fail("error while linking: {s}", .{@errorName(other)}),
     };
 

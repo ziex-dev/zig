@@ -4,45 +4,60 @@ const Dir = std.Io.Dir;
 const Allocator = std.mem.Allocator;
 const Cache = std.Build.Cache;
 
-const usage = "usage: incr-check <zig binary path> <input file> [--zig-lib-dir lib] [--debug-log foo] [--preserve-tmp] [--zig-cc-binary /path/to/zig]";
+const usage =
+    \\Usage: incr-check <zig binary path> <input file> [options]
+    \\Options:
+    \\  --target triple-backend
+    \\  --quiet
+    \\  --zig-lib-dir /path/to/zig/lib
+    \\  --zig-cc-binary /path/to/zig
+    \\  -fqemu
+    \\  -fwine
+    \\  -fwasmtime
+    \\Debug Options:
+    \\  --preserve-tmp
+    \\  --debug-log foo
+;
 
 pub const std_options: std.Options = .{
     .logFn = logImpl,
 };
-var log_cur_update: ?struct { *const Case.Target, *const Case.Update } = null;
+var log_cur_update: ?*const Case.Update = null;
 fn logImpl(
     comptime level: std.log.Level,
     comptime scope: @EnumLiteral(),
     comptime format: []const u8,
     args: anytype,
 ) void {
-    const target, const update = log_cur_update orelse {
+    const update = log_cur_update orelse {
         return std.log.defaultLog(level, scope, format, args);
     };
     std.log.defaultLog(
         level,
         scope,
-        "[{s}-{t} '{s}'] " ++ format,
-        .{ target.query, target.backend, update.name } ++ args,
+        "['{s}'] " ++ format,
+        .{update.name} ++ args,
     );
 }
 
 pub fn main(init: std.process.Init) !void {
-    const fatal = std.process.fatal;
+    const gpa = init.gpa;
     const arena = init.arena.allocator();
     const io = init.io;
     const environ_map = init.environ_map;
-    const cwd_path = try std.process.getCwdAlloc(arena);
+    const cwd_path = try std.process.currentPathAlloc(io, arena);
 
     var opt_zig_exe: ?[]const u8 = null;
     var opt_input_file_name: ?[]const u8 = null;
     var opt_lib_dir: ?[]const u8 = null;
     var opt_cc_zig: ?[]const u8 = null;
+    var opt_target: ?struct { std.Target.Query, Backend } = null;
     var preserve_tmp = false;
     var enable_qemu: bool = false;
     var enable_wine: bool = false;
     var enable_wasmtime: bool = false;
     var enable_darling: bool = false;
+    var quiet: bool = false;
 
     var debug_log_args: std.ArrayList([]const u8) = .empty;
 
@@ -51,11 +66,16 @@ pub fn main(init: std.process.Init) !void {
     while (arg_it.next()) |arg| {
         if (arg.len > 0 and arg[0] == '-') {
             if (std.mem.eql(u8, arg, "--zig-lib-dir")) {
-                opt_lib_dir = arg_it.next() orelse fatal("expected arg after --zig-lib-dir\n{s}", .{usage});
+                opt_lib_dir = arg_it.next() orelse badUsage("expected arg after --zig-lib-dir", .{});
+            } else if (std.mem.eql(u8, arg, "--target")) {
+                const str = arg_it.next() orelse badUsage("expected arg after --zig-cc-binary", .{});
+                opt_target = parseTargetQueryAndBackend(str, "");
+            } else if (std.mem.eql(u8, arg, "--quiet")) {
+                quiet = true;
             } else if (std.mem.eql(u8, arg, "--debug-log")) {
                 try debug_log_args.append(
                     arena,
-                    arg_it.next() orelse fatal("expected arg after --debug-log\n{s}", .{usage}),
+                    arg_it.next() orelse badUsage("expected arg after --debug-log", .{}),
                 );
             } else if (std.mem.eql(u8, arg, "--preserve-tmp")) {
                 preserve_tmp = true;
@@ -68,9 +88,9 @@ pub fn main(init: std.process.Init) !void {
             } else if (std.mem.eql(u8, arg, "-fdarling")) {
                 enable_darling = true;
             } else if (std.mem.eql(u8, arg, "--zig-cc-binary")) {
-                opt_cc_zig = arg_it.next() orelse fatal("expected arg after --zig-cc-binary\n{s}", .{usage});
+                opt_cc_zig = arg_it.next() orelse badUsage("expected arg after --zig-cc-binary", .{});
             } else {
-                fatal("unknown option '{s}'\n{s}", .{ arg, usage });
+                badUsage("unknown option '{s}'", .{arg});
             }
             continue;
         }
@@ -79,23 +99,28 @@ pub fn main(init: std.process.Init) !void {
         } else if (opt_input_file_name == null) {
             opt_input_file_name = arg;
         } else {
-            fatal("unknown argument '{s}'\n{s}", .{ arg, usage });
+            badUsage("unknown argument '{s}'\n{s}", .{ arg, usage });
         }
     }
-    const zig_exe = opt_zig_exe orelse fatal("missing path to zig\n{s}", .{usage});
-    const input_file_name = opt_input_file_name orelse fatal("missing input file\n{s}", .{usage});
+    const zig_exe = opt_zig_exe orelse badUsage("missing path to zig", .{});
+    const input_file_name = opt_input_file_name orelse badUsage("missing input file", .{});
+    const target_query, const backend = opt_target orelse badUsage("missing required option '--target'", .{});
+
+    if (backend == .cbe and opt_lib_dir == null) {
+        std.process.fatal("'--zig-lib-dir' required when using backend 'cbe'", .{});
+    }
 
     const input_file_bytes = try Dir.cwd().readFileAlloc(io, input_file_name, arena, .limited(std.math.maxInt(u32)));
-    const case = try Case.parse(arena, io, input_file_bytes);
+    const case: Case = try .parse(arena, input_file_bytes);
 
-    // Check now: if there are any targets using the `cbe` backend, we need the lib dir.
-    if (opt_lib_dir == null) {
-        for (case.targets) |target| {
-            if (target.backend == .cbe) {
-                fatal("'--zig-lib-dir' requried when using backend 'cbe'", .{});
-            }
+    for (case.skip_targets) |skip| {
+        if (target_query.eql(skip.query) and backend == skip.backend) {
+            if (!quiet) std.log.warn("skipping test because of a 'skip_target' match", .{});
+            return;
         }
     }
+
+    const target = try std.zig.system.resolveTargetQuery(io, target_query);
 
     const prog_node = std.Progress.start(io, .{});
     defer prog_node.end();
@@ -121,149 +146,137 @@ pub fn main(init: std.process.Init) !void {
 
     const host = try std.zig.system.resolveTargetQuery(io, .{});
 
-    const debug_log_verbose = debug_log_args.items.len != 0;
+    var child_args: std.ArrayList([]const u8) = .empty;
+    try child_args.appendSlice(arena, &.{
+        resolved_zig_exe,
+        "build-exe",
+        "-fincremental",
+        "-fno-ubsan-rt",
+        "-target",
+        try target_query.zigTriple(arena),
+        "--cache-dir",
+        ".local-cache",
+        "--global-cache-dir",
+        ".global-cache",
+    });
+    try child_args.append(arena, "--listen=-");
 
-    for (case.targets) |target| {
-        const target_prog_node = node: {
-            var name_buf: [std.Progress.Node.max_name_len]u8 = undefined;
-            const name = std.fmt.bufPrint(&name_buf, "{s}-{t}", .{ target.query, target.backend }) catch &name_buf;
-            break :node prog_node.start(name, case.updates.len);
-        };
-        defer target_prog_node.end();
-
-        if (debug_log_verbose) {
-            std.log.scoped(.status).info("target: '{s}-{t}'", .{ target.query, target.backend });
-        }
-        var child_args: std.ArrayList([]const u8) = .empty;
-        try child_args.appendSlice(arena, &.{
-            resolved_zig_exe,
-            "build-exe",
-            "-fincremental",
-            "-fno-ubsan-rt",
-            "-target",
-            target.query,
-            "--cache-dir",
-            ".local-cache",
-            "--global-cache-dir",
-            ".global-cache",
-        });
-        if (target.resolved.os.tag == .windows) try child_args.append(arena, "-lws2_32");
-        try child_args.append(arena, "--listen=-");
-
-        if (opt_resolved_lib_dir) |resolved_lib_dir| {
-            try child_args.appendSlice(arena, &.{ "--zig-lib-dir", resolved_lib_dir });
-        }
-        switch (target.backend) {
-            .sema => try child_args.append(arena, "-fno-emit-bin"),
-            .selfhosted => try child_args.appendSlice(arena, &.{ "-fno-llvm", "-fno-lld" }),
-            .llvm => try child_args.appendSlice(arena, &.{ "-fllvm", "-flld" }),
-            .cbe => try child_args.appendSlice(arena, &.{ "-ofmt=c", "-lc" }),
-        }
-        for (debug_log_args.items) |arg| {
-            try child_args.appendSlice(arena, &.{ "--debug-log", arg });
-        }
-        for (case.modules) |mod| {
-            try child_args.appendSlice(arena, &.{ "--dep", mod.name });
-        }
-        try child_args.append(arena, try std.fmt.allocPrint(arena, "-Mroot={s}", .{case.root_source_file}));
-        for (case.modules) |mod| {
-            try child_args.append(arena, try std.fmt.allocPrint(arena, "-M{s}={s}", .{ mod.name, mod.file }));
-        }
-
-        const zig_prog_node = target_prog_node.start("zig build-exe", 0);
-        defer zig_prog_node.end();
-
-        var cc_child_args: std.ArrayList([]const u8) = .empty;
-        if (target.backend == .cbe) {
-            const resolved_cc_zig_exe = if (opt_cc_zig) |cc_zig_exe|
-                try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, cc_zig_exe)
-            else
-                resolved_zig_exe;
-
-            try cc_child_args.appendSlice(arena, &.{
-                resolved_cc_zig_exe,
-                "cc",
-                "-target",
-                target.query,
-                "-I",
-                opt_resolved_lib_dir.?, // verified earlier
-            });
-
-            if (target.resolved.os.tag == .windows)
-                try cc_child_args.append(arena, "-lws2_32");
-
-            try cc_child_args.append(arena, "-o");
-        }
-
-        var child = try std.process.spawn(io, .{
-            .argv = child_args.items,
-            .stdin = .pipe,
-            .stdout = .pipe,
-            .stderr = .pipe,
-            .progress_node = zig_prog_node,
-            .cwd_dir = tmp_dir,
-            .cwd = tmp_dir_path,
-        });
-        defer child.kill(io);
-
-        var eval: Eval = .{
-            .arena = arena,
-            .io = io,
-            .case = case,
-            .host = host,
-            .target = target,
-            .tmp_dir = tmp_dir,
-            .tmp_dir_path = tmp_dir_path,
-            .child = &child,
-            .allow_stderr = debug_log_verbose,
-            .preserve_tmp_on_fatal = preserve_tmp,
-            .cc_child_args = &cc_child_args,
-            .enable_qemu = enable_qemu,
-            .enable_wine = enable_wine,
-            .enable_wasmtime = enable_wasmtime,
-            .enable_darling = enable_darling,
-        };
-
-        var poller = Io.poll(arena, Eval.StreamEnum, .{
-            .stdout = child.stdout.?,
-            .stderr = child.stderr.?,
-        });
-        defer poller.deinit();
-
-        for (case.updates) |update| {
-            var update_node = target_prog_node.start(update.name, 0);
-            defer update_node.end();
-
-            if (debug_log_verbose) {
-                std.log.scoped(.status).info("update: '{s}'", .{update.name});
-            }
-
-            log_cur_update = .{ &target, &update };
-            defer log_cur_update = null;
-
-            eval.write(update);
-            try eval.requestUpdate();
-            try eval.check(&poller, update, update_node);
-        }
-
-        try eval.end(&poller);
-
-        waitChild(&child, &eval);
+    if (opt_resolved_lib_dir) |resolved_lib_dir| {
+        try child_args.appendSlice(arena, &.{ "--zig-lib-dir", resolved_lib_dir });
     }
+    switch (backend) {
+        .sema => try child_args.append(arena, "-fno-emit-bin"),
+        .selfhosted => try child_args.appendSlice(arena, &.{ "-fno-llvm", "-fno-lld" }),
+        .llvm => try child_args.appendSlice(arena, &.{ "-fllvm", "-flld" }),
+        .cbe => try child_args.appendSlice(arena, &.{ "-ofmt=c", "-lc" }),
+    }
+    for (debug_log_args.items) |arg| {
+        try child_args.appendSlice(arena, &.{ "--debug-log", arg });
+    }
+    for (case.modules) |mod| {
+        try child_args.appendSlice(arena, &.{ "--dep", mod.name });
+    }
+    try child_args.append(arena, try std.fmt.allocPrint(arena, "-Mroot={s}", .{case.root_source_file}));
+    for (case.modules) |mod| {
+        try child_args.append(arena, try std.fmt.allocPrint(arena, "-M{s}={s}", .{ mod.name, mod.file }));
+    }
+
+    const zig_prog_node = prog_node.start("zig", 0);
+    defer zig_prog_node.end();
+
+    var cc_child_args: std.ArrayList([]const u8) = .empty;
+    if (backend == .cbe) {
+        const resolved_cc_zig_exe = if (opt_cc_zig) |cc_zig_exe|
+            try Dir.path.relative(arena, cwd_path, environ_map, tmp_dir_path, cc_zig_exe)
+        else
+            resolved_zig_exe;
+
+        try cc_child_args.appendSlice(arena, &.{
+            resolved_cc_zig_exe,
+            "cc",
+            "-target",
+            try target_query.zigTriple(arena),
+            "-I",
+            opt_resolved_lib_dir.?, // verified earlier
+        });
+
+        try cc_child_args.append(arena, "-o");
+    }
+
+    var child = try std.process.spawn(io, .{
+        .argv = child_args.items,
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+        .progress_node = zig_prog_node,
+        .cwd = .{ .path = tmp_dir_path },
+    });
+    defer child.kill(io);
+
+    const updates_prog_node = prog_node.start("updates", case.updates.len);
+    defer updates_prog_node.end();
+
+    var eval: Eval = .{
+        .arena = arena,
+        .io = io,
+        .case = case,
+        .host = host,
+        .target = target,
+        .backend = backend,
+        .tmp_dir = tmp_dir,
+        .tmp_dir_path = tmp_dir_path,
+        .child = &child,
+        .allow_compiler_stderr = debug_log_args.items.len != 0,
+        .quiet = quiet,
+        .preserve_tmp_on_fatal = preserve_tmp,
+        .cc_child_args = &cc_child_args,
+        .enable_qemu = enable_qemu,
+        .enable_wine = enable_wine,
+        .enable_wasmtime = enable_wasmtime,
+        .enable_darling = enable_darling,
+    };
+
+    var multi_reader_buffer: Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: Io.File.MultiReader = undefined;
+    multi_reader.init(gpa, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
+
+    for (case.updates) |update| {
+        var update_prog_node = updates_prog_node.start(update.name, 0);
+        defer update_prog_node.end();
+
+        if (debug_log_args.items.len != 0) {
+            // Print a line separating the debug logs from the compiler in the stderr output.
+            std.log.scoped(.status).info("update: '{s}'", .{update.name});
+        }
+
+        log_cur_update = &update;
+        defer log_cur_update = null;
+
+        eval.write(update);
+        try eval.requestUpdate();
+        try eval.check(&multi_reader, update, update_prog_node);
+    }
+
+    try eval.end(&multi_reader);
+
+    waitChild(&child, &eval);
 }
 
 const Eval = struct {
     arena: Allocator,
     io: Io,
-    host: std.Target,
     case: Case,
-    target: Case.Target,
+    host: std.Target,
+    target: std.Target,
+    backend: Backend,
     tmp_dir: Dir,
     tmp_dir_path: []const u8,
     child: *std.process.Child,
-    allow_stderr: bool,
+    allow_compiler_stderr: bool,
+    quiet: bool,
     preserve_tmp_on_fatal: bool,
-    /// When `target.backend == .cbe`, this contains the first few arguments to `zig cc` to build the generated binary.
+    /// When `backend == .cbe`, this contains the first few arguments to `zig cc` to build the generated binary.
     /// The arguments `out.c in.c` must be appended before spawning the subprocess.
     cc_child_args: *std.ArrayList([]const u8),
 
@@ -271,9 +284,6 @@ const Eval = struct {
     enable_wine: bool,
     enable_wasmtime: bool,
     enable_darling: bool,
-
-    const StreamEnum = enum { stdout, stderr };
-    const Poller = Io.Poller(StreamEnum);
 
     /// Currently this function assumes the previous updates have already been written.
     fn write(eval: *Eval, update: Case.Update) void {
@@ -293,28 +303,34 @@ const Eval = struct {
         }
     }
 
-    fn check(eval: *Eval, poller: *Poller, update: Case.Update, prog_node: std.Progress.Node) !void {
+    fn check(eval: *Eval, mr: *Io.File.MultiReader, update: Case.Update, prog_node: std.Progress.Node) !void {
         const arena = eval.arena;
-        const stdout = poller.reader(.stdout);
-        const stderr = poller.reader(.stderr);
+        const stdout = mr.fileReader(0);
+        const stderr = &mr.fileReader(1).interface;
+        const Header = std.zig.Server.Message.Header;
 
-        poll: while (true) {
-            const Header = std.zig.Server.Message.Header;
-            while (stdout.buffered().len < @sizeOf(Header)) if (!try poller.poll()) break :poll;
-            const header = stdout.takeStruct(Header, .little) catch unreachable;
-            while (stdout.buffered().len < header.bytes_len) if (!try poller.poll()) break :poll;
-            const body = stdout.take(header.bytes_len) catch unreachable;
+        while (true) {
+            const header = stdout.interface.takeStruct(Header, .little) catch |err| switch (err) {
+                error.EndOfStream => break,
+                error.ReadFailed => return stdout.err.?,
+            };
+            const body = stdout.interface.take(header.bytes_len) catch |err| switch (err) {
+                // If this panic triggers it might be helpful to rework this
+                // code to print the stderr from the abnormally terminated child.
+                error.EndOfStream => @panic("unexpected mid-message end of stream"),
+                error.ReadFailed => return stdout.err.?,
+            };
 
             switch (header.tag) {
                 .error_bundle => {
                     const result_error_bundle = try std.zig.Server.allocErrorBundle(arena, body);
                     if (stderr.bufferedLen() > 0) {
-                        const stderr_data = try poller.toOwnedSlice(.stderr);
-                        if (eval.allow_stderr) {
-                            std.log.info("error_bundle stderr:\n{s}", .{stderr_data});
+                        if (eval.allow_compiler_stderr) {
+                            std.log.info("error_bundle stderr:\n{s}", .{stderr.buffered()});
                         } else {
-                            eval.fatal("error_bundle unexpected stderr:\n{s}", .{stderr_data});
+                            eval.fatal("error_bundle unexpected stderr:\n{s}", .{stderr.buffered()});
                         }
+                        stderr.tossBuffered();
                     }
                     if (result_error_bundle.errorMessageCount() != 0) {
                         try eval.checkErrorOutcome(update, result_error_bundle);
@@ -325,18 +341,18 @@ const Eval = struct {
                 .emit_digest => {
                     var r: std.Io.Reader = .fixed(body);
                     _ = r.takeStruct(std.zig.Server.Message.EmitDigest, .little) catch unreachable;
-                    if (stderr.bufferedLen() > 0) {
-                        const stderr_data = try poller.toOwnedSlice(.stderr);
-                        if (eval.allow_stderr) {
-                            std.log.info("emit_digest stderr:\n{s}", .{stderr_data});
-                        } else {
-                            eval.fatal("emit_digest unexpected stderr:\n{s}", .{stderr_data});
-                        }
-                    }
 
-                    if (eval.target.backend == .sema) {
+                    if (stderr.bufferedLen() > 0) {
+                        if (eval.allow_compiler_stderr) {
+                            std.log.info("emit_digest stderr:\n{s}", .{stderr.buffered()});
+                        } else {
+                            eval.fatal("emit_digest unexpected stderr:\n{s}", .{stderr.buffered()});
+                        }
+                        stderr.tossBuffered();
+                    }
+                    if (eval.backend == .sema) {
                         try eval.checkSuccessOutcome(update, null, prog_node);
-                        // This message indicates the end of the update.
+                        continue;
                     }
 
                     const digest = r.takeArray(Cache.bin_digest_len) catch unreachable;
@@ -344,13 +360,15 @@ const Eval = struct {
 
                     const bin_name = try std.zig.EmitArtifact.bin.cacheName(arena, .{
                         .root_name = "root", // corresponds to the module name "root"
-                        .target = &eval.target.resolved,
+                        .cpu_arch = eval.target.cpu.arch,
+                        .os_tag = eval.target.os.tag,
+                        .ofmt = eval.target.ofmt,
+                        .abi = eval.target.abi,
                         .output_mode = .Exe,
                     });
                     const bin_path = try Dir.path.join(arena, &.{ result_dir, bin_name });
 
                     try eval.checkSuccessOutcome(update, bin_path, prog_node);
-                    // This message indicates the end of the update.
                 },
                 else => {
                     // Ignore other messages.
@@ -358,16 +376,17 @@ const Eval = struct {
             }
         }
 
-        if (stderr.bufferedLen() > 0) {
-            if (eval.allow_stderr) {
-                std.log.info("stderr:\n{s}", .{stderr.buffered()});
+        const buffered_stderr = stderr.buffered();
+        if (buffered_stderr.len > 0) {
+            if (eval.allow_compiler_stderr) {
+                std.log.info("stderr:\n{s}", .{buffered_stderr});
             } else {
-                eval.fatal("unexpected stderr:\n{s}", .{stderr.buffered()});
+                eval.fatal("unexpected stderr:\n{s}", .{buffered_stderr});
             }
         }
 
         waitChild(eval.child, eval);
-        eval.fatal("compiler failed to send error_bundle or emit_bin_path", .{});
+        eval.fatal("compiler failed to send terminating error_bundle", .{});
     }
 
     fn checkErrorOutcome(eval: *Eval, update: Case.Update, error_bundle: std.zig.ErrorBundle) !void {
@@ -414,29 +433,32 @@ const Eval = struct {
         is_note: bool,
         err_idx: std.zig.ErrorBundle.MessageIndex,
     ) Allocator.Error!void {
+        const io = eval.io;
         const err = eb.getErrorMessage(err_idx);
-        if (err.src_loc == .none) @panic("TODO error message with no source location");
         if (err.count != 1) @panic("TODO error message with count>1");
         const msg = eb.nullTerminatedString(err.msg);
-        const src = eb.getSourceLocation(err.src_loc);
-        const raw_filename = eb.nullTerminatedString(src.src_path);
-
-        const io = eval.io;
-
-        // We need to replace backslashes for consistency between platforms.
-        const filename = name: {
-            if (std.mem.indexOfScalar(u8, raw_filename, '\\') == null) break :name raw_filename;
-            const copied = try eval.arena.dupe(u8, raw_filename);
-            std.mem.replaceScalar(u8, copied, '\\', '/');
-            break :name copied;
+        const matches = matches: {
+            if (expected.is_note != is_note) break :matches false;
+            if (!std.mem.eql(u8, expected.msg, msg)) break :matches false;
+            if (err.src_loc == .none) {
+                break :matches expected.src == null;
+            }
+            const expected_src = expected.src orelse break :matches false;
+            const src = eb.getSourceLocation(err.src_loc);
+            const raw_filename = eb.nullTerminatedString(src.src_path);
+            // We need to replace backslashes for consistency between platforms.
+            const filename = name: {
+                if (std.mem.indexOfScalar(u8, raw_filename, '\\') == null) break :name raw_filename;
+                const copied = try eval.arena.dupe(u8, raw_filename);
+                std.mem.replaceScalar(u8, copied, '\\', '/');
+                break :name copied;
+            };
+            if (!std.mem.eql(u8, expected_src.filename, filename)) break :matches false;
+            if (expected_src.line != src.line + 1) break :matches false;
+            if (expected_src.column != src.column + 1) break :matches false;
+            break :matches true;
         };
-
-        if (expected.is_note != is_note or
-            !std.mem.eql(u8, expected.filename, filename) or
-            expected.line != src.line + 1 or
-            expected.column != src.column + 1 or
-            !std.mem.eql(u8, expected.msg, msg))
-        {
+        if (!matches) {
             eb.renderToStderr(io, .{}, .auto) catch {};
             eval.fatal("compile error did not match expected error", .{});
         }
@@ -449,12 +471,12 @@ const Eval = struct {
             .stdout, .exit_code => {},
         }
         const emitted_path = opt_emitted_path orelse {
-            std.debug.assert(eval.target.backend == .sema);
+            std.debug.assert(eval.backend == .sema);
             return;
         };
         const io = eval.io;
 
-        const binary_path = switch (eval.target.backend) {
+        const binary_path = switch (eval.backend) {
             .sema => unreachable,
             .selfhosted, .llvm => emitted_path,
             .cbe => bin: {
@@ -468,16 +490,19 @@ const Eval = struct {
         var argv_buf: [2][]const u8 = undefined;
         const argv: []const []const u8, const is_foreign: bool = sw: switch (std.zig.system.getExternalExecutor(
             io,
-            &eval.host,
-            &eval.target.resolved,
-            .{ .link_libc = eval.target.backend == .cbe },
+            &eval.target,
+            .{
+                .link_libc = eval.backend == .cbe,
+                .host_cpu_arch = eval.host.cpu.arch,
+                .host_os_tag = eval.host.os.tag,
+            },
         )) {
             .bad_dl, .bad_os_or_cpu => {
                 // This binary cannot be executed on this host.
-                if (eval.allow_stderr) {
+                if (!eval.quiet) {
                     std.log.warn("skipping execution because host '{s}' cannot execute binaries for foreign target '{s}'", .{
                         try eval.host.zigTriple(eval.arena),
-                        try eval.target.resolved.zigTriple(eval.arena),
+                        try eval.target.zigTriple(eval.arena),
                     });
                 }
                 return;
@@ -529,15 +554,14 @@ const Eval = struct {
 
         const result = std.process.run(eval.arena, io, .{
             .argv = argv,
-            .cwd_dir = eval.tmp_dir,
-            .cwd = eval.tmp_dir_path,
+            .cwd = .{ .path = eval.tmp_dir_path },
         }) catch |err| {
             if (is_foreign) {
                 // Chances are the foreign executor isn't available. Skip this evaluation.
-                if (eval.allow_stderr) {
+                if (!eval.quiet) {
                     std.log.warn("skipping execution of '{s}' via executor for foreign target '{s}': {t}", .{
                         binary_path,
-                        try eval.target.resolved.zigTriple(eval.arena),
+                        try eval.target.zigTriple(eval.arena),
                         err,
                     });
                 }
@@ -568,7 +592,10 @@ const Eval = struct {
             .signal => |sig| {
                 eval.fatal("generated executable '{s}' terminated with signal {t}", .{ binary_path, sig });
             },
-            .stopped, .unknown => {
+            .stopped => |sig| {
+                eval.fatal("generated executable '{s}' stopped with signal {t}", .{ binary_path, sig });
+            },
+            .unknown => {
                 eval.fatal("generated executable '{s}' terminated unexpectedly", .{binary_path});
             },
         }
@@ -588,23 +615,27 @@ const Eval = struct {
         };
     }
 
-    fn end(eval: *Eval, poller: *Poller) !void {
+    fn end(eval: *Eval, mr: *Io.File.MultiReader) !void {
         requestExit(eval.child, eval);
 
-        const stdout = poller.reader(.stdout);
-        const stderr = poller.reader(.stderr);
+        const stdout = mr.fileReader(0);
+        const Header = std.zig.Server.Message.Header;
 
-        poll: while (true) {
-            const Header = std.zig.Server.Message.Header;
-            while (stdout.buffered().len < @sizeOf(Header)) if (!try poller.poll()) break :poll;
-            const header = stdout.takeStruct(Header, .little) catch unreachable;
-            while (stdout.buffered().len < header.bytes_len) if (!try poller.poll()) break :poll;
-            stdout.toss(header.bytes_len);
+        while (true) {
+            const header = stdout.interface.takeStruct(Header, .little) catch |err| switch (err) {
+                error.EndOfStream => break,
+                error.ReadFailed => return stdout.err.?,
+            };
+            stdout.interface.discardAll(header.bytes_len) catch |err| switch (err) {
+                error.ReadFailed => return stdout.err.?,
+                error.EndOfStream => |e| return e,
+            };
         }
 
-        if (stderr.bufferedLen() > 0) {
-            eval.fatal("unexpected stderr:\n{s}", .{stderr.buffered()});
-        }
+        try mr.fillRemaining(.none);
+
+        const stderr = mr.reader(1).buffered();
+        if (stderr.len > 0) eval.fatal("unexpected stderr:\n{s}", .{stderr});
     }
 
     fn buildCOutput(eval: *Eval, c_path: []const u8, out_path: []const u8, prog_node: std.Progress.Node) !void {
@@ -618,25 +649,22 @@ const Eval = struct {
 
         const result = std.process.run(eval.arena, eval.io, .{
             .argv = eval.cc_child_args.items,
-            .cwd_dir = eval.tmp_dir,
-            .cwd = eval.tmp_dir_path,
+            .cwd = .{ .path = eval.tmp_dir_path },
             .progress_node = child_prog_node,
         }) catch |err| {
             eval.fatal("failed to spawn zig cc for '{s}': {t}", .{ c_path, err });
         };
+
+        if (result.term == .exited and result.term.exited == 0) return;
+
+        if (result.stderr.len != 0) {
+            std.log.err("zig cc stderr:\n{s}", .{result.stderr});
+        }
         switch (result.term) {
-            .exited => |code| if (code != 0) {
-                if (result.stderr.len != 0) {
-                    std.log.err("zig cc stderr:\n{s}", .{result.stderr});
-                }
-                eval.fatal("zig cc for '{s}' failed with code {d}", .{ c_path, code });
-            },
-            .signal, .stopped, .unknown => {
-                if (result.stderr.len != 0) {
-                    std.log.err("zig cc stderr:\n{s}", .{result.stderr});
-                }
-                eval.fatal("zig cc for '{s}' terminated unexpectedly", .{c_path});
-            },
+            .exited => |code| eval.fatal("zig cc for '{s}' failed with code {d}", .{ c_path, code }),
+            .signal => |sig| eval.fatal("zig cc for '{s}' terminated unexpectedly with signal {t}", .{ c_path, sig }),
+            .stopped => |sig| eval.fatal("zig cc for '{s}' stopped unexpectedly with signal {t}", .{ c_path, sig }),
+            .unknown => eval.fatal("zig cc for '{s}' terminated unexpectedly", .{c_path}),
         }
     }
 
@@ -654,30 +682,30 @@ const Eval = struct {
     }
 };
 
+const Backend = enum {
+    /// Run semantic analysis only. Runtime output will not be tested, but we still verify
+    /// that compilation succeeds. Corresponds to `-fno-emit-bin`.
+    sema,
+    /// Use the self-hosted code generation backend for this target.
+    /// Corresponds to `-fno-llvm -fno-lld`.
+    selfhosted,
+    /// Use the LLVM backend.
+    /// Corresponds to `-fllvm -flld`.
+    llvm,
+    /// Use the C backend. The output is compiled with `zig cc`.
+    /// Corresponds to `-ofmt=c`.
+    cbe,
+};
+
 const Case = struct {
     updates: []Update,
     root_source_file: []const u8,
-    targets: []const Target,
+    skip_targets: []const SkipTarget,
     modules: []const Module,
 
-    const Target = struct {
-        query: []const u8,
-        resolved: std.Target,
+    const SkipTarget = struct {
+        query: std.Target.Query,
         backend: Backend,
-        const Backend = enum {
-            /// Run semantic analysis only. Runtime output will not be tested, but we still verify
-            /// that compilation succeeds. Corresponds to `-fno-emit-bin`.
-            sema,
-            /// Use the self-hosted code generation backend for this target.
-            /// Corresponds to `-fno-llvm -fno-lld`.
-            selfhosted,
-            /// Use the LLVM backend.
-            /// Corresponds to `-fllvm -flld`.
-            llvm,
-            /// Use the C backend. The output is compiled with `zig cc`.
-            /// Corresponds to `-ofmt=c`.
-            cbe,
-        };
     };
 
     const Module = struct {
@@ -709,16 +737,18 @@ const Case = struct {
 
     const ExpectedError = struct {
         is_note: bool,
-        filename: []const u8,
-        line: u32,
-        column: u32,
         msg: []const u8,
+        src: ?struct {
+            filename: []const u8,
+            line: u32,
+            column: u32,
+        },
     };
 
-    fn parse(arena: Allocator, io: Io, bytes: []const u8) !Case {
+    fn parse(arena: Allocator, bytes: []const u8) !Case {
         const fatal = std.process.fatal;
 
-        var targets: std.ArrayList(Target) = .empty;
+        var skip_targets: std.ArrayList(SkipTarget) = .empty;
         var modules: std.ArrayList(Module) = .empty;
         var updates: std.ArrayList(Update) = .empty;
         var changes: std.ArrayList(FullContents) = .empty;
@@ -733,29 +763,13 @@ const Case = struct {
                 const val = std.mem.trimEnd(u8, line_it.rest(), "\r"); // windows moment
                 if (val.len == 0) {
                     fatal("line {d}: missing value", .{line_n});
-                } else if (std.mem.eql(u8, key, "target")) {
-                    const split_idx = std.mem.lastIndexOfScalar(u8, val, '-') orelse
-                        fatal("line {d}: target does not include backend", .{line_n});
-
-                    const query = val[0..split_idx];
-
-                    const backend_str = val[split_idx + 1 ..];
-                    const backend: Target.Backend = std.meta.stringToEnum(Target.Backend, backend_str) orelse
-                        fatal("line {d}: invalid backend '{s}'", .{ line_n, backend_str });
-
-                    const parsed_query = std.Build.parseTargetQuery(.{
-                        .arch_os_abi = query,
-                        .object_format = switch (backend) {
-                            .sema, .selfhosted, .llvm => null,
-                            .cbe => "c",
-                        },
-                    }) catch fatal("line {d}: invalid target query '{s}'", .{ line_n, query });
-
-                    const resolved = try std.zig.system.resolveTargetQuery(io, parsed_query);
-
-                    try targets.append(arena, .{
+                } else if (std.mem.eql(u8, key, "skip_target")) {
+                    const query, const backend = parseTargetQueryAndBackend(
+                        val,
+                        try std.fmt.allocPrint(arena, "line {d}: ", .{line_n}),
+                    );
+                    try skip_targets.append(arena, .{
                         .query = query,
-                        .resolved = resolved,
                         .backend = backend,
                     });
                 } else if (std.mem.eql(u8, key, "module")) {
@@ -866,10 +880,6 @@ const Case = struct {
             }
         }
 
-        if (targets.items.len == 0) {
-            fatal("missing target", .{});
-        }
-
         if (changes.items.len > 0) {
             const last_update = &updates.items[updates.items.len - 1];
             last_update.changes = changes.items; // arena so no need for toOwnedSlice
@@ -879,7 +889,7 @@ const Case = struct {
         return .{
             .updates = updates.items,
             .root_source_file = root_source_file orelse fatal("missing root source file", .{}),
-            .targets = targets.items, // arena so no need for toOwnedSlice
+            .skip_targets = skip_targets.items, // arena so no need for toOwnedSlice
             .modules = modules.items,
         };
     }
@@ -913,7 +923,8 @@ fn waitChild(child: *std.process.Child, eval: *Eval) void {
     switch (term) {
         .exited => |code| if (code != 0) eval.fatal("compiler failed with code {d}", .{code}),
         .signal => |sig| eval.fatal("compiler terminated with signal {t}", .{sig}),
-        .stopped, .unknown => eval.fatal("compiler terminated unexpectedly", .{}),
+        .stopped => |sig| eval.fatal("compiler stopped unexpectedly with signal {t}", .{sig}),
+        .unknown => eval.fatal("compiler terminated unexpectedly", .{}),
     }
 }
 
@@ -925,16 +936,16 @@ fn parseExpectedError(str: []const u8, l: usize) Case.ExpectedError {
 
     var it = std.mem.splitScalar(u8, str, ':');
     const filename = it.first();
-    const line_str = it.next() orelse fatal("line {d}: incomplete error specification", .{l});
-    const column_str = it.next() orelse fatal("line {d}: incomplete error specification", .{l});
+    const line_str, const column_str = if (filename.len > 0) .{
+        it.next() orelse fatal("line {d}: incomplete error specification", .{l}),
+        it.next() orelse fatal("line {d}: incomplete error specification", .{l}),
+    } else .{ undefined, undefined };
     const error_or_note_str = std.mem.trim(
         u8,
         it.next() orelse fatal("line {d}: incomplete error specification", .{l}),
         " ",
     );
-    const message = std.mem.trim(u8, it.rest(), " ");
-    if (filename.len == 0) fatal("line {d}: empty filename", .{l});
-    if (message.len == 0) fatal("line {d}: empty error message", .{l});
+
     const is_note = if (std.mem.eql(u8, error_or_note_str, "error"))
         false
     else if (std.mem.eql(u8, error_or_note_str, "note"))
@@ -942,18 +953,19 @@ fn parseExpectedError(str: []const u8, l: usize) Case.ExpectedError {
     else
         fatal("line {d}: expeted 'error' or 'note', found '{s}'", .{ l, error_or_note_str });
 
-    const line = std.fmt.parseInt(u32, line_str, 10) catch
-        fatal("line {d}: invalid line number '{s}'", .{ l, line_str });
-
-    const column = std.fmt.parseInt(u32, column_str, 10) catch
-        fatal("line {d}: invalid column number '{s}'", .{ l, column_str });
+    const message = std.mem.trim(u8, it.rest(), " ");
+    if (message.len == 0) fatal("line {d}: empty error message", .{l});
 
     return .{
         .is_note = is_note,
-        .filename = filename,
-        .line = line,
-        .column = column,
         .msg = message,
+        .src = if (filename.len == 0) null else .{
+            .filename = filename,
+            .line = std.fmt.parseInt(u32, line_str, 10) catch
+                fatal("line {d}: invalid line number '{s}'", .{ l, line_str }),
+            .column = std.fmt.parseInt(u32, column_str, 10) catch
+                fatal("line {d}: invalid column number '{s}'", .{ l, column_str }),
+        },
     };
 }
 
@@ -961,4 +973,33 @@ fn rand64(io: Io) u64 {
     var x: u64 = undefined;
     io.random(@ptrCast(&x));
     return x;
+}
+
+/// Calls `std.process.fatal` on error. The error messages are prefixed with `err_prefix`.
+fn parseTargetQueryAndBackend(input_str: []const u8, err_prefix: []const u8) struct { std.Target.Query, Backend } {
+    const fatal = std.process.fatal;
+
+    const split_idx = std.mem.lastIndexOfScalar(u8, input_str, '-') orelse
+        fatal("{s}target does not include backend", .{err_prefix});
+
+    const query = input_str[0..split_idx];
+
+    const backend_str = input_str[split_idx + 1 ..];
+    const backend: Backend = std.meta.stringToEnum(Backend, backend_str) orelse
+        fatal("{s}invalid backend '{s}'", .{ err_prefix, backend_str });
+
+    const parsed_query = std.Build.parseTargetQuery(.{
+        .arch_os_abi = query,
+        .object_format = switch (backend) {
+            .sema, .selfhosted, .llvm => null,
+            .cbe => "c",
+        },
+    }) catch fatal("{s}invalid target query '{s}'", .{ err_prefix, query });
+
+    return .{ parsed_query, backend };
+}
+
+fn badUsage(comptime fmt: []const u8, args: anytype) noreturn {
+    std.log.err(fmt ++ "\n{s}", args ++ .{usage});
+    std.process.exit(1);
 }

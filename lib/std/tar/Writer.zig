@@ -17,6 +17,7 @@ pub const Options = struct {
 };
 
 underlying_writer: *Io.Writer,
+/// Assumed to use `/` for any path separators.
 prefix: []const u8 = "",
 
 const Error = error{
@@ -26,6 +27,7 @@ const Error = error{
 };
 
 /// Sets prefix for all other write* method paths.
+/// `root` is assumed to use `/` for any path separators.
 pub fn setRoot(w: *Writer, root: []const u8) Error!void {
     if (root.len > 0)
         try w.writeDir(root, .{});
@@ -41,6 +43,7 @@ pub const WriteFileError = Io.Writer.FileError || Error || Io.File.Reader.SizeEr
 
 pub fn writeFileTimestamp(
     w: *Writer,
+    /// Assumed to use `/` for any path separators.
     sub_path: []const u8,
     file_reader: *Io.File.Reader,
     mtime: Io.Timestamp,
@@ -50,6 +53,7 @@ pub fn writeFileTimestamp(
 
 pub fn writeFile(
     w: *Writer,
+    /// Assumed to use `/` for any path separators.
     sub_path: []const u8,
     file_reader: *Io.File.Reader,
     /// If you want to match the file format's expectations, it wants number of
@@ -76,6 +80,7 @@ pub const WriteFileStreamError = Error || Io.Reader.StreamError;
 /// from `reader`, or returns `error.EndOfStream`.
 pub fn writeFileStream(
     w: *Writer,
+    /// Assumed to use `/` for any path separators.
     sub_path: []const u8,
     size: u64,
     reader: *Io.Reader,
@@ -87,7 +92,13 @@ pub fn writeFileStream(
 }
 
 /// Writes file using bytes buffer `content` for size and file content.
-pub fn writeFileBytes(w: *Writer, sub_path: []const u8, content: []const u8, options: Options) Error!void {
+pub fn writeFileBytes(
+    w: *Writer,
+    /// Assumed to use `/` for all path separators.
+    sub_path: []const u8,
+    content: []const u8,
+    options: Options,
+) Error!void {
     try w.writeHeader(.regular, sub_path, "", content.len, options);
     try w.underlying_writer.writeAll(content);
     try w.writePadding(content.len);
@@ -182,23 +193,23 @@ pub const Header = extern struct {
     // numeric field of width w contains w minus 1 digits, and a null.
     // Reference: https://www.gnu.org/software/tar/manual/html_node/Standard.html
     // POSIX header:                                  byte offset
-    name: [100]u8 = [_]u8{0} ** 100, //                         0
+    name: [100]u8 = @splat(0), //                               0
     mode: [7:0]u8 = default_mode.file, //                     100
-    uid: [7:0]u8 = [_:0]u8{0} ** 7, // unused                 108
-    gid: [7:0]u8 = [_:0]u8{0} ** 7, // unused                 116
-    size: [11:0]u8 = [_:0]u8{'0'} ** 11, //                   124
-    mtime: [11:0]u8 = [_:0]u8{'0'} ** 11, //                  136
-    checksum: [7:0]u8 = [_:0]u8{' '} ** 7, //                 148
+    uid: [7:0]u8 = @splat(0), // unused                       108
+    gid: [7:0]u8 = @splat(0), // unused                       116
+    size: [11:0]u8 = @splat('0'), //                          124
+    mtime: [11:0]u8 = @splat('0'), //                         136
+    checksum: [7:0]u8 = @splat(' '), //                       148
     typeflag: FileType = .regular, //                         156
-    linkname: [100]u8 = [_]u8{0} ** 100, //                   157
-    magic: [6]u8 = [_]u8{ 'u', 's', 't', 'a', 'r', 0 }, //    257
-    version: [2]u8 = [_]u8{ '0', '0' }, //                    263
-    uname: [32]u8 = [_]u8{0} ** 32, // unused                 265
-    gname: [32]u8 = [_]u8{0} ** 32, // unused                 297
-    devmajor: [7:0]u8 = [_:0]u8{0} ** 7, // unused            329
-    devminor: [7:0]u8 = [_:0]u8{0} ** 7, // unused            337
-    prefix: [155]u8 = [_]u8{0} ** 155, //                     345
-    pad: [12]u8 = [_]u8{0} ** 12, // unused                   500
+    linkname: [100]u8 = @splat(0), //                         157
+    magic: [6]u8 = .{ 'u', 's', 't', 'a', 'r', 0 }, //        257
+    version: [2]u8 = .{ '0', '0' }, //                        263
+    uname: [32]u8 = @splat(0), // unused                      265
+    gname: [32]u8 = @splat(0), // unused                      297
+    devmajor: [7:0]u8 = @splat(0), // unused                  329
+    devminor: [7:0]u8 = @splat(0), // unused                  337
+    prefix: [155]u8 = @splat(0), //                           345
+    pad: [12]u8 = @splat(0), // unused                        500
 
     pub const FileType = enum(u8) {
         regular = '0',
@@ -331,26 +342,26 @@ pub const Header = extern struct {
             },
             // no more both fits into name
             .{
-                .in = &.{ "prefix", "0123456789/" ** 8 ++ "basename" },
-                .out = &.{ "prefix", "0123456789/" ** 8 ++ "basename" },
+                .in = &.{ "prefix", repeatString(8, "0123456789/") ++ "basename" },
+                .out = &.{ "prefix", repeatString(8, "0123456789/") ++ "basename" },
             },
             // put as much as you can into prefix the rest goes into name
             .{
-                .in = &.{ "prefix", "0123456789/" ** 10 ++ "basename" },
-                .out = &.{ "prefix/" ++ "0123456789/" ** 9 ++ "0123456789", "basename" },
+                .in = &.{ "prefix", repeatString(10, "0123456789/") ++ "basename" },
+                .out = &.{ "prefix/" ++ repeatString(9, "0123456789/") ++ "0123456789", "basename" },
             },
 
             .{
-                .in = &.{ "prefix", "0123456789/" ** 15 ++ "basename" },
-                .out = &.{ "prefix/" ++ "0123456789/" ** 12 ++ "0123456789", "0123456789/0123456789/basename" },
+                .in = &.{ "prefix", repeatString(15, "0123456789/") ++ "basename" },
+                .out = &.{ "prefix/" ++ repeatString(12, "0123456789/") ++ "0123456789", "0123456789/0123456789/basename" },
             },
             .{
-                .in = &.{ "prefix", "0123456789/" ** 21 ++ "basename" },
-                .out = &.{ "prefix/" ++ "0123456789/" ** 12 ++ "0123456789", "0123456789/" ** 8 ++ "basename" },
+                .in = &.{ "prefix", repeatString(21, "0123456789/") ++ "basename" },
+                .out = &.{ "prefix/" ++ repeatString(12, "0123456789/") ++ "0123456789", repeatString(8, "0123456789/") ++ "basename" },
             },
             .{
-                .in = &.{ "", "012345678/" ** 10 ++ "foo" },
-                .out = &.{ "012345678/" ** 9 ++ "012345678", "foo" },
+                .in = &.{ "", repeatString(10, "012345678/") ++ "foo" },
+                .out = &.{ repeatString(9, "012345678/") ++ "012345678", "foo" },
             },
         };
 
@@ -367,10 +378,10 @@ pub const Header = extern struct {
             // basename can't fit into name (106 characters)
             .{ .in = &.{ "zig", "test/cases/compile_errors/regression_test_2980_base_type_u32_is_not_type_checked_properly_when_assigning_a_value_within_a_struct.zig" } },
             // cant fit into 255 + sep
-            .{ .in = &.{ "prefix", "0123456789/" ** 22 ++ "basename" } },
+            .{ .in = &.{ "prefix", repeatString(22, "0123456789/") ++ "basename" } },
             // can fit but sub_path can't be split (there is no separator)
-            .{ .in = &.{ "prefix", "0123456789" ** 10 ++ "a" } },
-            .{ .in = &.{ "prefix", "0123456789" ** 14 ++ "basename" } },
+            .{ .in = &.{ "prefix", repeatString(10, "0123456789") ++ "a" } },
+            .{ .in = &.{ "prefix", repeatString(14, "0123456789") ++ "basename" } },
         };
 
         for (error_cases) |case| {
@@ -393,11 +404,11 @@ test "write files" {
         content: []const u8,
     }{
         .{ .path = "foo", .content = "bar" },
-        .{ .path = "a12345678/" ** 10 ++ "foo", .content = "a" ** 511 },
-        .{ .path = "b12345678/" ** 24 ++ "foo", .content = "b" ** 512 },
-        .{ .path = "c12345678/" ** 25 ++ "foo", .content = "c" ** 513 },
-        .{ .path = "d12345678/" ** 51 ++ "foo", .content = "d" ** 1025 },
-        .{ .path = "e123456789" ** 11, .content = "e" },
+        .{ .path = repeatString(10, "a12345678/") ++ "foo", .content = repeatString(511, "a") },
+        .{ .path = repeatString(24, "b12345678/") ++ "foo", .content = repeatString(512, "b") },
+        .{ .path = repeatString(25, "c12345678/") ++ "foo", .content = repeatString(513, "c") },
+        .{ .path = repeatString(51, "d12345678/") ++ "foo", .content = repeatString(1025, "d") },
+        .{ .path = repeatString(11, "e123456789"), .content = "e" },
     };
 
     var file_name_buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -470,4 +481,10 @@ test "write files" {
         }
         try w.finishPedantically();
     }
+}
+
+/// Marked `inline` to avoid unnecessary binary float, since arguments are always comptime-known.
+inline fn repeatString(comptime n: usize, comptime str: []const u8) []const u8 {
+    const buf: [n][str.len]u8 = @splat(str[0..str.len].*);
+    return @ptrCast(&buf);
 }

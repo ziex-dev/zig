@@ -406,6 +406,7 @@
 #define __NR_fsmount 432
 #define __NR_fspick 433
 #define __NR_pidfd_open 434
+#define __NR_clone3 435
 #define __NR_close_range 436
 #define __NR_openat2 437
 #define __NR_pidfd_getfd 438
@@ -439,6 +440,8 @@
 #define __NR_open_tree_attr 467
 #define __NR_file_getattr 468
 #define __NR_file_setattr 469
+#define __NR_listns 470
+#define __NR_rseq_slice_yield 471
 
 
 #endif /* _ASM_UNISTD_32_H */

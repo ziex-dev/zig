@@ -2,18 +2,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const math = std.math;
 const arch = builtin.cpu.arch;
-const common = @import("common.zig");
+const compiler_rt = @import("../compiler_rt.zig");
+const symbol = compiler_rt.symbol;
 
 comptime {
-    @export(&__fminh, .{ .name = "__fminh", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fminf, .{ .name = "fminf", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmin, .{ .name = "fmin", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__fminx, .{ .name = "__fminx", .linkage = common.linkage, .visibility = common.visibility });
-    if (common.want_ppc_abi) {
-        @export(&fminq, .{ .name = "fminf128", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&__fminh, "__fminh");
+    symbol(&fminf, "fminf");
+    symbol(&fmin, "fmin");
+    symbol(&__fminx, "__fminx");
+    if (compiler_rt.want_ppc_abi) {
+        symbol(&fminq, "fminf128");
     }
-    @export(&fminq, .{ .name = "fminq", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fminl, .{ .name = "fminl", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&fminq, "fminq");
+    symbol(&fminl, "fminl");
 }
 
 pub fn __fminh(x: f16, y: f16) callconv(.c) f16 {
@@ -38,8 +39,6 @@ pub fn fminq(x: f128, y: f128) callconv(.c) f128 {
 
 pub fn fminl(x: c_longdouble, y: c_longdouble) callconv(.c) c_longdouble {
     switch (@typeInfo(c_longdouble).float.bits) {
-        16 => return __fminh(x, y),
-        32 => return fminf(x, y),
         64 => return fmin(x, y),
         80 => return __fminx(x, y),
         128 => return fminq(x, y),
@@ -60,7 +59,7 @@ inline fn generic_fmin(comptime T: type, x: T, y: T) T {
 test "generic_fmin" {
     inline for ([_]type{ f32, f64, c_longdouble, f80, f128 }) |T| {
         const nan_val = math.nan(T);
-        const Int = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const Int = @Int(.unsigned, @bitSizeOf(T));
 
         try std.testing.expect(math.isNan(generic_fmin(T, nan_val, nan_val)));
         try std.testing.expectEqual(@as(T, 1.0), generic_fmin(T, nan_val, 1.0));

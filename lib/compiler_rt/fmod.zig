@@ -3,19 +3,20 @@ const std = @import("std");
 const math = std.math;
 const assert = std.debug.assert;
 const arch = builtin.cpu.arch;
-const common = @import("common.zig");
-const normalize = common.normalize;
+const compiler_rt = @import("../compiler_rt.zig");
+const symbol = compiler_rt.symbol;
+const normalize = compiler_rt.normalize;
 
 comptime {
-    @export(&__fmodh, .{ .name = "__fmodh", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmodf, .{ .name = "fmodf", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmod, .{ .name = "fmod", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&__fmodx, .{ .name = "__fmodx", .linkage = common.linkage, .visibility = common.visibility });
-    if (common.want_ppc_abi) {
-        @export(&fmodq, .{ .name = "fmodf128", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&__fmodh, "__fmodh");
+    symbol(&fmodf, "fmodf");
+    symbol(&fmod, "fmod");
+    symbol(&__fmodx, "__fmodx");
+    if (compiler_rt.want_ppc_abi) {
+        symbol(&fmodq, "fmodf128");
     }
-    @export(&fmodq, .{ .name = "fmodq", .linkage = common.linkage, .visibility = common.visibility });
-    @export(&fmodl, .{ .name = "fmodl", .linkage = common.linkage, .visibility = common.visibility });
+    symbol(&fmodq, "fmodq");
+    symbol(&fmodl, "fmodl");
 }
 
 pub fn __fmodh(x: f16, y: f16) callconv(.c) f16 {
@@ -35,7 +36,7 @@ pub fn fmod(x: f64, y: f64) callconv(.c) f64 {
 /// Logic and flow heavily inspired by MUSL fmodl for 113 mantissa digits
 pub fn __fmodx(a: f80, b: f80) callconv(.c) f80 {
     const T = f80;
-    const Z = std.meta.Int(.unsigned, @bitSizeOf(T));
+    const Z = @Int(.unsigned, @bitSizeOf(T));
 
     const significandBits = math.floatMantissaBits(T);
     const fractionalBits = math.floatFractionalBits(T);
@@ -250,8 +251,6 @@ pub fn fmodq(a: f128, b: f128) callconv(.c) f128 {
 
 pub fn fmodl(a: c_longdouble, b: c_longdouble) callconv(.c) c_longdouble {
     switch (@typeInfo(c_longdouble).float.bits) {
-        16 => return __fmodh(a, b),
-        32 => return fmodf(a, b),
         64 => return fmod(a, b),
         80 => return __fmodx(a, b),
         128 => return fmodq(a, b),
@@ -261,7 +260,7 @@ pub fn fmodl(a: c_longdouble, b: c_longdouble) callconv(.c) c_longdouble {
 
 inline fn generic_fmod(comptime T: type, x: T, y: T) T {
     const bits = @typeInfo(T).float.bits;
-    const uint = std.meta.Int(.unsigned, bits);
+    const uint = @Int(.unsigned, bits);
     comptime assert(T == f32 or T == f64);
     const digits = if (T == f32) 23 else 52;
     const exp_bits = if (T == f32) 9 else 12;

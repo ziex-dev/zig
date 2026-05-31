@@ -402,7 +402,7 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
             st.pad();
             mem.writeInt(u128, out[0..16], st.acc, endian);
 
-            std.crypto.secureZero(u8, @as([*]u8, @ptrCast(st))[0..@sizeOf(Self)]);
+            std.crypto.secureZero(Self, st[0..1]);
         }
 
         /// Compute the GHASH of a message.
@@ -417,8 +417,8 @@ fn Hash(comptime endian: std.builtin.Endian, comptime shift_key: bool) type {
 const htest = @import("test.zig");
 
 test "ghash" {
-    const key = [_]u8{0x42} ** 16;
-    const m = [_]u8{0x69} ** 256;
+    const key: [16]u8 = @splat(0x42);
+    const m: [256]u8 = @splat(0x69);
 
     var st = Ghash.init(&key);
     st.update(&m);
@@ -467,8 +467,8 @@ test "ghash2" {
 }
 
 test "polyval" {
-    const key = [_]u8{0x42} ** 16;
-    const m = [_]u8{0x69} ** 256;
+    const key: [16]u8 = @splat(0x42);
+    const m: [256]u8 = @splat(0x69);
 
     var st = Polyval.init(&key);
     st.update(&m);

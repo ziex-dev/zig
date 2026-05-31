@@ -1,4 +1,4 @@
-const expect = @import("std").testing.expect;
+const expectEqual = @import("std").testing.expectEqual;
 const assert = @import("std").debug.assert;
 const mem = @import("std").mem;
 
@@ -29,7 +29,7 @@ test "iterate over an array" {
     for (message) |byte| {
         sum += byte;
     }
-    try expect(sum == 'h' + 'e' + 'l' * 2 + 'o');
+    try expectEqual('h' + 'e' + 'l' * 2 + 'o', sum);
 }
 
 // modifiable array
@@ -39,8 +39,8 @@ test "modify an array" {
     for (&some_integers, 0..) |*item, i| {
         item.* = @intCast(i);
     }
-    try expect(some_integers[10] == 10);
-    try expect(some_integers[99] == 99);
+    try expectEqual(10, some_integers[10]);
+    try expectEqual(99, some_integers[99]);
 }
 
 // array concatenation works if the values are known
@@ -60,14 +60,8 @@ comptime {
     assert(mem.eql(u8, hello_world, "hello world"));
 }
 
-// ** does repeating patterns
-const pattern = "ab" ** 3;
-comptime {
-    assert(mem.eql(u8, pattern, "ababab"));
-}
-
 // initialize an array to zero
-const all_zero = [_]u16{0} ** 10;
+const all_zero: [10]u16 = @splat(0);
 
 comptime {
     assert(all_zero.len == 10);
@@ -91,12 +85,12 @@ const Point = struct {
 };
 
 test "compile-time array initialization" {
-    try expect(fancy_array[4].x == 4);
-    try expect(fancy_array[4].y == 8);
+    try expectEqual(4, fancy_array[4].x);
+    try expectEqual(8, fancy_array[4].y);
 }
 
 // call a function to initialize an array
-var more_points = [_]Point{makePoint(3)} ** 10;
+var more_points: [10]Point = @splat(makePoint(3));
 fn makePoint(x: i32) Point {
     return Point{
         .x = x,
@@ -104,9 +98,9 @@ fn makePoint(x: i32) Point {
     };
 }
 test "array initialization with function calls" {
-    try expect(more_points[4].x == 3);
-    try expect(more_points[4].y == 6);
-    try expect(more_points.len == 10);
+    try expectEqual(3, more_points[4].x);
+    try expectEqual(6, more_points[4].y);
+    try expectEqual(10, more_points.len);
 }
 
 // test

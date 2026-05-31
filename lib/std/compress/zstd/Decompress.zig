@@ -123,9 +123,13 @@ fn rebaseFallible(r: *Reader, capacity: usize) Reader.RebaseError!void {
     rebase(r, capacity);
 }
 
+// Rebase the buffer, keeping at least the sliding window (`d.window_len` bytes) buffered
 fn rebase(r: *Reader, capacity: usize) void {
     const d: *Decompress = @alignCast(@fieldParentPtr("reader", r));
+    // `capacity` must fit in the buffer along with the required sliding window
     assert(capacity <= r.buffer.len - d.window_len);
+    // According to the vtable contract, this function will only be called if the free space in the
+    // buffer cannot already fit `capacity` bytes
     assert(r.end + capacity > r.buffer.len);
     const discard_n = @min(r.seek, r.end - d.window_len);
     const keep = r.buffer[discard_n..r.end];
@@ -134,11 +138,27 @@ fn rebase(r: *Reader, capacity: usize) void {
     r.seek -= discard_n;
 }
 
+/// Rebase `d.reader.buffer` as much as needed for a discard limited by `limit`
+fn rebaseForDiscard(d: *Decompress, limit: std.Io.Limit) void {
+    // Number of bytes desired to rebase, always rebase for at least block_size
+    const desire_n = limit.max(Limit.limited(zstd.block_size_max));
+    // Maximum number of bytes possible to rebase
+    const max_n = d.reader.buffer.len -| d.window_len;
+    // Number of bytes to rebase
+    const n = desire_n.minInt(max_n);
+
+    // Current buffer free space
+    const current_cap = d.reader.buffer.len - d.reader.end;
+    if (current_cap < n) {
+        rebase(&d.reader, n);
+    }
+}
+
 /// This could be improved so that when an amount is discarded that includes an
 /// entire frame, skip decoding that frame.
 fn discardDirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
     const d: *Decompress = @alignCast(@fieldParentPtr("reader", r));
-    rebase(r, d.window_len);
+    rebaseForDiscard(d, limit);
     var writer: Writer = .{
         .vtable = &.{
             .drain = std.Io.Writer.Discarding.drain,
@@ -153,8 +173,7 @@ fn discardDirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
     }
     const n = r.stream(&writer, limit) catch |err| switch (err) {
         error.WriteFailed => unreachable,
-        error.ReadFailed => return error.ReadFailed,
-        error.EndOfStream => return error.EndOfStream,
+        error.ReadFailed, error.EndOfStream => |e| return e,
     };
     assert(n <= @intFromEnum(limit));
     return n;
@@ -162,7 +181,7 @@ fn discardDirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
 
 fn discardIndirect(r: *Reader, limit: std.Io.Limit) Reader.Error!usize {
     const d: *Decompress = @alignCast(@fieldParentPtr("reader", r));
-    rebase(r, d.window_len);
+    rebaseForDiscard(d, limit);
     var writer: Writer = .{
         .buffer = r.buffer,
         .end = r.end,
@@ -232,8 +251,7 @@ fn stream(d: *Decompress, w: *Writer, limit: Limit) Reader.StreamError!usize {
         },
         .in_frame => |*in_frame| {
             return readInFrame(d, w, limit, in_frame) catch |err| switch (err) {
-                error.ReadFailed => return error.ReadFailed,
-                error.WriteFailed => return error.WriteFailed,
+                error.ReadFailed, error.WriteFailed => |e| return e,
                 else => |e| {
                     d.err = e;
                     return error.ReadFailed;
@@ -515,7 +533,7 @@ pub const Frame = struct {
                     table: Table,
                     accuracy_log: u8,
 
-                    const State = std.meta.Int(.unsigned, max_accuracy_log);
+                    const State = @Int(.unsigned, max_accuracy_log);
                 };
             }
 
@@ -1765,7 +1783,7 @@ const ReverseBitReader = struct {
     }
 
     fn initBits(comptime T: type, out: anytype, num: u16) Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         return .{
             @bitCast(@as(UT, @intCast(out))),
             num,
@@ -1785,7 +1803,7 @@ const ReverseBitReader = struct {
     }
 
     fn readBitsTuple(self: *ReverseBitReader, comptime T: type, num: u16) !Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         const U = if (@bitSizeOf(T) < 8) u8 else UT;
 
         if (num <= self.count) return initBits(T, self.removeBits(@intCast(num)), num);
@@ -1853,7 +1871,7 @@ const BitReader = struct {
     count: u4 = 0,
 
     fn initBits(comptime T: type, out: anytype, num: u16) Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         return .{
             @bitCast(@as(UT, @intCast(out))),
             num,
@@ -1873,7 +1891,7 @@ const BitReader = struct {
     }
 
     fn readBitsTuple(self: *@This(), comptime T: type, num: u16) !Bits(T) {
-        const UT = std.meta.Int(.unsigned, @bitSizeOf(T));
+        const UT = @Int(.unsigned, @bitSizeOf(T));
         const U = if (@bitSizeOf(T) < 8) u8 else UT;
 
         if (num <= self.count) return initBits(T, self.removeBits(@intCast(num)), num);

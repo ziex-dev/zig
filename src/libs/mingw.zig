@@ -37,7 +37,7 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
     const target = comp.getTarget();
 
     // The old 32-bit x86 variant of SEH doesn't use tables.
-    const unwind_tables: std.builtin.UnwindTables = if (target.cpu.arch != .x86) .async else .none;
+    const unwind_tables: std.lang.UnwindTables = if (target.cpu.arch != .x86) .async else .none;
 
     switch (crt_file) {
         .crt2_o => {
@@ -115,36 +115,8 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                             });
                         }
                     }
-                } else if (target.cpu.arch == .thumb) {
+                } else if (target.cpu.arch == .thumb or target.cpu.arch == .aarch64) {
                     for (mingw32_arm_src) |dep| {
-                        try c_source_files.append(.{
-                            .src_path = try comp.dirs.zig_lib.join(arena, &.{
-                                "libc", "mingw", dep,
-                            }),
-                            .extra_flags = crt_args.items,
-                            .owner = undefined,
-                        });
-                    }
-                    for (mingw32_arm32_src) |dep| {
-                        try c_source_files.append(.{
-                            .src_path = try comp.dirs.zig_lib.join(arena, &.{
-                                "libc", "mingw", dep,
-                            }),
-                            .extra_flags = crt_args.items,
-                            .owner = undefined,
-                        });
-                    }
-                } else if (target.cpu.arch == .aarch64) {
-                    for (mingw32_arm_src) |dep| {
-                        try c_source_files.append(.{
-                            .src_path = try comp.dirs.zig_lib.join(arena, &.{
-                                "libc", "mingw", dep,
-                            }),
-                            .extra_flags = crt_args.items,
-                            .owner = undefined,
-                        });
-                    }
-                    for (mingw32_arm64_src) |dep| {
                         try c_source_files.append(.{
                             .src_path = try comp.dirs.zig_lib.join(arena, &.{
                                 "libc", "mingw", dep,
@@ -163,8 +135,6 @@ pub fn buildCrtFile(comp: *Compilation, crt_file: CrtFile, prog_node: std.Progre
                 try addCcArgs(comp, arena, &winpthreads_args);
                 try winpthreads_args.appendSlice(&[_][]const u8{
                     "-DIN_WINPTHREAD",
-                    // winpthreads incorrectly assumes that Clang has `-Wprio-ctor-dtor`.
-                    "-Wno-unknown-warning-option",
                 });
 
                 switch (comp.compilerRtOptMode()) {
@@ -198,6 +168,7 @@ fn addCcArgs(
     args: *std.array_list.Managed([]const u8),
 ) error{OutOfMemory}!void {
     try args.appendSlice(&[_][]const u8{
+        "-w", // Disable all warnings.
         "-std=gnu11",
         "-D__USE_MINGW_ANSI_STDIO=0",
 
@@ -307,7 +278,13 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         .output = .{ .to_list = .{ .arena = .init(gpa) } },
     };
     defer diagnostics.deinit();
-    var aro_comp = aro.Compilation.init(gpa, arena, io, &diagnostics, Io.Dir.cwd());
+    var aro_comp = try aro.Compilation.init(.{
+        .gpa = gpa,
+        .arena = arena,
+        .io = io,
+        .diagnostics = &diagnostics,
+        .environ_map = null,
+    });
     defer aro_comp.deinit();
 
     aro_comp.target = .fromZigTarget(target.*);
@@ -332,7 +309,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
     const builtin_macros = try aro_comp.generateBuiltinMacros(.include_system_defines);
     const def_file_source = try aro_comp.addSourceFromPath(def_file_path);
 
-    var pp = aro.Preprocessor.init(&aro_comp, .{ .provided = 0 });
+    var pp = try aro.Preprocessor.init(&aro_comp, .{ .base_file = .unused });
     defer pp.deinit();
     pp.linemarkers = .none;
     pp.preserve_whitespace = true;
@@ -347,7 +324,7 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
             if (msg.kind == .@"fatal error" or msg.kind == .@"error") {
                 msg.write(stderr.terminal(), true) catch |err| switch (err) {
                     error.WriteFailed => return stderr.file_writer.err.?,
-                    error.Unexpected => |e| return e,
+                    error.Canceled, error.Unexpected => |e| return e,
                 };
                 return error.AroPreprocessorFailed;
             }
@@ -537,57 +514,6 @@ const mingw32_generic_src = [_][]const u8{
     // mingwex
     "cfguard" ++ path.sep_str ++ "mingw_cfguard_support.c",
     "complex" ++ path.sep_str ++ "_cabs.c",
-    "complex" ++ path.sep_str ++ "cabs.c",
-    "complex" ++ path.sep_str ++ "cabsf.c",
-    "complex" ++ path.sep_str ++ "cabsl.c",
-    "complex" ++ path.sep_str ++ "cacos.c",
-    "complex" ++ path.sep_str ++ "cacosf.c",
-    "complex" ++ path.sep_str ++ "cacosl.c",
-    "complex" ++ path.sep_str ++ "carg.c",
-    "complex" ++ path.sep_str ++ "cargf.c",
-    "complex" ++ path.sep_str ++ "cargl.c",
-    "complex" ++ path.sep_str ++ "casin.c",
-    "complex" ++ path.sep_str ++ "casinf.c",
-    "complex" ++ path.sep_str ++ "casinl.c",
-    "complex" ++ path.sep_str ++ "catan.c",
-    "complex" ++ path.sep_str ++ "catanf.c",
-    "complex" ++ path.sep_str ++ "catanl.c",
-    "complex" ++ path.sep_str ++ "ccos.c",
-    "complex" ++ path.sep_str ++ "ccosf.c",
-    "complex" ++ path.sep_str ++ "ccosl.c",
-    "complex" ++ path.sep_str ++ "cexp.c",
-    "complex" ++ path.sep_str ++ "cexpf.c",
-    "complex" ++ path.sep_str ++ "cexpl.c",
-    "complex" ++ path.sep_str ++ "cimag.c",
-    "complex" ++ path.sep_str ++ "cimagf.c",
-    "complex" ++ path.sep_str ++ "cimagl.c",
-    "complex" ++ path.sep_str ++ "clog.c",
-    "complex" ++ path.sep_str ++ "clog10.c",
-    "complex" ++ path.sep_str ++ "clog10f.c",
-    "complex" ++ path.sep_str ++ "clog10l.c",
-    "complex" ++ path.sep_str ++ "clogf.c",
-    "complex" ++ path.sep_str ++ "clogl.c",
-    "complex" ++ path.sep_str ++ "conj.c",
-    "complex" ++ path.sep_str ++ "conjf.c",
-    "complex" ++ path.sep_str ++ "conjl.c",
-    "complex" ++ path.sep_str ++ "cpow.c",
-    "complex" ++ path.sep_str ++ "cpowf.c",
-    "complex" ++ path.sep_str ++ "cpowl.c",
-    "complex" ++ path.sep_str ++ "cproj.c",
-    "complex" ++ path.sep_str ++ "cprojf.c",
-    "complex" ++ path.sep_str ++ "cprojl.c",
-    "complex" ++ path.sep_str ++ "creal.c",
-    "complex" ++ path.sep_str ++ "crealf.c",
-    "complex" ++ path.sep_str ++ "creall.c",
-    "complex" ++ path.sep_str ++ "csin.c",
-    "complex" ++ path.sep_str ++ "csinf.c",
-    "complex" ++ path.sep_str ++ "csinl.c",
-    "complex" ++ path.sep_str ++ "csqrt.c",
-    "complex" ++ path.sep_str ++ "csqrtf.c",
-    "complex" ++ path.sep_str ++ "csqrtl.c",
-    "complex" ++ path.sep_str ++ "ctan.c",
-    "complex" ++ path.sep_str ++ "ctanf.c",
-    "complex" ++ path.sep_str ++ "ctanl.c",
     "gdtoa" ++ path.sep_str ++ "arithchk.c",
     "gdtoa" ++ path.sep_str ++ "dmisc.c",
     "gdtoa" ++ path.sep_str ++ "dtoa.c",
@@ -613,15 +539,10 @@ const mingw32_generic_src = [_][]const u8{
     "math" ++ path.sep_str ++ "fpclassify.c",
     "math" ++ path.sep_str ++ "fpclassifyf.c",
     "math" ++ path.sep_str ++ "fpclassifyl.c",
-    "math" ++ path.sep_str ++ "frexpf.c",
-    "math" ++ path.sep_str ++ "frexpl.c",
-    "math" ++ path.sep_str ++ "hypotf.c",
-    "math" ++ path.sep_str ++ "hypotl.c",
     "math" ++ path.sep_str ++ "ldexpf.c",
     "math" ++ path.sep_str ++ "lgamma.c",
     "math" ++ path.sep_str ++ "lgammaf.c",
     "math" ++ path.sep_str ++ "lgammal.c",
-    "math" ++ path.sep_str ++ "modfl.c",
     "math" ++ path.sep_str ++ "powi.c",
     "math" ++ path.sep_str ++ "powif.c",
     "math" ++ path.sep_str ++ "powil.c",
@@ -632,7 +553,6 @@ const mingw32_generic_src = [_][]const u8{
     "math" ++ path.sep_str ++ "sinhl.c",
     "math" ++ path.sep_str ++ "tanhl.c",
     "misc" ++ path.sep_str ++ "alarm.c",
-    "misc" ++ path.sep_str ++ "btowc.c",
     "misc" ++ path.sep_str ++ "delay-f.c",
     "misc" ++ path.sep_str ++ "delay-n.c",
     "misc" ++ path.sep_str ++ "delayimp.c",
@@ -661,7 +581,6 @@ const mingw32_generic_src = [_][]const u8{
     "misc" ++ path.sep_str ++ "getlogin.c",
     "misc" ++ path.sep_str ++ "getopt.c",
     "misc" ++ path.sep_str ++ "gettimeofday.c",
-    "misc" ++ path.sep_str ++ "mempcpy.c",
     "misc" ++ path.sep_str ++ "mingw-access.c",
     "misc" ++ path.sep_str ++ "mingw-aligned-malloc.c",
     "misc" ++ path.sep_str ++ "mingw_getsp.S",
@@ -674,37 +593,13 @@ const mingw32_generic_src = [_][]const u8{
     "misc" ++ path.sep_str ++ "mingw_wcstold.c",
     "misc" ++ path.sep_str ++ "mkstemp.c",
     "misc" ++ path.sep_str ++ "sleep.c",
-    "misc" ++ path.sep_str ++ "strnlen.c",
     "misc" ++ path.sep_str ++ "strsafe.c",
     "misc" ++ path.sep_str ++ "tdelete.c",
     "misc" ++ path.sep_str ++ "tdestroy.c",
     "misc" ++ path.sep_str ++ "tfind.c",
     "misc" ++ path.sep_str ++ "tsearch.c",
     "misc" ++ path.sep_str ++ "twalk.c",
-    "misc" ++ path.sep_str ++ "wcsnlen.c",
-    "misc" ++ path.sep_str ++ "wcstof.c",
-    "misc" ++ path.sep_str ++ "wcstoimax.c",
-    "misc" ++ path.sep_str ++ "wcstold.c",
-    "misc" ++ path.sep_str ++ "wcstoumax.c",
-    "misc" ++ path.sep_str ++ "wctob.c",
     "misc" ++ path.sep_str ++ "wdirent.c",
-    "misc" ++ path.sep_str ++ "winbs_uint64.c",
-    "misc" ++ path.sep_str ++ "winbs_ulong.c",
-    "misc" ++ path.sep_str ++ "winbs_ushort.c",
-    "misc" ++ path.sep_str ++ "wmemchr.c",
-    "misc" ++ path.sep_str ++ "wmemcmp.c",
-    "misc" ++ path.sep_str ++ "wmemcpy.c",
-    "misc" ++ path.sep_str ++ "wmemmove.c",
-    "misc" ++ path.sep_str ++ "wmempcpy.c",
-    "misc" ++ path.sep_str ++ "wmemset.c",
-    "stdio" ++ path.sep_str ++ "_Exit.c",
-    "stdio" ++ path.sep_str ++ "_findfirst64i32.c",
-    "stdio" ++ path.sep_str ++ "_findnext64i32.c",
-    "stdio" ++ path.sep_str ++ "_fstat64i32.c",
-    "stdio" ++ path.sep_str ++ "_stat64i32.c",
-    "stdio" ++ path.sep_str ++ "_wfindfirst64i32.c",
-    "stdio" ++ path.sep_str ++ "_wfindnext64i32.c",
-    "stdio" ++ path.sep_str ++ "_wstat64i32.c",
     "stdio" ++ path.sep_str ++ "__mingw_fix_stat_path.c",
     "stdio" ++ path.sep_str ++ "__mingw_fix_wstat_path.c",
     "stdio" ++ path.sep_str ++ "asprintf.c",
@@ -751,7 +646,6 @@ const mingw32_generic_src = [_][]const u8{
     "stdio" ++ path.sep_str ++ "mingw_vswscanf.c",
     "stdio" ++ path.sep_str ++ "snprintf.c",
     "stdio" ++ path.sep_str ++ "snwprintf.c",
-    "stdio" ++ path.sep_str ++ "strtok_r.c",
     "stdio" ++ path.sep_str ++ "truncate.c",
     "stdio" ++ path.sep_str ++ "ulltoa.c",
     "stdio" ++ path.sep_str ++ "ulltow.c",
@@ -937,16 +831,29 @@ const mingw32_x86_src = [_][]const u8{
     // mingw32
     "crt" ++ path.sep_str ++ "CRT_fp10.c",
     // mingwex
+    "complex" ++ path.sep_str ++ "cabsl.c",
+    "complex" ++ path.sep_str ++ "cacosl.c",
+    "complex" ++ path.sep_str ++ "cargl.c",
+    "complex" ++ path.sep_str ++ "casinl.c",
+    "complex" ++ path.sep_str ++ "catanl.c",
+    "complex" ++ path.sep_str ++ "ccosl.c",
+    "complex" ++ path.sep_str ++ "cexpl.c",
+    "complex" ++ path.sep_str ++ "cimagl.c",
+    "complex" ++ path.sep_str ++ "clog10l.c",
+    "complex" ++ path.sep_str ++ "clogl.c",
+    "complex" ++ path.sep_str ++ "conjl.c",
+    "complex" ++ path.sep_str ++ "cpowl.c",
+    "complex" ++ path.sep_str ++ "cprojl.c",
+    "complex" ++ path.sep_str ++ "creall.c",
+    "complex" ++ path.sep_str ++ "csinl.c",
+    "complex" ++ path.sep_str ++ "csqrtl.c",
+    "complex" ++ path.sep_str ++ "ctanl.c",
     "math" ++ path.sep_str ++ "cbrtl.c",
     "math" ++ path.sep_str ++ "erfl.c",
-    "math" ++ path.sep_str ++ "fdiml.c",
     "math" ++ path.sep_str ++ "fmal.c",
     "math" ++ path.sep_str ++ "llrintl.c",
     "math" ++ path.sep_str ++ "llroundl.c",
-    "math" ++ path.sep_str ++ "lrintl.c",
     "math" ++ path.sep_str ++ "lroundl.c",
-    "math" ++ path.sep_str ++ "rintl.c",
-    "math" ++ path.sep_str ++ "roundl.c",
     "math" ++ path.sep_str ++ "tgammal.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "_chgsignl.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "acoshl.c",
@@ -955,9 +862,6 @@ const mingw32_x86_src = [_][]const u8{
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "asinl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atan2l.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atanhl.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atanl.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "cosl.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "cosl_internal.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "cossinl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "exp2l.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "expl.c",
@@ -965,7 +869,6 @@ const mingw32_x86_src = [_][]const u8{
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "fucom.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "ilogbl.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "internal_logl.S",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "ldexp.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "ldexpl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "log10l.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "log1pl.S",
@@ -976,12 +879,8 @@ const mingw32_x86_src = [_][]const u8{
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "powl.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "remainderl.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "remquol.S",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "scalbn.S",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "scalbnf.S",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "scalbnl.S",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "sinl.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "sinl_internal.S",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "tanl.S",
+    "misc" ++ path.sep_str ++ "wcstold.c",
     // ucrtbase
     "math" ++ path.sep_str ++ "nextafterl.c",
     "math" ++ path.sep_str ++ "nexttoward.c",
@@ -990,35 +889,15 @@ const mingw32_x86_src = [_][]const u8{
 
 const mingw32_x86_32_src = [_][]const u8{
     // ucrtbase
-    "math" ++ path.sep_str ++ "coshf.c",
-    "math" ++ path.sep_str ++ "modff.c",
     "math" ++ path.sep_str ++ "powf.c",
     "math" ++ path.sep_str ++ "sinhf.c",
-    "math" ++ path.sep_str ++ "tanhf.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "acosf.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "asinf.c",
     "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atan2f.c",
-    "math" ++ path.sep_str ++ "x86" ++ path.sep_str ++ "atanf.c",
 };
 
 const mingw32_arm_src = [_][]const u8{
     // mingwex
     "math" ++ path.sep_str ++ "arm-common" ++ path.sep_str ++ "ldexpl.c",
-    "math" ++ path.sep_str ++ "arm-common" ++ path.sep_str ++ "sincosl.c",
-};
-
-const mingw32_arm32_src = [_][]const u8{
-    // mingwex
-    "math" ++ path.sep_str ++ "arm" ++ path.sep_str ++ "s_rint.c",
-    "math" ++ path.sep_str ++ "arm" ++ path.sep_str ++ "s_rintf.c",
-    "math" ++ path.sep_str ++ "arm" ++ path.sep_str ++ "sincos.S",
-};
-
-const mingw32_arm64_src = [_][]const u8{
-    // mingwex
-    "math" ++ path.sep_str ++ "arm64" ++ path.sep_str ++ "rint.c",
-    "math" ++ path.sep_str ++ "arm64" ++ path.sep_str ++ "rintf.c",
-    "math" ++ path.sep_str ++ "arm64" ++ path.sep_str ++ "sincos.S",
 };
 
 const mingw32_winpthreads_src = [_][]const u8{
@@ -1032,7 +911,6 @@ const mingw32_winpthreads_src = [_][]const u8{
     "winpthreads" ++ path.sep_str ++ "rwlock.c",
     "winpthreads" ++ path.sep_str ++ "sched.c",
     "winpthreads" ++ path.sep_str ++ "sem.c",
-    "winpthreads" ++ path.sep_str ++ "spinlock.c",
     "winpthreads" ++ path.sep_str ++ "thread.c",
 };
 

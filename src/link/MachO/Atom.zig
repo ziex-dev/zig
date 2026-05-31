@@ -129,9 +129,9 @@ const AddExtraOpts = struct {
 pub fn addExtra(atom: *Atom, opts: AddExtraOpts, macho_file: *MachO) void {
     const file = atom.getFile(macho_file);
     var extra = file.getAtomExtra(atom.extra);
-    inline for (@typeInfo(@TypeOf(opts)).@"struct".fields) |field| {
-        if (@field(opts, field.name)) |x| {
-            @field(extra, field.name) = x;
+    inline for (@typeInfo(@TypeOf(opts)).@"struct".field_names) |field_name| {
+        if (@field(opts, field_name)) |x| {
+            @field(extra, field_name) = x;
         }
     }
     file.setAtomExtra(atom.extra, extra);
@@ -561,7 +561,7 @@ fn reportUndefSymbol(self: Atom, rel: Relocation, macho_file: *MachO) !bool {
         defer macho_file.undefs_mutex.unlock(io);
         const gop = try macho_file.undefs.getOrPut(gpa, file.getGlobals()[rel.target]);
         if (!gop.found_existing) {
-            gop.value_ptr.* = .{ .refs = .{} };
+            gop.value_ptr.* = .{ .refs = .empty };
         }
         try gop.value_ptr.refs.append(gpa, .{ .index = self.atom_index, .file = self.file });
         return true;

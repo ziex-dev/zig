@@ -30,6 +30,19 @@ pub const Annotation = struct {
     dom_id: u32,
 };
 
+pub fn fileSourceLineNumbersHtml(
+    file_index: Walk.File.Index,
+    out: *std.ArrayListUnmanaged(u8),
+    root_node: Ast.Node.Index,
+) !void {
+    const ast = file_index.get_ast();
+    const first_token_line = ast.tokenLocation(0, ast.firstToken(root_node)).line;
+    const last_token_line = ast.tokenLocation(0, ast.lastToken(root_node)).line;
+    for (first_token_line..last_token_line + 1) |i| {
+        try out.print(gpa, "<span>{d}</span>\n", .{i + 1});
+    }
+}
+
 pub fn fileSourceHtml(
     file_index: Walk.File.Index,
     out: *ArrayList(u8),
@@ -289,7 +302,6 @@ pub fn fileSourceHtml(
             .minus_pipe_equal,
             .asterisk,
             .asterisk_equal,
-            .asterisk_asterisk,
             .asterisk_percent,
             .asterisk_percent_equal,
             .asterisk_pipe,
@@ -315,7 +327,7 @@ pub fn fileSourceHtml(
             .tilde,
             => try appendEscaped(out, slice),
 
-            .invalid, .invalid_periodasterisks => return error.InvalidToken,
+            .invalid => return error.InvalidToken,
         }
     }
 }

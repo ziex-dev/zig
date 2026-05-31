@@ -8,8 +8,7 @@ const has_armaes = builtin.cpu.has(.aarch64, .aes);
 // C backend doesn't currently support passing vectors to inline asm.
 const impl = if (builtin.cpu.arch == .x86_64 and builtin.zig_backend != .stage2_c and has_aesni and has_avx) impl: {
     break :impl @import("aes/aesni.zig");
-} else if (builtin.cpu.arch == .aarch64 and builtin.zig_backend != .stage2_c and has_armaes)
-impl: {
+} else if (builtin.cpu.arch == .aarch64 and builtin.zig_backend != .stage2_c and has_armaes) impl: {
     break :impl @import("aes/armcrypto.zig");
 } else impl: {
     break :impl @import("aes/soft.zig");
@@ -136,6 +135,18 @@ test "BlockVec invMixColumns" {
         const expected = block.invMixColumns().toBytes();
         try testing.expectEqualSlices(u8, &expected, result_bytes[i * 16 ..][0..16]);
     }
+}
+
+test "BlockVec bitwise operations" {
+    const a_bytes: [32]u8 = @splat(0xaa);
+    const b_bytes: [32]u8 = @splat(0xbb);
+    const a = BlockVec(2).fromBytes(&a_bytes);
+    const b = BlockVec(2).fromBytes(&b_bytes);
+
+    try testing.expectEqual(@as([32]u8, @splat(0x11)), a.xorBytes(&b_bytes));
+    try testing.expectEqual(@as([32]u8, @splat(0x11)), a.xorBlocks(b).toBytes());
+    try testing.expectEqual(@as([32]u8, @splat(0xbb)), a.orBlocks(b).toBytes());
+    try testing.expectEqual(@as([32]u8, @splat(0xaa)), a.andBlocks(b).toBytes());
 }
 
 test "expand 256-bit key" {
