@@ -259,7 +259,7 @@ const EntryHeader = union(enum) {
     terminator,
 
     fn read(r: *Reader, header_section_offset: u64, section: Section, endian: Endian) !EntryHeader {
-        const unit_header = try Dwarf.readUnitHeader(r, endian);
+        const unit_header = try Dwarf.readCommonUnitHeader(r, endian);
         if (unit_header.unit_length == 0) return .terminator;
 
         // Next is a value which will disambiguate CIEs and FDEs. Annoyingly, LSB Core makes this

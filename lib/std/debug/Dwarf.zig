@@ -228,6 +228,51 @@ pub const Sections = struct {
     }
 };
 
+pub const UnitHeader = struct {
+    offset: Section.Offset,
+    data_offset: u8,
+    format: Format,
+    /// Unlike the `unit_length` header field in the DWARF specifications,
+    /// this field *includes* the length of the length field itself.
+    unit_length: u64,
+    version: u16,
+    address_size: u8,
+    debug_abbrev_offset: Section.Offset,
+};
+
+pub fn readUnitHeader(r: *Reader, endian: Endian) !UnitHeader {
+    const offset = r.seek;
+    const cuh = try readCommonUnitHeader(r, endian);
+    if (cuh.unit_length == 0) return bad();
+    const version = try r.takeInt(u16, endian);
+    var address_size: u8 = undefined;
+    var debug_abbrev_offset: u64 = undefined;
+    switch (version) {
+        2...4 => {
+            debug_abbrev_offset = try readFormatSizedInt(r, cuh.format, endian);
+            address_size = try r.takeByte();
+        },
+        5 => {
+            const unit_type = try r.takeByte();
+            if (unit_type != DW.UT.compile) return bad();
+            address_size = try r.takeByte();
+            debug_abbrev_offset = try readFormatSizedInt(r, cuh.format, endian);
+        },
+        // unsupported version
+        else => return bad(),
+    }
+    const data_offset: u8 = @intCast(r.seek - offset);
+    return .{
+        .offset = .fromByteOffset(offset),
+        .data_offset = data_offset,
+        .format = cuh.format,
+        .unit_length = cuh.unit_length + cuh.header_length,
+        .version = version,
+        .address_size = address_size,
+        .debug_abbrev_offset = .fromByteOffset(debug_abbrev_offset),
+    };
+}
+
 pub const Abbrev = struct {
     code: u64,
     tag_id: u64,
@@ -268,9 +313,7 @@ pub const Abbrev = struct {
 };
 
 pub const CompileUnit = struct {
-    version: u16,
-    format: Format,
-    addr_size_bytes: u8,
+    header: UnitHeader,
     die: Die,
     pc_range: ?PcRange,
 
@@ -420,7 +463,7 @@ pub const Die = struct {
             form_value.*,
             endian,
             if (compile_unit.str_offsets_base == 0) null else .fromByteOffset(compile_unit.str_offsets_base),
-            compile_unit.format,
+            compile_unit.header.format,
         );
     }
 };
@@ -508,25 +551,8 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
         fr.seek = @intCast(this_unit_offset);
 
         const unit_header = try readUnitHeader(&fr, endian);
-        if (unit_header.unit_length == 0) return;
-        const next_offset = unit_header.header_length + unit_header.unit_length;
 
-        const version = try fr.takeInt(u16, endian);
-        if (version < 2 or version > 5) return bad();
-
-        var address_size: u8 = undefined;
-        var debug_abbrev_offset: u64 = undefined;
-        if (version >= 5) {
-            const unit_type = try fr.takeByte();
-            if (unit_type != DW.UT.compile) return bad();
-            address_size = try fr.takeByte();
-            debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
-        } else {
-            debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
-            address_size = try fr.takeByte();
-        }
-
-        const abbrev_table = try di.getAbbrevTable(gpa, debug_abbrev_offset);
+        const abbrev_table = try di.getAbbrevTable(gpa, unit_header.debug_abbrev_offset.toByteOffset());
 
         var max_attrs: usize = 0;
         var zig_padding_abbrev_code: u7 = 0;
@@ -546,12 +572,10 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
         var attrs_bufs: [3][]Die.Attr = undefined;
         for (&attrs_bufs, 0..) |*buf, index| buf.* = attrs_buf[index * max_attrs ..][0..max_attrs];
 
-        const next_unit_pos = this_unit_offset + next_offset;
+        const next_unit_pos = this_unit_offset + unit_header.unit_length;
 
         var compile_unit: CompileUnit = .{
-            .version = version,
-            .format = unit_header.format,
-            .addr_size_bytes = address_size,
+            .header = unit_header,
             .die = undefined,
             .pc_range = null,
 
@@ -574,7 +598,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                 abbrev_table,
                 unit_header.format,
                 endian,
-                address_size,
+                unit_header.address_size,
             )) orelse continue;
 
             switch (die_obj.tag_id) {
@@ -601,7 +625,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                 defer fr.seek = after_die_offset;
 
                                 // Follow the DIE it points to and repeat
-                                const ref_offset = try this_die_obj.getAttrRef(AT.abstract_origin, this_unit_offset, next_offset);
+                                const ref_offset = try this_die_obj.getAttrRef(AT.abstract_origin, this_unit_offset, unit_header.unit_length);
                                 fr.seek = try ref_offset.toByteOffsetUsize();
                                 this_die_obj = (try parseDie(
                                     &fr,
@@ -609,14 +633,14 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                     abbrev_table, // wrong abbrev table for different cu
                                     unit_header.format,
                                     endian,
-                                    address_size,
+                                    unit_header.address_size,
                                 )) orelse return bad();
                             } else if (this_die_obj.getAttr(AT.specification)) |_| {
                                 const after_die_offset = fr.seek;
                                 defer fr.seek = after_die_offset;
 
                                 // Follow the DIE it points to and repeat
-                                const ref_offset = try this_die_obj.getAttrRef(AT.specification, this_unit_offset, next_offset);
+                                const ref_offset = try this_die_obj.getAttrRef(AT.specification, this_unit_offset, unit_header.unit_length);
                                 fr.seek = try ref_offset.toByteOffsetUsize();
                                 this_die_obj = (try parseDie(
                                     &fr,
@@ -624,7 +648,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                     abbrev_table, // wrong abbrev table for different cu
                                     unit_header.format,
                                     endian,
-                                    address_size,
+                                    unit_header.address_size,
                                 )) orelse return bad();
                             } else {
                                 break :x null;
@@ -688,7 +712,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
             }
         }
 
-        this_unit_offset += next_offset;
+        this_unit_offset += unit_header.unit_length;
     }
 }
 
@@ -703,25 +727,8 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
         fr.seek = @intCast(this_unit_offset);
 
         const unit_header = try readUnitHeader(&fr, endian);
-        if (unit_header.unit_length == 0) return;
-        const next_offset = unit_header.header_length + unit_header.unit_length;
 
-        const version = try fr.takeInt(u16, endian);
-        if (version < 2 or version > 5) return bad();
-
-        var address_size: u8 = undefined;
-        var debug_abbrev_offset: u64 = undefined;
-        if (version >= 5) {
-            const unit_type = try fr.takeByte();
-            if (unit_type != UT.compile) return bad();
-            address_size = try fr.takeByte();
-            debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
-        } else {
-            debug_abbrev_offset = try readFormatSizedInt(&fr, unit_header.format, endian);
-            address_size = try fr.takeByte();
-        }
-
-        const abbrev_table = try di.getAbbrevTable(gpa, debug_abbrev_offset);
+        const abbrev_table = try di.getAbbrevTable(gpa, unit_header.debug_abbrev_offset.toByteOffset());
 
         var max_attrs: usize = 0;
         for (abbrev_table.abbrevs) |abbrev| {
@@ -735,7 +742,7 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
             abbrev_table,
             unit_header.format,
             endian,
-            address_size,
+            unit_header.address_size,
         )) orelse return bad();
 
         if (compile_unit_die.tag_id != DW.TAG.compile_unit) return bad();
@@ -743,9 +750,7 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
         compile_unit_die.attrs = try gpa.dupe(Die.Attr, compile_unit_die.attrs);
 
         var compile_unit: CompileUnit = .{
-            .version = version,
-            .format = unit_header.format,
-            .addr_size_bytes = address_size,
+            .header = unit_header,
             .pc_range = null,
             .die = compile_unit_die,
             .str_offsets_base = if (compile_unit_die.getAttr(AT.str_offsets_base)) |fv| try fv.getUInt(usize) else 0,
@@ -779,7 +784,7 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
 
         try di.compile_unit_list.append(gpa, compile_unit);
 
-        this_unit_offset += next_offset;
+        this_unit_offset += unit_header.unit_length;
     }
 }
 
@@ -826,13 +831,13 @@ const DebugRangeIterator = struct {
     fr: Reader,
 
     pub fn init(ranges_value: *const FormValue, di: *const Dwarf, endian: Endian, compile_unit: *const CompileUnit) !@This() {
-        const section_type = if (compile_unit.version >= 5) Section.Id.debug_rnglists else Section.Id.debug_ranges;
+        const section_type = if (compile_unit.header.version >= 5) Section.Id.debug_rnglists else Section.Id.debug_ranges;
         const debug_ranges = if (di.sections.get(section_type)) |sect| sect.data else |e| return e;
 
         const ranges_offset = switch (ranges_value.*) {
             .sec_offset, .udata => |off| off,
             .rnglistx => |idx| off: {
-                switch (compile_unit.format) {
+                switch (compile_unit.header.format) {
                     .@"32" => {
                         const offset_loc = compile_unit.rnglists_base + 4 * idx;
                         if (offset_loc + 4 > debug_ranges.len) return bad();
@@ -875,7 +880,7 @@ const DebugRangeIterator = struct {
     // Returns the next range in the list, or null if the end was reached.
     pub fn next(self: *@This()) !?PcRange {
         const endian = self.endian;
-        const addr_size_bytes = self.compile_unit.addr_size_bytes;
+        const addr_size_bytes = self.compile_unit.header.address_size;
         switch (self.section_type) {
             .debug_rnglists => {
                 const kind = try self.fr.takeByte();
@@ -1079,7 +1084,7 @@ fn runLineNumberProgram(d: *Dwarf, gpa: Allocator, endian: Endian, compile_unit:
 
     var fr = try d.sections.sectionReader(.debug_line, line_info_offset);
 
-    const unit_header = try readUnitHeader(&fr, endian);
+    const unit_header = try readCommonUnitHeader(&fr, endian);
     if (unit_header.unit_length == 0) return missing();
 
     const next_offset = unit_header.header_length + unit_header.unit_length;
@@ -1091,7 +1096,7 @@ fn runLineNumberProgram(d: *Dwarf, gpa: Allocator, endian: Endian, compile_unit:
         try fr.takeByte(),
         try fr.takeByte(),
     } else .{
-        compile_unit.addr_size_bytes,
+        compile_unit.header.address_size,
         0,
     };
     if (seg_size != 0) return bad(); // unsupported
@@ -1490,13 +1495,13 @@ const LineNumberProgram = struct {
     }
 };
 
-const UnitHeader = struct {
+const CommonUnitHeader = struct {
     format: Format,
     header_length: u4,
     unit_length: u64,
 };
 
-pub fn readUnitHeader(r: *Reader, endian: Endian) ScanError!UnitHeader {
+pub fn readCommonUnitHeader(r: *Reader, endian: Endian) ScanError!CommonUnitHeader {
     return switch (try r.takeInt(u32, endian)) {
         0...0xfffffff0 - 1 => |unit_length| .{
             .format = .@"32",
