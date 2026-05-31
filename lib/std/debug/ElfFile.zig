@@ -225,7 +225,7 @@ pub fn load(
                     sections[f_value] = .{ .data = s.bytes, .owned = false };
                 }
             }
-            break :dwarf .{ .sections = sections };
+            break :dwarf .{ .sections = .init(sections) };
         },
         .eh_frame = if (result.sections.get(.eh_frame)) |s| .{
             .vaddr = s.header.sh_addr,

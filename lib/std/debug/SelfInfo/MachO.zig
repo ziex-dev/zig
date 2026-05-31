@@ -76,10 +76,12 @@ pub fn getSymbols(
             ofile_dwarf,
             native_endian,
             std.dwarf.AT.name,
-            ofile_dwarf.section(.debug_str),
             compile_unit,
         ) catch |err| switch (err) {
-            error.MissingDebugInfo, error.InvalidDebugInfo => null,
+            error.MissingDebugInfo => null,
+            error.InvalidDebugInfo => null,
+            error.Overflow => null,
+            error.EndOfStream => null,
         },
         .source_location = ofile_dwarf.getLineNumberInfo(
             gpa,

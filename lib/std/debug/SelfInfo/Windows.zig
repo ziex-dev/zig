@@ -519,7 +519,7 @@ const Module = struct {
                     .owned = false,
                 } else null;
             }
-            break :dwarf .{ .sections = sections };
+            break :dwarf .{ .sections = .init(sections) };
         };
         errdefer if (opt_dwarf) |*dwarf| dwarf.deinit(gpa);
 

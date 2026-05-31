@@ -35,7 +35,7 @@ pub const SelfUnwinder = @import("Dwarf/SelfUnwinder.zig");
 /// Useful to temporarily enable while working on this file.
 const debug_debug_mode = false;
 
-sections: SectionArray = @splat(null),
+sections: Sections = .empty,
 
 /// Filled later by the initializer
 abbrev_table_list: ArrayList(Abbrev.Table) = .empty,
@@ -59,6 +59,14 @@ pub const Section = struct {
     /// If `data` is owned by this Dwarf.
     owned: bool,
 
+    pub fn reader(section: Section, offset: Offset) error{ Overflow, EndOfStream }!Reader {
+        const byte_ofs = try offset.toByteOffsetUsize();
+        if (byte_ofs > section.data.len) return error.EndOfStream;
+        var r: Reader = .fixed(section.data);
+        r.seek = byte_ofs;
+        return r;
+    }
+
     pub const Id = enum {
         debug_info,
         debug_abbrev,
@@ -72,6 +80,152 @@ pub const Section = struct {
         debug_addr,
         debug_names,
     };
+
+    pub const Offset = enum(u64) {
+        _,
+
+        pub const zero: Offset = .fromByteOffset(0);
+
+        pub fn compare(ofs: Offset, op: std.math.CompareOperator, other: u64) bool {
+            return std.math.compare(ofs.toByteOffset(), op, other);
+        }
+
+        pub fn add(ofs: Offset, operand: u64) Offset {
+            return .fromByteOffset(ofs.toByteOffset() + operand);
+        }
+
+        pub inline fn fromByteOffset(byte_ofs: u64) Offset {
+            return @enumFromInt(byte_ofs);
+        }
+
+        pub inline fn toByteOffset(ofs: Offset) u64 {
+            return @intFromEnum(ofs);
+        }
+
+        pub fn toByteOffsetUsize(ofs: Offset) error{Overflow}!usize {
+            return std.math.cast(usize, ofs.toByteOffset()) orelse error.Overflow;
+        }
+    };
+};
+
+pub const Sections = struct {
+    array: SectionArray,
+
+    pub const empty: Sections = .init(@splat(null));
+
+    const SectionReaderError = error{
+        MissingDebugInfo,
+        Overflow,
+        EndOfStream,
+    };
+
+    pub fn init(array: SectionArray) Sections {
+        return .{ .array = array };
+    }
+
+    pub fn get(s: *const Sections, id: Section.Id) error{MissingDebugInfo}!Section {
+        return s.array[@intFromEnum(id)] orelse return error.MissingDebugInfo;
+    }
+
+    pub fn sectionReader(s: *const Sections, id: Section.Id, offset: Section.Offset) SectionReaderError!Reader {
+        const sect = try s.get(id);
+        return try sect.reader(offset);
+    }
+
+    fn readStringCommon(
+        s: *const Sections,
+        id: Section.Id,
+        offset: Section.Offset,
+    ) (InvalidOrMissingError || SectionReaderError)![:0]const u8 {
+        var reader = try s.sectionReader(id, offset);
+        return reader.peekSentinel(0) catch |err| switch (err) {
+            error.ReadFailed => unreachable,
+            error.EndOfStream => bad(),
+            // `reader` is a fixed reader containing the full section, `StreamTooLong`
+            // is equivalent to `EndOfStream`
+            error.StreamTooLong => bad(),
+        };
+    }
+
+    pub fn readDebugAddr(
+        s: *const Sections,
+        addr_base: Section.Offset,
+        index: u64,
+        endian: Endian,
+    ) (InvalidOrMissingError || SectionReaderError)!u64 {
+        const DebugAddrTableHeader = extern struct {
+            /// For DWARF64, this is the upper half of the actual length field.
+            short_length: u32 align(1),
+            version: u16 align(1),
+            address_size: u8 align(1),
+            segment_sel_size: u8 align(1),
+        };
+        // addr_base points to the first item after the header, however we need to read
+        // the header to know the size of each item. Empirically, it may disagree with
+        // is_64 on the compile unit. The header is at least 8 bytes in size depending on
+        // is_64, but the positions of the fields we need from the header are always the
+        // same.
+        const addr_table_header = try std.math.sub(u64, @intFromEnum(addr_base), @sizeOf(DebugAddrTableHeader));
+        var reader = try s.sectionReader(.debug_addr, .fromByteOffset(addr_table_header));
+        const header = reader.takeStruct(DebugAddrTableHeader, endian) catch |err| switch (err) {
+            error.EndOfStream => |e| return e,
+            error.ReadFailed => unreachable,
+        };
+        if (header.version < 5) return bad();
+        const byte_offset = index * (@as(u64, header.address_size) + header.segment_sel_size);
+        if (byte_offset + header.address_size > reader.bufferedLen()) {
+            return error.EndOfStream;
+        }
+        reader.seek += @intCast(byte_offset);
+        return reader.takeVarInt(u64, endian, header.address_size) catch |err| switch (err) {
+            error.EndOfStream => unreachable,
+            error.ReadFailed => unreachable,
+        };
+    }
+
+    pub fn getAddr(
+        s: *const Sections,
+        fv: FormValue,
+        endian: Endian,
+        addr_base: ?Section.Offset,
+    ) (InvalidOrMissingError || SectionReaderError)!u64 {
+        return switch (fv) {
+            .addr => |value| value,
+            .addrx => |index| s.readDebugAddr(addr_base orelse .zero, index, endian),
+            else => bad(),
+        };
+    }
+
+    pub fn getString(
+        s: *const Sections,
+        fv: FormValue,
+        endian: Endian,
+        str_offsets_base: ?Section.Offset,
+        format: Format,
+    ) (InvalidOrMissingError || SectionReaderError)![:0]const u8 {
+        return switch (fv) {
+            .string => |value| value,
+            .strp => |offset| s.readStringCommon(.debug_str, .fromByteOffset(offset)),
+            .line_strp => |offset| s.readStringCommon(.debug_line_str, .fromByteOffset(offset)),
+            .strx => |index| {
+                const base = str_offsets_base orelse return missing();
+                const strp = strp: {
+                    const elem_size: usize = switch (format) {
+                        .@"32" => 4,
+                        .@"64" => 8,
+                    };
+                    var reader = try s.sectionReader(.debug_str_offsets, base.add(@as(u64, elem_size) * index));
+                    const offset = reader.takeVarInt(u64, endian, elem_size) catch |err| switch (err) {
+                        error.EndOfStream => return bad(),
+                        error.ReadFailed => unreachable,
+                    };
+                    break :strp offset;
+                };
+                return s.readStringCommon(.debug_str, .fromByteOffset(strp));
+            },
+            else => bad(),
+        };
+    }
 };
 
 pub const Abbrev = struct {
@@ -184,13 +338,16 @@ pub const FormValue = union(enum) {
     loclistx: u64,
     rnglistx: u64,
 
-    fn getString(fv: FormValue, di: Dwarf) ![:0]const u8 {
-        switch (fv) {
-            .string => |s| return s,
-            .strp => |off| return di.getString(off),
-            .line_strp => |off| return di.getLineString(off),
-            else => return bad(),
-        }
+    fn getString(fv: FormValue, di: *const Dwarf, endian: Endian, format: Format) ![:0]const u8 {
+        return di.sections.getString(fv, endian, null, format);
+    }
+
+    fn getSecOffset(fv: FormValue) error{InvalidDebugInfo}!Section.Offset {
+        return switch (fv) {
+            .udata => |i| .fromByteOffset(i),
+            .sec_offset => |i| .fromByteOffset(i),
+            else => bad(),
+        };
     }
 
     fn getUInt(fv: FormValue, comptime U: type) !U {
@@ -232,62 +389,39 @@ pub const Die = struct {
         endian: Endian,
         id: u64,
         compile_unit: *const CompileUnit,
-    ) error{ InvalidDebugInfo, MissingDebugInfo }!u64 {
+    ) !u64 {
         const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
-        return switch (form_value.*) {
-            .addr => |value| value,
-            .addrx => |index| di.readDebugAddr(endian, compile_unit, index),
-            else => bad(),
-        };
+        return di.sections.getAddr(form_value.*, endian, .fromByteOffset(compile_unit.addr_base));
     }
 
-    fn getAttrSecOffset(self: *const Die, id: u64) !u64 {
+    fn getAttrSecOffset(self: *const Die, id: u64) !Section.Offset {
         const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
-        return form_value.getUInt(u64);
+        return form_value.getSecOffset();
     }
 
-    fn getAttrRef(self: *const Die, id: u64, unit_offset: u64, unit_len: u64) !u64 {
+    fn getAttrRef(self: *const Die, id: u64, unit_offset: u64, unit_len: u64) !Section.Offset {
         const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
         return switch (form_value.*) {
-            .ref => |offset| if (offset < unit_len) unit_offset + offset else bad(),
-            .ref_addr => |addr| addr,
+            .ref => |offset| if (offset < unit_len) .fromByteOffset(unit_offset + offset) else bad(),
+            .ref_addr => |addr| .fromByteOffset(addr),
             else => bad(),
         };
     }
 
     pub fn getAttrString(
         self: *const Die,
-        di: *Dwarf,
+        di: *const Dwarf,
         endian: Endian,
         id: u64,
-        opt_str: ?[]const u8,
         compile_unit: *const CompileUnit,
-    ) error{ InvalidDebugInfo, MissingDebugInfo }![]const u8 {
+    ) ![]const u8 {
         const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
-        switch (form_value.*) {
-            .string => |value| return value,
-            .strp => |offset| return di.getString(offset),
-            .strx => |index| {
-                const debug_str_offsets = di.section(.debug_str_offsets) orelse return bad();
-                if (compile_unit.str_offsets_base == 0) return bad();
-                switch (compile_unit.format) {
-                    .@"32" => {
-                        const byte_offset = compile_unit.str_offsets_base + 4 * index;
-                        if (byte_offset + 4 > debug_str_offsets.len) return bad();
-                        const offset = mem.readInt(u32, debug_str_offsets[@intCast(byte_offset)..][0..4], endian);
-                        return getStringGeneric(opt_str, offset);
-                    },
-                    .@"64" => {
-                        const byte_offset = compile_unit.str_offsets_base + 8 * index;
-                        if (byte_offset + 8 > debug_str_offsets.len) return bad();
-                        const offset = mem.readInt(u64, debug_str_offsets[@intCast(byte_offset)..][0..8], endian);
-                        return getStringGeneric(opt_str, offset);
-                    },
-                }
-            },
-            .line_strp => |offset| return di.getLineString(offset),
-            else => return bad(),
-        }
+        return try di.sections.getString(
+            form_value.*,
+            endian,
+            if (compile_unit.str_offsets_base == 0) null else .fromByteOffset(compile_unit.str_offsets_base),
+            compile_unit.format,
+        );
     }
 };
 
@@ -314,12 +448,8 @@ const Func = struct {
     name: ?[]const u8,
 };
 
-pub fn section(di: Dwarf, dwarf_section: Section.Id) ?[]const u8 {
-    return if (di.sections[@intFromEnum(dwarf_section)]) |s| s.data else null;
-}
-
 pub fn deinit(di: *Dwarf, gpa: Allocator) void {
-    for (di.sections) |opt_section| {
+    for (di.sections.array) |opt_section| {
         if (opt_section) |s| if (s.owned) gpa.free(s.data);
     }
     for (di.abbrev_table_list.items) |*abbrev| {
@@ -358,17 +488,20 @@ pub fn getSymbolName(di: *const Dwarf, address: u64) ?[]const u8 {
     return null;
 }
 
-pub const ScanError = error{
+pub const InvalidOrMissingError = error{
     InvalidDebugInfo,
     MissingDebugInfo,
+};
+
+pub const ScanError = error{
     ReadFailed,
     EndOfStream,
     Overflow,
     StreamTooLong,
-} || Allocator.Error;
+} || InvalidOrMissingError || Allocator.Error;
 
 fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
-    var fr: Reader = .fixed(di.section(.debug_info).?);
+    var fr = try di.sections.sectionReader(.debug_info, .zero);
     var this_unit_offset: u64 = 0;
 
     while (this_unit_offset < fr.buffer.len) {
@@ -462,14 +595,14 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                         // Prevent endless loops
                         for (0..3) |_| {
                             if (this_die_obj.getAttr(AT.name)) |_| {
-                                break :x try this_die_obj.getAttrString(di, endian, AT.name, di.section(.debug_str), &compile_unit);
+                                break :x try this_die_obj.getAttrString(di, endian, AT.name, &compile_unit);
                             } else if (this_die_obj.getAttr(AT.abstract_origin)) |_| {
                                 const after_die_offset = fr.seek;
                                 defer fr.seek = after_die_offset;
 
                                 // Follow the DIE it points to and repeat
                                 const ref_offset = try this_die_obj.getAttrRef(AT.abstract_origin, this_unit_offset, next_offset);
-                                fr.seek = @intCast(ref_offset);
+                                fr.seek = try ref_offset.toByteOffsetUsize();
                                 this_die_obj = (try parseDie(
                                     &fr,
                                     attrs_bufs[2],
@@ -484,7 +617,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
 
                                 // Follow the DIE it points to and repeat
                                 const ref_offset = try this_die_obj.getAttrRef(AT.specification, this_unit_offset, next_offset);
-                                fr.seek = @intCast(ref_offset);
+                                fr.seek = try ref_offset.toByteOffsetUsize();
                                 this_die_obj = (try parseDie(
                                     &fr,
                                     attrs_bufs[2],
@@ -560,7 +693,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
 }
 
 fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
-    var fr: Reader = .fixed(di.section(.debug_info).?);
+    var fr = try di.sections.sectionReader(.debug_info, .zero);
     var this_unit_offset: u64 = 0;
 
     var attrs_buf = std.array_list.Managed(Die.Attr).init(gpa);
@@ -694,7 +827,7 @@ const DebugRangeIterator = struct {
 
     pub fn init(ranges_value: *const FormValue, di: *const Dwarf, endian: Endian, compile_unit: *const CompileUnit) !@This() {
         const section_type = if (compile_unit.version >= 5) Section.Id.debug_rnglists else Section.Id.debug_ranges;
-        const debug_ranges = di.section(section_type) orelse return error.MissingDebugInfo;
+        const debug_ranges = if (di.sections.get(section_type)) |sect| sect.data else |e| return e;
 
         const ranges_offset = switch (ranges_value.*) {
             .sec_offset, .udata => |off| off,
@@ -868,8 +1001,7 @@ fn getAbbrevTable(di: *Dwarf, gpa: Allocator, abbrev_offset: u64) !*const Abbrev
 }
 
 fn parseAbbrevTable(di: *Dwarf, gpa: Allocator, offset: u64) !Abbrev.Table {
-    var fr: Reader = .fixed(di.section(.debug_abbrev).?);
-    fr.seek = cast(usize, offset) orelse return bad();
+    var fr = try di.sections.sectionReader(.debug_abbrev, .fromByteOffset(offset));
 
     var abbrevs: std.ArrayList(Abbrev) = .empty;
     defer {
@@ -942,11 +1074,10 @@ fn parseDie(
 
 /// Ensures that addresses in the returned LineTable are monotonically increasing.
 fn runLineNumberProgram(d: *Dwarf, gpa: Allocator, endian: Endian, compile_unit: *const CompileUnit) !CompileUnit.SrcLocCache {
-    const compile_unit_cwd = try compile_unit.die.getAttrString(d, endian, AT.comp_dir, d.section(.debug_line_str), compile_unit);
+    const compile_unit_cwd = try compile_unit.die.getAttrString(d, endian, AT.comp_dir, compile_unit);
     const line_info_offset = try compile_unit.die.getAttrSecOffset(AT.stmt_list);
 
-    var fr: Reader = .fixed(d.section(.debug_line).?);
-    fr.seek = @intCast(line_info_offset);
+    var fr = try d.sections.sectionReader(.debug_line, line_info_offset);
 
     const unit_header = try readUnitHeader(&fr, endian);
     if (unit_header.unit_length == 0) return missing();
@@ -1036,7 +1167,7 @@ fn runLineNumberProgram(d: *Dwarf, gpa: Allocator, endian: Endian, compile_unit:
                 for (dir_ent_fmt_buf[0..directory_entry_format_count]) |ent_fmt| {
                     const form_value = try parseFormValue(&fr, ent_fmt.form_code, unit_header.format, endian, addr_size_bytes, null);
                     switch (ent_fmt.content_type_code) {
-                        DW.LNCT.path => e.path = try form_value.getString(d.*),
+                        DW.LNCT.path => e.path = try form_value.getString(d, endian, unit_header.format),
                         DW.LNCT.directory_index => e.dir_index = try form_value.getUInt(u32),
                         DW.LNCT.timestamp => e.mtime = try form_value.getUInt(u64),
                         DW.LNCT.size => e.size = try form_value.getUInt(u64),
@@ -1068,7 +1199,7 @@ fn runLineNumberProgram(d: *Dwarf, gpa: Allocator, endian: Endian, compile_unit:
             for (file_ent_fmt_buf[0..file_name_entry_format_count]) |ent_fmt| {
                 const form_value = try parseFormValue(&fr, ent_fmt.form_code, unit_header.format, endian, addr_size_bytes, null);
                 switch (ent_fmt.content_type_code) {
-                    DW.LNCT.path => e.path = try form_value.getString(d.*),
+                    DW.LNCT.path => e.path = try form_value.getString(d, endian, unit_header.format),
                     DW.LNCT.directory_index => e.dir_index = try form_value.getUInt(u32),
                     DW.LNCT.timestamp => e.mtime = try form_value.getUInt(u64),
                     DW.LNCT.size => e.size = try form_value.getUInt(u64),
@@ -1088,7 +1219,7 @@ fn runLineNumberProgram(d: *Dwarf, gpa: Allocator, endian: Endian, compile_unit:
 
     fr.seek = @intCast(prog_start_offset);
 
-    const next_unit_pos = line_info_offset + next_offset;
+    const next_unit_pos = line_info_offset.toByteOffset() + next_offset;
 
     while (fr.seek < next_unit_pos) {
         const opcode = try fr.takeByte();
@@ -1236,38 +1367,8 @@ pub fn getLineNumberInfo(
     };
 }
 
-fn getString(di: Dwarf, offset: u64) ![:0]const u8 {
-    return getStringGeneric(di.section(.debug_str), offset);
-}
-
-fn getLineString(di: Dwarf, offset: u64) ![:0]const u8 {
-    return getStringGeneric(di.section(.debug_line_str), offset);
-}
-
-fn readDebugAddr(di: Dwarf, endian: Endian, compile_unit: *const CompileUnit, index: u64) !u64 {
-    const debug_addr = di.section(.debug_addr) orelse return bad();
-
-    // addr_base points to the first item after the header, however we
-    // need to read the header to know the size of each item. Empirically,
-    // it may disagree with is_64 on the compile unit.
-    // The header is 8 or 12 bytes depending on is_64.
-    if (compile_unit.addr_base < 8) return bad();
-
-    const version = mem.readInt(u16, debug_addr[compile_unit.addr_base - 4 ..][0..2], endian);
-    if (version != 5) return bad();
-
-    const addr_size = debug_addr[compile_unit.addr_base - 2];
-    const seg_size = debug_addr[compile_unit.addr_base - 1];
-
-    const byte_offset = compile_unit.addr_base + (addr_size + seg_size) * index;
-    if (byte_offset + addr_size > debug_addr.len) return bad();
-    return switch (addr_size) {
-        1 => debug_addr[@intCast(byte_offset)],
-        2 => mem.readInt(u16, debug_addr[@intCast(byte_offset)..][0..2], endian),
-        4 => mem.readInt(u32, debug_addr[@intCast(byte_offset)..][0..4], endian),
-        8 => mem.readInt(u64, debug_addr[@intCast(byte_offset)..][0..8], endian),
-        else => bad(),
-    };
+fn readDebugAddr(di: *const Dwarf, endian: Endian, compile_unit: *const CompileUnit, index: u64) !u64 {
+    return di.sections.readDebugAddr(.fromByteOffset(compile_unit.addr_base), index, endian);
 }
 
 fn parseFormValue(
@@ -1538,15 +1639,6 @@ pub fn missing() error{MissingDebugInfo} {
     return error.MissingDebugInfo;
 }
 
-fn getStringGeneric(opt_str: ?[]const u8, offset: u64) ![:0]const u8 {
-    const str = opt_str orelse return bad();
-    if (offset > str.len) return bad();
-    const casted_offset = cast(usize, offset) orelse return bad();
-    // Valid strings always have a terminating zero byte
-    const last = std.mem.findScalarPos(u8, str, casted_offset, 0) orelse return bad();
-    return str[casted_offset..last :0];
-}
-
 pub fn getSymbols(
     di: *Dwarf,
     symbol_allocator: Allocator,
@@ -1566,8 +1658,11 @@ pub fn getSymbols(
     };
     try symbols.append(symbol_allocator, .{
         .name = di.getSymbolName(address),
-        .compile_unit_name = compile_unit.die.getAttrString(di, endian, std.dwarf.AT.name, di.section(.debug_str), compile_unit) catch |err| switch (err) {
-            error.MissingDebugInfo, error.InvalidDebugInfo => null,
+        .compile_unit_name = compile_unit.die.getAttrString(di, endian, std.dwarf.AT.name, compile_unit) catch |err| switch (err) {
+            error.MissingDebugInfo => null,
+            error.InvalidDebugInfo => null,
+            error.Overflow => null,
+            error.EndOfStream => null,
         },
         .source_location = di.getLineNumberInfo(gpa, text_arena, endian, compile_unit, address) catch |err| switch (err) {
             error.MissingDebugInfo, error.InvalidDebugInfo => null,

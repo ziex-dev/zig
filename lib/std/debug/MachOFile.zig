@@ -524,7 +524,7 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
         return error.MissingDebugInfo;
     }
 
-    var dwarf: Dwarf = .{ .sections = sections };
+    var dwarf: Dwarf = .{ .sections = .init(sections) };
     errdefer dwarf.deinit(gpa);
     dwarf.open(gpa, .little) catch |err| switch (err) {
         error.InvalidDebugInfo,
