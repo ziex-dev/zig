@@ -463,6 +463,82 @@ pub const FormValue = union(enum) {
     }
 };
 
+const DieRef = struct {
+    cu: *const CompileUnit,
+    offset: Section.Offset,
+};
+
+/// Get the section-relative offset, along with its containing compile unit, for the
+/// reference-class form value `fv`. The returned offset points to a DIE in the
+/// .debug_info section which might belong to a different compile unit. The parent compile
+/// unit is required to be able to parse the referenced DIE.
+fn getDieRef(di: *const Dwarf, cu: *const CompileUnit, fv: FormValue) !DieRef {
+    return switch (fv) {
+        .ref => |unit_offset| if (unit_offset < cu.header.unit_length) .{
+            .cu = cu,
+            .offset = cu.header.offset.add(unit_offset),
+        } else bad(),
+        .ref_addr => |addr| {
+            // DW_FORM_ref_addr is an offset into the .debug_info section that points to a
+            // DIE, which is not necessarily contained within the compilation unit that
+            // holds the ref attribute.
+            for (di.compile_unit_list.items) |*other_cu| {
+                const other_cu_start = other_cu.header.offset.toByteOffset();
+                if (other_cu_start <= addr and addr < other_cu_start + other_cu.header.unit_length) {
+                    return .{ .cu = other_cu, .offset = .fromByteOffset(addr) };
+                }
+            }
+            return missing();
+        },
+        else => bad(),
+    };
+}
+
+fn getNameAttr(
+    di: *Dwarf,
+    endian: Endian,
+    gpa: Allocator,
+    source_table: *const Abbrev.Table,
+    source_cu: *const CompileUnit,
+    source_die: Die,
+    attrs_buf: []Die.Attr,
+) !?[]const u8 {
+    var curr_table = source_table;
+    var curr_cu = source_cu;
+    var curr_die = source_die;
+    // Prevent endless loops
+    repeat: for (0..3) |_| {
+        for (curr_die.attrs) |*attr| switch (attr.id) {
+            AT.name => {
+                return try di.sections.getString(
+                    attr.value,
+                    endian,
+                    .fromByteOffset(curr_cu.str_offsets_base),
+                    curr_cu.header.format,
+                );
+            },
+            AT.abstract_origin, AT.specification => {
+                const ref = try getDieRef(di, curr_cu, attr.value);
+                curr_cu = ref.cu;
+                curr_table = try di.getAbbrevTable(gpa, curr_cu.header.debug_abbrev_offset.toByteOffset());
+                var reader = try di.sections.sectionReader(.debug_info, ref.offset);
+                // Follow the DIE it points to and repeat
+                curr_die = try parseDie(
+                    &reader,
+                    attrs_buf,
+                    curr_table,
+                    curr_cu.header.format,
+                    endian,
+                    curr_cu.header.address_size,
+                ) orelse return bad();
+                continue :repeat;
+            },
+            else => {},
+        } else break :repeat;
+    }
+    return null;
+}
+
 pub const Die = struct {
     tag_id: u64,
     has_children: bool,
@@ -499,15 +575,6 @@ pub const Die = struct {
     fn getAttrSecOffset(self: *const Die, id: u64) !Section.Offset {
         const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
         return form_value.getSecOffset();
-    }
-
-    fn getAttrRef(self: *const Die, id: u64, unit_offset: u64, unit_len: u64) !Section.Offset {
-        const form_value = self.getAttr(id) orelse return error.MissingDebugInfo;
-        return switch (form_value.*) {
-            .ref => |offset| if (offset < unit_len) .fromByteOffset(unit_offset + offset) else bad(),
-            .ref_addr => |addr| .fromByteOffset(addr),
-            else => bad(),
-        };
     }
 
     pub fn getAttrString(
@@ -638,58 +705,7 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                 // We skipped the compile unit's die
                 DW.TAG.compile_unit => return bad(),
                 DW.TAG.subprogram, DW.TAG.inlined_subroutine, DW.TAG.subroutine, DW.TAG.entry_point => {
-                    const fn_name = x: {
-                        var this_die_obj = die_obj;
-                        // Prevent endless loops
-                        for (0..3) |_| {
-                            if (this_die_obj.getAttr(AT.name)) |_| {
-                                break :x try this_die_obj.getAttrString(di, endian, AT.name, &compile_unit);
-                            } else if (this_die_obj.getAttr(AT.abstract_origin)) |_| {
-                                const after_die_offset = fr.seek;
-                                defer fr.seek = after_die_offset;
-
-                                // Follow the DIE it points to and repeat
-                                const ref_offset = try this_die_obj.getAttrRef(
-                                    AT.abstract_origin,
-                                    unit_header.offset.toByteOffset(),
-                                    unit_header.unit_length,
-                                );
-                                fr.seek = try ref_offset.toByteOffsetUsize();
-                                this_die_obj = (try parseDie(
-                                    &fr,
-                                    attrs_bufs[2],
-                                    abbrev_table, // wrong abbrev table for different cu
-                                    unit_header.format,
-                                    endian,
-                                    unit_header.address_size,
-                                )) orelse return bad();
-                            } else if (this_die_obj.getAttr(AT.specification)) |_| {
-                                const after_die_offset = fr.seek;
-                                defer fr.seek = after_die_offset;
-
-                                // Follow the DIE it points to and repeat
-                                const ref_offset = try this_die_obj.getAttrRef(
-                                    AT.specification,
-                                    unit_header.offset.toByteOffset(),
-                                    unit_header.unit_length,
-                                );
-                                fr.seek = try ref_offset.toByteOffsetUsize();
-                                this_die_obj = (try parseDie(
-                                    &fr,
-                                    attrs_bufs[2],
-                                    abbrev_table, // wrong abbrev table for different cu
-                                    unit_header.format,
-                                    endian,
-                                    unit_header.address_size,
-                                )) orelse return bad();
-                            } else {
-                                break :x null;
-                            }
-                        }
-
-                        break :x null;
-                    };
-
+                    const fn_name = try getNameAttr(di, endian, gpa, abbrev_table, &compile_unit, die_obj, attrs_bufs[2]);
                     var range_added = if (die_obj.getAttrAddr(di, endian, AT.low_pc, &compile_unit)) |low_pc| blk: {
                         if (die_obj.getAttr(AT.high_pc)) |high_pc_value| {
                             const pc_end = switch (high_pc_value.*) {
@@ -1442,6 +1458,10 @@ fn parseFormValue(
         FORM.ref8 => .{ .ref = try r.takeInt(u64, endian) },
         FORM.ref_udata => .{ .ref = try r.takeLeb128(u64) },
 
+        // NOTE: this is *wrong* for DWARFv2, which specifies ref_addr as a
+        // system-address-sized value. However, it appears that this may have been the
+        // original intention even in v2, and there is some evidence that DWARF emitters
+        // use format-sized values here even when producing v2.
         FORM.ref_addr => .{ .ref_addr = try readFormatSizedInt(r, format, endian) },
         FORM.ref_sig8 => .{ .ref = try r.takeInt(u64, endian) },
 
