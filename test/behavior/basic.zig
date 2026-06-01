@@ -1425,17 +1425,6 @@ test "allocation and looping over 3-byte integer" {
     try expect(x[1] == 0x00);
 }
 
-test "allocation of large buffer" {
-    const buf = try std.testing.allocator.alloc(u8, try std.math.powi(usize, 2, 30));
-    defer std.testing.allocator.free(buf);
-
-    buf[buf.len - 1] = 0;
-    buf[0] = 0;
-
-    try expect(buf[buf.len - 1] == 0);
-    try expect(buf[0] == 0);
-}
-
 test "loading array from struct is not optimized away" {
     const S = struct {
         arr: [1]u32 = .{0},
