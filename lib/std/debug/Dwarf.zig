@@ -371,7 +371,9 @@ pub const Abbrev = struct {
 
 pub const CompileUnit = struct {
     header: UnitHeader,
+    zig_padding_abbrev_code: u7,
     die: Die,
+    cu_die_end: Section.Offset,
     pc_range: ?PcRange,
 
     str_offsets_base: usize,
@@ -534,8 +536,8 @@ pub const OpenError = ScanError;
 /// the `Dwarf` fields before calling. `binary_mem` is the raw bytes of the
 /// main binary file (not the secondary debug info file).
 pub fn open(d: *Dwarf, gpa: Allocator, endian: Endian) OpenError!void {
-    try d.scanAllFunctions(gpa, endian);
     try d.scanAllCompileUnits(gpa, endian);
+    try d.scanAllFunctions(gpa, endian);
 }
 
 const PcRange = struct {
@@ -602,46 +604,25 @@ pub const ScanError = error{
 
 fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
     const debug_info_sect = try di.sections.get(.debug_info);
-    var unit_it: UnitHeader.Iterator = .init(try debug_info_sect.reader(.zero));
 
-    while (try unit_it.next(endian)) |unit_header| {
+    for (di.compile_unit_list.items) |compile_unit| {
+        const unit_header = &compile_unit.header;
         const abbrev_table = try di.getAbbrevTable(gpa, unit_header.debug_abbrev_offset.toByteOffset());
 
         var max_attrs: usize = 0;
-        var zig_padding_abbrev_code: u7 = 0;
         for (abbrev_table.abbrevs) |abbrev| {
             max_attrs = @max(max_attrs, abbrev.attrs.len);
-            if (cast(u7, abbrev.code)) |code| {
-                if (abbrev.tag_id == DW.TAG.ZIG_padding and
-                    !abbrev.has_children and
-                    abbrev.attrs.len == 0)
-                {
-                    zig_padding_abbrev_code = code;
-                }
-            }
         }
         const attrs_buf = try gpa.alloc(Die.Attr, max_attrs * 3);
         defer gpa.free(attrs_buf);
         var attrs_bufs: [3][]Die.Attr = undefined;
         for (&attrs_bufs, 0..) |*buf, index| buf.* = attrs_buf[index * max_attrs ..][0..max_attrs];
 
-        var compile_unit: CompileUnit = .{
-            .header = unit_header,
-            .die = undefined,
-            .pc_range = null,
-
-            .str_offsets_base = 0,
-            .addr_base = 0,
-            .rnglists_base = 0,
-            .loclists_base = 0,
-            .frame_base = null,
-            .src_loc_cache = null,
-        };
-
         var fr = try unit_header.dataReader(debug_info_sect);
+        fr.seek = try compile_unit.cu_die_end.toByteOffsetUsize();
         while (true) {
             fr.seek = std.mem.findNonePos(u8, fr.buffer, fr.seek, &.{
-                zig_padding_abbrev_code, 0,
+                compile_unit.zig_padding_abbrev_code, 0,
             }) orelse fr.end;
             if (fr.seek >= fr.end) break;
             var die_obj = (try parseDie(
@@ -654,17 +635,8 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
             )) orelse continue;
 
             switch (die_obj.tag_id) {
-                DW.TAG.compile_unit => {
-                    compile_unit.die = die_obj;
-                    compile_unit.die.attrs = attrs_bufs[1][0..die_obj.attrs.len];
-                    @memcpy(compile_unit.die.attrs, die_obj.attrs);
-
-                    compile_unit.str_offsets_base = if (die_obj.getAttr(AT.str_offsets_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.addr_base = if (die_obj.getAttr(AT.addr_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.rnglists_base = if (die_obj.getAttr(AT.rnglists_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.loclists_base = if (die_obj.getAttr(AT.loclists_base)) |fv| try fv.getUInt(usize) else 0;
-                    compile_unit.frame_base = die_obj.getAttr(AT.frame_base);
-                },
+                // We skipped the compile unit's die
+                DW.TAG.compile_unit => return bad(),
                 DW.TAG.subprogram, DW.TAG.inlined_subroutine, DW.TAG.subroutine, DW.TAG.entry_point => {
                     const fn_name = x: {
                         var this_die_obj = die_obj;
@@ -785,8 +757,17 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
         const abbrev_table = try di.getAbbrevTable(gpa, unit_header.debug_abbrev_offset.toByteOffset());
 
         var max_attrs: usize = 0;
+        var zig_padding_abbrev_code: u7 = 0;
         for (abbrev_table.abbrevs) |abbrev| {
             max_attrs = @max(max_attrs, abbrev.attrs.len);
+            if (cast(u7, abbrev.code)) |code| {
+                if (abbrev.tag_id == DW.TAG.ZIG_padding and
+                    !abbrev.has_children and
+                    abbrev.attrs.len == 0)
+                {
+                    zig_padding_abbrev_code = code;
+                }
+            }
         }
         try attrs_buf.resize(max_attrs);
 
@@ -801,14 +782,18 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
             unit_header.address_size,
         )) orelse return bad();
 
+        const after_die_offset = fr.seek;
+
         if (compile_unit_die.tag_id != DW.TAG.compile_unit) return bad();
 
         compile_unit_die.attrs = try gpa.dupe(Die.Attr, compile_unit_die.attrs);
 
         var compile_unit: CompileUnit = .{
             .header = unit_header,
+            .zig_padding_abbrev_code = zig_padding_abbrev_code,
             .pc_range = null,
             .die = compile_unit_die,
+            .cu_die_end = .fromByteOffset(after_die_offset),
             .str_offsets_base = if (compile_unit_die.getAttr(AT.str_offsets_base)) |fv| try fv.getUInt(usize) else 0,
             .addr_base = if (compile_unit_die.getAttr(AT.addr_base)) |fv| try fv.getUInt(usize) else 0,
             .rnglists_base = if (compile_unit_die.getAttr(AT.rnglists_base)) |fv| try fv.getUInt(usize) else 0,
