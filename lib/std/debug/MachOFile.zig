@@ -3,6 +3,7 @@ symbols: []const Symbol,
 strings: []const u8,
 text_vmaddr: u64,
 uuid: ?Uuid,
+adjacent_dsym: ?DsymFile,
 
 /// Key is index into `strings` of the file path.
 ofiles: std.AutoArrayHashMapUnmanaged(u32, Error!OFile),
@@ -17,6 +18,7 @@ pub const Error = error{
 };
 
 pub fn deinit(mf: *MachOFile, gpa: Allocator) void {
+    if (mf.adjacent_dsym) |*dsym| dsym.deinit(gpa);
     for (mf.ofiles.values()) |*maybe_of| {
         const of = &(maybe_of.* catch continue);
         posix.munmap(of.mapped_memory);
@@ -218,6 +220,11 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
     // This sort is so that we can binary search later.
     mem.sort(Symbol, symbols_slice, {}, Symbol.addressLessThan);
 
+    const adjacent_dsym = if (uuid) |expected_uuid|
+        try loadAdjacentDsym(gpa, io, path, arch, expected_uuid)
+    else
+        null;
+
     return .{
         .mapped_memory = all_mapped_memory,
         .symbols = symbols_slice,
@@ -225,9 +232,15 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
         .ofiles = .empty,
         .text_vmaddr = text_vmaddr,
         .uuid = uuid,
+        .adjacent_dsym = adjacent_dsym,
     };
 }
+
 pub fn getDwarfForAddress(mf: *MachOFile, gpa: Allocator, io: Io, vaddr: u64) !struct { *Dwarf, u64 } {
+    if (mf.adjacent_dsym) |*dsym| {
+        return .{ &dsym.dwarf, vaddr };
+    }
+
     const symbol = Symbol.find(mf.symbols, vaddr) orelse return error.MissingDebugInfo;
 
     if (symbol.ofile == Symbol.unknown_ofile) return error.MissingDebugInfo;
@@ -288,6 +301,16 @@ const OFile = struct {
             return mem.eql(u8, a_sym_name, b_sym_name);
         }
     };
+};
+
+const DsymFile = struct {
+    mapped_memory: []align(std.heap.page_size_min) const u8,
+    dwarf: Dwarf,
+
+    fn deinit(df: *DsymFile, gpa: Allocator) void {
+        df.dwarf.deinit(gpa);
+        posix.munmap(df.mapped_memory);
+    }
 };
 
 const Symbol = struct {
@@ -358,6 +381,74 @@ fn appendStabSymbol(
     } else {
         symbols.items[gop.index] = last_sym;
     }
+}
+
+fn loadAdjacentDsym(
+    gpa: Allocator,
+    io: Io,
+    binary_path: []const u8,
+    arch: std.Target.Cpu.Arch,
+    uuid: Uuid,
+) Error!?DsymFile {
+    const s = std.fs.path.sep_str;
+    const dsym_path = try std.fmt.allocPrint(
+        gpa,
+        "{s}.dSYM" ++ s ++ "Contents" ++ s ++ "Resources" ++ s ++ "DWARF" ++ s ++ "{s}",
+        .{ binary_path, std.fs.path.basename(binary_path) },
+    );
+    defer gpa.free(dsym_path);
+    return loadDsymFile(gpa, io, dsym_path, arch, uuid) catch |err| switch (err) {
+        error.MissingDebugInfo,
+        error.InvalidMachO,
+        error.InvalidDwarf,
+        error.UnsupportedDebugInfo,
+        error.ReadFailed,
+        => null,
+        error.OutOfMemory => |e| return e,
+    };
+}
+
+fn loadDsymFile(
+    gpa: Allocator,
+    io: Io,
+    path: []const u8,
+    arch: std.Target.Cpu.Arch,
+    expected_uuid: Uuid,
+) Error!DsymFile {
+    const all_mapped_memory = try mapDebugInfoFile(io, path);
+    errdefer posix.munmap(all_mapped_memory);
+    const mapped_macho = try selectMachOSlice(all_mapped_memory, arch);
+
+    var r: Io.Reader = .fixed(mapped_macho);
+    const hdr = r.takeStruct(macho.mach_header_64, .little) catch |err| switch (err) {
+        error.ReadFailed => unreachable,
+        error.EndOfStream => return error.InvalidMachO,
+    };
+    if (hdr.magic != macho.MH_MAGIC_64) return error.InvalidMachO;
+    if (hdr.filetype != macho.MH_DSYM) return error.MissingDebugInfo;
+
+    var uuid: ?Uuid = null;
+    var dwarf_sections: ?[]align(1) const macho.section_64 = null;
+
+    var it: macho.LoadCommandIterator = try .init(&hdr, mapped_macho[@sizeOf(macho.mach_header_64)..]);
+    while (try it.next()) |lc| switch (lc.hdr.cmd) {
+        .SEGMENT_64 => if (lc.cast(macho.segment_command_64)) |seg_cmd| {
+            if (!mem.eql(u8, "__DWARF", seg_cmd.segName())) continue;
+            dwarf_sections = lc.getSections();
+        },
+        .UUID => if (lc.cast(macho.uuid_command)) |uuid_cmd| {
+            uuid = uuid_cmd.uuid;
+        },
+        else => {},
+    };
+
+    const actual_uuid = uuid orelse return error.MissingDebugInfo;
+    if (!mem.eql(u8, &actual_uuid, &expected_uuid)) return error.MissingDebugInfo;
+
+    return .{
+        .mapped_memory = all_mapped_memory,
+        .dwarf = try loadDwarfFromSections(gpa, mapped_macho, dwarf_sections orelse return error.MissingDebugInfo),
+    };
 }
 
 fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
@@ -463,8 +554,24 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
         gop.key_ptr.* = @intCast(sym_index);
     }
 
+    const dwarf = try loadDwarfFromSections(gpa, mapped_ofile, seg_cmd.getSections());
+
+    return .{
+        .mapped_memory = all_mapped_memory,
+        .dwarf = dwarf,
+        .strtab = strtab,
+        .symtab_raw = symtab_raw,
+        .symbols_by_name = symbols_by_name.move(),
+    };
+}
+
+fn loadDwarfFromSections(
+    gpa: Allocator,
+    mapped_macho: []const u8,
+    section_headers: []align(1) const macho.section_64,
+) !Dwarf {
     var sections: Dwarf.SectionArray = @splat(null);
-    for (seg_cmd.getSections()) |sect_raw| {
+    for (section_headers) |sect_raw| {
         var sect = sect_raw;
         if (builtin.cpu.arch.endian() != .little) std.mem.byteSwapAllFields(macho.section_64, &sect);
 
@@ -474,8 +581,8 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
             if (mem.eql(u8, "__" ++ section_name, sect.sectName())) break i;
         } else continue;
 
-        if (mapped_ofile.len < sect.offset + sect.size) return error.InvalidMachO;
-        const section_bytes = mapped_ofile[sect.offset..][0..sect.size];
+        if (mapped_macho.len < sect.offset + sect.size) return error.InvalidMachO;
+        const section_bytes = mapped_macho[sect.offset..][0..sect.size];
         sections[section_index] = .{
             .data = section_bytes,
             .owned = false,
@@ -505,13 +612,7 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
         => |e| return e,
     };
 
-    return .{
-        .mapped_memory = all_mapped_memory,
-        .dwarf = dwarf,
-        .strtab = strtab,
-        .symtab_raw = symtab_raw,
-        .symbols_by_name = symbols_by_name.move(),
-    };
+    return dwarf;
 }
 
 fn selectMachOSlice(
