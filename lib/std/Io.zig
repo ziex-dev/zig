@@ -1738,7 +1738,9 @@ pub const Condition = struct {
                         .waiters = prev_state.waiters - 1,
                         .signals = prev_state.signals - 1,
                     }, .acquire, .monotonic) orelse {
-                        // We successfully consumed a signal.
+                        // We successfully consumed a signal. If the futex wait was
+                        // canceled, preserve that cancellation state.
+                        result catch io.recancel();
                         return;
                     };
                 }
