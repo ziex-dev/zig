@@ -2,6 +2,7 @@ mapped_memory: []align(std.heap.page_size_min) const u8,
 symbols: []const Symbol,
 strings: []const u8,
 text_vmaddr: u64,
+uuid: ?Uuid,
 
 /// Key is index into `strings` of the file path.
 ofiles: std.AutoArrayHashMapUnmanaged(u32, Error!OFile),
@@ -88,21 +89,26 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
     if (hdr.magic != macho.MH_MAGIC_64)
         return error.InvalidMachO;
 
-    const symtab: macho.symtab_command, const text_vmaddr: u64 = lcs: {
+    const symtab: macho.symtab_command, const text_vmaddr: u64, const uuid: ?Uuid = lcs: {
         var it: macho.LoadCommandIterator = try .init(&hdr, mapped_macho[@sizeOf(macho.mach_header_64)..]);
         var symtab: ?macho.symtab_command = null;
         var text_vmaddr: ?u64 = null;
+        var uuid: ?Uuid = null;
         while (try it.next()) |cmd| switch (cmd.hdr.cmd) {
             .SYMTAB => symtab = cmd.cast(macho.symtab_command) orelse return error.InvalidMachO,
             .SEGMENT_64 => if (cmd.cast(macho.segment_command_64)) |seg_cmd| {
                 if (!mem.eql(u8, seg_cmd.segName(), "__TEXT")) continue;
                 text_vmaddr = seg_cmd.vmaddr;
             },
+            .UUID => if (cmd.cast(macho.uuid_command)) |uuid_cmd| {
+                uuid = uuid_cmd.uuid;
+            },
             else => {},
         };
         break :lcs .{
             symtab orelse return error.MissingDebugInfo,
             text_vmaddr orelse return error.MissingDebugInfo,
+            uuid,
         };
     };
 
@@ -259,6 +265,7 @@ pub fn load(gpa: Allocator, io: Io, path: []const u8, arch: std.Target.Cpu.Arch)
         .strings = strings,
         .ofiles = .empty,
         .text_vmaddr = text_vmaddr,
+        .uuid = uuid,
     };
 }
 pub fn getDwarfForAddress(mf: *MachOFile, gpa: Allocator, io: Io, vaddr: u64) !struct { *Dwarf, u64 } {
@@ -583,4 +590,5 @@ const testing = std.testing;
 
 const builtin = @import("builtin");
 
+const Uuid = @FieldType(macho.uuid_command, "uuid");
 const MachOFile = @This();
