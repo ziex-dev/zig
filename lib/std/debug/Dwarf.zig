@@ -226,6 +226,36 @@ pub const Sections = struct {
             else => bad(),
         };
     }
+
+    pub fn getRangesOffset(
+        s: *const Sections,
+        fv: FormValue,
+        endian: Endian,
+        rnglists_base: ?Section.Offset,
+        format: Format,
+    ) !Section.Offset {
+        return switch (fv) {
+            .udata => |i| .fromByteOffset(i),
+            .sec_offset => |offset| .fromByteOffset(offset),
+            .rnglistx => |index| {
+                const base = rnglists_base orelse return missing();
+                const offset = offset: {
+                    const elem_size: usize = switch (format) {
+                        .@"32" => 4,
+                        .@"64" => 8,
+                    };
+                    var reader = try s.sectionReader(.debug_rnglists, base.add(@as(u64, elem_size) * index));
+                    const offset = reader.takeVarInt(u64, endian, elem_size) catch |err| switch (err) {
+                        error.EndOfStream => return bad(),
+                        error.ReadFailed => unreachable,
+                    };
+                    break :offset offset;
+                };
+                return base.add(offset);
+            },
+            else => bad(),
+        };
+    }
 };
 
 pub const UnitHeader = struct {
@@ -834,26 +864,12 @@ const DebugRangeIterator = struct {
         const section_type = if (compile_unit.header.version >= 5) Section.Id.debug_rnglists else Section.Id.debug_ranges;
         const debug_ranges = if (di.sections.get(section_type)) |sect| sect.data else |e| return e;
 
-        const ranges_offset = switch (ranges_value.*) {
-            .sec_offset, .udata => |off| off,
-            .rnglistx => |idx| off: {
-                switch (compile_unit.header.format) {
-                    .@"32" => {
-                        const offset_loc = compile_unit.rnglists_base + 4 * idx;
-                        if (offset_loc + 4 > debug_ranges.len) return bad();
-                        const offset = mem.readInt(u32, debug_ranges[@intCast(offset_loc)..][0..4], endian);
-                        break :off compile_unit.rnglists_base + offset;
-                    },
-                    .@"64" => {
-                        const offset_loc = compile_unit.rnglists_base + 8 * idx;
-                        if (offset_loc + 8 > debug_ranges.len) return bad();
-                        const offset = mem.readInt(u64, debug_ranges[@intCast(offset_loc)..][0..8], endian);
-                        break :off compile_unit.rnglists_base + offset;
-                    },
-                }
-            },
-            else => return bad(),
-        };
+        const ranges_offset = try di.sections.getRangesOffset(
+            ranges_value.*,
+            endian,
+            .fromByteOffset(compile_unit.rnglists_base),
+            compile_unit.header.format,
+        );
 
         // All the addresses in the list are relative to the value
         // specified by DW_AT.low_pc or to some other value encoded
@@ -865,7 +881,7 @@ const DebugRangeIterator = struct {
         };
 
         var fr: Reader = .fixed(debug_ranges);
-        fr.seek = cast(usize, ranges_offset) orelse return bad();
+        fr.seek = try ranges_offset.toByteOffsetUsize();
 
         return .{
             .base_address = base_address,
