@@ -504,8 +504,15 @@ fn loadOFile(gpa: Allocator, io: Io, o_file_name: []const u8) !OFile {
 
         if (!std.mem.eql(u8, "__DWARF", sect.segName())) continue;
 
-        const section_index: usize = inline for (@typeInfo(Dwarf.Section.Id).@"enum".field_names, 0..) |section_name, i| {
-            if (mem.eql(u8, "__" ++ section_name, sect.sectName())) break i;
+        const section_index: usize = inline for (@typeInfo(Dwarf.Section.Id).@"enum".field_names, 0..) |field_name, i| {
+            const section_name_long = "__" ++ field_name;
+            // __debug_str_offsets does not fit in the `sectname` field, and so its name
+            // is just __debug_str_offs, cut-off at the name buffer len. Fix this by only
+            // comparing up to the first 16 bytes. Note that `sectname`s are only
+            // nul-terminated if they are less than `sectname.len` bytes long.
+            const max_len = sect.sectname.len;
+            const section_name = section_name_long[0..@min(section_name_long.len, max_len)];
+            if (mem.eql(u8, section_name, sect.sectName())) break i;
         } else continue;
 
         if (mapped_ofile.len < sect.offset + sect.size) return error.InvalidMachO;
