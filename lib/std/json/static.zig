@@ -500,7 +500,11 @@ pub fn innerParse(
                             }
                             if (ptrInfo.attrs.@"const") {
                                 switch (try source.nextAllocMax(allocator, options.allocate.?, options.max_value_len.?)) {
-                                    inline .string, .allocated_string => |slice| return slice,
+                                    .string => |slice| {
+                                        if (slice.len > options.max_value_len.?) return error.ValueTooLong;
+                                        return slice;
+                                    },
+                                    .allocated_string => |slice| return slice,
                                     else => unreachable,
                                 }
                             } else {

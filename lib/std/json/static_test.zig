@@ -772,19 +772,17 @@ test "parseFromTokenSource" {
 }
 
 test "max_value_len" {
-    try testing.expectError(error.ValueTooLong, parseFromSlice([]u8, testing.allocator, "\"0123456789\"", .{ .max_value_len = 5 }));
+    try testMaxValueLen([]u8);
+    try testMaxValueLen([:0]u8);
+    try testMaxValueLen([]const u8);
+    try testMaxValueLen([:0]const u8);
 }
 
-test "max_value_len sentinel string" {
-    const json_string =
-        "\"" ++ "a" ** (std.json.default_max_value_len + 1) ++
-        "\"";
-    const parsed = try parseFromSlice([:0]const u8, testing.allocator, json_string, .{
-        .max_value_len = std.json.default_max_value_len + 1,
-    });
+fn testMaxValueLen(comptime T: type) !void {
+    const parsed = try parseFromSlice(T, testing.allocator, "\"12345\"", .{ .max_value_len = 5 });
     defer parsed.deinit();
-
-    try testing.expectEqual(parsed.value.len, std.json.default_max_value_len + 1);
+    try testing.expectEqualStrings("12345", parsed.value);
+    try testing.expectError(error.ValueTooLong, parseFromSlice(T, testing.allocator, "\"123456\"", .{ .max_value_len = 5 }));
 }
 
 test "parse into vector" {
