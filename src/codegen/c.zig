@@ -1119,7 +1119,7 @@ pub const DeclGen = struct {
                     }
                     try w.writeByte('{');
                     const ai = ty.arrayInfo(zcu);
-                    if (ai.elem_type.eql(.u8, zcu)) {
+                    if (ai.elem_type.eql(.u8)) {
                         var literal: StringLiteral = .init(w, @intCast(ty.arrayLenIncludingSentinel(zcu)));
                         try literal.start();
                         var index: usize = 0;
@@ -1538,7 +1538,7 @@ pub const DeclGen = struct {
                     }
                     try w.writeByte('{');
                     const ai = ty.arrayInfo(zcu);
-                    if (ai.elem_type.eql(.u8, zcu)) {
+                    if (ai.elem_type.eql(.u8)) {
                         var literal: StringLiteral = .init(w, @intCast(ty.arrayLenIncludingSentinel(zcu)));
                         try literal.start();
                         var index: u64 = 0;
@@ -3425,7 +3425,7 @@ fn airStore(f: *Function, inst: Air.Inst.Index, safety: bool) !CValue {
     if (!is_aligned) {
         // For this memcpy to safely work we need the rhs to have the same
         // underlying type as the lhs (i.e. they must both be arrays of the same underlying type).
-        assert(src_ty.eql(.fromInterned(ptr_info.child), zcu));
+        assert(src_ty.eql(.fromInterned(ptr_info.child)));
 
         const v = try Vectorize.start(f, inst, w, ptr_ty);
         try w.writeAll("memcpy((char *)");
