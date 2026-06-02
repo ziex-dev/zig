@@ -41,11 +41,20 @@ pub const backend_can_print = switch (builtin.zig_backend) {
     else => true,
 };
 
+/// Writer to be used by std.testing.print
+pub var output: ?std.Io.File.Writer = null;
+
 fn print(comptime fmt: []const u8, args: anytype) void {
     if (@inComptime()) {
         @compileError(std.fmt.comptimePrint(fmt, args));
     } else if (backend_can_print) {
-        std.debug.print(fmt, args);
+        if (output == null) {
+            var buf: [1024]u8 = undefined;
+            var io_threaded: Io.Threaded = undefined;
+            output = std.Io.File.stderr().writer(io_threaded.io(), &buf);
+        }
+        output.?.interface.print(fmt, args) catch return;
+        defer output.?.flush() catch {};
     }
 }
 
