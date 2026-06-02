@@ -32,6 +32,7 @@ pub const ParseOptions = struct {
     /// The default for `parseFromSlice` or `parseFromTokenSource` with a `*std.json.Scanner` input
     /// is the length of the input slice, which means `error.ValueTooLong` will never be returned.
     /// The default for `parseFromTokenSource` with a `*std.json.Reader` is `std.json.default_max_value_len`.
+    /// Ignored for values that don't need allocation or are not copied (see `allocate`).
     /// Ignored for `parseFromValue` and `parseFromValueLeaky`.
     max_value_len: ?usize = null,
 
@@ -500,11 +501,7 @@ pub fn innerParse(
                             }
                             if (ptrInfo.attrs.@"const") {
                                 switch (try source.nextAllocMax(allocator, options.allocate.?, options.max_value_len.?)) {
-                                    .string => |slice| {
-                                        if (slice.len > options.max_value_len.?) return error.ValueTooLong;
-                                        return slice;
-                                    },
-                                    .allocated_string => |slice| return slice,
+                                    inline .string, .allocated_string => |slice| return slice,
                                     else => unreachable,
                                 }
                             } else {
