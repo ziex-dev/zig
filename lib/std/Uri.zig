@@ -202,6 +202,7 @@ pub const ParseError = error{
     InvalidFormat,
     InvalidPort,
     InvalidHostName,
+    NameTooLong
 };
 
 /// Parses the URI or returns an error. This function is not compliant, but is required to parse
@@ -211,7 +212,6 @@ pub const ParseError = error{
 pub fn parseAfterScheme(scheme: []const u8, text: []const u8) ParseError!Uri {
     var uri: Uri = .{ .scheme = scheme, .path = undefined };
     var i: usize = 0;
-
     if (std.mem.startsWith(u8, text, "//")) a: {
         i = std.mem.findAnyPos(u8, text, 2, &authority_sep) orelse text.len;
         const authority = text[2..i];
@@ -264,7 +264,9 @@ pub fn parseAfterScheme(scheme: []const u8, text: []const u8) ParseError!Uri {
         }
 
         if (start_of_host >= end_of_host) return error.InvalidFormat;
-        uri.host = .{ .percent_encoded = authority[start_of_host..end_of_host] };
+        const host = authority[start_of_host..end_of_host];
+        if (host.len >= HostName.max_len) return error.NameTooLong;
+        uri.host = .{ .percent_encoded = host };
     }
 
     const path_start = i;
@@ -592,6 +594,17 @@ test "with port" {
 
 test "should fail gracefully" {
     try std.testing.expectError(error.InvalidFormat, parse("foobar://"));
+}
+
+test "parse name too long" {
+    const allocator = std.testing.allocator;
+    var buf: [300]u8 = undefined;
+    @memset(&buf, 'Z');
+
+    const text = try std.fmt.allocPrint(allocator, "http://{s}", .{buf[0..300]});
+    defer allocator.free(text);
+
+    try std.testing.expectError(error.NameTooLong, parse(text));
 }
 
 test "file" {
