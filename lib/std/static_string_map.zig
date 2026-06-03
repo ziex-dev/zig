@@ -135,7 +135,8 @@ pub fn StaticStringMapWithEql(
             allocator.free(self.len_indexes[0..self.len_indexes_len]);
             allocator.free(self.kvs.keys[0..self.kvs.len]);
             allocator.free(self.kvs.values[0..self.kvs.len]);
-            allocator.destroy(self.kvs);
+            if (self.len_indexes_len > 0)
+                allocator.destroy(self.kvs);
         }
 
         const SortContext = struct {
@@ -401,6 +402,11 @@ test "empty" {
 
     const m4 = try StaticStringMapWithEql(usize, eqlAsciiIgnoreCase).init(.{}, test_alloc);
     try testing.expect(null == m4.get("anything"));
+
+    const gpa = std.testing.allocator;
+    var map = try std.StaticStringMap([]const u8).init(.{}, gpa);
+    defer map.deinit(gpa);
+    try std.testing.expect(map.get("anything") == null);
 }
 
 test "redundant entries" {
