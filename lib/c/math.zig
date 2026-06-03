@@ -282,15 +282,15 @@ fn lrintl(x: c_longdouble) callconv(.c) c_long {
 }
 
 fn lround(x: f64) callconv(.c) c_long {
-    return @intFromFloat(@round(x));
+    return @round(x);
 }
 
 fn lroundf(x: f32) callconv(.c) c_long {
-    return @intFromFloat(@round(x));
+    return @round(x);
 }
 
 fn lroundl(x: c_longdouble) callconv(.c) c_long {
-    return @intFromFloat(@round(x));
+    return @round(x);
 }
 
 fn modfGeneric(comptime T: type, x: T, iptr: *T) T {
