@@ -31,7 +31,8 @@ inline _LIBCPP_HIDE_FROM_ABI void* __libcpp_aligned_alloc(std::size_t __alignmen
   return ::_aligned_malloc(__size, __alignment);
 
 // Android only provides aligned_alloc when targeting API 28 or higher.
-#  elif !defined(__ANDROID__) || __ANDROID_API__ >= 28
+// glibc 2.16 introduced aligned_alloc.
+#  elif (!defined(__ANDROID__) || __ANDROID_API__ >= 28) && (!defined(__GLIBC__) || _LIBCPP_GLIBC_PREREQ(2, 16))
   // aligned_alloc() requires that __size is a multiple of __alignment,
   // but for C++ [new.delete.general], only states "if the value of an
   // alignment argument passed to any of these functions is not a valid

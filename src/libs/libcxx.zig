@@ -552,10 +552,4 @@ pub fn addCxxArgs(
             try cflags.append("-D_LIBCPP_ASSERTION_SEMANTIC_DEFAULT=_LIBCPP_ASSERTION_SEMANTIC_ENFORCE");
         },
     }
-    if (target.isGnuLibC()) {
-        // glibc 2.16 introduced aligned_alloc
-        if (target.os.versionRange().gnuLibCVersion().?.order(.{ .major = 2, .minor = 16, .patch = 0 }) == .lt) {
-            try cflags.append("-D_LIBCPP_HAS_LIBRARY_ALIGNED_ALLOCATION=0");
-        }
-    }
 }
