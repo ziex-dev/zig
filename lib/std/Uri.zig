@@ -212,7 +212,7 @@ pub const ParseError = error{
 pub fn parseAfterScheme(scheme: []const u8, text: []const u8) ParseError!Uri {
     var uri: Uri = .{ .scheme = scheme, .path = undefined };
     var i: usize = 0;
-    
+
     if (std.mem.startsWith(u8, text, "//")) a: {
         i = std.mem.findAnyPos(u8, text, 2, &authority_sep) orelse text.len;
         const authority = text[2..i];
