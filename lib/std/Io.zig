@@ -1739,8 +1739,11 @@ pub const Condition = struct {
                         .signals = prev_state.signals - 1,
                     }, .acquire, .monotonic) orelse {
                         // We successfully consumed a signal. If the futex wait was
-                        // canceled, preserve that cancellation state.
-                        result catch io.recancel();
+                        // canceled, forward the signal to the next waiter.
+                        result catch |err| {
+                            cond.signal(io);
+                            return err;
+                        };
                         return;
                     };
                 }
