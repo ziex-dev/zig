@@ -268,6 +268,33 @@ pub const UnitHeader = struct {
     version: u16,
     address_size: u8,
     debug_abbrev_offset: Section.Offset,
+
+    pub fn dataReader(unit: *const UnitHeader, section: Section) !Reader {
+        var reader = try section.reader(unit.offset.add(unit.data_offset));
+        reader.end = try unit.offset.add(unit.unit_length).toByteOffsetUsize();
+        return reader;
+    }
+
+    pub const Iterator = struct {
+        reader: Reader,
+
+        /// `reader` must be a fixed reader whose buffer corresponds to the target
+        /// section's data in full.
+        pub fn init(reader: Reader) Iterator {
+            return .{ .reader = reader };
+        }
+
+        pub fn next(it: *Iterator, endian: Endian) !?UnitHeader {
+            if (it.reader.bufferedLen() == 0) return null;
+            const uh = try readUnitHeader(&it.reader, endian);
+            const end_pos = try uh.offset.add(uh.unit_length).toByteOffsetUsize();
+            if (end_pos > it.reader.end) {
+                return error.EndOfStream;
+            }
+            it.reader.seek = end_pos;
+            return uh;
+        }
+    };
 };
 
 pub fn readUnitHeader(r: *Reader, endian: Endian) !UnitHeader {
@@ -574,14 +601,10 @@ pub const ScanError = error{
 } || InvalidOrMissingError || Allocator.Error;
 
 fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
-    var fr = try di.sections.sectionReader(.debug_info, .zero);
-    var this_unit_offset: u64 = 0;
+    const debug_info_sect = try di.sections.get(.debug_info);
+    var unit_it: UnitHeader.Iterator = .init(try debug_info_sect.reader(.zero));
 
-    while (this_unit_offset < fr.buffer.len) {
-        fr.seek = @intCast(this_unit_offset);
-
-        const unit_header = try readUnitHeader(&fr, endian);
-
+    while (try unit_it.next(endian)) |unit_header| {
         const abbrev_table = try di.getAbbrevTable(gpa, unit_header.debug_abbrev_offset.toByteOffset());
 
         var max_attrs: usize = 0;
@@ -602,8 +625,6 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
         var attrs_bufs: [3][]Die.Attr = undefined;
         for (&attrs_bufs, 0..) |*buf, index| buf.* = attrs_buf[index * max_attrs ..][0..max_attrs];
 
-        const next_unit_pos = this_unit_offset + unit_header.unit_length;
-
         var compile_unit: CompileUnit = .{
             .header = unit_header,
             .die = undefined,
@@ -617,11 +638,12 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
             .src_loc_cache = null,
         };
 
+        var fr = try unit_header.dataReader(debug_info_sect);
         while (true) {
             fr.seek = std.mem.findNonePos(u8, fr.buffer, fr.seek, &.{
                 zig_padding_abbrev_code, 0,
-            }) orelse fr.buffer.len;
-            if (fr.seek >= next_unit_pos) break;
+            }) orelse fr.end;
+            if (fr.seek >= fr.end) break;
             var die_obj = (try parseDie(
                 &fr,
                 attrs_bufs[0],
@@ -655,7 +677,11 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                 defer fr.seek = after_die_offset;
 
                                 // Follow the DIE it points to and repeat
-                                const ref_offset = try this_die_obj.getAttrRef(AT.abstract_origin, this_unit_offset, unit_header.unit_length);
+                                const ref_offset = try this_die_obj.getAttrRef(
+                                    AT.abstract_origin,
+                                    unit_header.offset.toByteOffset(),
+                                    unit_header.unit_length,
+                                );
                                 fr.seek = try ref_offset.toByteOffsetUsize();
                                 this_die_obj = (try parseDie(
                                     &fr,
@@ -670,7 +696,11 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                                 defer fr.seek = after_die_offset;
 
                                 // Follow the DIE it points to and repeat
-                                const ref_offset = try this_die_obj.getAttrRef(AT.specification, this_unit_offset, unit_header.unit_length);
+                                const ref_offset = try this_die_obj.getAttrRef(
+                                    AT.specification,
+                                    unit_header.offset.toByteOffset(),
+                                    unit_header.unit_length,
+                                );
                                 fr.seek = try ref_offset.toByteOffsetUsize();
                                 this_die_obj = (try parseDie(
                                     &fr,
@@ -741,23 +771,17 @@ fn scanAllFunctions(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
                 else => {},
             }
         }
-
-        this_unit_offset += unit_header.unit_length;
     }
 }
 
 fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!void {
-    var fr = try di.sections.sectionReader(.debug_info, .zero);
-    var this_unit_offset: u64 = 0;
+    const debug_info_sect = try di.sections.get(.debug_info);
+    var unit_it: UnitHeader.Iterator = .init(try debug_info_sect.reader(.zero));
 
     var attrs_buf = std.array_list.Managed(Die.Attr).init(gpa);
     defer attrs_buf.deinit();
 
-    while (this_unit_offset < fr.buffer.len) {
-        fr.seek = @intCast(this_unit_offset);
-
-        const unit_header = try readUnitHeader(&fr, endian);
-
+    while (try unit_it.next(endian)) |unit_header| {
         const abbrev_table = try di.getAbbrevTable(gpa, unit_header.debug_abbrev_offset.toByteOffset());
 
         var max_attrs: usize = 0;
@@ -765,6 +789,8 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
             max_attrs = @max(max_attrs, abbrev.attrs.len);
         }
         try attrs_buf.resize(max_attrs);
+
+        var fr = try unit_header.dataReader(debug_info_sect);
 
         var compile_unit_die = (try parseDie(
             &fr,
@@ -813,8 +839,6 @@ fn scanAllCompileUnits(di: *Dwarf, gpa: Allocator, endian: Endian) ScanError!voi
         };
 
         try di.compile_unit_list.append(gpa, compile_unit);
-
-        this_unit_offset += unit_header.unit_length;
     }
 }
 
