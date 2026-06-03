@@ -31,7 +31,7 @@ base_timestamp: Io.Timestamp,
 /// The "step name" data which trails `abi.Hello`, for the steps in `all_steps`.
 step_names_trailing: []u8,
 
-step_indices: std.AutoHashMapUnmanaged(Configuration.Step.Index, u32),
+step_indices: std.AutoArrayHashMapUnmanaged(Configuration.Step.Index, void),
 
 /// The bit-packed "step status" data. Values are `abi.StepUpdate.Status`. LSBs are earlier steps.
 /// Accessed atomically.
@@ -106,10 +106,10 @@ pub fn init(opts: Options) WebServer {
     }
 
     const step_indices = indices: {
-        var map: std.AutoHashMapUnmanaged(Configuration.Step.Index, u32) = .empty;
+        var map: std.AutoArrayHashMapUnmanaged(Configuration.Step.Index, void) = .empty;
         map.ensureTotalCapacity(gpa, @intCast(all_steps.len)) catch @panic("out of memory");
-        for (all_steps, 0..) |step, i| {
-            map.putAssumeCapacityNoClobber(step, @intCast(i));
+        for (all_steps) |step| {
+            map.putAssumeCapacityNoClobber(step, {});
         }
         break :indices map;
     };
@@ -238,7 +238,7 @@ pub fn updateStepStatus(
     step_index: Configuration.Step.Index,
     new_status: abi.StepUpdate.Status,
 ) void {
-    const step_idx = ws.step_indices.get(step_index) orelse unreachable;
+    const step_idx: u32 = @intCast(ws.step_indices.getIndex(step_index) orelse unreachable);
 
     const ptr = &ws.step_status_bits[step_idx / 4];
     const bit_offset: u3 = @intCast((step_idx % 4) * 2);
@@ -799,7 +799,7 @@ pub fn updateTimeReportCompile(ws: *WebServer, opts: struct {
     const gpa = maker.gpa;
     const io = maker.graph.io;
 
-    const step_idx = ws.step_indices.get(opts.compile_step) orelse unreachable;
+    const step_idx: u32 = @intCast(ws.step_indices.getIndex(opts.compile_step) orelse unreachable);
 
     const old_buf = old: {
         ws.time_report_mutex.lock(io) catch return;
@@ -839,7 +839,7 @@ pub fn updateTimeReportGeneric(ws: *WebServer, step_index: Configuration.Step.In
     const gpa = maker.gpa;
     const io = maker.graph.io;
 
-    const step_idx = ws.step_indices.get(step_index) orelse unreachable;
+    const step_idx: u32 = @intCast(ws.step_indices.getIndex(step_index) orelse unreachable);
 
     const old_buf = old: {
         ws.time_report_mutex.lock(io) catch return;
@@ -874,7 +874,7 @@ pub fn updateTimeReportRunTest(
     const gpa = maker.gpa;
     const io = maker.graph.io;
 
-    const step_idx = ws.step_indices.get(run_step_index) orelse unreachable;
+    const step_idx: u32 = @intCast(ws.step_indices.getIndex(run_step_index) orelse unreachable);
 
     assert(tests.names.len == ns_per_test.len);
     const tests_len: u32 = @intCast(tests.names.len);
