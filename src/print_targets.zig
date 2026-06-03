@@ -18,9 +18,10 @@ pub fn cmdTargets(
     args: []const []const u8,
     out: *std.Io.Writer,
     native_target: *const Target,
+    environ_map: *std.process.Environ.Map,
 ) !void {
     _ = args;
-    var zig_lib_directory = introspect.findZigLibDir(allocator, io) catch |err|
+    var zig_lib_directory = introspect.findZigLibDir(allocator, io, environ_map) catch |err|
         fatal("unable to find zig installation directory: {t}", .{err});
     defer zig_lib_directory.handle.close(io);
     defer allocator.free(zig_lib_directory.path.?);

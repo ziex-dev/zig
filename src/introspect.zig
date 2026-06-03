@@ -42,7 +42,17 @@ fn testZigInstallPrefix(io: Io, base_dir: Io.Dir) ?Cache.Directory {
 }
 
 /// Both the directory handle and the path are newly allocated resources which the caller now owns.
-pub fn findZigLibDir(gpa: Allocator, io: Io) !Cache.Directory {
+pub fn findZigLibDir(gpa: Allocator, io: Io, environ_map: *const std.process.Environ.Map) !Cache.Directory {
+    if (std.zig.EnvVar.ZIG_LIB_DIR.get(environ_map)) |override_lib_dir| fallback: {
+        const dir = Io.Dir.cwd().openDir(io, override_lib_dir, .{}) catch {
+            break :fallback;
+        };
+        return .{
+            .handle = dir,
+            .path = override_lib_dir,
+        };
+    }
+
     const cwd_path = try getResolvedCwd(io, gpa);
     defer gpa.free(cwd_path);
     const self_exe_path = try std.process.executablePathAlloc(io, gpa);

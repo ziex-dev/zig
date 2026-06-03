@@ -429,13 +429,20 @@ fn mainArgs(
             });
         },
         .init => {
-            return cmdInit(gpa, arena, io, cmd_args);
+            return cmdInit(gpa, arena, io, cmd_args, environ_map);
         },
         .targets => {
             dev.check(.targets_command);
             const host = std.zig.resolveTargetQueryOrFatal(io, .{});
             var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
-            try @import("print_targets.zig").cmdTargets(arena, io, cmd_args, &stdout_writer.interface, &host);
+            try @import("print_targets.zig").cmdTargets(
+                arena,
+                io,
+                cmd_args,
+                &stdout_writer.interface,
+                &host,
+                environ_map,
+            );
             return stdout_writer.interface.flush();
         },
         .version => {
@@ -4851,7 +4858,13 @@ const usage_init =
     \\
 ;
 
-fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !void {
+fn cmdInit(
+    gpa: Allocator,
+    arena: Allocator,
+    io: Io,
+    args: []const []const u8,
+    environ_map: *process.Environ.Map,
+) !void {
     dev.check(.init_command);
 
     var template: enum { example, minimal } = .example;
@@ -4883,7 +4896,7 @@ fn cmdInit(gpa: Allocator, arena: Allocator, io: Io, args: []const []const u8) !
 
     switch (template) {
         .example => {
-            var templates = findTemplates(gpa, arena, io);
+            var templates = findTemplates(gpa, io, environ_map);
             defer templates.deinit(io);
 
             const s = fs.path.sep_str;
@@ -7788,15 +7801,9 @@ fn writeSimpleTemplateFile(io: Io, file_name: []const u8, comptime fmt: []const 
     try fw.interface.flush();
 }
 
-fn findTemplates(gpa: Allocator, arena: Allocator, io: Io) Templates {
-    const cwd_path = introspect.getResolvedCwd(io, arena) catch |err| {
-        fatal("unable to get cwd: {t}", .{err});
-    };
-    const self_exe_path = process.executablePathAlloc(io, arena) catch |err| {
-        fatal("unable to find self exe path: {t}", .{err});
-    };
-    var zig_lib_directory = introspect.findZigLibDirFromSelfExe(arena, io, cwd_path, self_exe_path) catch |err| {
-        fatal("unable to find zig installation directory {q}: {t}", .{ self_exe_path, err });
+fn findTemplates(gpa: Allocator, io: Io, environ_map: *process.Environ.Map) Templates {
+    var zig_lib_directory = introspect.findZigLibDir(gpa, io, environ_map) catch |err| {
+        fatal("unable to find zig installation directory: {t}", .{err});
     };
 
     const s = fs.path.sep_str;
