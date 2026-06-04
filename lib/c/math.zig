@@ -82,6 +82,10 @@ comptime {
         symbol(&pow10, "pow10");
         symbol(&pow10f, "pow10f");
         symbol(&tanh, "tanh");
+        symbol(&sinh, "sinh");
+        symbol(&sinhf, "sinhf");
+        symbol(&expm1, "expm1");
+        symbol(&expm1f, "expm1f");
     }
 
     if (builtin.target.isMuslLibC()) {
@@ -409,4 +413,18 @@ fn tanh(x: f64) callconv(.c) f64 {
 
 fn tanhf(x: f32) callconv(.c) f32 {
     return math.tanh(x);
+}
+
+fn sinhf(x: f32) callconv(.c) f32 {
+    return math.sinh(x);
+}
+fn sinh(x: f64) callconv(.c) f64 {
+    return math.sinh(x);
+}
+
+fn expm1f(x: f32) callconv(.c) f32 {
+    return math.expm1(x);
+}
+fn expm1(x: f64) callconv(.c) f64 {
+    return math.expm1(x);
 }
