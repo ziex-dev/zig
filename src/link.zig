@@ -2078,6 +2078,25 @@ fn resolveLibInput(
 
     const lib_name = name_query.name;
 
+    // GNU ld compat: -l:filename searches for the exact filename in
+    // library directories, without prepending "lib" or appending a suffix.
+    if (lib_name.len > 0 and lib_name[0] == ':') {
+        const exact_name = lib_name[1..];
+        const test_path: Path = .{
+            .root_dir = lib_directory,
+            .sub_path = exact_name,
+        };
+        try checked_paths.print(gpa, "\n  {f}", .{test_path});
+        switch (try resolvePathInputLib(gpa, arena, io, unresolved_inputs, resolved_inputs, ld_script_bytes, archive_dedup, target, .{
+            .path = test_path,
+            .query = name_query.query,
+        }, link_mode, color)) {
+            .no_match => {},
+            .ok => return .ok,
+        }
+        return .no_match;
+    }
+
     if (target.os.tag.isDarwin() and link_mode == .dynamic) tbd: {
         // Prefer .tbd over .dylib.
         const test_path: Path = .{

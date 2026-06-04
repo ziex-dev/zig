@@ -1,0 +1,6 @@
+.{
+    .name = .colon_link,
+    .fingerprint = 0x3f6f6055e363538a,
+    .version = "0.0.0",
+    .paths = .{""},
+}

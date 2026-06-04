@@ -33,6 +33,9 @@
         .issue_339 = .{
             .path = "issue_339",
         },
+        .colon_link = .{
+            .path = "colon_link",
+        },
         .compile_asm = .{
             .path = "compile_asm",
         },
