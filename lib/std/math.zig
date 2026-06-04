@@ -178,23 +178,23 @@ test approxEqRel {
 }
 
 pub fn raiseInvalid() void {
-    // Raise INVALID fpu exception
+    fenv.raiseExcept(fenv.ExceptionFlag.invalid);
 }
 
 pub fn raiseUnderflow() void {
-    // Raise UNDERFLOW fpu exception
+    fenv.raiseExcept(fenv.ExceptionFlag.underflow);
 }
 
 pub fn raiseOverflow() void {
-    // Raise OVERFLOW fpu exception
+    fenv.raiseExcept(fenv.ExceptionFlag.overflow);
 }
 
 pub fn raiseInexact() void {
-    // Raise INEXACT fpu exception
+    fenv.raiseExcept(fenv.ExceptionFlag.inexact);
 }
 
 pub fn raiseDivByZero() void {
-    // Raise INEXACT fpu exception
+    fenv.raiseExcept(fenv.ExceptionFlag.div_by_zero);
 }
 
 pub const isNan = @import("math/isnan.zig").isNan;
@@ -346,6 +346,7 @@ pub const complex = @import("math/complex.zig");
 pub const Complex = complex.Complex;
 
 pub const big = @import("math/big.zig");
+pub const fenv = @import("math/fenv.zig");
 
 test {
     _ = floatExponentBits;
@@ -408,6 +409,8 @@ test {
     _ = Complex;
 
     _ = big;
+
+    _ = fenv;
 }
 
 /// Given two types, returns the smallest one which is capable of holding the
