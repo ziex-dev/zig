@@ -111,14 +111,21 @@ pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
         /// Creates a new item and adds it to the memory pool.
         /// `allocator` may be `undefined` if pool is not `growable`.
         pub fn create(pool: *Pool, allocator: Allocator) Allocator.Error!ItemPtr {
+            const ptr = try createUnsafe(pool, allocator);
+            ptr.* = undefined;
+            return ptr;
+        }
+
+        /// Creates a new item and adds it to the memory pool.
+        /// `allocator` may be `undefined` if pool is not `growable`.
+        /// Is same is .create without runtime safety
+        pub fn createUnsafe(pool: *Pool, allocator: Allocator) Allocator.Error!ItemPtr {
             const ptr: ItemPtr = if (pool.free_list.popFirst()) |node|
                 @ptrCast(@alignCast(node))
             else if (pool_options.growable)
                 @ptrCast(try pool.allocNew(allocator))
             else
                 return error.OutOfMemory;
-
-            ptr.* = undefined;
             return ptr;
         }
 
@@ -126,6 +133,13 @@ pub fn Extra(comptime Item: type, comptime pool_options: Options) type {
         /// Only pass items to `ptr` that were previously created with `create()` of the same memory pool!
         pub fn destroy(pool: *Pool, ptr: ItemPtr) void {
             ptr.* = undefined;
+            destroyUnsafe(pool, ptr);
+        }
+
+        /// Destroys a previously created item.
+        /// Only pass items to `ptr` that were previously created with `create()` of the same memory pool!
+        /// Is same is .destroy without runtime safety
+        pub fn destroyUnsafe(pool: *Pool, ptr: ItemPtr) void {
             pool.free_list.prepend(@ptrCast(ptr));
         }
 
