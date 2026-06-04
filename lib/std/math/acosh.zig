@@ -43,10 +43,12 @@ fn acosh32(x: f32) f32 {
 
 fn acosh64(x: f64) f64 {
     const u = @as(u64, @bitCast(x));
-    const e = (u >> 52);
-
+    const e = (u >> 52) & 0x7FF;
+    if ((u >> 63) != 0) {
+        return math.nan(f64);
+    }
     // |x| < 2, invalid if x < 1 or nan
-    if (e < 0x3FF + 1) {
+    if (e < 0x3FF) {
         return math.log1p(x - 1 + @sqrt((x - 1) * (x - 1) + 2 * (x - 1)));
     }
     // |x| < 0x1p26
