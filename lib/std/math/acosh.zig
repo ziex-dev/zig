@@ -24,6 +24,7 @@ pub fn acosh(x: anytype) @TypeOf(x) {
 
 // acosh(x) = log(x + sqrt(x * x - 1))
 fn acosh32(x: f32) f32 {
+    if (x < 1.0) return math.nan(f32); 
     const u = @as(u32, @bitCast(x));
     const i = u & 0x7FFFFFFF;
 
@@ -42,6 +43,7 @@ fn acosh32(x: f32) f32 {
 }
 
 fn acosh64(x: f64) f64 {
+    if (x < 1.0) return math.nan(f32); 
     const u = @as(u64, @bitCast(x));
     const e = (u >> 52) & 0x7FF;
 
@@ -90,4 +92,11 @@ test "acosh32.special" {
 test "acosh64.special" {
     try expect(math.isNan(acosh64(math.nan(f64))));
     try expect(math.isNan(acosh64(0.5)));
+}
+
+test "acosh returns NaN for x < 1" {
+    try std.testing.expect(math.isNan(math.acosh(@as(f64, -1.9e4))));
+    try std.testing.expect(math.isNan(math.acosh(@as(f64, -2e4))));
+    try std.testing.expect(math.isNan(math.acosh(@as(f32, -1.9e4))));
+    try std.testing.expect(math.isNan(math.acosh(@as(f32, -2e4))));
 }
