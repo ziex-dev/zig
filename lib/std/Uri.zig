@@ -598,14 +598,8 @@ test "should fail gracefully" {
 }
 
 test "parse name too long" {
-    const allocator = std.testing.allocator;
-    var buf: [300]u8 = undefined;
-    @memset(&buf, 'Z');
-
-    const text = try std.fmt.allocPrint(allocator, "http://{s}", .{buf[0..300]});
-    defer allocator.free(text);
-
-    try std.testing.expectError(error.NameTooLong, parse(text));
+    const uri = "http://" ++ @as([HostName.max_len + 1]u8, @splat('Z'));
+    try std.testing.expectError(error.NameTooLong, parse(uri));
 }
 
 test "file" {
