@@ -24,7 +24,6 @@ pub fn acosh(x: anytype) @TypeOf(x) {
 
 // acosh(x) = log(x + sqrt(x * x - 1))
 fn acosh32(x: f32) f32 {
-    if (x < 1.0) return math.nan(f32); 
     const u = @as(u32, @bitCast(x));
     const i = u & 0x7FFFFFFF;
 
@@ -43,9 +42,8 @@ fn acosh32(x: f32) f32 {
 }
 
 fn acosh64(x: f64) f64 {
-    if (x < 1.0) return math.nan(f32); 
     const u = @as(u64, @bitCast(x));
-    const e = (u >> 52) & 0x7FF;
+    const e = (u >> 52);
 
     // |x| < 2, invalid if x < 1 or nan
     if (e < 0x3FF + 1) {
