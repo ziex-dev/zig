@@ -22595,7 +22595,8 @@ fn zirSplat(sema: *Sema, block: *Block, inst: Zir.Inst.Index) CompileError!Air.I
     const extra = sema.code.extraData(Zir.Inst.Bin, inst_data.payload_index).data;
     const src = block.nodeOffset(inst_data.src_node);
     const scalar_src = block.builtinCallArgSrc(inst_data.src_node, 0);
-    const dest_ty = try sema.resolveDestType(block, src, extra.lhs, .remove_eu_opt, "@splat");
+    const raw_ty = try sema.resolveDestType(block, src, extra.lhs, .remove_eu_opt, "@splat");
+    const dest_ty = raw_ty.optEuBaseType(zcu);
 
     switch (dest_ty.zigTypeTag(zcu)) {
         .array, .vector => {},
