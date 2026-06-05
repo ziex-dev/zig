@@ -40,6 +40,7 @@ const arch_bits = switch (native_arch) {
     .loongarch32 => @import("linux/loongarch32.zig"),
     .loongarch64 => @import("linux/loongarch64.zig"),
     .m68k => @import("linux/m68k.zig"),
+    .microblaze, .microblazeel => @import("linux/microblaze.zig"),
     .mips, .mipsel => @import("linux/mips.zig"),
     .mips64, .mips64el => switch (builtin.abi) {
         .gnuabin32, .muslabin32 => @import("linux/mipsn32.zig"),
@@ -51,6 +52,8 @@ const arch_bits = switch (native_arch) {
     .riscv32 => @import("linux/riscv32.zig"),
     .riscv64 => @import("linux/riscv64.zig"),
     .s390x => @import("linux/s390x.zig"),
+    .sh, .sheb => @import("linux/sh.zig"),
+    .sparc => @import("linux/sparc.zig"),
     .sparc64 => @import("linux/sparc64.zig"),
     .x86 => @import("linux/x86.zig"),
     .x86_64 => switch (builtin.abi) {
@@ -132,9 +135,12 @@ pub const SYS = switch (native_arch) {
     .arm, .armeb, .thumb, .thumbeb => syscalls.Arm,
     .csky => syscalls.CSky,
     .hexagon => syscalls.Hexagon,
+    .hppa => syscalls.Hppa,
+    .hppa64 => syscalls.Hppa64,
     .loongarch32 => syscalls.LoongArch32,
     .loongarch64 => syscalls.LoongArch64,
     .m68k => syscalls.M68k,
+    .microblaze, .microblazeel => syscalls.Microblaze,
     .mips, .mipsel => syscalls.MipsO32,
     .mips64, .mips64el => switch (builtin.abi) {
         .gnuabin32, .muslabin32 => syscalls.MipsN32,
@@ -146,6 +152,7 @@ pub const SYS = switch (native_arch) {
     .riscv32 => syscalls.RiscV32,
     .riscv64 => syscalls.RiscV64,
     .s390x => syscalls.S390x,
+    .sh, .sheb => syscalls.Sh,
     .sparc => syscalls.Sparc,
     .sparc64 => syscalls.Sparc64,
     .x86 => syscalls.X86,
@@ -223,7 +230,7 @@ pub const MAP = switch (native_arch) {
         UNINITIALIZED: bool = false,
         _: u5 = 0,
     },
-    .sparc64 => packed struct(u32) {
+    .sparc, .sparc64 => packed struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
         ANONYMOUS: bool = false,
@@ -292,8 +299,12 @@ pub const MAP = switch (native_arch) {
     .csky,
     .hexagon,
     .m68k,
+    .microblaze,
+    .microblazeel,
     .or1k,
     .s390x,
+    .sh,
+    .sheb,
     => packed struct(u32) {
         TYPE: MAP_TYPE,
         FIXED: bool = false,
@@ -444,7 +455,7 @@ pub const O = switch (native_arch) {
         TMPFILE: bool = false,
         _23: u9 = 0,
     },
-    .sparc64 => packed struct(u32) {
+    .sparc, .sparc64 => packed struct(u32) {
         ACCMODE: ACCMODE = .RDONLY,
         _2: u1 = 0,
         APPEND: bool = false,
@@ -522,8 +533,12 @@ pub const O = switch (native_arch) {
     .arceb,
     .csky,
     .hexagon,
+    .microblaze,
+    .microblazeel,
     .or1k,
     .s390x,
+    .sh,
+    .sheb,
     .xtensa,
     .xtensaeb,
     => packed struct(u32) {
@@ -1994,7 +2009,7 @@ pub const F = struct {
                 const SETLKW = 7;
             },
         },
-        .alpha, .sparc64 => struct {
+        .alpha, .sparc, .sparc64 => struct {
             const GETLK = 7;
             const SETLK = 8;
             const SETLKW = 9;
@@ -6585,7 +6600,7 @@ const TFD_TIMER = packed struct(u32) {
 };
 
 pub const TFD = switch (native_arch) {
-    .sparc64 => packed struct(u32) {
+    .sparc, .sparc64 => packed struct(u32) {
         _0: u14 = 0,
         NONBLOCK: bool = false,
         _15: u7 = 0,
@@ -6977,12 +6992,16 @@ pub const MINSIGSTKSZ = switch (native_arch) {
     .mipsel,
     .mips64,
     .mips64el,
+    .microblaze,
+    .microblazeel,
     .or1k,
     .powerpc,
     .powerpcle,
     .riscv32,
     .riscv64,
     .s390x,
+    .sh,
+    .sheb,
     .thumb,
     .thumbeb,
     .x86,
@@ -7015,12 +7034,16 @@ pub const SIGSTKSZ = switch (native_arch) {
     .mipsel,
     .mips64,
     .mips64el,
+    .microblaze,
+    .microblazeel,
     .or1k,
     .powerpc,
     .powerpcle,
     .riscv32,
     .riscv64,
     .s390x,
+    .sh,
+    .sheb,
     .thumb,
     .thumbeb,
     .x86,
@@ -10718,6 +10741,7 @@ pub const AUDIT = struct {
             .loongarch32 => .LOONGARCH32,
             .loongarch64 => .LOONGARCH64,
             .m68k => .M68K,
+            .microblaze, .microblazeel => .MICROBLAZE,
             .mips => .MIPS,
             .mipsel => .MIPSEL,
             .mips64 => switch (native_abi) {
@@ -10734,9 +10758,11 @@ pub const AUDIT = struct {
             .powerpc64le => .PPC64LE,
             .riscv32 => .RISCV32,
             .riscv64 => .RISCV64,
+            .s390x => .S390X,
+            .sh => .SHEL,
+            .sheb => .SH,
             .sparc => .SPARC,
             .sparc64 => .SPARC64,
-            .s390x => .S390X,
             .x86 => .I386,
             .x86_64 => .X86_64,
             .xtensa => .XTENSA,

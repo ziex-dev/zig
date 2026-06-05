@@ -20,6 +20,7 @@ const LibCInstallation = std.zig.LibCInstallation;
 const AstGen = std.zig.AstGen;
 const ZonGen = std.zig.ZonGen;
 const Server = std.zig.Server;
+const stringToEnum = std.meta.stringToEnum;
 
 pub const tracy = @import("tracy.zig");
 const Compilation = @import("Compilation.zig");
@@ -229,6 +230,55 @@ pub fn main(init: std.process.Init.Minimal) anyerror!void {
     return mainArgs(gpa, arena, io, args, &environ_map);
 }
 
+const Cmd = enum {
+    @"build-exe",
+    @"build-lib",
+    @"build-obj",
+    @"test",
+    @"test-obj",
+    run,
+
+    dlltool,
+    ranlib,
+    lib,
+    ar,
+
+    build,
+
+    clang,
+    @"-cc1",
+    @"-cc1as",
+
+    @"ld.lld",
+    @"lld-link",
+    @"wasm-ld",
+
+    cc,
+    @"c++",
+    @"translate-c",
+    rc,
+    fmt,
+    objcopy,
+    objdump,
+    fetch,
+    libc,
+    std,
+    init,
+    targets,
+    version,
+    env,
+    reduce,
+    zen,
+    @"ast-check",
+
+    help,
+    @"-h",
+    @"--help",
+
+    changelist,
+    @"dump-zir",
+};
+
 fn mainArgs(
     gpa: Allocator,
     arena: Allocator,
@@ -271,144 +321,169 @@ fn mainArgs(
 
     const cmd = args[1];
     const cmd_args = args[2..];
-    if (mem.eql(u8, cmd, "build-exe")) {
-        dev.check(.build_exe_command);
-        return buildOutputType(gpa, arena, io, args, .{ .build = .Exe }, environ_map);
-    } else if (mem.eql(u8, cmd, "build-lib")) {
-        dev.check(.build_lib_command);
-        return buildOutputType(gpa, arena, io, args, .{ .build = .Lib }, environ_map);
-    } else if (mem.eql(u8, cmd, "build-obj")) {
-        dev.check(.build_obj_command);
-        return buildOutputType(gpa, arena, io, args, .{ .build = .Obj }, environ_map);
-    } else if (mem.eql(u8, cmd, "test")) {
-        dev.check(.test_command);
-        return buildOutputType(gpa, arena, io, args, .zig_test, environ_map);
-    } else if (mem.eql(u8, cmd, "test-obj")) {
-        dev.check(.test_command);
-        return buildOutputType(gpa, arena, io, args, .zig_test_obj, environ_map);
-    } else if (mem.eql(u8, cmd, "run")) {
-        dev.check(.run_command);
-        return buildOutputType(gpa, arena, io, args, .run, environ_map);
-    } else if (mem.eql(u8, cmd, "dlltool") or
-        mem.eql(u8, cmd, "ranlib") or
-        mem.eql(u8, cmd, "lib") or
-        mem.eql(u8, cmd, "ar"))
-    {
-        dev.check(.ar_command);
-        return process.exit(try llvmArMain(arena, args));
-    } else if (mem.eql(u8, cmd, "build")) {
-        dev.check(.build_command);
-        return cmdBuild(gpa, arena, io, cmd_args, environ_map);
-    } else if (mem.eql(u8, cmd, "clang") or
-        mem.eql(u8, cmd, "-cc1") or mem.eql(u8, cmd, "-cc1as"))
-    {
-        dev.check(.clang_command);
-        return process.exit(try clangMain(arena, args));
-    } else if (mem.eql(u8, cmd, "ld.lld") or
-        mem.eql(u8, cmd, "lld-link") or
-        mem.eql(u8, cmd, "wasm-ld"))
-    {
-        dev.check(.lld_linker);
-        return process.exit(try lldMain(arena, args, true));
-    } else if (mem.eql(u8, cmd, "cc")) {
-        dev.check(.cc_command);
-        return buildOutputType(gpa, arena, io, args, .cc, environ_map);
-    } else if (mem.eql(u8, cmd, "c++")) {
-        dev.check(.cc_command);
-        return buildOutputType(gpa, arena, io, args, .cpp, environ_map);
-    } else if (mem.eql(u8, cmd, "translate-c")) {
-        dev.check(.translate_c_command);
-        return buildOutputType(gpa, arena, io, args, .translate_c, environ_map);
-    } else if (mem.eql(u8, cmd, "rc")) {
-        const use_server = cmd_args.len > 0 and std.mem.eql(u8, cmd_args[0], "--zig-integration");
-        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
-            .cmd_name = "resinator",
-            .root_src_path = "resinator/main.zig",
-            .depend_on_aro = true,
-            .prepend_zig_lib_dir_path = true,
-            .server = use_server,
-            .color = Color.settingFromEnvironment(environ_map),
-        });
-    } else if (mem.eql(u8, cmd, "fmt")) {
-        dev.check(.fmt_command);
-        return @import("fmt.zig").run(gpa, arena, io, cmd_args);
-    } else if (mem.eql(u8, cmd, "objcopy")) {
-        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
-            .cmd_name = "objcopy",
-            .root_src_path = "objcopy.zig",
-            .color = Color.settingFromEnvironment(environ_map),
-        });
-    } else if (mem.eql(u8, cmd, "objdump")) {
-        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
-            .cmd_name = "objdump",
-            .root_src_path = "objdump.zig",
-            .color = Color.settingFromEnvironment(environ_map),
-        });
-    } else if (mem.eql(u8, cmd, "fetch")) {
-        return cmdFetch(gpa, arena, io, cmd_args, environ_map);
-    } else if (mem.eql(u8, cmd, "libc")) {
-        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
-            .cmd_name = "libc",
-            .root_src_path = "libc.zig",
-            .prepend_zig_lib_dir_path = true,
-            .color = Color.settingFromEnvironment(environ_map),
-        });
-    } else if (mem.eql(u8, cmd, "std")) {
-        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
-            .cmd_name = "std",
-            .root_src_path = "std-docs.zig",
-            .prepend_zig_lib_dir_path = true,
-            .prepend_zig_exe_path = true,
-            .prepend_global_cache_path = true,
-            .color = Color.settingFromEnvironment(environ_map),
-        });
-    } else if (mem.eql(u8, cmd, "init")) {
-        return cmdInit(gpa, arena, io, cmd_args);
-    } else if (mem.eql(u8, cmd, "targets")) {
-        dev.check(.targets_command);
-        const host = std.zig.resolveTargetQueryOrFatal(io, .{});
-        var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
-        try @import("print_targets.zig").cmdTargets(arena, io, cmd_args, &stdout_writer.interface, &host);
-        return stdout_writer.interface.flush();
-    } else if (mem.eql(u8, cmd, "version")) {
-        dev.check(.version_command);
-        try Io.File.stdout().writeStreamingAll(io, build_options.version ++ "\n");
-        return;
-    } else if (mem.eql(u8, cmd, "env")) {
-        dev.check(.env_command);
-        const host = std.zig.resolveTargetQueryOrFatal(io, .{});
-        var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
-        try @import("print_env.zig").cmdEnv(
-            arena,
-            io,
-            &stdout_writer.interface,
-            args,
-            preopens,
-            &host,
-            environ_map,
-        );
-        return stdout_writer.interface.flush();
-    } else if (mem.eql(u8, cmd, "reduce")) {
-        return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
-            .cmd_name = "reduce",
-            .root_src_path = "reduce.zig",
-            .color = Color.settingFromEnvironment(environ_map),
-        });
-    } else if (mem.eql(u8, cmd, "zen")) {
-        dev.check(.zen_command);
-        return Io.File.stdout().writeStreamingAll(io, info_zen);
-    } else if (mem.eql(u8, cmd, "help") or mem.eql(u8, cmd, "-h") or mem.eql(u8, cmd, "--help")) {
-        dev.check(.help_command);
-        return Io.File.stdout().writeStreamingAll(io, usage);
-    } else if (mem.eql(u8, cmd, "ast-check")) {
-        return cmdAstCheck(arena, io, cmd_args, environ_map);
-    } else if (build_options.enable_debug_extensions and mem.eql(u8, cmd, "changelist")) {
-        return cmdChangelist(arena, io, cmd_args, environ_map);
-    } else if (build_options.enable_debug_extensions and mem.eql(u8, cmd, "dump-zir")) {
-        return cmdDumpZir(arena, io, cmd_args);
-    } else {
+    switch (stringToEnum(Cmd, cmd) orelse {
         std.log.info("{s}", .{usage});
         fatal("unknown command: {s}", .{args[1]});
+    }) {
+        .@"build-exe" => {
+            dev.check(.build_exe_command);
+            return buildOutputType(gpa, arena, io, args, .{ .build = .Exe }, environ_map);
+        },
+        .@"build-lib" => {
+            dev.check(.build_lib_command);
+            return buildOutputType(gpa, arena, io, args, .{ .build = .Lib }, environ_map);
+        },
+        .@"build-obj" => {
+            dev.check(.build_obj_command);
+            return buildOutputType(gpa, arena, io, args, .{ .build = .Obj }, environ_map);
+        },
+        .@"test" => {
+            dev.check(.test_command);
+            return buildOutputType(gpa, arena, io, args, .zig_test, environ_map);
+        },
+        .@"test-obj" => {
+            dev.check(.test_command);
+            return buildOutputType(gpa, arena, io, args, .zig_test_obj, environ_map);
+        },
+        .run => {
+            dev.check(.run_command);
+            return buildOutputType(gpa, arena, io, args, .run, environ_map);
+        },
+        .dlltool, .ranlib, .lib, .ar => {
+            dev.check(.ar_command);
+            return process.exit(try llvmArMain(arena, args));
+        },
+        .build => {
+            dev.check(.build_command);
+            return cmdBuild(gpa, arena, io, cmd_args, environ_map);
+        },
+        .clang, .@"-cc1", .@"-cc1as" => {
+            dev.check(.clang_command);
+            return process.exit(try clangMain(arena, args));
+        },
+        .@"ld.lld", .@"lld-link", .@"wasm-ld" => {
+            dev.check(.lld_linker);
+            return process.exit(try lldMain(arena, args, true));
+        },
+        .cc => {
+            dev.check(.cc_command);
+            return buildOutputType(gpa, arena, io, args, .cc, environ_map);
+        },
+        .@"c++" => {
+            dev.check(.cc_command);
+            return buildOutputType(gpa, arena, io, args, .cpp, environ_map);
+        },
+        .@"translate-c" => {
+            dev.check(.translate_c_command);
+            return buildOutputType(gpa, arena, io, args, .translate_c, environ_map);
+        },
+        .rc => {
+            const use_server = cmd_args.len > 0 and std.mem.eql(u8, cmd_args[0], "--zig-integration");
+            return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
+                .cmd_name = "resinator",
+                .root_src_path = "resinator/main.zig",
+                .depend_on_aro = true,
+                .prepend_zig_lib_dir_path = true,
+                .server = use_server,
+                .color = Color.settingFromEnvironment(environ_map),
+            });
+        },
+        .fmt => {
+            dev.check(.fmt_command);
+            return @import("fmt.zig").run(gpa, arena, io, cmd_args);
+        },
+        .objcopy => {
+            return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
+                .cmd_name = "objcopy",
+                .root_src_path = "objcopy.zig",
+                .color = Color.settingFromEnvironment(environ_map),
+            });
+        },
+        .objdump => {
+            return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
+                .cmd_name = "objdump",
+                .root_src_path = "objdump.zig",
+                .color = Color.settingFromEnvironment(environ_map),
+            });
+        },
+        .fetch => {
+            return cmdFetch(gpa, arena, io, cmd_args, environ_map);
+        },
+        .libc => {
+            return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
+                .cmd_name = "libc",
+                .root_src_path = "libc.zig",
+                .prepend_zig_lib_dir_path = true,
+                .color = Color.settingFromEnvironment(environ_map),
+            });
+        },
+        .std => {
+            return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
+                .cmd_name = "std",
+                .root_src_path = "std-docs.zig",
+                .prepend_zig_lib_dir_path = true,
+                .prepend_zig_exe_path = true,
+                .prepend_global_cache_path = true,
+                .color = Color.settingFromEnvironment(environ_map),
+            });
+        },
+        .init => {
+            return cmdInit(gpa, arena, io, cmd_args);
+        },
+        .targets => {
+            dev.check(.targets_command);
+            const host = std.zig.resolveTargetQueryOrFatal(io, .{});
+            var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
+            try @import("print_targets.zig").cmdTargets(arena, io, cmd_args, &stdout_writer.interface, &host);
+            return stdout_writer.interface.flush();
+        },
+        .version => {
+            dev.check(.version_command);
+            try Io.File.stdout().writeStreamingAll(io, build_options.version ++ "\n");
+            return;
+        },
+        .env => {
+            dev.check(.env_command);
+            const host = std.zig.resolveTargetQueryOrFatal(io, .{});
+            var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
+            try @import("print_env.zig").cmdEnv(
+                arena,
+                io,
+                &stdout_writer.interface,
+                args,
+                preopens,
+                &host,
+                environ_map,
+            );
+            return stdout_writer.interface.flush();
+        },
+        .reduce => {
+            return jitCmd(gpa, arena, io, cmd_args, environ_map, .{
+                .cmd_name = "reduce",
+                .root_src_path = "reduce.zig",
+                .color = Color.settingFromEnvironment(environ_map),
+            });
+        },
+        .zen => {
+            dev.check(.zen_command);
+            return Io.File.stdout().writeStreamingAll(io, info_zen);
+        },
+        .help, .@"-h", .@"--help" => {
+            dev.check(.help_command);
+            return Io.File.stdout().writeStreamingAll(io, usage);
+        },
+        .@"ast-check" => {
+            dev.check(.ast_check_command);
+            return cmdAstCheck(arena, io, cmd_args, environ_map);
+        },
+        .changelist => {
+            dev.check(.changelist_command);
+            return cmdChangelist(arena, io, cmd_args, environ_map);
+        },
+        .@"dump-zir" => {
+            dev.check(.dump_zir_command);
+            return cmdDumpZir(arena, io, cmd_args);
+        },
     }
 }
 
@@ -1144,7 +1219,7 @@ fn buildOutputType(
                         const next_arg = args_iter.next() orelse {
                             fatal("expected [auto|on|off] after --color", .{});
                         };
-                        color = std.meta.stringToEnum(Color, next_arg) orelse {
+                        color = stringToEnum(Color, next_arg) orelse {
                             fatal("expected [auto|on|off] after --color, found {q}", .{next_arg});
                         };
                     } else if (mem.cutPrefix(u8, arg, "-j")) |str| {
@@ -1188,7 +1263,7 @@ fn buildOutputType(
                     } else if (mem.eql(u8, arg, "-install_name")) {
                         install_name = args_iter.nextOrFatal();
                     } else if (mem.cutPrefix(u8, arg, "--compress-debug-sections=")) |param| {
-                        linker_compress_debug_sections = std.meta.stringToEnum(std.zig.CompressDebugSections, param) orelse {
+                        linker_compress_debug_sections = stringToEnum(std.zig.CompressDebugSections, param) orelse {
                             fatal("expected --compress-debug-sections=[none|zlib|zstd], found: {s}", .{param});
                         };
                     } else if (mem.eql(u8, arg, "--compress-debug-sections")) {
@@ -2440,7 +2515,7 @@ fn buildOutputType(
                         if (it.only_arg.len == 0) {
                             linker_compress_debug_sections = .zlib;
                         } else {
-                            linker_compress_debug_sections = std.meta.stringToEnum(std.zig.CompressDebugSections, it.only_arg) orelse {
+                            linker_compress_debug_sections = stringToEnum(std.zig.CompressDebugSections, it.only_arg) orelse {
                                 fatal("expected [none|zlib|zstd] after --compress-debug-sections, found {q}", .{it.only_arg});
                             };
                         }
@@ -2592,7 +2667,7 @@ fn buildOutputType(
                     linker_print_map = true;
                 } else if (mem.eql(u8, arg, "--sort-section")) {
                     const arg1 = linker_args_it.nextOrFatal();
-                    linker_sort_section = std.meta.stringToEnum(link.File.Lld.Elf.SortSection, arg1) orelse {
+                    linker_sort_section = stringToEnum(link.File.Lld.Elf.SortSection, arg1) orelse {
                         fatal("expected [name|alignment] after --sort-section, found {q}", .{arg1});
                     };
                 } else if (mem.eql(u8, arg, "--allow-shlib-undefined") or
@@ -2648,7 +2723,7 @@ fn buildOutputType(
                     }
                 } else if (mem.eql(u8, arg, "--compress-debug-sections")) {
                     const arg1 = linker_args_it.nextOrFatal();
-                    linker_compress_debug_sections = std.meta.stringToEnum(std.zig.CompressDebugSections, arg1) orelse {
+                    linker_compress_debug_sections = stringToEnum(std.zig.CompressDebugSections, arg1) orelse {
                         fatal("expected [none|zlib|zstd] after --compress-debug-sections, found {q}", .{arg1});
                     };
                 } else if (mem.cutPrefix(u8, arg, "-z")) |z_rest| {
@@ -2859,7 +2934,7 @@ fn buildOutputType(
                     mem.eql(u8, arg, "--hash-style"))
                 {
                     const next_arg = linker_args_it.nextOrFatal();
-                    hash_style = std.meta.stringToEnum(link.File.Lld.Elf.HashStyle, next_arg) orelse {
+                    hash_style = stringToEnum(link.File.Lld.Elf.HashStyle, next_arg) orelse {
                         fatal("expected [sysv|gnu|both] after --hash-style, found {q}", .{next_arg});
                     };
                 } else if (mem.eql(u8, arg, "-wrap")) {
@@ -4115,7 +4190,7 @@ fn createModule(
             error.ZigLacksTargetSupport => fatal("compiler backend unavailable for the specified target", .{}),
             error.EmittingBinaryRequiresLlvmLibrary => fatal("producing machine code via LLVM requires using the LLVM library", .{}),
             error.LldIncompatibleObjectFormat => fatal("using LLD to link {s} files is unsupported", .{@tagName(target.ofmt)}),
-            error.LldCannotIncrementallyLink => fatal("self-hosted backends do not support linking with LLD", .{}),
+            error.LldIncompatibleWithSelfHostedBackend => fatal("self-hosted backends do not support linking with LLD", .{}),
             error.LtoRequiresLld => fatal("LTO requires using LLD", .{}),
             error.SanitizeThreadRequiresLibCpp => fatal("thread sanitization is (for now) implemented in C++, so it requires linking libc++", .{}),
             error.LibCRequiresLibUnwind => fatal("libc of the specified target requires linking libunwind", .{}),
@@ -4137,8 +4212,8 @@ fn createModule(
             error.LldUnavailable => fatal("zig was compiled without LLD libraries", .{}),
             error.ClangUnavailable => fatal("zig was compiled without Clang libraries", .{}),
             error.DllExportFnsRequiresWindows => fatal("only Windows OS targets support DLLs", .{}),
-            error.NewLinkerIncompatibleObjectFormat => fatal("using the new linker to link {s} files is unsupported", .{@tagName(target.ofmt)}),
             error.NewLinkerIncompatibleWithLld => fatal("using the new linker is incompatible with using lld", .{}),
+            error.NewLinkerIncompatibleObjectFormat => fatal("no new linker available for '{t}' files", .{target.ofmt}),
         };
     }
 
@@ -5015,7 +5090,7 @@ fn cmdBuild(
                     configure_argv.appendAssumeCapacity(arg); // Intentionally "--system" only; not the path.
                     continue;
                 } else if (mem.cutPrefix(u8, arg, "--color=")) |rest| {
-                    color = std.meta.stringToEnum(Color, rest) orelse
+                    color = stringToEnum(Color, rest) orelse
                         fatal("expected --color=[auto|on|off]; found {q}", .{arg});
 
                     try cached_passthru_configure.append(arena, @intCast(configure_argv.items.len));
@@ -5027,7 +5102,7 @@ fn cmdBuild(
                     continue;
                 } else if (mem.cutPrefix(u8, arg, "--cache-poison=")) |rest| {
                     // Allow the configurer process to report parse failure.
-                    if (std.meta.stringToEnum(std.Build.Graph.CachePoison, rest)) |poison| {
+                    if (stringToEnum(std.Build.Graph.CachePoison, rest)) |poison| {
                         cache_poison = poison;
                     }
                     configure_argv.appendAssumeCapacity(arg);
@@ -5079,7 +5154,7 @@ fn cmdBuild(
                     fetch_only = true;
                 } else if (mem.cutPrefix(u8, arg, "--fetch=")) |sub_arg| {
                     fetch_only = true;
-                    fetch_mode = std.meta.stringToEnum(Package.Fetch.JobQueue.Mode, sub_arg) orelse
+                    fetch_mode = stringToEnum(Package.Fetch.JobQueue.Mode, sub_arg) orelse
                         fatal("expected [needed|all] after \"--fetch=\", found: {s}", .{sub_arg});
                 } else if (mem.cutPrefix(u8, arg, "--fork=")) |sub_arg| {
                     try forks.append(arena, .init(sub_arg));
@@ -6197,16 +6272,17 @@ const info_zen =
     \\ * Communicate intent precisely.
     \\ * Edge cases matter.
     \\ * Favor reading code over writing code.
-    \\ * Only one obvious way to do things.
+    \\ * There is an idiomatic way to do it.
     \\ * Runtime crashes are better than bugs.
     \\ * Compile errors are better than runtime crashes.
     \\ * Incremental improvements.
     \\ * Avoid local maximums.
     \\ * Reduce the amount one must remember.
-    \\ * Focus on code rather than style.
-    \\ * Resource allocation may fail; resource deallocation must succeed.
-    \\ * Memory is a resource.
-    \\ * Together we serve the users.
+    \\ * Focus on logic, not style.
+    \\ * Resource allocation may fail.
+    \\ * Resource deallocation must succeed.
+    \\
+    \\Together, we serve the users!
     \\
     \\
 ;
@@ -6514,7 +6590,7 @@ pub const ClangArgIterator = struct {
 };
 
 fn parseCodeModel(arg: []const u8) std.lang.CodeModel {
-    return std.meta.stringToEnum(std.lang.CodeModel, arg) orelse
+    return stringToEnum(std.lang.CodeModel, arg) orelse
         fatal("unsupported machine code model: {q}", .{arg});
 }
 
@@ -6537,8 +6613,6 @@ const usage_ast_check =
 ;
 
 fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8, environ_map: *const std.process.Environ.Map) !void {
-    dev.check(.ast_check_command);
-
     const Zir = std.zig.Zir;
 
     var color: Color = Color.settingFromEnvironment(environ_map);
@@ -6563,7 +6637,7 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8, environ_map: 
                 }
                 i += 1;
                 const next_arg = args[i];
-                color = std.meta.stringToEnum(Color, next_arg) orelse {
+                color = stringToEnum(Color, next_arg) orelse {
                     fatal("expected [auto|on|off] after --color, found {q}", .{next_arg});
                 };
             } else {
@@ -6705,8 +6779,6 @@ fn cmdAstCheck(arena: Allocator, io: Io, args: []const []const u8, environ_map: 
 
 /// This is only enabled for debug builds.
 fn cmdDumpZir(arena: Allocator, io: Io, args: []const []const u8) !void {
-    dev.check(.dump_zir_command);
-
     const Zir = std.zig.Zir;
 
     const cache_file = args[0];
@@ -6749,8 +6821,6 @@ fn cmdDumpZir(arena: Allocator, io: Io, args: []const []const u8) !void {
 
 /// This is only enabled for debug builds.
 fn cmdChangelist(arena: Allocator, io: Io, args: []const []const u8, environ_map: *const std.process.Environ.Map) !void {
-    dev.check(.changelist_command);
-
     const color: Color = Color.settingFromEnvironment(environ_map);
     const Zir = std.zig.Zir;
 
@@ -6949,7 +7019,7 @@ fn warnAboutForeignBinaries(
 }
 
 fn parseSubsystem(arg: []const u8) !std.zig.Subsystem {
-    return std.meta.stringToEnum(std.zig.Subsystem, arg) orelse
+    return stringToEnum(std.zig.Subsystem, arg) orelse
         fatal("invalid: --subsystem: {q}. Options are:\n{s}", .{
             arg,
             \\  console
@@ -7080,7 +7150,7 @@ fn accessFrameworkPath(
 }
 
 fn parseRcIncludes(arg: []const u8) std.zig.RcIncludes {
-    return std.meta.stringToEnum(std.zig.RcIncludes, arg) orelse
+    return stringToEnum(std.zig.RcIncludes, arg) orelse
         fatal("unsupported rc includes type: {q}", .{arg});
 }
 
@@ -7746,12 +7816,12 @@ fn findTemplates(gpa: Allocator, arena: Allocator, io: Io) Templates {
 }
 
 fn parseOptimizeMode(s: []const u8) std.lang.OptimizeMode {
-    return std.meta.stringToEnum(std.lang.OptimizeMode, s) orelse
+    return stringToEnum(std.lang.OptimizeMode, s) orelse
         fatal("unrecognized optimization mode: {q}", .{s});
 }
 
 fn parseWasiExecModel(s: []const u8) std.lang.WasiExecModel {
-    return std.meta.stringToEnum(std.lang.WasiExecModel, s) orelse
+    return stringToEnum(std.lang.WasiExecModel, s) orelse
         fatal("expected [command|reactor] for -mexec-mode=[value], found {q}", .{s});
 }
 
