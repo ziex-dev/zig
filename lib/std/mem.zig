@@ -2006,6 +2006,35 @@ test "comptime read/write int" {
     }
 }
 
+/// Reads a floating point number from memory with bit count specified by T.
+pub inline fn readFloat(comptime T: type, buffer: *const [@divExact(@typeInfo(T).float.bits, 8)]u8, endian: Endian) T {
+    const value: T = @bitCast(buffer.*);
+
+    if (endian == native_endian) {
+        return value;
+    } else {
+        const IntT = @Int(.unsigned, @typeInfo(T).float.bits);
+        return @bitCast(@byteSwap(@as(IntT, @bitCast(value))));
+    }
+}
+
+test readFloat {
+    try testing.expectEqual(0x4.ABp-4, readFloat(f16, &[_]u8{ 0x34, 0xAB }, .big));
+    try testing.expectEqual(0x4.ABp-4, readFloat(f16, &[_]u8{ 0xAB, 0x34 }, .little));
+
+    try testing.expectEqual(0x9.ABCDEp8, readFloat(f32, &[_]u8{ 0x45, 0x1A, 0xBC, 0xDE }, .big));
+    try testing.expectEqual(0x9.ABCDEp8, readFloat(f32, &[_]u8{ 0xDE, 0xBC, 0x1A, 0x45 }, .little));
+
+    try testing.expectEqual(-0x1.23456789ABCDEp2, readFloat(f64, &[_]u8{ 0xC0, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE }, .big));
+    try testing.expectEqual(-0x1.23456789ABCDEp2, readFloat(f64, &[_]u8{ 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12, 0xC0 }, .little));
+
+    try testing.expectEqual(0x8.123456789ABCDEFp6, readFloat(f80, &[_]u8{ 0x40, 0x08, 0x81, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF }, .big));
+    try testing.expectEqual(0x8.123456789ABCDEFp6, readFloat(f80, &[_]u8{ 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x81, 0x08, 0x40 }, .little));
+
+    try testing.expectEqual(0x1.0123456789ABCDEFAABBCCDDEEFFp-1, readFloat(f128, &[_]u8{ 0x3F, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF }, .big));
+    try testing.expectEqual(0x1.0123456789ABCDEFAABBCCDDEEFFp-1, readFloat(f128, &[_]u8{ 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 0xFE, 0x3F }, .little));
+}
+
 /// Writes an integer to memory, storing it in twos-complement.
 /// This function always succeeds, has defined behavior for all inputs, but
 /// the integer bit width must be divisible by 8.
@@ -2196,6 +2225,46 @@ test writeVarPackedInt {
     const value: u64 = 0x7f;
     writeVarPackedInt(std.mem.asBytes(&st), @bitOffsetOf(T, "b"), 7, value, builtin.cpu.arch.endian());
     try testing.expectEqual(T{ .a = 1, .b = value, .c = 4 }, st);
+}
+
+/// Writes a floating point number to memory.
+pub inline fn writeFloat(comptime T: type, buffer: *[@divExact(@typeInfo(T).float.bits, 8)]u8, value: T, endian: Endian) void {
+    const IntT = @Int(.unsigned, @typeInfo(T).float.bits);
+    const int_value: IntT = @bitCast(value);
+    buffer.* = @bitCast(if (endian == native_endian) int_value else @byteSwap(int_value));
+}
+
+test writeFloat {
+    var buf2: [2]u8 = undefined;
+    var buf4: [4]u8 = undefined;
+    var buf8: [8]u8 = undefined;
+    var buf10: [10]u8 = undefined;
+    var buf16: [16]u8 = undefined;
+
+    writeFloat(f16, &buf2, 0x4.ABp-4, .big);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0x34, 0xAB }, buf2[0..]);
+    writeFloat(f16, &buf2, 0x4.ABp-4, .little);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xAB, 0x34 }, buf2[0..]);
+
+    writeFloat(f32, &buf4, 0x9.ABCDEp8, .big);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0x45, 0x1A, 0xBC, 0xDE }, buf4[0..]);
+    writeFloat(f32, &buf4, 0x9.ABCDEp8, .little);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xDE, 0xBC, 0x1A, 0x45 }, buf4[0..]);
+
+    writeFloat(f64, &buf8, -0x1.23456789ABCDEp2, .big);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xC0, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE }, buf8[0..]);
+    writeFloat(f64, &buf8, -0x1.23456789ABCDEp2, .little);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12, 0xC0 }, buf8[0..]);
+
+    writeFloat(f80, &buf10, 0x8.123456789ABCDEFp6, .big);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0x40, 0x08, 0x81, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF }, buf10[0..]);
+    writeFloat(f80, &buf10, 0x8.123456789ABCDEFp6, .little);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x81, 0x08, 0x40 }, buf10[0..]);
+
+    writeFloat(f128, &buf16, 0x1.0123456789ABCDEFAABBCCDDEEFFp-1, .big);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0x3F, 0xFE, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF }, buf16[0..]);
+    writeFloat(f128, &buf16, 0x1.0123456789ABCDEFAABBCCDDEEFFp-1, .little);
+    try testing.expectEqualSlices(u8, &[_]u8{ 0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA, 0xEF, 0xCD, 0xAB, 0x89, 0x67, 0x45, 0x23, 0x01, 0xFE, 0x3F }, buf16[0..]);
 }
 
 /// Swap the byte order of all the members of the fields of a struct
