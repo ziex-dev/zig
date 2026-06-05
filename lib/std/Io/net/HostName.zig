@@ -24,7 +24,7 @@ pub const ValidateError = error{
     InvalidHostName,
 };
 
-/// Validates a hostname according to [RFC 1123](https://www.rfc-editor.org/rfc/rfc1123)
+/// Validates a hostname according to [RFC 1123](https://www.rfc-editor.org/rfc/rfc1123) or IPv6
 pub fn validate(bytes: []const u8) ValidateError!void {
     if (bytes.len == 0) return error.InvalidHostName;
 
@@ -33,6 +33,11 @@ pub fn validate(bytes: []const u8) ValidateError!void {
 
     // The accepted maximum length of a hostname, including labels and dots.
     if (end > max_len) return error.NameTooLong;
+
+    // hostnames and IPv4 addresses never have colons
+    if (std.mem.findScalar(u8, bytes, ':')) |_| {
+        return validateIPv6(bytes);
+    }
 
     // Hostnames are divided into dot-separated "labels", which:
     //
@@ -64,6 +69,13 @@ pub fn validate(bytes: []const u8) ValidateError!void {
     if (!std.ascii.isAlphanumeric(bytes[end - 1])) return error.InvalidHostName;
 }
 
+pub fn validateIPv6(bytes: []const u8) ValidateError!void {
+    const result = std.Io.net.Ip6Address.Unresolved.parse(bytes);
+    if (result != .success) {
+        return error.InvalidHostName;
+    }
+}
+
 test validate {
     // Valid hostnames
     try validate("example");
@@ -76,6 +88,11 @@ test validate {
     try validate("a-b.com");
     try validate("a.b.c.d.e.f.g");
     try validate("127.0.0.1"); // Also a valid hostname
+
+    try validate("::1");
+    try validate("fe80::1");
+    try validate("fe80::e0e:76ff:fed4:cf22");
+    try validate("fe80::e0e:76ff:fed4:cf22%eno1");
 
     const many_a: [63]u8 = @splat('a');
     try validate(&many_a ++ ".com"); // Label exactly 63 chars (valid)
@@ -100,6 +117,8 @@ test validate {
     try std.testing.expectError(error.InvalidHostName, validate(&many_a ++ "a.com")); // Label length 64 (too long)
     try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "ab")); // Total length 256 (too long)
     try std.testing.expectError(error.NameTooLong, validate(many_a_dot ++ "ab.")); // Total length 256 + trailing dot (too long)
+
+    try std.testing.expectError(error.InvalidHostName, validate("not::an::address"));
 }
 
 pub fn init(bytes: []const u8) ValidateError!HostName {
