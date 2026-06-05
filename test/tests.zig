@@ -2643,11 +2643,6 @@ pub fn addModuleTests(b: *std.Build, options: ModuleTestOptions) *Step {
 
         const target = &resolved_target.result;
 
-        if (target.cpu.arch == .s390x and target.ofmt == .c) {
-            // https://codeberg.org/ziglang/zig/issues/35523
-            continue;
-        }
-
         if (target.cpu.arch == .riscv64 and target.ofmt == .c) {
             // https://codeberg.org/ziglang/zig/issues/30930
             continue;
