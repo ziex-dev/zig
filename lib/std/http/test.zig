@@ -1374,7 +1374,6 @@ test "Server.Request POST without content-length, keep-alive" {
     });
     defer test_server.destroy();
 
-    // Single TCP connection, two pipelined requests
     const request_bytes =
         "POST /empty HTTP/1.1\r\n" ++
         "Host: 127.0.0.1\r\n" ++
@@ -1397,4 +1396,77 @@ test "Server.Request POST without content-length, keep-alive" {
         "HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: keep-alive\r\n\r\nfirst\n",
         response,
     );
+}
+
+test "Client POST without content-length" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest;
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest;
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const io = std.testing.io;
+
+    const test_server = try createTestServer(io, struct {
+        fn run(test_server: *TestServer) !void {
+            const net_server = &test_server.net_server;
+
+            var recv_buffer: [1000]u8 = undefined;
+            var send_buffer: [500]u8 = undefined;
+
+            var stream = try net_server.accept(io);
+            defer stream.close(io);
+
+            var connection_br = stream.reader(io, &recv_buffer);
+            var connection_bw = stream.writer(io, &send_buffer);
+            var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+            try expectEqual(.ready, server.reader.state);
+            var request = try server.receiveHead();
+            try expectEqualStrings(request.head.target, "/empty");
+            var buf: [30]u8 = undefined;
+            var response = try request.respondStreaming(&buf, .{
+                .respond_options = .{
+                    .transfer_encoding = .none,
+                },
+            });
+
+            const w = &response.writer;
+
+            try w.writeAll(
+                "HTTP/1.1 200 OK\r\n" ++
+                    "Content-Length: 6\r\n" ++
+                    "Connection: keep-alive\r\n" ++
+                    "\r\n" ++
+                    "first\n",
+            );
+            try w.flush();
+            try response.end();
+        }
+    });
+    defer test_server.destroy();
+
+    const gpa = std.testing.allocator;
+    var client: http.Client = .{ .allocator = gpa, .io = io };
+    defer client.deinit();
+
+    var req = try client.request(
+        .POST,
+        .{
+            .host = .{ .raw = "127.0.0.1" },
+            .scheme = "http",
+            .port = test_server.port(),
+            .path = .{ .percent_encoded = "/empty" },
+        },
+        .{},
+    );
+    defer req.deinit();
+    req.transfer_encoding = .none;
+    try req.sendBodiless();
+    var response = try req.receiveHead(&.{});
+
+    try std.testing.expectEqual(http.Status.ok, response.head.status);
+
+    const body = try response.reader(&.{}).allocRemaining(gpa, .unlimited);
+    defer std.testing.allocator.free(body);
+
+    try std.testing.expectEqualStrings("HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nfirst\n", body);
 }
