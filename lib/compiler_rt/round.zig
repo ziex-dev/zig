@@ -26,118 +26,23 @@ comptime {
 }
 
 pub fn __roundh(x: f16) callconv(.c) f16 {
-    // TODO: more efficient implementation
-    return @floatCast(roundf(x));
+    return impl(f16, x);
 }
 
-pub fn roundf(x_: f32) callconv(.c) f32 {
-    const f32_toint = 1.0 / math.floatEps(f32);
-
-    var x = x_;
-    const u: u32 = @bitCast(x);
-    const e = (u >> 23) & 0xFF;
-    var y: f32 = undefined;
-
-    if (e >= 0x7F + 23) {
-        return x;
-    }
-    if (u >> 31 != 0) {
-        x = -x;
-    }
-    if (e < 0x7F - 1) {
-        if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(x + f32_toint);
-        return 0 * @as(f32, @bitCast(u));
-    }
-
-    y = x + f32_toint - f32_toint - x;
-    if (y > 0.5) {
-        y = y + x - 1;
-    } else if (y <= -0.5) {
-        y = y + x + 1;
-    } else {
-        y = y + x;
-    }
-
-    if (u >> 31 != 0) {
-        return -y;
-    } else {
-        return y;
-    }
+pub fn roundf(x: f32) callconv(.c) f32 {
+    return impl(f32, x);
 }
 
-pub fn round(x_: f64) callconv(.c) f64 {
-    const f64_toint = 1.0 / math.floatEps(f64);
-
-    var x = x_;
-    const u: u64 = @bitCast(x);
-    const e = (u >> 52) & 0x7FF;
-    var y: f64 = undefined;
-
-    if (e >= 0x3FF + 52) {
-        return x;
-    }
-    if (u >> 63 != 0) {
-        x = -x;
-    }
-    if (e < 0x3ff - 1) {
-        if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(x + f64_toint);
-        return 0 * @as(f64, @bitCast(u));
-    }
-
-    y = x + f64_toint - f64_toint - x;
-    if (y > 0.5) {
-        y = y + x - 1;
-    } else if (y <= -0.5) {
-        y = y + x + 1;
-    } else {
-        y = y + x;
-    }
-
-    if (u >> 63 != 0) {
-        return -y;
-    } else {
-        return y;
-    }
+pub fn round(x: f64) callconv(.c) f64 {
+    return impl(f64, x);
 }
 
 pub fn __roundx(x: f80) callconv(.c) f80 {
-    // TODO: more efficient implementation
-    return @floatCast(roundq(x));
+    return impl(f80, x);
 }
 
-pub fn roundq(x_: f128) callconv(.c) f128 {
-    const f128_toint = 1.0 / math.floatEps(f128);
-
-    var x = x_;
-    const u: u128 = @bitCast(x);
-    const e = (u >> 112) & 0x7FFF;
-    var y: f128 = undefined;
-
-    if (e >= 0x3FFF + 112) {
-        return x;
-    }
-    if (u >> 127 != 0) {
-        x = -x;
-    }
-    if (e < 0x3FFF - 1) {
-        if (compiler_rt.want_float_exceptions) mem.doNotOptimizeAway(x + f128_toint);
-        return 0 * @as(f128, @bitCast(u));
-    }
-
-    y = x + f128_toint - f128_toint - x;
-    if (y > 0.5) {
-        y = y + x - 1;
-    } else if (y <= -0.5) {
-        y = y + x + 1;
-    } else {
-        y = y + x;
-    }
-
-    if (u >> 127 != 0) {
-        return -y;
-    } else {
-        return y;
-    }
+pub fn roundq(x: f128) callconv(.c) f128 {
+    return impl(f128, x);
 }
 
 pub fn roundl(x: c_longdouble) callconv(.c) c_longdouble {
@@ -149,47 +54,117 @@ pub fn roundl(x: c_longdouble) callconv(.c) c_longdouble {
     }
 }
 
+/// returns 'x' rounded to the nearest integer, ties away from zero
+inline fn impl(T: type, x: T) T {
+    const size = @bitSizeOf(T);
+    const U = @Int(.unsigned, size);
+
+    const fbits = math.floatFractionalBits(T);
+    const mbits = math.floatMantissaBits(T);
+    const ebits = math.floatExponentBits(T);
+    const emask = (1 << ebits) - 1;
+    const smask: U = 1 << (size - 1);
+    const bias = emask >> 1;
+
+    const toint = 1.0 / math.floatEps(T);
+
+    const bits: U = @bitCast(x);
+    const expn = (bits >> mbits) & emask;
+    const is_negative = bits & smask != 0;
+
+    // filter out NaNs and +-inf, and |x| >= 2^fbits which are already integers
+    if (expn >= bias + fbits) return x;
+
+    // if |x| < 0.5, return +-zero
+    if (expn < bias - 1) {
+        if (compiler_rt.want_float_exceptions)
+            std.mem.doNotOptimizeAway(x + toint);
+        return @bitCast(bits & smask);
+    }
+
+    const a = if (is_negative) -x else x;
+
+    const rounded = a + toint - toint;
+    const delta = rounded - a;
+    // Apply correction to round ties away from zero
+    const result =
+        if (delta > 0.5)
+            rounded - 1
+        else if (delta <= -0.5)
+            rounded + 1
+        else
+            rounded;
+
+    return if (is_negative) -result else result;
+}
+
+fn testRound(T: type) !void {
+    const U = @Int(.unsigned, @bitSizeOf(T));
+
+    var u: U = 0;
+    while (u < math.maxInt(U) / 3) {
+        defer u = u + u / 3 + 1;
+        const x: T = @floatFromInt(u);
+
+        for ([_]T{ 0.0, 0.1, 0.5, 0.7 }) |frac| {
+            const y = x + frac;
+            const expected = if (x != y and frac >= 0.5) x + 1 else x;
+
+            try expect(impl(T, y) == expected);
+            try expect(impl(T, -y) == -expected);
+
+            if (expected == 0.0) {
+                try expect(math.signbit(impl(T, y)) == math.signbit(expected));
+                try expect(math.signbit(impl(T, -y)) == math.signbit(-expected));
+            }
+        }
+    }
+}
+
+test "round16" {
+    try testRound(f16);
+}
+
 test "round32" {
-    try expect(roundf(1.3) == 1.0);
-    try expect(roundf(-1.3) == -1.0);
-    try expect(roundf(0.2) == 0.0);
-    try expect(roundf(1.8) == 2.0);
+    try testRound(f32);
 }
 
 test "round64" {
-    try expect(round(1.3) == 1.0);
-    try expect(round(-1.3) == -1.0);
-    try expect(round(0.2) == 0.0);
-    try expect(round(1.8) == 2.0);
+    try testRound(f64);
+}
+
+test "round80" {
+    try testRound(f80);
 }
 
 test "round128" {
-    try expect(roundq(1.3) == 1.0);
-    try expect(roundq(-1.3) == -1.0);
-    try expect(roundq(0.2) == 0.0);
-    try expect(roundq(1.8) == 2.0);
+    try testRound(f128);
+}
+
+fn testRoundSpecial(T: type) !void {
+    try expect(math.isPositiveZero(impl(T, 0.0)));
+    try expect(math.isNegativeZero(impl(T, -0.0)));
+    try expect(math.isPositiveInf(impl(T, math.inf(T))));
+    try expect(math.isNegativeInf(impl(T, -math.inf(T))));
+    try expect(math.isNan(impl(T, math.nan(T))));
+}
+
+test "round16.special" {
+    try testRoundSpecial(f16);
 }
 
 test "round32.special" {
-    try expect(roundf(0.0) == 0.0);
-    try expect(roundf(-0.0) == -0.0);
-    try expect(math.isPositiveInf(roundf(math.inf(f32))));
-    try expect(math.isNegativeInf(roundf(-math.inf(f32))));
-    try expect(math.isNan(roundf(math.nan(f32))));
+    try testRoundSpecial(f32);
 }
 
 test "round64.special" {
-    try expect(round(0.0) == 0.0);
-    try expect(round(-0.0) == -0.0);
-    try expect(math.isPositiveInf(round(math.inf(f64))));
-    try expect(math.isNegativeInf(round(-math.inf(f64))));
-    try expect(math.isNan(round(math.nan(f64))));
+    try testRoundSpecial(f64);
+}
+
+test "round80.special" {
+    try testRoundSpecial(f80);
 }
 
 test "round128.special" {
-    try expect(roundq(0.0) == 0.0);
-    try expect(roundq(-0.0) == -0.0);
-    try expect(math.isPositiveInf(roundq(math.inf(f128))));
-    try expect(math.isNegativeInf(roundq(-math.inf(f128))));
-    try expect(math.isNan(roundq(math.nan(f128))));
+    try testRoundSpecial(f128);
 }
