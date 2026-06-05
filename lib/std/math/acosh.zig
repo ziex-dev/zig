@@ -44,7 +44,7 @@ fn acosh32(x: f32) f32 {
 fn acosh64(x: f64) f64 {
     const u = @as(u64, @bitCast(x));
     const e = (u >> 52) & 0x7FF;
-    
+
     if ((u >> 63) != 0) {
         return math.nan(f64);
     }
