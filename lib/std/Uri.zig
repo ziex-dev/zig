@@ -197,13 +197,7 @@ pub fn percentDecodeInPlace(buffer: []u8) []u8 {
     return percentDecodeBackwards(buffer, buffer);
 }
 
-pub const ParseError = error{
-    UnexpectedCharacter,
-    InvalidFormat,
-    InvalidPort,
-    InvalidHostName,
-    NameTooLong
-};
+pub const ParseError = error{ UnexpectedCharacter, InvalidFormat, InvalidPort, InvalidHostName, NameTooLong };
 
 /// Parses the URI or returns an error. This function is not compliant, but is required to parse
 /// some forms of URIs in the wild, such as HTTP Location headers.
