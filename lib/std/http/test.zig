@@ -1338,3 +1338,63 @@ test "boot failed connections from the pool" {
         try expectError(error.HttpConnectionClosing, client.fetch(.{ .location = .{ .uri = uri } }));
     }
 }
+
+test "Server.Request POST without content-length, keep-alive" {
+    if (builtin.cpu.arch.isPowerPC64() and builtin.mode != .Debug) return error.SkipZigTest;
+    if (builtin.os.tag == .openbsd) return error.SkipZigTest;
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const io = std.testing.io;
+
+    const test_server = try createTestServer(io, struct {
+        fn run(test_server: *TestServer) anyerror!void {
+            const net_server = &test_server.net_server;
+            var recv_buffer: [1000]u8 = undefined;
+            var send_buffer: [500]u8 = undefined;
+
+            var stream = try net_server.accept(io);
+            defer stream.close(io);
+
+            var connection_br = stream.reader(io, &recv_buffer);
+            var connection_bw = stream.writer(io, &send_buffer);
+            var server = http.Server.init(&connection_br.interface, &connection_bw.interface);
+
+            var req = try server.receiveHead();
+            try std.testing.expectEqualStrings("/empty", req.head.target);
+            try std.testing.expectEqual(http.Method.POST, req.head.method);
+
+            try req.respond("first\n", .{
+                .extra_headers = &.{
+                    .{ .name = "connection", .value = "keep-alive" },
+                },
+            });
+
+            try std.testing.expectEqual(.ready, server.reader.state);
+        }
+    });
+    defer test_server.destroy();
+
+    // Single TCP connection, two pipelined requests
+    const request_bytes =
+        "POST /empty HTTP/1.1\r\n" ++
+        "Host: 127.0.0.1\r\n" ++
+        "Connection: keep-alive\r\n" ++
+        "\r\n";
+
+    const host_name: net.HostName = try .init("127.0.0.1");
+    var stream = try host_name.connect(io, test_server.port(), .{ .mode = .stream });
+    defer stream.close(io);
+
+    var stream_writer = stream.writer(io, &.{});
+    try stream_writer.interface.writeAll(request_bytes);
+
+    var stream_reader = stream.reader(io, &.{});
+    const gpa = std.testing.allocator;
+    const response = try stream_reader.interface.allocRemaining(gpa, .unlimited);
+    defer gpa.free(response);
+
+    try std.testing.expectStringStartsWith(
+        "HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: keep-alive\r\n\r\nfirst\n",
+        response,
+    );
+}
