@@ -880,6 +880,20 @@ pub inline fn writeInt(w: *Writer, comptime T: type, value: T, endian: std.built
     return w.writeAll(&bytes);
 }
 
+/// Asserts the `buffer` was initialized with a capacity of at least `@sizeOf(T)` bytes.
+pub inline fn writeFloat(w: *Writer, comptime T: type, value: T, endian: std.builtin.Endian) Error!void {
+    var bytes: [@divExact(@typeInfo(T).float.bits, 8)]u8 = undefined;
+    std.mem.writeFloat(T, &bytes, value, endian);
+    return w.writeAll(&bytes);
+}
+
+test writeFloat {
+    var buffer: [4]u8 = undefined;
+    var w: Writer = .fixed(&buffer);
+    try w.writeFloat(f32, 1.0, .little);
+    try testing.expectEqualSlices(u8, &.{ 0x00, 0x00, 0x80, 0x3f }, &buffer);
+}
+
 /// The function is inline to avoid the dead code in case `endian` is
 /// comptime-known and matches host endianness.
 pub inline fn writeStruct(w: *Writer, value: anytype, endian: std.builtin.Endian) Error!void {

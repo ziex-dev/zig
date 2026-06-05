@@ -1187,6 +1187,18 @@ pub fn takeVarInt(r: *Reader, comptime Int: type, endian: std.builtin.Endian, n:
     return std.mem.readVarInt(Int, try r.take(n), endian);
 }
 
+/// Asserts the buffer was initialized with a capacity at least `@bitSizeOf(T) / 8`.
+pub inline fn takeFloat(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+    const n = @divExact(@typeInfo(T).float.bits, 8);
+    return std.mem.readFloat(T, try r.takeArray(n), endian);
+}
+
+/// Asserts the buffer was initialized with a capacity at least `@bitSizeOf(T) / 8`.
+pub inline fn peekFloat(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
+    const n = @divExact(@typeInfo(T).float.bits, 8);
+    return std.mem.readFloat(T, try r.peekArray(n), endian);
+}
+
 /// Obtains an unaligned pointer to the beginning of the stream, reinterpreted
 /// as a pointer to the provided type, advancing the seek position.
 ///
@@ -1658,6 +1670,12 @@ test takeVarInt {
     var r: Reader = .fixed(&.{ 0x12, 0x34, 0x56 });
     try testing.expectEqual(0x123456, try r.takeVarInt(u64, .big, 3));
     try testing.expectError(error.EndOfStream, r.takeVarInt(u16, .little, 1));
+}
+
+test takeFloat {
+    var r: Reader = .fixed(&.{ 0x3f, 0x80, 0x00, 0x00 });
+    try testing.expectEqual(1.0, try r.takeFloat(f32, .big));
+    try testing.expectError(error.EndOfStream, r.takeFloat(f16, .little));
 }
 
 test takeStructPointer {
