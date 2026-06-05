@@ -197,7 +197,7 @@ pub fn percentDecodeInPlace(buffer: []u8) []u8 {
     return percentDecodeBackwards(buffer, buffer);
 }
 
-pub const ParseError = error{ UnexpectedCharacter, InvalidFormat, InvalidPort, InvalidHostName, NameTooLong };
+pub const ParseError = error{ UnexpectedCharacter, InvalidFormat, InvalidPort, InvalidHostName };
 
 /// Parses the URI or returns an error. This function is not compliant, but is required to parse
 /// some forms of URIs in the wild, such as HTTP Location headers.
@@ -260,7 +260,7 @@ pub fn parseAfterScheme(scheme: []const u8, text: []const u8) ParseError!Uri {
 
         if (start_of_host >= end_of_host) return error.InvalidFormat;
         const host = authority[start_of_host..end_of_host];
-        if (host.len >= HostName.max_len) return error.NameTooLong;
+        if (host.len > HostName.max_len) return error.InvalidHostName;
         uri.host = .{ .percent_encoded = host };
     }
 
@@ -593,7 +593,7 @@ test "should fail gracefully" {
 
 test "parse name too long" {
     const uri = "http://" ++ @as([HostName.max_len + 1]u8, @splat('Z'));
-    try std.testing.expectError(error.NameTooLong, parse(uri));
+    try std.testing.expectError(error.InvalidHostName, parse(uri));
 }
 
 test "file" {
