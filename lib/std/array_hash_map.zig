@@ -7,6 +7,7 @@ const mem = std.mem;
 const autoHash = std.hash.autoHash;
 const Wyhash = std.hash.Wyhash;
 const Allocator = mem.Allocator;
+
 const hash_map = @This();
 
 /// An `ArrayHashMap` with default hash and equal functions.
@@ -263,11 +264,10 @@ pub fn Custom(
         /// Returns an iterator over the pairs in this map.
         /// Modifying the map may invalidate this iterator.
         pub fn iterator(self: Self) Iterator {
-            const slice = self.entries.slice();
             return .{
-                .keys = slice.items(.key).ptr,
-                .values = slice.items(.value).ptr,
-                .len = @as(u32, @intCast(slice.len)),
+                .keys = self.keys().ptr,
+                .values = self.values().ptr,
+                .len = @intCast(self.count()),
             };
         }
         pub const Iterator = struct {
@@ -319,10 +319,9 @@ pub fn Custom(
             self.ensureTotalCapacityContext(gpa, self.entries.len + 1, ctx) catch |err| {
                 // "If key exists this function cannot fail."
                 const index = self.getIndexAdapted(key, key_ctx) orelse return err;
-                const slice = self.entries.slice();
                 return GetOrPutResult{
-                    .key_ptr = &slice.items(.key)[index],
-                    .value_ptr = &slice.items(.value)[index],
+                    .key_ptr = &self.keys()[index],
+                    .value_ptr = &self.values()[index],
                     .found_existing = true,
                     .index = index,
                 };
@@ -360,14 +359,14 @@ pub fn Custom(
             const header = self.index_header orelse {
                 // Linear scan.
                 const h = if (store_hash) checkedHash(ctx, key) else {};
-                const slice = self.entries.slice();
-                const hashes_array = slice.items(.hash);
-                const keys_array = slice.items(.key);
-                for (keys_array, 0..) |*item_key, i| {
-                    if (hashes_array[i] == h and checkedEql(ctx, key, item_key.*, i)) {
+                const hashes_slice = self.entries.items(.hash);
+                const keys_slice = self.keys();
+                const values_slice = self.values();
+                for (0.., keys_slice, hashes_slice) |i, *existing_key_ptr, existing_h| {
+                    if (h == existing_h and checkedEql(ctx, key, existing_key_ptr.*, i)) {
                         return GetOrPutResult{
-                            .key_ptr = item_key,
-                            .value_ptr = &slice.items(.value)[i],
+                            .key_ptr = existing_key_ptr,
+                            .value_ptr = &values_slice[i],
                             .found_existing = true,
                             .index = i,
                         };
@@ -376,11 +375,11 @@ pub fn Custom(
 
                 const index = self.entries.addOneAssumeCapacity();
                 // The slice length changed, so we directly index the pointer.
-                if (store_hash) hashes_array.ptr[index] = h;
+                if (store_hash) hashes_slice.ptr[index] = h;
 
                 return GetOrPutResult{
-                    .key_ptr = &keys_array.ptr[index],
-                    .value_ptr = &slice.items(.value).ptr[index],
+                    .key_ptr = &keys_slice.ptr[index],
+                    .value_ptr = &values_slice.ptr[index],
                     .found_existing = false,
                     .index = index,
                 };
@@ -562,10 +561,9 @@ pub fn Custom(
         }
         pub fn getEntryAdapted(self: Self, key: anytype, ctx: anytype) ?Entry {
             const index = self.getIndexAdapted(key, ctx) orelse return null;
-            const slice = self.entries.slice();
             return Entry{
-                .key_ptr = &slice.items(.key)[index],
-                .value_ptr = &slice.items(.value)[index],
+                .key_ptr = &self.keys()[index],
+                .value_ptr = &self.values()[index],
             };
         }
 
@@ -582,11 +580,10 @@ pub fn Custom(
             const header = self.index_header orelse {
                 // Linear scan.
                 const h = if (store_hash) checkedHash(ctx, key) else {};
-                const slice = self.entries.slice();
-                const hashes_array = slice.items(.hash);
-                const keys_array = slice.items(.key);
-                for (keys_array, 0..) |*item_key, i| {
-                    if (hashes_array[i] == h and checkedEql(ctx, key, item_key.*, i)) {
+                const hashes_slice = self.entries.items(.hash);
+                const keys_slice = self.keys();
+                for (keys_slice, 0..) |*item_key, i| {
+                    if (hashes_slice[i] == h and checkedEql(ctx, key, item_key.*, i)) {
                         return i;
                     }
                 }
@@ -897,13 +894,13 @@ pub fn Custom(
             if (self.index_header) |header| {
                 self.removeFromIndexByIndex(index, if (store_hash) {} else ctx, header);
 
-                self.entries.items(.key)[index] = new_key;
+                self.keys()[index] = new_key;
                 const h = checkedHash(ctx, new_key);
                 if (store_hash) self.entries.items(.hash)[index] = h;
 
                 insertEntryIntoNewHeader(header, h, index);
             } else {
-                self.entries.items(.key)[index] = new_key;
+                self.keys()[index] = new_key;
                 if (store_hash) self.entries.items(.hash)[index] = checkedHash(ctx, new_key);
             }
         }
@@ -1067,15 +1064,13 @@ pub fn Custom(
             const header = self.index_header orelse {
                 // Linear scan.
                 const key_hash = if (store_hash) key_ctx.hash(key) else {};
-                const slice = self.entries.slice();
-                const hashes_array = if (store_hash) slice.items(.hash) else {};
-                const keys_array = slice.items(.key);
-                for (keys_array, 0..) |*item_key, i| {
-                    const hash_match = if (store_hash) hashes_array[i] == key_hash else true;
-                    if (hash_match and key_ctx.eql(key, item_key.*, i)) {
+                const hashes_slice = if (store_hash) self.entries.items(.hash) else {};
+                for (0.., self.keys()) |i, *existing_key| {
+                    const hash_match = if (store_hash) hashes_slice[i] == key_hash else true;
+                    if (hash_match and key_ctx.eql(key, existing_key.*, i)) {
                         const removed_entry: KV = .{
-                            .key = keys_array[i],
-                            .value = slice.items(.value)[i],
+                            .key = existing_key.*,
+                            .value = self.values()[i],
                         };
                         switch (removal_type) {
                             .swap => self.entries.swapRemove(i),
@@ -1103,10 +1098,9 @@ pub fn Custom(
         ) ?KV {
             const indexes = header.indexes(I);
             const entry_index = self.removeFromIndexByKey(key, key_ctx, header, I, indexes) orelse return null;
-            const slice = self.entries.slice();
             const removed_entry: KV = .{
-                .key = slice.items(.key)[entry_index],
-                .value = slice.items(.value)[entry_index],
+                .key = self.keys()[entry_index],
+                .value = self.values()[entry_index],
             };
             self.removeFromArrayAndUpdateIndex(entry_index, ctx, header, I, indexes, removal_type);
             return removed_entry;
@@ -1122,12 +1116,12 @@ pub fn Custom(
             const header = self.index_header orelse {
                 // Linear scan.
                 const key_hash = if (store_hash) key_ctx.hash(key) else {};
-                const slice = self.entries.slice();
-                const hashes_array = if (store_hash) slice.items(.hash) else {};
-                const keys_array = slice.items(.key);
-                for (keys_array, 0..) |*item_key, i| {
-                    const hash_match = if (store_hash) hashes_array[i] == key_hash else true;
-                    if (hash_match and key_ctx.eql(key, item_key.*, i)) {
+                const hashes_slice = if (store_hash) self.entries.items(.hash) else {};
+                // We capture the key by ptr. That way if the hash don't match,
+                // we are sure it's not dereferenced.
+                for (0.., self.keys()) |i, *existing_key| {
+                    const hash_match = if (store_hash) hashes_slice[i] == key_hash else true;
+                    if (hash_match and key_ctx.eql(key, existing_key.*, i)) {
                         switch (removal_type) {
                             .swap => self.entries.swapRemove(i),
                             .ordered => self.entries.orderedRemove(i),
@@ -1253,8 +1247,7 @@ pub fn Custom(
         }
 
         fn getSlotByIndex(self: *Self, entry_index: usize, ctx: ByIndexContext, header: *IndexHeader, comptime I: type, indexes: []Index(I)) usize {
-            const slice = self.entries.slice();
-            const h = if (store_hash) slice.items(.hash)[entry_index] else checkedHash(ctx, slice.items(.key)[entry_index]);
+            const h = if (store_hash) self.entries.items(.hash)[entry_index] else checkedHash(ctx, self.keys()[entry_index]);
             const start_index = safeTruncate(usize, h);
             const end_index = start_index +% indexes.len;
 
@@ -1281,10 +1274,9 @@ pub fn Custom(
 
         /// Must `ensureTotalCapacity`/`ensureUnusedCapacity` before calling this.
         fn getOrPutInternal(self: *Self, key: anytype, ctx: anytype, header: *IndexHeader, comptime I: type) GetOrPutResult {
-            const slice = self.entries.slice();
-            const hashes_array = if (store_hash) slice.items(.hash) else {};
-            const keys_array = slice.items(.key);
-            const values_array = slice.items(.value);
+            const hashes_slice = if (store_hash) self.entries.items(.hash) else {};
+            const keys_slice = self.keys();
+            const values_slice = self.values();
             const indexes = header.indexes(I);
 
             const h = checkedHash(ctx, key);
@@ -1311,12 +1303,12 @@ pub fn Custom(
                     };
 
                     // update the hash if applicable
-                    if (store_hash) hashes_array.ptr[new_index] = h;
+                    if (store_hash) hashes_slice.ptr[new_index] = h;
 
                     return .{
                         .found_existing = false,
-                        .key_ptr = &keys_array.ptr[new_index],
-                        .value_ptr = &values_array.ptr[new_index],
+                        .key_ptr = &keys_slice.ptr[new_index],
+                        .value_ptr = &values_slice.ptr[new_index],
                         .index = new_index,
                     };
                 }
@@ -1324,12 +1316,12 @@ pub fn Custom(
                 // This pointer survives the following append because we call
                 // entries.ensureTotalCapacity before getOrPutInternal.
                 const i = slot_data.entry_index;
-                const hash_match = if (store_hash) h == hashes_array[i] else true;
-                if (hash_match and checkedEql(ctx, key, keys_array[i], i)) {
+                const hash_match = if (store_hash) h == hashes_slice[i] else true;
+                if (hash_match and checkedEql(ctx, key, keys_slice[i], i)) {
                     return .{
                         .found_existing = true,
-                        .key_ptr = &keys_array[slot_data.entry_index],
-                        .value_ptr = &values_array[slot_data.entry_index],
+                        .key_ptr = &keys_slice[slot_data.entry_index],
+                        .value_ptr = &values_slice[slot_data.entry_index],
                         .index = slot_data.entry_index,
                     };
                 }
@@ -1344,7 +1336,7 @@ pub fn Custom(
                     // the previous index down the line, to keep the max distance_from_start_index
                     // as small as possible.
                     const new_index = self.entries.addOneAssumeCapacity();
-                    if (store_hash) hashes_array.ptr[new_index] = h;
+                    if (store_hash) hashes_slice.ptr[new_index] = h;
                     indexes[slot] = .{
                         .entry_index = @as(I, @intCast(new_index)),
                         .distance_from_start_index = distance_from_start_index,
@@ -1369,8 +1361,8 @@ pub fn Custom(
                             };
                             return .{
                                 .found_existing = false,
-                                .key_ptr = &keys_array.ptr[new_index],
-                                .value_ptr = &values_array.ptr[new_index],
+                                .key_ptr = &keys_slice.ptr[new_index],
+                                .value_ptr = &values_slice.ptr[new_index],
                                 .index = new_index,
                             };
                         }
@@ -1391,9 +1383,8 @@ pub fn Custom(
         }
 
         fn getSlotByKey(self: Self, key: anytype, ctx: anytype, header: *IndexHeader, comptime I: type, indexes: []Index(I)) ?usize {
-            const slice = self.entries.slice();
-            const hashes_array = if (store_hash) slice.items(.hash) else {};
-            const keys_array = slice.items(.key);
+            const hashes_slice = if (store_hash) self.entries.items(.hash) else {};
+            const keys_slice = self.keys();
             const h = checkedHash(ctx, key);
 
             const start_index = safeTruncate(usize, h);
@@ -1411,8 +1402,8 @@ pub fn Custom(
                     return null;
 
                 const i = slot_data.entry_index;
-                const hash_match = if (store_hash) h == hashes_array[i] else true;
-                if (hash_match and checkedEql(ctx, key, keys_array[i], i))
+                const hash_match = if (store_hash) h == hashes_slice[i] else true;
+                if (hash_match and checkedEql(ctx, key, keys_slice[i], i))
                     return slot;
             }
             unreachable;
@@ -1426,8 +1417,7 @@ pub fn Custom(
             }
         }
         fn insertAllEntriesIntoNewHeaderGeneric(self: *Self, ctx: ByIndexContext, header: *IndexHeader, comptime I: type) void {
-            const slice = self.entries.slice();
-            const items = if (store_hash) slice.items(.hash) else slice.items(.key);
+            const items = if (store_hash) self.entries.items(.hash) else self.keys();
 
             for (items, 0..) |hash_or_key, i| {
                 const h = if (store_hash) hash_or_key else checkedHash(ctx, hash_or_key);
@@ -1494,22 +1484,20 @@ pub fn Custom(
         fn dumpStateContext(self: Self, comptime keyFmt: []const u8, comptime valueFmt: []const u8, ctx: Context) void {
             const p = std.debug.print;
             p("{s}:\n", .{@typeName(Self)});
-            const slice = self.entries.slice();
             const hash_status = if (store_hash) "stored" else "computed";
-            p("  len={} capacity={} hashes {s}\n", .{ slice.len, slice.capacity, hash_status });
-            var i: usize = 0;
+            p("  len={} capacity={} hashes {s}\n", .{ self.entries.len, self.entries.capacity, hash_status });
             const mask: u32 = if (self.index_header) |header| header.mask() else ~@as(u32, 0);
-            while (i < slice.len) : (i += 1) {
-                const hash = if (store_hash) slice.items(.hash)[i] else checkedHash(ctx, slice.items(.key)[i]);
+            for (0.., self.keys(), self.values(), self.entries.items(.hash)) |i, key, value, maybe_hash| {
+                const hash = if (store_hash) maybe_hash else checkedHash(ctx, key);
                 if (store_hash) {
                     p(
                         "  [{}]: key=" ++ keyFmt ++ " value=" ++ valueFmt ++ " hash=0x{x} slot=[0x{x}]\n",
-                        .{ i, slice.items(.key)[i], slice.items(.value)[i], hash, hash & mask },
+                        .{ i, key, value, hash, hash & mask },
                     );
                 } else {
                     p(
                         "  [{}]: key=" ++ keyFmt ++ " value=" ++ valueFmt ++ " slot=[0x{x}]\n",
-                        .{ i, slice.items(.key)[i], slice.items(.value)[i], hash & mask },
+                        .{ i, key, value, hash & mask },
                     );
                 }
             }
