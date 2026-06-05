@@ -1215,11 +1215,7 @@ pub const File = struct {
 
     pub fn loadInput(base: *File, input: Input) anyerror!void {
         if (base.tag == .lld) return;
-<<<<<<< HEAD
         assert(!base.post_prelink);
-=======
-
->>>>>>> cb11f3b48e (- Skip the !use_llvm shared library tests on faiiling platforms)
         switch (base.tag) {
             inline .elf, .elf2, .coff2, .wasm => |tag| {
                 dev.check(tag.devFeature());
