@@ -1311,8 +1311,14 @@ fn printLineFromFile(io: Io, writer: *Writer, source_location: SourceLocation) !
     while (true) {
         line_index += 1;
         if (line_index == source_location.line) {
-            // TODO delete hard tabs from the language
-            _ = try r.streamDelimiterEnding(writer, '\n');
+            while (true) {
+                const byte = r.takeByte() catch break;
+                switch (byte) {
+                    '\n' => break,
+                    '\t' => try writer.writeByte(' '),
+                    else => try writer.writeByte(byte),
+                }
+            }
             try writer.writeByte('\n');
             return;
         }
@@ -1348,6 +1354,15 @@ test printLineFromFile {
 
         try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
         try expectEqualStrings("no new lines in this file, but one is printed anyway\n", aw.written());
+        aw.clearRetainingCapacity();
+    }
+    {
+        const path = try join(gpa, &.{ test_dir_path, "tab_line.zig" });
+        defer gpa.free(path);
+        try test_dir.dir.writeFile(io, .{ .sub_path = "tab_line.zig", .data = "\ttabs should be replaced with spaces to render the caret in the correct position" });
+
+        try printLineFromFile(io, output_stream, .{ .file_name = path, .line = 1, .column = 0 });
+        try expectEqualStrings(" tabs should be replaced with spaces to render the caret in the correct position\n", aw.written());
         aw.clearRetainingCapacity();
     }
     {
