@@ -40,8 +40,8 @@ pub fn StaticStringMapWithEql(
     comptime eql: fn (a: []const u8, b: []const u8) bool,
 ) type {
     return struct {
-        kvs: *const KVs = &empty_kvs,
-        len_indexes: [*]const u32 = &empty_len_indexes,
+        kvs: KVs = empty_kvs,
+        len_indexes: [*]const u32 = &.{},
         len_indexes_len: u32 = 0,
         min_len: u32 = std.math.maxInt(u32),
         max_len: u32 = 0,
@@ -61,14 +61,11 @@ pub fn StaticStringMapWithEql(
             values: [*]const V,
             len: u32,
         };
-        const empty_kvs = KVs{
-            .keys = &empty_keys,
-            .values = &empty_vals,
+        const empty_kvs: KVs = .{
+            .keys = &.{},
+            .values = &.{},
             .len = 0,
         };
-        const empty_len_indexes = [0]u32{};
-        const empty_keys = [0][]const u8{};
-        const empty_vals = [0]V{};
 
         /// Returns a map backed by static, comptime allocated memory.
         ///
@@ -92,7 +89,7 @@ pub fn StaticStringMapWithEql(
                 self.initSortedKVs(kvs_list, &sorted_keys, &sorted_vals);
                 const final_keys = sorted_keys;
                 const final_vals = sorted_vals;
-                self.kvs = &.{
+                self.kvs = .{
                     .keys = &final_keys,
                     .values = &final_vals,
                     .len = @intCast(kvs_list.len),
@@ -138,7 +135,7 @@ pub fn StaticStringMapWithEql(
 
                 const final_keys = sorted_keys;
                 const final_vals = sorted_vals;
-                self.kvs = &.{
+                self.kvs = .{
                     .keys = &final_keys,
                     .values = &final_vals,
                     .len = @intCast(field_names.len),
@@ -165,16 +162,13 @@ pub fn StaticStringMapWithEql(
             errdefer allocator.free(sorted_keys);
             const sorted_vals = try allocator.alloc(V, kvs_list.len);
             errdefer allocator.free(sorted_vals);
-            const kvs = try allocator.create(KVs);
-            errdefer allocator.destroy(kvs);
 
             self.initSortedKVs(kvs_list, sorted_keys, sorted_vals);
-            kvs.* = .{
+            self.kvs = .{
                 .keys = sorted_keys.ptr,
                 .values = sorted_vals.ptr,
                 .len = @intCast(kvs_list.len),
             };
-            self.kvs = kvs;
 
             const len_indexes = try allocator.alloc(u32, self.max_len + 1);
             self.initLenIndexes(len_indexes);
@@ -188,7 +182,6 @@ pub fn StaticStringMapWithEql(
             allocator.free(self.len_indexes[0..self.len_indexes_len]);
             allocator.free(self.kvs.keys[0..self.kvs.len]);
             allocator.free(self.kvs.values[0..self.kvs.len]);
-            allocator.destroy(self.kvs);
         }
 
         const SortContext = struct {
@@ -253,8 +246,7 @@ pub fn StaticStringMapWithEql(
         /// generated `kvs`, or `null` if `str` was not found.
         /// The returned index is unrelated to the input `kvs_list`.
         pub fn getIndex(self: Self, str: []const u8) ?usize {
-            const kvs = self.kvs.*;
-            if (kvs.len == 0)
+            if (self.kvs.len == 0)
                 return null;
 
             if (str.len < self.min_len or str.len > self.max_len)
@@ -262,13 +254,13 @@ pub fn StaticStringMapWithEql(
 
             var i = self.len_indexes[str.len];
             while (true) {
-                const key = kvs.keys[i];
+                const key = self.kvs.keys[i];
                 if (key.len != str.len)
                     return null;
                 if (eql(key, str))
                     return i;
                 i += 1;
-                if (i >= kvs.len)
+                if (i >= self.kvs.len)
                     return null;
             }
         }
@@ -281,10 +273,9 @@ pub fn StaticStringMapWithEql(
         /// len.
         pub fn getLongestPrefix(self: Self, str: []const u8) ?KV {
             const i = self.getLongestPrefixIndex(str) orelse return null;
-            const kvs = self.kvs.*;
             return .{
-                .key = kvs.keys[i],
-                .value = kvs.values[i],
+                .key = self.kvs.keys[i],
+                .value = self.kvs.values[i],
             };
         }
         /// Returns the key-value-pointer pair where key is the longest prefix
@@ -295,10 +286,9 @@ pub fn StaticStringMapWithEql(
         /// len.
         pub fn getLongestPrefixPtr(self: Self, str: []const u8) ?KVPtr {
             const i = self.getLongestPrefixIndex(str) orelse return null;
-            const kvs = self.kvs.*;
             return .{
-                .key = kvs.keys[i],
-                .value_ptr = &kvs.values[i],
+                .key = self.kvs.keys[i],
+                .value_ptr = &self.kvs.values[i],
             };
         }
 
@@ -328,15 +318,13 @@ pub fn StaticStringMapWithEql(
         /// Returns the slice of keys from the generated `kvs`, which may
         /// be in a different order than the input `kvs_list`.
         pub fn keys(self: Self) []const []const u8 {
-            const kvs = self.kvs.*;
-            return kvs.keys[0..kvs.len];
+            return self.kvs.keys[0..self.kvs.len];
         }
 
         /// Returns the slice of values from the generated `kvs`, which may
         /// be in a different order than the input `kvs_list`.
         pub fn values(self: Self) []const V {
-            const kvs = self.kvs.*;
-            return kvs.values[0..kvs.len];
+            return self.kvs.values[0..self.kvs.len];
         }
     };
 }
@@ -450,6 +438,7 @@ test "empty" {
 
     // Doesn't allocate if empty.
     const m3 = try StaticStringMap(usize).init(.{}, testing.failing_allocator);
+    defer m3.deinit(testing.failing_allocator);
     try testing.expect(null == m3.get("anything"));
 }
 
