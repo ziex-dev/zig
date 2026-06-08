@@ -49,6 +49,7 @@ pub const Os = struct {
         uefi,
 
         @"3ds",
+        wiiu,
 
         ps3,
         ps4,
@@ -196,6 +197,7 @@ pub const Os = struct {
                 .uefi,
 
                 .@"3ds",
+                .wiiu,
 
                 .psp,
                 .vita,
@@ -622,6 +624,13 @@ pub const Os = struct {
                     },
                 },
 
+                .wiiu => .{
+	                    .semver = .{
+	                        .min = .{ .major = 5, .minor = 5, .patch = 5 }, // Latest global release
+	                        .max = .{ .major = 5, .minor = 5, .patch = 6 }, // Latest US only release
+	                    },
+	                },
+
                 .psp => .{
                     .semver = .{
                         // https://www.psdevwiki.com/psp/Official_Firmware_(OFW)#1.XX_Kernel
@@ -933,6 +942,7 @@ pub const Abi = enum {
             .windows => .gnu,
             .uefi => .msvc,
             .@"3ds" => .eabihf,
+            .wiiu => .eabihf,
             .psp => .eabihf,
             .vita => .eabihf,
             .wasi, .emscripten => .musl,
@@ -2091,7 +2101,7 @@ pub const Cpu = struct {
                 .msp430 => &msp430.cpu.msp430,
                 .nvptx, .nvptx64 => &nvptx.cpu.sm_52,
                 .powerpc => switch (os.tag) {
-                    .openbsd => &powerpc.cpu.@"750",
+                    .openbsd, .wiiu => &powerpc.cpu.@"750",
                     else => generic(arch),
                 },
                 .powerpc64 => switch (os.tag) {
@@ -2296,6 +2306,7 @@ pub fn requiresLibC(target: *const Target) bool {
         .other,
         .@"3ds",
         .tios,
+        .wiiu,
         => false,
     };
 }
@@ -2441,6 +2452,7 @@ pub const DynamicLinker = struct {
             .windows,
 
             .@"3ds",
+            .wiiu,
 
             .emscripten,
             .wasi,
@@ -2863,6 +2875,7 @@ pub const DynamicLinker = struct {
             .windows,
 
             .@"3ds",
+            .wiiu,
 
             .psp,
             .vita,
@@ -3418,6 +3431,13 @@ pub fn cTypeBitSize(target: *const Target, c_type: CType) u16 {
             .int, .uint, .float, .long, .ulong => return 32,
             .longlong, .ulonglong, .double, .longdouble => return 64,
         },
+
+        .wiiu => switch (c_type) {
+	            .char => return 8,
+	            .short, .ushort => return 16,
+	            .int, .uint, .float, .long, .ulong => return 32,
+	            .longlong, .ulonglong, .double, .longdouble => return 64,
+	    },
 
         .ps4, .ps5 => switch (c_type) {
             .char => return 8,
