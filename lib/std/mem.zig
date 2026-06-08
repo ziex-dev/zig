@@ -2007,6 +2007,36 @@ test "comptime read/write int" {
 }
 
 /// Reads a floating point number from memory with bit count specified by T.
+///
+/// This will directly read the IEEE 754 binary interchange format for types
+/// that have them: namely, `f16`, `f32`, `f64` and `f128`. These IEEE 754
+/// binary formats use an implicit integer bit in the mantissa. For the `f80`
+/// type, this function will read the usual Intel 8087 80-bit representation
+/// with an explicit integer bit in the mantissa.
+///
+/// All encodings are ordered from most significant bit to least: sign bit,
+/// exponent, mantissa.
+///
+/// | Type   | Sign bit | Exponent bits | Mantissa bits (encoded) | Total bits |
+/// |--------|---------:|--------------:|------------------------:|-----------:|
+/// | `f16`  |        1 |             5 |                 11 (10) |         16 |
+/// | `f32`  |        1 |             8 |                 24 (23) |         32 |
+/// | `f64`  |        1 |            11 |                 53 (52) |         64 |
+/// | `f80`  |        1 |            15 |                 64 (64) |         80 |
+/// | `f128` |        1 |            15 |               113 (112) |        128 |
+///
+/// The exponent is represented in offset binary with the following biases for
+/// each type:
+/// * `f16`: 15
+/// * `f32`: 127
+/// * `f64`: 1023
+/// * `f80`: 16383
+/// * `f128`: 16383
+///
+/// NOTE: `c_longdouble` can be used with this function but the exact encoding
+/// chosen by the compiler will be determined by the target ABI.
+///
+/// See also `writeFloat`.
 pub inline fn readFloat(comptime T: type, buffer: *const [@divExact(@typeInfo(T).float.bits, 8)]u8, endian: Endian) T {
     const value: T = @bitCast(buffer.*);
 
@@ -2228,6 +2258,14 @@ test writeVarPackedInt {
 }
 
 /// Writes a floating point number to memory.
+///
+/// This will directly write the IEEE 754 binary interchange format for types
+/// that have them: namely, `f16`, `f32`, `f64` and `f128`. These IEEE 754
+/// binary formats use an implicit integer bit in the mantissa. For the `f80`
+/// type, this function will write the usual Intel 8087 80-bit representation
+/// with an explicit integer bit in the mantissa.
+///
+/// See `readFloat` for details about the encoding.
 pub inline fn writeFloat(comptime T: type, buffer: *[@divExact(@typeInfo(T).float.bits, 8)]u8, value: T, endian: Endian) void {
     const IntT = @Int(.unsigned, @typeInfo(T).float.bits);
     const int_value: IntT = @bitCast(value);

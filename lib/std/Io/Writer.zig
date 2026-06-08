@@ -881,6 +881,8 @@ pub inline fn writeInt(w: *Writer, comptime T: type, value: T, endian: std.built
 }
 
 /// Asserts the `buffer` was initialized with a capacity of at least `@sizeOf(T)` bytes.
+///
+/// See also `std.mem.writeFloat`.
 pub inline fn writeFloat(w: *Writer, comptime T: type, value: T, endian: std.builtin.Endian) Error!void {
     var bytes: [@divExact(@typeInfo(T).float.bits, 8)]u8 = undefined;
     std.mem.writeFloat(T, &bytes, value, endian);

@@ -1188,12 +1188,16 @@ pub fn takeVarInt(r: *Reader, comptime Int: type, endian: std.builtin.Endian, n:
 }
 
 /// Asserts the buffer was initialized with a capacity at least `@bitSizeOf(T) / 8`.
+///
+/// See also `std.mem.readFloat`.
 pub inline fn takeFloat(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
     const n = @divExact(@typeInfo(T).float.bits, 8);
     return std.mem.readFloat(T, try r.takeArray(n), endian);
 }
 
 /// Asserts the buffer was initialized with a capacity at least `@bitSizeOf(T) / 8`.
+///
+/// See also `std.mem.readFloat`.
 pub inline fn peekFloat(r: *Reader, comptime T: type, endian: std.builtin.Endian) Error!T {
     const n = @divExact(@typeInfo(T).float.bits, 8);
     return std.mem.readFloat(T, try r.peekArray(n), endian);
