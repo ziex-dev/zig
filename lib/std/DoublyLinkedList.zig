@@ -131,7 +131,7 @@ pub fn remove(list: *DoublyLinkedList, node: *Node) void {
 ///
 /// Returns:
 ///     A pointer to the last node in the list.
-pub fn pop(list: *DoublyLinkedList) ?*Node {
+pub fn popLast(list: *DoublyLinkedList) ?*Node {
     const last = list.last orelse return null;
     list.remove(last);
     return last;
@@ -200,7 +200,7 @@ test "basics" {
     }
 
     _ = list.popFirst(); // {2, 3, 4, 5}
-    _ = list.pop(); // {2, 3, 4}
+    _ = list.popLast(); // {2, 3, 4}
     list.remove(&three.node); // {2, 4}
 
     try testing.expect(@as(*L, @fieldParentPtr("node", list.first.?)).data == 2);
