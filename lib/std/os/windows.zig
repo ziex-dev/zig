@@ -3775,14 +3775,14 @@ pub fn eqlIgnoreCaseWtf8(a: []const u8, b: []const u8) bool {
 fn testEqlIgnoreCase(comptime expect_eql: bool, comptime a: []const u8, comptime b: []const u8) !void {
     try std.testing.expectEqual(expect_eql, eqlIgnoreCaseWtf8(a, b));
     try std.testing.expectEqual(expect_eql, eqlIgnoreCaseWtf16(
-        std.unicode.utf8ToUtf16LeStringLiteral(a),
-        std.unicode.utf8ToUtf16LeStringLiteral(b),
+        std.unicode.utf8ToUtf16StringLiteral(a, .little),
+        std.unicode.utf8ToUtf16StringLiteral(b, .little),
     ));
 
     try comptime std.testing.expect(expect_eql == eqlIgnoreCaseWtf8(a, b));
     try comptime std.testing.expect(expect_eql == eqlIgnoreCaseWtf16(
-        std.unicode.utf8ToUtf16LeStringLiteral(a),
-        std.unicode.utf8ToUtf16LeStringLiteral(b),
+        std.unicode.utf8ToUtf16StringLiteral(a, .little),
+        std.unicode.utf8ToUtf16StringLiteral(b, .little),
     ));
 }
 
@@ -3911,7 +3911,7 @@ pub fn ntToWin32Namespace(path: []const u16, out: []u16) error{ NameTooLong, Not
     // The prefix \??\UNC\ means this is a UNC path, in which case the
     // `\??\UNC\` should be replaced by `\\` (two backslashes)
     const is_unc = after_prefix.len >= 4 and
-        eqlIgnoreCaseWtf16(after_prefix[0..3], std.unicode.utf8ToUtf16LeStringLiteral("UNC")) and
+        eqlIgnoreCaseWtf16(after_prefix[0..3], std.unicode.utf8ToUtf16StringLiteral("UNC", .little)) and
         std.fs.path.PathType.windows.isSep(u16, after_prefix[3]);
     const win32_len = path.len - @as(usize, if (is_unc) 6 else 4);
     if (out.len < win32_len) return error.NameTooLong;
@@ -3926,16 +3926,16 @@ pub fn ntToWin32Namespace(path: []const u16, out: []u16) error{ NameTooLong, Not
 }
 
 test ntToWin32Namespace {
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    const L = std.unicode.utf8ToUtf16StringLiteral;
 
-    var mutable_unc_path_buf = L("\\??\\UNC\\path1\\path2").*;
-    try std.testing.expectEqualSlices(u16, L("\\\\path1\\path2"), try ntToWin32Namespace(&mutable_unc_path_buf, &mutable_unc_path_buf));
+    var mutable_unc_path_buf = L("\\??\\UNC\\path1\\path2", .little).*;
+    try std.testing.expectEqualSlices(u16, L("\\\\path1\\path2", .little), try ntToWin32Namespace(&mutable_unc_path_buf, &mutable_unc_path_buf));
 
-    var mutable_path_buf = L("\\??\\C:\\test\\").*;
-    try std.testing.expectEqualSlices(u16, L("C:\\test\\"), try ntToWin32Namespace(&mutable_path_buf, &mutable_path_buf));
+    var mutable_path_buf = L("\\??\\C:\\test\\", .little).*;
+    try std.testing.expectEqualSlices(u16, L("C:\\test\\", .little), try ntToWin32Namespace(&mutable_path_buf, &mutable_path_buf));
 
     var too_small_buf: [6]u16 = undefined;
-    try std.testing.expectError(error.NameTooLong, ntToWin32Namespace(L("\\??\\C:\\test"), &too_small_buf));
+    try std.testing.expectError(error.NameTooLong, ntToWin32Namespace(L("\\??\\C:\\test", .little), &too_small_buf));
 }
 
 inline fn MAKELANGID(p: c_ushort, s: c_ushort) LANGID {

@@ -2452,40 +2452,40 @@ test "ComponentIterator windows" {
 
 test "ComponentIterator windows WTF-16" {
     const WindowsComponentIterator = ComponentIterator(.windows, u16);
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
+    const L = std.unicode.utf8ToUtf16StringLiteral;
 
-    const path = L("C:\\a/b/c/");
+    const path = L("C:\\a/b/c/", .little);
     var it = WindowsComponentIterator.init(path);
     try std.testing.expectEqual(3, it.root_len);
     try std.testing.expectEqual(3, it.root_end_index);
-    try std.testing.expectEqualSlices(u16, L("C:\\"), it.root().?);
+    try std.testing.expectEqualSlices(u16, L("C:\\", .little), it.root().?);
     {
         const first = it.first().?;
-        try std.testing.expectEqualSlices(u16, L("a"), first.name);
-        try std.testing.expectEqualSlices(u16, L("C:\\a"), first.path);
+        try std.testing.expectEqualSlices(u16, L("a", .little), first.name);
+        try std.testing.expectEqualSlices(u16, L("C:\\a", .little), first.path);
 
         const second = it.next().?;
-        try std.testing.expectEqualSlices(u16, L("b"), second.name);
-        try std.testing.expectEqualSlices(u16, L("C:\\a/b"), second.path);
+        try std.testing.expectEqualSlices(u16, L("b", .little), second.name);
+        try std.testing.expectEqualSlices(u16, L("C:\\a/b", .little), second.path);
 
         const third = it.next().?;
-        try std.testing.expectEqualSlices(u16, L("c"), third.name);
-        try std.testing.expectEqualSlices(u16, L("C:\\a/b/c"), third.path);
+        try std.testing.expectEqualSlices(u16, L("c", .little), third.name);
+        try std.testing.expectEqualSlices(u16, L("C:\\a/b/c", .little), third.path);
 
         try std.testing.expect(null == it.next());
     }
     {
         const last = it.last().?;
-        try std.testing.expectEqualSlices(u16, L("c"), last.name);
-        try std.testing.expectEqualSlices(u16, L("C:\\a/b/c"), last.path);
+        try std.testing.expectEqualSlices(u16, L("c", .little), last.name);
+        try std.testing.expectEqualSlices(u16, L("C:\\a/b/c", .little), last.path);
 
         const second_to_last = it.previous().?;
-        try std.testing.expectEqualSlices(u16, L("b"), second_to_last.name);
-        try std.testing.expectEqualSlices(u16, L("C:\\a/b"), second_to_last.path);
+        try std.testing.expectEqualSlices(u16, L("b", .little), second_to_last.name);
+        try std.testing.expectEqualSlices(u16, L("C:\\a/b", .little), second_to_last.path);
 
         const third_to_last = it.previous().?;
-        try std.testing.expectEqualSlices(u16, L("a"), third_to_last.name);
-        try std.testing.expectEqualSlices(u16, L("C:\\a"), third_to_last.path);
+        try std.testing.expectEqualSlices(u16, L("a", .little), third_to_last.name);
+        try std.testing.expectEqualSlices(u16, L("C:\\a", .little), third_to_last.path);
 
         try std.testing.expect(null == it.previous());
     }

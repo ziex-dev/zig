@@ -3,7 +3,7 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 const windows = std.os.windows;
-const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
+const utf16Literal = std.unicode.utf8ToUtf16StringLiteral;
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
@@ -29,10 +29,10 @@ pub fn main(init: std.process.Init) !void {
     defer gpa.free(tmp_relative_path);
 
     // Clear PATH
-    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH"), null).toBool());
+    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH", .little), null).toBool());
 
     // Set PATHEXT to something predictable
-    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATHEXT"), utf16Literal(".COM;.EXE;.BAT;.CMD;.JS")).toBool());
+    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATHEXT", .little), utf16Literal(".COM;.EXE;.BAT;.CMD;.JS", .little)).toBool());
 
     // No PATH, so it should fail to find anything not in the cwd
     try testExecError(error.FileNotFound, gpa, io, "something_missing");
@@ -40,7 +40,7 @@ pub fn main(init: std.process.Init) !void {
     // make sure we don't get error.BadPath traversing out of cwd with a relative path
     try testExecError(error.FileNotFound, gpa, io, "..\\.\\.\\.\\\\..\\more_missing");
 
-    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH"), tmp_absolute_path_w).toBool());
+    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH", .little), tmp_absolute_path_w).toBool());
 
     // Move hello.exe into the tmp dir which is now added to the path
     try Io.Dir.cwd().copyFile(hello_exe_cache_path, tmp_dir, "hello.exe", io, .{});
@@ -117,10 +117,10 @@ pub fn main(init: std.process.Init) !void {
     // Now let's set the tmp dir as the cwd and set the path only include the "something" sub dir
     try std.process.setCurrentDir(io, tmp_dir);
     defer std.process.setCurrentPath(io, process_cwd_path) catch {};
-    const something_subdir_abs_path = try std.mem.concatWithSentinel(gpa, u16, &.{ tmp_absolute_path_w, utf16Literal("\\something") }, 0);
+    const something_subdir_abs_path = try std.mem.concatWithSentinel(gpa, u16, &.{ tmp_absolute_path_w, utf16Literal("\\something", .little) }, 0);
     defer gpa.free(something_subdir_abs_path);
 
-    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH"), something_subdir_abs_path).toBool());
+    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH", .little), something_subdir_abs_path).toBool());
 
     // Now trying to execute goodbye should give error.InvalidExe since it's the original
     // error that we got when trying within the cwd
@@ -146,23 +146,23 @@ pub fn main(init: std.process.Init) !void {
     try testExecWithCwd(gpa, io, "goodbye", tmp_absolute_path, "hello from exe\n");
 
     // introduce some extra path separators into the path which is dealt with inside the spawn call.
-    const denormed_something_subdir_size = std.mem.replacementSize(u16, something_subdir_abs_path, utf16Literal("\\"), utf16Literal("\\\\\\\\"));
+    const denormed_something_subdir_size = std.mem.replacementSize(u16, something_subdir_abs_path, utf16Literal("\\", .little), utf16Literal("\\\\\\\\", .little));
 
     const denormed_something_subdir_abs_path = try gpa.allocSentinel(u16, denormed_something_subdir_size, 0);
     defer gpa.free(denormed_something_subdir_abs_path);
 
-    _ = std.mem.replace(u16, something_subdir_abs_path, utf16Literal("\\"), utf16Literal("\\\\\\\\"), denormed_something_subdir_abs_path);
+    _ = std.mem.replace(u16, something_subdir_abs_path, utf16Literal("\\", .little), utf16Literal("\\\\\\\\", .little), denormed_something_subdir_abs_path);
 
     const denormed_something_subdir_wtf8 = try std.unicode.wtf16LeToWtf8Alloc(gpa, denormed_something_subdir_abs_path);
     defer gpa.free(denormed_something_subdir_wtf8);
 
     // clear the path to ensure that the match comes from the cwd
-    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH"), null).toBool());
+    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH", .little), null).toBool());
 
     try testExecWithCwd(gpa, io, "goodbye", denormed_something_subdir_wtf8, "hello from exe\n");
 
     // normalization should also work if the non-normalized path is found in the PATH var.
-    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH"), denormed_something_subdir_abs_path).toBool());
+    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH", .little), denormed_something_subdir_abs_path).toBool());
     try testExec(gpa, io, "goodbye", "hello from exe\n");
 
     // now make sure we can launch executables "outside" of the cwd
@@ -173,7 +173,7 @@ pub fn main(init: std.process.Init) !void {
     try std.process.setCurrentDir(io, subdir_cwd);
 
     // clear the PATH again
-    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH"), null).toBool());
+    std.debug.assert(SetEnvironmentVariableW(utf16Literal("PATH", .little), null).toBool());
 
     // while we're at it make sure non-windows separators work fine
     try testExec(gpa, io, "../hello", "hello from exe\n");

@@ -258,18 +258,18 @@ pub const ControlClass = struct {
     /// Like `map.get` but works on WTF16 strings, for use with parsed
     /// string literals ("BUTTON", or even "\x42UTTON")
     pub fn fromWideString(str: []const u16) ?res.ControlClass {
-        const utf16Literal = std.unicode.utf8ToUtf16LeStringLiteral;
-        return if (ascii.eqlIgnoreCaseW(str, utf16Literal("BUTTON")))
+        const utf16Literal = std.unicode.utf8ToUtf16StringLiteral;
+        return if (ascii.eqlIgnoreCaseW(str, utf16Literal("BUTTON", .little)))
             .button
-        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("EDIT")))
+        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("EDIT", .little)))
             .edit
-        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("STATIC")))
+        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("STATIC", .little)))
             .static
-        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("LISTBOX")))
+        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("LISTBOX", .little)))
             .listbox
-        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("SCROLLBAR")))
+        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("SCROLLBAR", .little)))
             .scrollbar
-        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("COMBOBOX")))
+        else if (ascii.eqlIgnoreCaseW(str, utf16Literal("COMBOBOX", .little)))
             .combobox
         else
             null;

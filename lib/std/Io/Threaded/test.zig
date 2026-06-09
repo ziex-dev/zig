@@ -292,8 +292,8 @@ fn RtlDosPathNameToNtPathName_U(path: [:0]const u16) !Io.Threaded.WindowsPathSpa
 /// Test that the Zig conversion matches the expected_path (for instances where
 /// the Zig implementation intentionally diverges from what RtlDosPathNameToNtPathName_U does).
 fn testToPrefixedFileNoOracle(comptime path: []const u8, comptime expected_path: []const u8) !void {
-    const path_utf16 = std.unicode.utf8ToUtf16LeStringLiteral(path);
-    const expected_path_utf16 = std.unicode.utf8ToUtf16LeStringLiteral(expected_path);
+    const path_utf16 = std.unicode.utf8ToUtf16StringLiteral(path, .little);
+    const expected_path_utf16 = std.unicode.utf8ToUtf16StringLiteral(expected_path, .little);
     const actual_path = try Io.Threaded.wToPrefixedFileW(null, path_utf16, .{});
     std.testing.expectEqualSlices(u16, expected_path_utf16, actual_path.span()) catch |e| {
         std.debug.print("got '{f}', expected '{f}'\n", .{ std.unicode.fmtUtf16(actual_path.span(), .little), std.unicode.fmtUtf16(expected_path_utf16, .little) });
@@ -310,7 +310,7 @@ fn testToPrefixedFileWithOracle(comptime path: []const u8, comptime expected_pat
 
 /// Test that the Zig conversion matches the conversion that RtlDosPathNameToNtPathName_U does.
 fn testToPrefixedFileOnlyOracle(comptime path: []const u8) !void {
-    const path_utf16 = std.unicode.utf8ToUtf16LeStringLiteral(path);
+    const path_utf16 = std.unicode.utf8ToUtf16StringLiteral(path, .little);
     const zig_result = try Io.Threaded.wToPrefixedFileW(null, path_utf16, .{});
     const win32_api_result = try RtlDosPathNameToNtPathName_U(path_utf16);
     std.testing.expectEqualSlices(u16, win32_api_result.span(), zig_result.span()) catch |e| {

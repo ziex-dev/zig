@@ -6289,7 +6289,7 @@ pub fn GetFinalPathNameByHandle(
         },
         .Dos => {
             // parse the string to separate volume path from file path
-            const device_prefix = std.unicode.utf8ToUtf16LeStringLiteral("\\Device\\");
+            const device_prefix = std.unicode.utf8ToUtf16StringLiteral("\\Device\\", .little);
 
             // We aren't entirely sure of the structure of the path returned by
             // QueryObjectName in all contexts/environments.
@@ -6317,7 +6317,7 @@ pub fn GetFinalPathNameByHandle(
             // MUP is Multiple UNC Provider, and indicates that the path is a UNC
             // path. In this case, the canonical UNC path can be gotten by just
             // dropping the \Device\Mup\ and making sure the path begins with \\
-            if (std.mem.eql(u16, device_name_u16, std.unicode.utf8ToUtf16LeStringLiteral("Mup"))) {
+            if (std.mem.eql(u16, device_name_u16, std.unicode.utf8ToUtf16StringLiteral("Mup", .little))) {
                 out_buffer[0] = '\\';
                 @memmove(out_buffer[1..][0..file_name_u16.len], file_name_u16);
                 return out_buffer[0 .. 1 + file_name_u16.len];
@@ -6335,7 +6335,7 @@ pub fn GetFinalPathNameByHandle(
             // This surprising path is a filesystem path to the mount manager on Windows.
             // Source: https://stackoverflow.com/questions/3012828/using-ioctl-mountmgr-query-points
             // This is the NT namespaced version of \\.\MountPointManager
-            const mgmt_path_u16 = std.unicode.utf8ToUtf16LeStringLiteral("\\??\\MountPointManager");
+            const mgmt_path_u16 = std.unicode.utf8ToUtf16StringLiteral("\\??\\MountPointManager", .little);
             const mgmt_handle = OpenFile(mgmt_path_u16, .{
                 .access_mask = .{ .STANDARD = .{ .SYNCHRONIZE = true } },
                 .creation = .OPEN,
@@ -6386,7 +6386,7 @@ pub fn GetFinalPathNameByHandle(
 
                 // Look for `\DosDevices\` prefix. We don't really care if there are more than one symlinks
                 // with traditional DOS drive letters, so pick the first one available.
-                var prefix_buf = std.unicode.utf8ToUtf16LeStringLiteral("\\DosDevices\\");
+                var prefix_buf = std.unicode.utf8ToUtf16StringLiteral("\\DosDevices\\", .little);
                 const prefix = prefix_buf[0..prefix_buf.len];
 
                 if (std.mem.startsWith(u16, symlink, prefix)) {
@@ -6498,7 +6498,7 @@ fn mountmgrIsVolumeName(name: []const u16) bool {
         (name[1] == std.mem.nativeToLittle(u16, '?') or name[1] == std.mem.nativeToLittle(u16, '\\')) and
         name[2] == std.mem.nativeToLittle(u16, '?') and
         name[3] == std.mem.nativeToLittle(u16, '\\') and
-        std.mem.startsWith(u16, name[4..], std.unicode.utf8ToUtf16LeStringLiteral("Volume{")) and
+        std.mem.startsWith(u16, name[4..], std.unicode.utf8ToUtf16StringLiteral("Volume{", .little)) and
         name[19] == std.mem.nativeToLittle(u16, '-') and
         name[24] == std.mem.nativeToLittle(u16, '-') and
         name[29] == std.mem.nativeToLittle(u16, '-') and
@@ -6508,14 +6508,14 @@ fn mountmgrIsVolumeName(name: []const u16) bool {
 
 test mountmgrIsVolumeName {
     @setEvalBranchQuota(2000);
-    const L = std.unicode.utf8ToUtf16LeStringLiteral;
-    try std.testing.expect(mountmgrIsVolumeName(L("\\\\?\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}")));
-    try std.testing.expect(mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}")));
-    try std.testing.expect(mountmgrIsVolumeName(L("\\\\?\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}\\")));
-    try std.testing.expect(mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}\\")));
-    try std.testing.expect(!mountmgrIsVolumeName(L("\\\\.\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}")));
-    try std.testing.expect(!mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}\\foo")));
-    try std.testing.expect(!mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58}")));
+    const L = std.unicode.utf8ToUtf16StringLiteral;
+    try std.testing.expect(mountmgrIsVolumeName(L("\\\\?\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}", .little)));
+    try std.testing.expect(mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}", .little)));
+    try std.testing.expect(mountmgrIsVolumeName(L("\\\\?\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}\\", .little)));
+    try std.testing.expect(mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}\\", .little)));
+    try std.testing.expect(!mountmgrIsVolumeName(L("\\\\.\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}", .little)));
+    try std.testing.expect(!mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58d}\\foo", .little)));
+    try std.testing.expect(!mountmgrIsVolumeName(L("\\??\\Volume{383da0b0-717f-41b6-8c36-00500992b58}", .little)));
 }
 
 pub const QueryObjectNameError = error{
@@ -16299,7 +16299,7 @@ fn windowsCreateProcessPathExt(
                     const app_name = app_buf.items[0..app_name_len];
                     const ext_start = std.mem.lastIndexOfScalar(u16, app_name, '.') orelse break :unappended err;
                     const ext = app_name[ext_start..];
-                    if (windows.eqlIgnoreCaseWtf16(ext, std.unicode.utf8ToUtf16LeStringLiteral(".EXE"))) {
+                    if (windows.eqlIgnoreCaseWtf16(ext, std.unicode.utf8ToUtf16StringLiteral(".EXE", .little))) {
                         return error.UnrecoverableInvalidExe;
                     }
                     break :unappended err;
@@ -16350,7 +16350,7 @@ fn windowsCreateProcessPathExt(
                 // On InvalidExe, if the extension of the app name is .exe then
                 // it's treated as an unrecoverable error. Otherwise, it'll be
                 // skipped as normal.
-                if (windows.eqlIgnoreCaseWtf16(ext, std.unicode.utf8ToUtf16LeStringLiteral(".EXE"))) {
+                if (windows.eqlIgnoreCaseWtf16(ext, std.unicode.utf8ToUtf16StringLiteral(".EXE", .little))) {
                     return error.UnrecoverableInvalidExe;
                 }
                 continue;
@@ -16561,7 +16561,7 @@ const WindowsCommandLineCache = struct {
         if (self.cmd_exe_path == null) {
             // Remove trailing slash from system directory path; we'll re-add it below
             const system_dir = std.mem.trimEnd(u16, windows.getSystemDirectoryWtf16Le(), &.{ '/', '\\' });
-            const suffix = std.unicode.utf8ToUtf16LeStringLiteral("\\cmd.exe");
+            const suffix = std.unicode.utf8ToUtf16StringLiteral("\\cmd.exe", .little);
             const buf = try self.allocator.allocSentinel(u16, system_dir.len + suffix.len, 0);
             errdefer comptime unreachable;
             @memcpy(buf[0..system_dir.len], system_dir);

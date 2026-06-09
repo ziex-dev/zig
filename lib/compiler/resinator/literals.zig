@@ -834,7 +834,7 @@ test "parse quoted wide string" {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("hello"), try parseQuotedWideString(arena, .{
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("hello", .little), try parseQuotedWideString(arena, .{
         .slice =
         \\L"hello"
         ,
@@ -879,19 +879,19 @@ test "parse quoted wide string" {
         .output_code_page = .windows1252,
     }));
     // literal tab characters get converted to spaces (dependent on source file columns)
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("abcdefg       "), try parseQuotedWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("abcdefg       ", .little), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"abcdefg\t\"", .code_page = .windows1252 },
         .{ .output_code_page = .windows1252 },
     ));
     // Windows-1252 conversion
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("ðð€€€"), try parseQuotedWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("ðð€€€", .little), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .windows1252 },
         .{ .output_code_page = .windows1252 },
     ));
     // Invalid escape sequences are skipped
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral(""), try parseQuotedWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("", .little), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\\H\"", .code_page = .windows1252 },
         .{ .output_code_page = .windows1252 },
@@ -908,13 +908,13 @@ test "parse quoted wide string with utf8 code page" {
         .{ .slice = "L\"\"", .code_page = .utf8 },
         .{ .output_code_page = .windows1252 },
     ));
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("кириллица", .little), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"кириллица\"", .code_page = .utf8 },
         .{ .output_code_page = .windows1252 },
     ));
     // Invalid UTF-8 gets converted to � depending on well-formedness
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("����"), try parseQuotedWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("����", .little), try parseQuotedWideString(
         arena,
         .{ .slice = "L\"\xf0\xf0\x80\x80\x80\"", .code_page = .utf8 },
         .{ .output_code_page = .windows1252 },
@@ -926,18 +926,18 @@ test "parse quoted ascii string as wide string" {
     defer arena_allocator.deinit();
     const arena = arena_allocator.allocator();
 
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("кириллица"), try parseQuotedStringAsWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("кириллица", .little), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "\"кириллица\"", .code_page = .utf8 },
         .{ .output_code_page = .windows1252 },
     ));
     // Whether or not invalid escapes are skipped is still determined by the L prefix
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral("\\H"), try parseQuotedStringAsWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("\\H", .little), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "\"\\H\"", .code_page = .windows1252 },
         .{ .output_code_page = .windows1252 },
     ));
-    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16LeStringLiteral(""), try parseQuotedStringAsWideString(
+    try std.testing.expectEqualSentinel(u16, 0, std.unicode.utf8ToUtf16StringLiteral("", .little), try parseQuotedStringAsWideString(
         arena,
         .{ .slice = "L\"\\H\"", .code_page = .windows1252 },
         .{ .output_code_page = .windows1252 },

@@ -491,34 +491,34 @@ test "NameOrOrdinal" {
 
     // zero is treated as a string
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("0") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("0", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "0", .code_page = .windows1252 }),
     );
     // any non-digit byte invalidates the number
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1A") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("1A", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "1a", .code_page = .windows1252 }),
     );
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1ÿ") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("1ÿ", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "1\xff", .code_page = .windows1252 }),
     );
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1€") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("1€", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "1€", .code_page = .utf8 }),
     );
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("1�") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("1�", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "1\x80", .code_page = .utf8 }),
     );
     // same with overflow that resolves to 0
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("65536") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("65536", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "65536", .code_page = .windows1252 }),
     );
     // hex zero is also treated as a string
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("0X0") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("0X0", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "0x0", .code_page = .windows1252 }),
     );
     // hex numbers work
@@ -533,7 +533,7 @@ test "NameOrOrdinal" {
     );
     // octal is not supported so it gets treated as a string
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("0O1234") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("0O1234", .little) },
         try NameOrOrdinal.fromString(allocator, .{ .slice = "0o1234", .code_page = .windows1252 }),
     );
     // overflow wraps
@@ -585,7 +585,7 @@ test "NameOrOrdinal code page awareness" {
     const allocator = arena.allocator();
 
     try expectNameOrOrdinal(
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("��𐐷") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("��𐐷", .little) },
         try NameOrOrdinal.fromString(allocator, .{
             .slice = "\xF0\x80\x80𐐷",
             .code_page = .utf8,
@@ -593,10 +593,10 @@ test "NameOrOrdinal code page awareness" {
     );
     try expectNameOrOrdinal(
         // The UTF-8 representation of 𐐷 is 0xF0 0x90 0x90 0xB7. In order to provide valid
-        // UTF-8 to utf8ToUtf16LeStringLiteral, it uses the UTF-8 representation of the codepoint
+        // UTF-8 to utf8ToUtf16StringLiteral, it uses the UTF-8 representation of the codepoint
         // <U+0x90> which is 0xC2 0x90. The code units in the expected UTF-16 string are:
         // { 0x00F0, 0x20AC, 0x20AC, 0x00F0, 0x0090, 0x0090, 0x00B7 }
-        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16LeStringLiteral("ð€€ð\xC2\x90\xC2\x90·") },
+        NameOrOrdinal{ .name = std.unicode.utf8ToUtf16StringLiteral("ð€€ð\xC2\x90\xC2\x90·", .little) },
         try NameOrOrdinal.fromString(allocator, .{
             .slice = "\xF0\x80\x80𐐷",
             .code_page = .windows1252,
@@ -1046,7 +1046,7 @@ test "forced ordinal" {
 
     // From UTF-16
     try std.testing.expectEqual(@as(u16, 0x122), ForcedOrdinal.fromUtf16Le(&[_:0]u16{ std.mem.nativeToLittle(u16, '0'), std.mem.nativeToLittle(u16, 'Œ') }));
-    try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromUtf16Le(std.unicode.utf8ToUtf16LeStringLiteral("0\u{10100}")));
+    try std.testing.expectEqual(@as(u16, 0x4AF0), ForcedOrdinal.fromUtf16Le(std.unicode.utf8ToUtf16StringLiteral("0\u{10100}", .little)));
 }
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/verrsrc/ns-verrsrc-vs_fixedfileinfo
@@ -1065,7 +1065,7 @@ pub const FixedFileInfo = struct {
     pub const version = 0x00010000;
 
     pub const byte_len = 0x34;
-    pub const key = std.unicode.utf8ToUtf16LeStringLiteral("VS_VERSION_INFO");
+    pub const key = std.unicode.utf8ToUtf16StringLiteral("VS_VERSION_INFO", .little);
 
     pub const Version = struct {
         parts: [4]u16 = @splat(0),
