@@ -193,40 +193,6 @@ pub fn utf8ValidCodepoint(value: u21) bool {
     };
 }
 
-/// Returns the length of a supplied UTF-8 string literal in terms of unicode
-/// codepoints.
-pub fn utf8CountCodepoints(s: []const u8) !usize {
-    var len: usize = 0;
-
-    const N = @sizeOf(usize);
-    const MASK = 0x80 * (std.math.maxInt(usize) / 0xff);
-
-    var i: usize = 0;
-    while (i < s.len) {
-        // Fast path for ASCII sequences
-        while (i + N <= s.len) : (i += N) {
-            const v = mem.readInt(usize, s[i..][0..N], native_endian);
-            if (v & MASK != 0) break;
-            len += N;
-        }
-
-        if (i < s.len) {
-            const n = try utf8ByteSequenceLength(s[i]);
-            if (i + n > s.len) return error.TruncatedInput;
-
-            switch (n) {
-                1 => {}, // ASCII, no validation needed
-                else => _ = try utf8Decode(s[i..][0..n]),
-            }
-
-            i += n;
-            len += 1;
-        }
-    }
-
-    return len;
-}
-
 /// Returns true if the input consists entirely of UTF-8 codepoints
 pub fn utf8ValidateSlice(input: []const u8) bool {
     return utf8ValidateSliceImpl(input, .cannot_encode_surrogate_half);
@@ -389,6 +355,43 @@ pub const Utf8View = struct {
             .i = 0,
         };
     }
+
+    /// Returns the length of a supplied UTF-8 string literal in terms of Unicode
+    /// codepoints.
+    pub fn countCodepoints(s: Utf8View) usize {
+        var count: usize = 0;
+        var i: usize = 0;
+
+        if (std.simd.suggestVectorLength(u8)) |chunk_len| {
+            const Chunk = @Vector(chunk_len, u8);
+            const SignedChunk = @Vector(chunk_len, i8);
+
+            while (i + chunk_len <= s.bytes.len) {
+                const chunk: Chunk = s.bytes[i..][0..chunk_len].*;
+                const ascii = chunk <= @as(Chunk, @splat(128));
+                // ASCII fast path
+                if (@reduce(.And, ascii)) {
+                    count += chunk_len;
+                    i += chunk_len;
+                    continue;
+                }
+                const signed: SignedChunk = @bitCast(chunk);
+                // Mask for leading UTF-8 bytes
+                const leading = signed > @as(SignedChunk, @splat(-65));
+                count += std.simd.countTrues(leading);
+                i += chunk_len;
+            }
+        }
+        while (i < s.bytes.len) {
+            // Count leading UTF-8 bytes
+            if (@as(i8, @bitCast(s.bytes[i])) > -65) {
+                count += 1;
+            }
+            i += 1;
+        }
+
+        return count;
+    }
 };
 
 pub const Utf8Iterator = struct {
@@ -537,7 +540,7 @@ pub fn utf16ValidateSlice(input: []const u8, endian: std.builtin.Endian) bool {
     // Simple scalar validation
     var i: usize = 0;
     while (i < remaining.len) {
-        const code_unit = std.mem.readInt(u16, remaining[i..][0..2], endian);
+        const code_unit = mem.readInt(u16, remaining[i..][0..2], endian);
         if ((code_unit & 0xf800) == 0xd800) {
             if (i + 2 >= remaining.len) {
                 return false;
@@ -546,7 +549,7 @@ pub fn utf16ValidateSlice(input: []const u8, endian: std.builtin.Endian) bool {
             if (diff > 0x3FF) {
                 return false;
             }
-            const next_code_unit = std.mem.readInt(u16, remaining[i + 2 ..][0..2], endian);
+            const next_code_unit = mem.readInt(u16, remaining[i + 2 ..][0..2], endian);
             const diff2 = next_code_unit -% 0xdc00;
             if (diff2 > 0x3ff) {
                 return false;
@@ -593,6 +596,18 @@ pub const Utf16View = struct {
             .endian = s.endian,
             .i = 0,
         };
+    }
+
+    /// Returns the length of the UTF-16 slice in terms of Unicode code points.
+    pub fn countCodepoints(s: Utf16View) usize {
+        var count: usize = 0;
+        var i: usize = 0;
+        while (i < s.bytes.len) {
+            const code_unit = mem.readInt(u16, s.bytes[i..][0..2], s.endian);
+            count += @intFromBool((code_unit & 0xfc00) != 0xdc00);
+            i += 2;
+        }
+        return count;
     }
 };
 
@@ -711,49 +726,6 @@ fn testUtf16IteratorPeek() !void {
     try testing.expect(mem.eql(u8, "\x62\x00\x63\x00\x3c\xd8\x0e\xdf", it.peek(4)));
 }
 
-pub const Utf16LeIterator = struct {
-    bytes: []const u8,
-    i: usize,
-
-    pub fn init(s: []const u16) Utf16LeIterator {
-        return Utf16LeIterator{
-            .bytes = mem.sliceAsBytes(s),
-            .i = 0,
-        };
-    }
-
-    pub const NextCodepointError = error{ DanglingSurrogateHalf, ExpectedSecondSurrogateHalf, UnexpectedSecondSurrogateHalf };
-
-    pub fn nextCodepoint(it: *Utf16LeIterator) NextCodepointError!?u21 {
-        assert(it.i <= it.bytes.len);
-        if (it.i == it.bytes.len) return null;
-        var code_units: [2]u16 = undefined;
-        code_units[0] = mem.readInt(u16, it.bytes[it.i..][0..2], .little);
-        it.i += 2;
-        if (utf16IsHighSurrogate(code_units[0])) {
-            // surrogate pair
-            if (it.i >= it.bytes.len) return error.DanglingSurrogateHalf;
-            code_units[1] = mem.readInt(u16, it.bytes[it.i..][0..2], .little);
-            const codepoint = try utf16DecodeSurrogatePair(&code_units);
-            it.i += 2;
-            return codepoint;
-        } else if (utf16IsLowSurrogate(code_units[0])) {
-            return error.UnexpectedSecondSurrogateHalf;
-        } else {
-            return code_units[0];
-        }
-    }
-};
-
-/// Returns the length of a supplied UTF-16 string literal in terms of unicode
-/// codepoints.
-pub fn utf16CountCodepoints(utf16le: []const u16) !usize {
-    var len: usize = 0;
-    var it = Utf16LeIterator.init(utf16le);
-    while (try it.nextCodepoint()) |_| len += 1;
-    return len;
-}
-
 test "utf16 count codepoints" {
     @setEvalBranchQuota(2000);
     try testUtf16CountCodepoints();
@@ -762,19 +734,28 @@ test "utf16 count codepoints" {
 fn testUtf16CountCodepoints() !void {
     try testing.expectEqual(
         @as(usize, 1),
-        try utf16CountCodepoints(utf8ToUtf16LeStringLiteral("a")),
+        Utf16View.initUnchecked(mem.sliceAsBytes(utf8ToUtf16LeStringLiteral("a")), .little).countCodepoints(),
     );
     try testing.expectEqual(
         @as(usize, 10),
-        try utf16CountCodepoints(utf8ToUtf16LeStringLiteral("abcdefghij")),
+        Utf16View.initUnchecked(
+            mem.sliceAsBytes(utf8ToUtf16LeStringLiteral("abcdefghij")),
+            .little,
+        ).countCodepoints(),
     );
     try testing.expectEqual(
         @as(usize, 10),
-        try utf16CountCodepoints(utf8ToUtf16LeStringLiteral("äåéëþüúíóö")),
+        Utf16View.initUnchecked(
+            mem.sliceAsBytes(utf8ToUtf16LeStringLiteral("äåéëþüúíóö")),
+            .little,
+        ).countCodepoints(),
     );
     try testing.expectEqual(
         @as(usize, 5),
-        try utf16CountCodepoints(utf8ToUtf16LeStringLiteral("こんにちは")),
+        Utf16View.initUnchecked(
+            mem.sliceAsBytes(utf8ToUtf16LeStringLiteral("こんにちは")),
+            .little,
+        ).countCodepoints(),
     );
 }
 
@@ -1186,8 +1167,9 @@ fn utf16LeToUtf8ArrayListImpl(
 
     switch (surrogates) {
         .cannot_encode_surrogate_half => {
-            var it = Utf16LeIterator.init(remaining);
-            while (try it.nextCodepoint()) |codepoint| {
+            const utf16view = try Utf16View.init(mem.sliceAsBytes(remaining), .little);
+            var it = utf16view.iterator();
+            while (it.nextCodepoint()) |codepoint| {
                 const utf8_len = utf8CodepointSequenceLength(codepoint) catch unreachable;
                 assert((utf8Encode(codepoint, try result.addManyAsSlice(utf8_len)) catch unreachable) == utf8_len);
             }
@@ -1229,7 +1211,7 @@ pub fn utf16LeToUtf8AllocZ(allocator: Allocator, utf16le: []const u16) Utf16LeTo
     return result.toOwnedSliceSentinel(0);
 }
 
-pub const Utf16LeToUtf8Error = Utf16LeIterator.NextCodepointError;
+pub const Utf16LeToUtf8Error = error{InvalidUtf16};
 
 /// Asserts that the output buffer is big enough.
 /// Returns end byte index into utf8.
@@ -1261,8 +1243,9 @@ fn utf16LeToUtf8Impl(utf8: []u8, utf16le: []const u16, comptime surrogates: Surr
 
     switch (surrogates) {
         .cannot_encode_surrogate_half => {
-            var it = Utf16LeIterator.init(remaining);
-            while (try it.nextCodepoint()) |codepoint| {
+            const utf16view = try Utf16View.init(mem.sliceAsBytes(remaining), .little);
+            var it = utf16view.iterator();
+            while (it.nextCodepoint()) |codepoint| {
                 dest_index += utf8Encode(codepoint, utf8[dest_index..]) catch |err| switch (err) {
                     // The maximum possible codepoint encoded by UTF-16 is U+10FFFF,
                     // which is within the valid codepoint range.
@@ -1350,7 +1333,7 @@ test utf16LeToUtf8 {
         mem.writeInt(u16, utf16le_as_bytes[0..2], 0xdcdc, .little);
         mem.writeInt(u16, utf16le_as_bytes[2..4], 0xdcdc, .little);
         const result = utf16LeToUtf8Alloc(testing.allocator, &utf16le);
-        try testing.expectError(error.UnexpectedSecondSurrogateHalf, result);
+        try testing.expectError(error.InvalidUtf16, result);
     }
 }
 
@@ -1702,13 +1685,28 @@ test calcWtf16LeLen {
     try comptime testCalcUtf16LeLenImpl(calcWtf16LeLen);
 }
 
-/// Print the given `utf16le` string, encoded as UTF-8 bytes.
-/// Unpaired surrogates are replaced by the replacement character (U+FFFD).
 fn formatUtf16Le(utf16le: []const u16, writer: *std.Io.Writer) std.Io.Writer.Error!void {
     var buf: [300]u8 = undefined; // just an arbitrary size
-    var it = Utf16LeIterator.init(utf16le);
+    var i: usize = 0;
     var u8len: usize = 0;
-    while (it.nextCodepoint() catch replacement_character) |codepoint| {
+    while (i < utf16le.len) {
+        const code_unit = utf16le[i];
+        const codepoint = if (utf16IsHighSurrogate(code_unit)) cp: {
+            if (i == utf16le.len - 1) {
+                i += 1;
+                break :cp replacement_character;
+            }
+            const next = utf16le[i + 1];
+            if (!utf16IsLowSurrogate(next)) {
+                i += 1;
+                break :cp replacement_character;
+            }
+            i += 2;
+            break :cp utf16DecodeSurrogatePair(&.{ code_unit, next }) catch unreachable;
+        } else cp: {
+            i += 1;
+            break :cp code_unit;
+        };
         u8len += utf8Encode(codepoint, buf[u8len..]) catch
             utf8Encode(replacement_character, buf[u8len..]) catch unreachable;
         // make sure there's always enough room for another maximum length UTF-8 codepoint
@@ -1720,13 +1718,9 @@ fn formatUtf16Le(utf16le: []const u16, writer: *std.Io.Writer) std.Io.Writer.Err
     try writer.writeAll(buf[0..u8len]);
 }
 
-/// Return a Formatter for a (potentially ill-formed) UTF-16 LE string,
-/// which will be converted to UTF-8 during formatting.
-/// Unpaired surrogates are replaced by the replacement character (U+FFFD).
 pub fn fmtUtf16Le(utf16le: []const u16) std.fmt.Alt([]const u16, formatUtf16Le) {
     return .{ .data = utf16le };
 }
-
 test fmtUtf16Le {
     const expectFmt = testing.expectFmt;
     try expectFmt("", "{f}", .{fmtUtf16Le(utf8ToUtf16LeStringLiteral(""))});
@@ -1734,12 +1728,13 @@ test fmtUtf16Le {
     try expectFmt("foo", "{f}", .{fmtUtf16Le(utf8ToUtf16LeStringLiteral("foo"))});
     try expectFmt("foo", "{f}", .{fmtUtf16Le(wtf8ToWtf16LeStringLiteral("foo"))});
     try expectFmt("𐐷", "{f}", .{fmtUtf16Le(wtf8ToWtf16LeStringLiteral("𐐷"))});
-    try expectFmt("퟿", "{f}", .{fmtUtf16Le(&[_]u16{mem.readInt(u16, "\xff\xd7", native_endian)})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&[_]u16{mem.readInt(u16, "\x00\xd8", native_endian)})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&[_]u16{mem.readInt(u16, "\xff\xdb", native_endian)})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&[_]u16{mem.readInt(u16, "\x00\xdc", native_endian)})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&[_]u16{mem.readInt(u16, "\xff\xdf", native_endian)})});
-    try expectFmt("", "{f}", .{fmtUtf16Le(&[_]u16{mem.readInt(u16, "\x00\xe0", native_endian)})});
+    try expectFmt("퟿", "{f}", .{fmtUtf16Le(&.{0xd7ff})});
+    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xd800})});
+    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xdbff})});
+    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xdc00})});
+    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xdfff})});
+    try expectFmt("�D", "{f}", .{fmtUtf16Le(&.{ 0xd800, 0x0044 })});
+    try expectFmt("", "{f}", .{fmtUtf16Le(&.{0xe000})});
 }
 
 fn testUtf8ToUtf16LeStringLiteral(utf8ToUtf16LeStringLiteral_: anytype) !void {
@@ -1803,18 +1798,29 @@ test wtf8ToWtf16LeStringLiteral {
     try testUtf8ToUtf16LeStringLiteral(wtf8ToWtf16LeStringLiteral);
 }
 
-fn testUtf8CountCodepoints() !void {
-    try testing.expectEqual(@as(usize, 10), try utf8CountCodepoints("abcdefghij"));
-    try testing.expectEqual(@as(usize, 10), try utf8CountCodepoints("äåéëþüúíóö"));
-    try testing.expectEqual(@as(usize, 5), try utf8CountCodepoints("こんにちは"));
-    // testing.expectError(error.Utf8EncodesSurrogateHalf, utf8CountCodepoints("\xED\xA0\x80"));
-}
-
 test "utf8 count codepoints" {
     try testUtf8CountCodepoints();
     try comptime testUtf8CountCodepoints();
 }
+fn testUtf8CountCodepoints() !void {
+    try testing.expectEqual(
+        @as(usize, 10),
+        Utf8View.initUnchecked("abcdefghij").countCodepoints(),
+    );
+    try testing.expectEqual(
+        @as(usize, 10),
+        Utf8View.initUnchecked("äåéëþüúíóö").countCodepoints(),
+    );
+    try testing.expectEqual(
+        @as(usize, 5),
+        Utf8View.initUnchecked("こんにちは").countCodepoints(),
+    );
+}
 
+test "utf8 valid codepoint" {
+    try testUtf8ValidCodepoint();
+    try comptime testUtf8ValidCodepoint();
+}
 fn testUtf8ValidCodepoint() !void {
     try testing.expect(utf8ValidCodepoint('e'));
     try testing.expect(utf8ValidCodepoint('ë'));
@@ -1824,11 +1830,6 @@ fn testUtf8ValidCodepoint() !void {
     try testing.expect(!utf8ValidCodepoint(0xd800));
     try testing.expect(!utf8ValidCodepoint(0xdfff));
     try testing.expect(!utf8ValidCodepoint(0x110000));
-}
-
-test "utf8 valid codepoint" {
-    try testUtf8ValidCodepoint();
-    try comptime testUtf8ValidCodepoint();
 }
 
 /// Returns true if the codepoint is a surrogate (U+DC00 to U+DFFF)
