@@ -3,31 +3,33 @@ const Io = std.Io;
 const time = std.time;
 const unicode = std.unicode;
 
+fn utf16LeValidateSlice(input: []const u8) void {
+    _ = std.mem.doNotOptimizeAway(unicode.utf16ValidateSlice(input, .little));
+}
+
+fn utf8CountCodepoints(input: []const u8) void {
+    _ = std.mem.doNotOptimizeAway(unicode.utf8CountCodepoints(input) catch {});
+}
+
 const N = 1_000_000;
 
 const KiB = 1024;
 const MiB = 1024 * KiB;
 const GiB = 1024 * MiB;
 
-const ResultCount = struct {
-    count: usize,
-    throughput: u64,
-};
-
 fn benchTime(io: Io) i96 {
     return Io.Clock.awake.now(io).nanoseconds;
 }
 
-fn benchmarkCodepointCount(buf: []const u8, io: Io) !ResultCount {
+fn benchmark(comptime function: fn ([]const u8) void, buf: []const u8, io: Io) u64 {
     const bytes = N * buf.len;
 
     const start = benchTime(io);
     var i: usize = 0;
-    var r: usize = undefined;
     while (i < N) : (i += 1) {
-        r = try @call(
+        @call(
             .never_inline,
-            std.unicode.utf8CountCodepoints,
+            function,
             .{buf},
         );
     }
@@ -36,7 +38,7 @@ fn benchmarkCodepointCount(buf: []const u8, io: Io) !ResultCount {
     const elapsed_s = @as(f64, @floatFromInt(end - start)) / time.ns_per_s;
     const throughput = @as(u64, @intFromFloat(@as(f64, @floatFromInt(bytes)) / elapsed_s));
 
-    return ResultCount{ .count = r, .throughput = throughput };
+    return throughput;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -46,45 +48,54 @@ pub fn main(init: std.process.Init) !void {
     var stdout_writer = Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    try stdout.print("short ASCII strings\n", .{});
+    try stdout.print("utf8CountCodepoints: short ASCII strings\n", .{});
     try stdout.flush();
     {
-        const result = try benchmarkCodepointCount("abc", io);
-        try stdout.print("  count: {:5} MiB/s [{d}]\n", .{ result.throughput / (1 * MiB), result.count });
+        const throughput = benchmark(utf8CountCodepoints, "abc", io);
+        try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
-
-    try stdout.print("short Unicode strings\n", .{});
+    try stdout.print("utf8CountCodepoints: short Unicode strings\n", .{});
     try stdout.flush();
     {
-        const result = try benchmarkCodepointCount("ŌŌŌ", io);
-        try stdout.print("  count: {:5} MiB/s [{d}]\n", .{ result.throughput / (1 * MiB), result.count });
+        const throughput = benchmark(utf8CountCodepoints, "ŌŌŌ", io);
+        try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
 
-    try stdout.print("pure ASCII strings\n", .{});
+    try stdout.print("utf8CountCodepoints: pure ASCII strings\n", .{});
     try stdout.flush();
     {
         const part = "hello";
-        const buf: [16][part.len]u8 = @splat(part.*);
-        const result = try benchmarkCodepointCount(@ptrCast(&buf), io);
-        try stdout.print("  count: {:5} MiB/s [{d}]\n", .{ result.throughput / (1 * MiB), result.count });
+        const buf: [128][part.len]u8 = @splat(part.*);
+        const throughput = benchmark(utf8CountCodepoints, @ptrCast(&buf), io);
+        try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
 
-    try stdout.print("pure Unicode strings\n", .{});
+    try stdout.print("utf8CountCodepoints: pure Unicode strings\n", .{});
     try stdout.flush();
     {
         const part = "こんにちは";
         const buf: [16][part.len]u8 = @splat(part.*);
-        const result = try benchmarkCodepointCount(@ptrCast(&buf), io);
-        try stdout.print("  count: {:5} MiB/s [{d}]\n", .{ result.throughput / (1 * MiB), result.count });
+        const throughput = benchmark(utf8CountCodepoints, @ptrCast(&buf), io);
+        try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
 
-    try stdout.print("mixed ASCII/Unicode strings\n", .{});
+    try stdout.print("utf8CountCodepoints: mixed ASCII/Unicode strings\n", .{});
     try stdout.flush();
     {
         const part = "Hyvää huomenta";
         const buf: [16][part.len]u8 = @splat(part.*);
-        const result = try benchmarkCodepointCount(@ptrCast(&buf), io);
-        try stdout.print("  count: {:5} MiB/s [{d}]\n", .{ result.throughput / (1 * MiB), result.count });
+        const throughput = benchmark(utf8CountCodepoints, @ptrCast(&buf), io);
+        try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
+    }
+    try stdout.flush();
+
+    try stdout.print("utf16ValidateSlice: mixed ASCII/Unicode strings\n", .{});
+    try stdout.flush();
+    {
+        const part = "\x61\x00\x62\x00\x63\x00\x3c\xd8\x0e\xdf";
+        const buf: [16][part.len]u8 = @splat(part.*);
+        const throughput = benchmark(utf16LeValidateSlice, @ptrCast(&buf), io);
+        try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
     try stdout.flush();
 }

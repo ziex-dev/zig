@@ -479,6 +479,238 @@ pub fn utf16DecodeSurrogatePair(surrogate_pair: []const u16) !u21 {
     return 0x10000 + ((high_half & 0x03ff) << 10) | (low_half & 0x03ff);
 }
 
+/// Returns true if the input consists of valid UTF-16 encoded code points.
+pub fn utf16ValidateSlice(input: []const u8, endian: std.builtin.Endian) bool {
+    if (input.len % 2 != 0) {
+        return false;
+    }
+    var remaining = input;
+
+    // Validate using SIMD if possible. This algorithm is based on simdutf's UTF-16 validation
+    // algorithm.
+    if (std.simd.suggestVectorLength(u8)) |chunk_len| {
+        const d8: @Vector(chunk_len, u8) = @splat(0xd8);
+        const f8: @Vector(chunk_len, u8) = @splat(0xf8);
+        const fc: @Vector(chunk_len, u8) = @splat(0xfc);
+        const dc: @Vector(chunk_len, u8) = @splat(0xdc);
+
+        while (remaining.len >= chunk_len * 2) {
+            const in: @Vector(chunk_len * 2, u8) = remaining[0 .. chunk_len * 2].*;
+            const deinterlace = std.simd.deinterlace(2, in);
+            // We only need to look at the high bytes to validate UTF-16
+            const high_bytes = if (endian == .little) deinterlace[1] else deinterlace[0];
+            const surrogates = (high_bytes & f8) == d8;
+            if (!@reduce(.Or, surrogates)) {
+                // No high surrogates, so we can skip
+                remaining = remaining[chunk_len * 2 ..];
+            } else {
+                const Bitmask = @Int(.unsigned, chunk_len);
+                const surrogates_bitmask: Bitmask = @bitCast(surrogates);
+                // Non-surrogate bitmask
+                const v = ~surrogates_bitmask;
+                const high_surrogates = (high_bytes & fc) == dc;
+                // High surrogates bitmask
+                const h: Bitmask = @bitCast(high_surrogates);
+                // Low surrogates bitmask
+                const l = ~h & surrogates_bitmask;
+                // We need low surrogates to follow high surrogates. This puts 1's in low surrogate
+                // positions so long as the low surrogate is preceded by a high surrogate
+                const a = l & (h >> 1);
+                // Supplementary mask that puts 1's where a high surrogate prcedes a low surrogate
+                const b = a << 1;
+                // Combine non-surrogates, high surrogate, and low surrogate masks. All bits set
+                // mean all code units are valid UTF-16.
+                const c = v | a | b;
+                if (c == 0xffff) {
+                    remaining = remaining[chunk_len * 2 ..];
+                } else if (c == 0x7fff) {
+                    // In this case, the last code unit is a lone high surrogate, so we need to
+                    // consider this code unit in the next iteration to check if it is valid.
+                    remaining = remaining[(chunk_len * 2) - 2 ..];
+                } else {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // Simple scalar validation
+    var i: usize = 0;
+    while (i < remaining.len) {
+        const code_unit = std.mem.readInt(u16, remaining[i..][0..2], endian);
+        if ((code_unit & 0xf800) == 0xd800) {
+            if (i + 2 >= remaining.len) {
+                return false;
+            }
+            const diff = code_unit -% 0xd800;
+            if (diff > 0x3FF) {
+                return false;
+            }
+            const next_code_unit = std.mem.readInt(u16, remaining[i + 2 ..][0..2], endian);
+            const diff2 = next_code_unit -% 0xdc00;
+            if (diff2 > 0x3ff) {
+                return false;
+            }
+            i += 4;
+        } else {
+            i += 2;
+        }
+    }
+
+    return true;
+}
+
+pub const Utf16View = struct {
+    bytes: []const u8,
+    endian: std.builtin.Endian,
+
+    pub fn init(s: []const u8, endian: std.builtin.Endian) !Utf16View {
+        if (!utf16ValidateSlice(s, endian)) {
+            return error.InvalidUtf16;
+        }
+
+        return initUnchecked(s, endian);
+    }
+
+    pub fn initUnchecked(s: []const u8, endian: std.builtin.Endian) Utf16View {
+        return .{ .bytes = s, .endian = endian };
+    }
+
+    pub inline fn initComptime(
+        comptime s: []const u8,
+        comptime endian: std.builtin.Endian,
+    ) Utf16View {
+        return comptime if (init(s, endian)) |r| r else |err| switch (err) {
+            error.InvalidUtf16 => {
+                @compileError(std.fmt.comptimePrint("invalid utf16 (endian: {})", endian));
+            },
+        };
+    }
+
+    pub fn iterator(s: Utf16View) Utf16Iterator {
+        return Utf16Iterator{
+            .bytes = s.bytes,
+            .endian = s.endian,
+            .i = 0,
+        };
+    }
+};
+
+pub const Utf16Iterator = struct {
+    bytes: []const u8,
+    endian: std.builtin.Endian,
+    i: usize,
+
+    pub fn nextCodepointSlice(it: *Utf16Iterator) ?[]const u8 {
+        assert(it.i <= it.bytes.len);
+        if (it.i == it.bytes.len) {
+            return null;
+        }
+        const leading_code_unit = mem.readInt(u16, it.bytes[it.i..][0..2], it.endian);
+        const len: usize = utf16CodeUnitSequenceLength(leading_code_unit) catch unreachable;
+        it.i += len * 2;
+        return it.bytes[it.i - (len * 2) .. it.i];
+    }
+
+    pub fn nextCodepoint(it: *Utf16Iterator) ?u21 {
+        const slice = it.nextCodepointSlice() orelse return null;
+        if (slice.len == 2) {
+            return mem.readInt(u16, slice[0..2], it.endian);
+        } else {
+            assert(slice.len == 4);
+            const c1 = mem.readInt(u16, slice[0..2], it.endian);
+            const c2 = mem.readInt(u16, slice[2..4], it.endian);
+            return utf16DecodeSurrogatePair(&.{ c1, c2 }) catch unreachable;
+        }
+    }
+
+    /// Get the next n code points as a slice without advancing the iterator.
+    /// If fewer than n codepoints are available, then the remainder of the string is returned.
+    pub fn peek(it: *Utf16Iterator, n: usize) []const u8 {
+        const original_i = it.i;
+        defer it.i = original_i;
+        var end_ix = original_i;
+        var found: usize = 0;
+        while (found < n) : (found += 1) {
+            const next_codepoint = it.nextCodepointSlice() orelse return it.bytes[original_i..];
+            end_ix += next_codepoint.len;
+        }
+        return it.bytes[original_i..end_ix];
+    }
+};
+
+test "utf16 validate slice" {
+    try comptime testUtf16ValidateSlice();
+    try testUtf16ValidateSlice();
+}
+fn testUtf16ValidateSlice() !void {
+    // ASCII
+    try testing.expect(utf16ValidateSlice("\x61\x00\x62\x00\x63\x00", .little));
+    // BMP
+    try testing.expect(utf16ValidateSlice("\x00\x02\x90\x21", .little));
+    // Surrogate pair
+    try testing.expect(utf16ValidateSlice("\x3c\xd8\x0e\xdf", .little));
+    // Surrogate pair (big endian)
+    try testing.expect(utf16ValidateSlice("\xd8\x3c\xdf\x0e", .big));
+
+    // Lone high surrogate
+    try testing.expect(!utf16ValidateSlice("\x3c\xd8", .little));
+    // Lone low surrogate
+    try testing.expect(!utf16ValidateSlice("\x0e\xdf", .little));
+    // Two high surrogates
+    try testing.expect(!utf16ValidateSlice("\xd8\x00\xd8\x00", .big));
+    // Two low surrogates
+    try testing.expect(!utf16ValidateSlice("\xdc\x00\xdc\x00", .big));
+    // High surrogate then non-surrogate
+    try testing.expect(!utf16ValidateSlice("\xd8\x00\x41\x00", .big));
+    // Single byte
+    try testing.expect(!utf16ValidateSlice("\x41", .big));
+}
+
+test "utf16 view ok" {
+    try comptime testUtf16ViewOk();
+    try testUtf16ViewOk();
+}
+fn testUtf16ViewOk() !void {
+    const s = Utf16View.initComptime("\x61\x00\x62\x00\x63\x00\x3c\xd8\x0e\xdf", .little);
+
+    var it1 = s.iterator();
+    try testing.expect(mem.eql(u8, "\x61\x00", it1.nextCodepointSlice().?));
+    try testing.expect(mem.eql(u8, "\x62\x00", it1.nextCodepointSlice().?));
+    try testing.expect(mem.eql(u8, "\x63\x00", it1.nextCodepointSlice().?));
+    try testing.expect(mem.eql(u8, "\x3c\xd8\x0e\xdf", it1.nextCodepointSlice().?));
+    try testing.expect(it1.nextCodepointSlice() == null);
+
+    var it2 = s.iterator();
+    try testing.expect(it2.nextCodepoint().? == 0x61);
+    try testing.expect(it2.nextCodepoint().? == 0x62);
+    try testing.expect(it2.nextCodepoint().? == 0x63);
+    try testing.expect(it2.nextCodepoint().? == 0x1F30E);
+    try testing.expect(it2.nextCodepoint() == null);
+}
+
+test "utf16 view bad" {
+    try comptime testUtf16ViewBad();
+    try testUtf16ViewBad();
+}
+fn testUtf16ViewBad() !void {
+    try testing.expectError(error.InvalidUtf16, Utf16View.init("\x68", .big));
+}
+
+test "utf16 iterator peek" {
+    try comptime testUtf16IteratorPeek();
+    try testUtf16IteratorPeek();
+}
+fn testUtf16IteratorPeek() !void {
+    const s = Utf16View.initComptime("\x61\x00\x62\x00\x63\x00\x3c\xd8\x0e\xdf", .little);
+    var it = s.iterator();
+    try testing.expect(mem.eql(u8, "\x61\x00", it.peek(1)));
+    _ = it.nextCodepoint().?;
+    try testing.expect(mem.eql(u8, "\x62\x00\x63\x00", it.peek(2)));
+    try testing.expect(mem.eql(u8, "\x62\x00\x63\x00\x3c\xd8\x0e\xdf", it.peek(3)));
+    try testing.expect(mem.eql(u8, "\x62\x00\x63\x00\x3c\xd8\x0e\xdf", it.peek(4)));
+}
+
 pub const Utf16LeIterator = struct {
     bytes: []const u8,
     i: usize,
@@ -522,6 +754,11 @@ pub fn utf16CountCodepoints(utf16le: []const u16) !usize {
     return len;
 }
 
+test "utf16 count codepoints" {
+    @setEvalBranchQuota(2000);
+    try testUtf16CountCodepoints();
+    try comptime testUtf16CountCodepoints();
+}
 fn testUtf16CountCodepoints() !void {
     try testing.expectEqual(
         @as(usize, 1),
@@ -539,12 +776,6 @@ fn testUtf16CountCodepoints() !void {
         @as(usize, 5),
         try utf16CountCodepoints(utf8ToUtf16LeStringLiteral("こんにちは")),
     );
-}
-
-test "utf16 count codepoints" {
-    @setEvalBranchQuota(2000);
-    try testUtf16CountCodepoints();
-    try comptime testUtf16CountCodepoints();
 }
 
 test "utf8 encode" {
@@ -646,9 +877,9 @@ fn testUtf8ViewOk() !void {
     try testing.expect(it2.nextCodepoint() == null);
 }
 
-test "validate slice" {
-    try comptime testValidateSlice();
-    try testValidateSlice();
+test "utf8 validate slice" {
+    try comptime testUtf8ValidateSlice();
+    try testUtf8ValidateSlice();
 
     // We skip a variable (based on recommended vector size) chunks of
     // ASCII characters. Let's make sure we're chunking correctly.
@@ -657,7 +888,7 @@ test "validate slice" {
         try testing.expect(!utf8ValidateSlice(str[i..]));
     }
 }
-fn testValidateSlice() !void {
+fn testUtf8ValidateSlice() !void {
     try testing.expect(utf8ValidateSlice("abc"));
     try testing.expect(utf8ValidateSlice("abc\xdf\xbf"));
     try testing.expect(utf8ValidateSlice(""));
