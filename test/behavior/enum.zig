@@ -1329,7 +1329,7 @@ test "switch on an enum with small signed tag type" {
         .y, .z, .a, .b => 0,
         .c => 1,
     };
-    try expectEqual(1, result);
+    try expect(result == 1);
 }
 
 test "Non-exhaustive enum with nonstandard int size behaves correctly" {
