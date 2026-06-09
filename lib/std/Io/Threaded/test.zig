@@ -296,7 +296,7 @@ fn testToPrefixedFileNoOracle(comptime path: []const u8, comptime expected_path:
     const expected_path_utf16 = std.unicode.utf8ToUtf16LeStringLiteral(expected_path);
     const actual_path = try Io.Threaded.wToPrefixedFileW(null, path_utf16, .{});
     std.testing.expectEqualSlices(u16, expected_path_utf16, actual_path.span()) catch |e| {
-        std.debug.print("got '{f}', expected '{f}'\n", .{ std.unicode.fmtUtf16Le(actual_path.span()), std.unicode.fmtUtf16Le(expected_path_utf16) });
+        std.debug.print("got '{f}', expected '{f}'\n", .{ std.unicode.fmtUtf16(actual_path.span(), .little), std.unicode.fmtUtf16(expected_path_utf16, .little) });
         return e;
     };
 }
@@ -314,7 +314,7 @@ fn testToPrefixedFileOnlyOracle(comptime path: []const u8) !void {
     const zig_result = try Io.Threaded.wToPrefixedFileW(null, path_utf16, .{});
     const win32_api_result = try RtlDosPathNameToNtPathName_U(path_utf16);
     std.testing.expectEqualSlices(u16, win32_api_result.span(), zig_result.span()) catch |e| {
-        std.debug.print("got '{f}', expected '{f}'\n", .{ std.unicode.fmtUtf16Le(zig_result.span()), std.unicode.fmtUtf16Le(win32_api_result.span()) });
+        std.debug.print("got '{f}', expected '{f}'\n", .{ std.unicode.fmtUtf16(zig_result.span(), .little), std.unicode.fmtUtf16(win32_api_result.span(), .little) });
         return e;
     };
 }
@@ -544,14 +544,14 @@ test "getWin32PathType vs RtlDetermineDosPathNameType_U" {
         const wtf8_type = std.fs.path.getWin32PathType(u8, wtf8_buf.items);
 
         checkPathType(windows_type, wtf16_type) catch |err| {
-            std.debug.print("expected type {}, got {} for path: {f}\n", .{ windows_type, wtf16_type, std.unicode.fmtUtf16Le(path) });
+            std.debug.print("expected type {}, got {} for path: {f}\n", .{ windows_type, wtf16_type, std.unicode.fmtUtf16(path, .little) });
             std.debug.print("path bytes:\n", .{});
             std.debug.dumpHex(std.mem.sliceAsBytes(path));
             return err;
         };
 
         if (wtf16_type != wtf8_type) {
-            std.debug.print("type mismatch between wtf8: {} and wtf16: {} for path: {f}\n", .{ wtf8_type, wtf16_type, std.unicode.fmtUtf16Le(path) });
+            std.debug.print("type mismatch between wtf8: {} and wtf16: {} for path: {f}\n", .{ wtf8_type, wtf16_type, std.unicode.fmtUtf16(path, .little) });
             std.debug.print("wtf-16 path bytes:\n", .{});
             std.debug.dumpHex(std.mem.sliceAsBytes(path));
             std.debug.print("wtf-8 path bytes:\n", .{});

@@ -2564,7 +2564,9 @@ pub const fmtAsUtf8Lossy = std.unicode.fmtUtf8;
 /// The path will be converted to valid UTF-8 during formatting. This is
 /// a lossy conversion if the path contains any unpaired surrogates.
 /// Unpaired surrogates are replaced by the replacement character (U+FFFD).
-pub const fmtWtf16LeAsUtf8Lossy = std.unicode.fmtUtf16Le;
+pub fn fmtWtf16LeAsUtf8Lossy(utf16le: []const u16) std.unicode.FormatUtf16Alt {
+    return std.unicode.fmtUtf16(utf16le, .little);
+}
 
 /// Similar to `RTL_PATH_TYPE`, but without the `UNKNOWN` path type.
 pub const Win32PathType = enum {

@@ -4,7 +4,12 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const mem = std.mem;
 const native_endian = builtin.cpu.arch.endian();
+const non_native_endian: Endian = switch (native_endian) {
+    .little => .big,
+    .big => .little,
+};
 const Allocator = std.mem.Allocator;
+const Endian = std.builtin.Endian;
 
 /// Use this to replace an unknown, unrecognized, or unrepresentable character.
 ///
@@ -483,7 +488,7 @@ pub fn utf16DecodeSurrogatePair(surrogate_pair: []const u16) !u21 {
 }
 
 /// Returns true if the input consists of valid UTF-16 encoded code points.
-pub fn utf16ValidateSlice(input: []const u8, endian: std.builtin.Endian) bool {
+pub fn utf16ValidateSlice(input: []const u8, endian: Endian) bool {
     if (input.len % 2 != 0) {
         return false;
     }
@@ -565,9 +570,9 @@ pub fn utf16ValidateSlice(input: []const u8, endian: std.builtin.Endian) bool {
 
 pub const Utf16View = struct {
     bytes: []const u8,
-    endian: std.builtin.Endian,
+    endian: Endian,
 
-    pub fn init(s: []const u8, endian: std.builtin.Endian) !Utf16View {
+    pub fn init(s: []const u8, endian: Endian) !Utf16View {
         if (!utf16ValidateSlice(s, endian)) {
             return error.InvalidUtf16;
         }
@@ -575,13 +580,13 @@ pub const Utf16View = struct {
         return initUnchecked(s, endian);
     }
 
-    pub fn initUnchecked(s: []const u8, endian: std.builtin.Endian) Utf16View {
+    pub fn initUnchecked(s: []const u8, endian: Endian) Utf16View {
         return .{ .bytes = s, .endian = endian };
     }
 
     pub inline fn initComptime(
         comptime s: []const u8,
-        comptime endian: std.builtin.Endian,
+        comptime endian: Endian,
     ) Utf16View {
         return comptime if (init(s, endian)) |r| r else |err| switch (err) {
             error.InvalidUtf16 => {
@@ -613,7 +618,7 @@ pub const Utf16View = struct {
 
 pub const Utf16Iterator = struct {
     bytes: []const u8,
-    endian: std.builtin.Endian,
+    endian: Endian,
     i: usize,
 
     pub fn nextCodepointSlice(it: *Utf16Iterator) ?[]const u8 {
@@ -1685,27 +1690,34 @@ test calcWtf16LeLen {
     try comptime testCalcUtf16LeLenImpl(calcWtf16LeLen);
 }
 
-fn formatUtf16Le(utf16le: []const u16, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+const FormatUtf16Info = struct {
+    utf16: []const u16,
+    endian: Endian,
+};
+fn formatUtf16(info: FormatUtf16Info, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+    const bytes = mem.sliceAsBytes(info.utf16);
     var buf: [300]u8 = undefined; // just an arbitrary size
     var i: usize = 0;
     var u8len: usize = 0;
-    while (i < utf16le.len) {
-        const code_unit = utf16le[i];
-        const codepoint = if (utf16IsHighSurrogate(code_unit)) cp: {
-            if (i == utf16le.len - 1) {
-                i += 1;
-                break :cp replacement_character;
+    while (i < bytes.len) {
+        const codepoint = cp: {
+            const code_unit = mem.readInt(u16, bytes[i..][0..2], info.endian);
+            if (utf16IsHighSurrogate(code_unit)) {
+                if (i + 2 >= bytes.len) {
+                    i += 2;
+                    break :cp replacement_character;
+                }
+                const next = mem.readInt(u16, bytes[i + 2 ..][0..2], info.endian);
+                if (!utf16IsLowSurrogate(next)) {
+                    i += 2;
+                    break :cp replacement_character;
+                }
+                i += 4;
+                break :cp utf16DecodeSurrogatePair(&.{ code_unit, next }) catch unreachable;
+            } else {
+                i += 2;
+                break :cp code_unit;
             }
-            const next = utf16le[i + 1];
-            if (!utf16IsLowSurrogate(next)) {
-                i += 1;
-                break :cp replacement_character;
-            }
-            i += 2;
-            break :cp utf16DecodeSurrogatePair(&.{ code_unit, next }) catch unreachable;
-        } else cp: {
-            i += 1;
-            break :cp code_unit;
         };
         u8len += utf8Encode(codepoint, buf[u8len..]) catch
             utf8Encode(replacement_character, buf[u8len..]) catch unreachable;
@@ -1718,23 +1730,30 @@ fn formatUtf16Le(utf16le: []const u16, writer: *std.Io.Writer) std.Io.Writer.Err
     try writer.writeAll(buf[0..u8len]);
 }
 
-pub fn fmtUtf16Le(utf16le: []const u16) std.fmt.Alt([]const u16, formatUtf16Le) {
-    return .{ .data = utf16le };
+pub const FormatUtf16Alt = std.fmt.Alt(FormatUtf16Info, formatUtf16);
+pub fn fmtUtf16(utf16: []const u16, endian: Endian) FormatUtf16Alt {
+    return .{ .data = .{ .utf16 = utf16, .endian = endian } };
 }
-test fmtUtf16Le {
+test fmtUtf16 {
     const expectFmt = testing.expectFmt;
-    try expectFmt("", "{f}", .{fmtUtf16Le(utf8ToUtf16LeStringLiteral(""))});
-    try expectFmt("", "{f}", .{fmtUtf16Le(wtf8ToWtf16LeStringLiteral(""))});
-    try expectFmt("foo", "{f}", .{fmtUtf16Le(utf8ToUtf16LeStringLiteral("foo"))});
-    try expectFmt("foo", "{f}", .{fmtUtf16Le(wtf8ToWtf16LeStringLiteral("foo"))});
-    try expectFmt("𐐷", "{f}", .{fmtUtf16Le(wtf8ToWtf16LeStringLiteral("𐐷"))});
-    try expectFmt("퟿", "{f}", .{fmtUtf16Le(&.{0xd7ff})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xd800})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xdbff})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xdc00})});
-    try expectFmt("�", "{f}", .{fmtUtf16Le(&.{0xdfff})});
-    try expectFmt("�D", "{f}", .{fmtUtf16Le(&.{ 0xd800, 0x0044 })});
-    try expectFmt("", "{f}", .{fmtUtf16Le(&.{0xe000})});
+    try expectFmt("", "{f}", .{fmtUtf16(&.{}, .little)});
+    try expectFmt("foo", "{f}", .{
+        fmtUtf16(utf8ToUtf16LeStringLiteral("foo"), .little),
+    });
+    try expectFmt("foo", "{f}", .{
+        fmtUtf16(wtf8ToWtf16LeStringLiteral("foo"), .little),
+    });
+    try expectFmt("𐐷", "{f}", .{
+        fmtUtf16(wtf8ToWtf16LeStringLiteral("𐐷"), .little),
+    });
+    try expectFmt("퟿", "{f}", .{fmtUtf16(&.{0xd7ff}, native_endian)});
+    try expectFmt("�", "{f}", .{fmtUtf16(&.{0xd800}, native_endian)});
+    try expectFmt("�", "{f}", .{fmtUtf16(&.{0xdbff}, native_endian)});
+    try expectFmt("�", "{f}", .{fmtUtf16(&.{0xdc00}, native_endian)});
+    try expectFmt("�", "{f}", .{fmtUtf16(&.{0xdfff}, native_endian)});
+    try expectFmt("�D", "{f}", .{fmtUtf16(&.{ 0xd800, 0x0044 }, native_endian)});
+    try expectFmt("", "{f}", .{fmtUtf16(&.{0xe000}, native_endian)});
+    try expectFmt("", "{f}", .{fmtUtf16(&.{0x00e0}, non_native_endian)});
 }
 
 fn testUtf8ToUtf16LeStringLiteral(utf8ToUtf16LeStringLiteral_: anytype) !void {
