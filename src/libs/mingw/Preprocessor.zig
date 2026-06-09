@@ -900,7 +900,7 @@ pub fn addSourceFromPath(pp: *Preprocessor, path: []const u8) !Source {
 
     const contents = try pp.getFileContents(file);
     errdefer pp.gpa.free(contents);
-    return addSourceFromBuffer(pp, path, contents);
+    return addSourceFromBuffer(pp.gpa, pp, path, contents);
 }
 
 fn getFileContents(pp: *Preprocessor, file: std.Io.File) ![]u8 {
@@ -925,13 +925,46 @@ fn getFileContents(pp: *Preprocessor, file: std.Io.File) ![]u8 {
     return allocating.toOwnedSlice();
 }
 
-fn addSourceFromBuffer(pp: *Preprocessor, path: []const u8, buf: []const u8) !Source {
+fn addSourceFromBuffer(gpa: Allocator, pp: *Preprocessor, path: []const u8, buf: []u8) !Source {
     try pp.sources.ensureUnusedCapacity(pp.gpa, 1);
     const duped_path = try pp.gpa.dupe(u8, path);
     errdefer pp.gpa.free(duped_path);
 
+    var contents = buf;
+    var cr = false;
+
+    var i: usize = 0;
+    for (buf) |byte| {
+        contents[i] = byte;
+        switch (byte) {
+            '\r' => {
+                cr = true;
+                contents[i] = '\n';
+                i += 1;
+            },
+            '\n' => {
+                if (!cr) {
+                    i += 1;
+                }
+                cr = false;
+            },
+            else => {
+                i += 1;
+                cr = false;
+            },
+        }
+    }
+
+    if (i != contents.len) {
+        var list: std.ArrayList(u8) = .{
+            .items = contents[0..i],
+            .capacity = contents.len,
+        };
+        contents = try list.toOwnedSlice(gpa);
+    }
+
     const src: Source = .{
-        .buf = buf,
+        .buf = contents,
         .path = duped_path,
         .id = pp.sources.count(),
     };
