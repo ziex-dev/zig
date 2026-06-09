@@ -647,9 +647,7 @@ pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![
     if (mem.startsWith(u8, buffer.items, "\xff\xfe")) {
         if (buffer.items.len % 2 != 0) return error.InvalidEncoding;
         return std.unicode.utf16LeToUtf8AllocZ(gpa, @ptrCast(@alignCast(buffer.items))) catch |err| switch (err) {
-            error.DanglingSurrogateHalf => error.UnsupportedEncoding,
-            error.ExpectedSecondSurrogateHalf => error.UnsupportedEncoding,
-            error.UnexpectedSecondSurrogateHalf => error.UnsupportedEncoding,
+            error.InvalidUtf16 => error.UnsupportedEncoding,
             else => |e| return e,
         };
     }
