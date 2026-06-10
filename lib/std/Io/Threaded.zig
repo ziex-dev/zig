@@ -256,7 +256,7 @@ pub const Environ = struct {
                         var value_buf: [std.fmt.count("{d}", .{std.math.maxInt(usize)})]u8 = undefined;
                         const len = std.unicode.calcWtf8Len(value_w);
                         if (len > value_buf.len) break :file error.UnrecognizedFormat;
-                        assert(std.unicode.wtf16LeToWtf8(&value_buf, value_w) == len);
+                        assert(std.unicode.wtf16ToWtf8(&value_buf, value_w, .little) == len);
                         break :file .{
                             .handle = @ptrFromInt(std.fmt.parseInt(usize, value_buf[0..len], 10) catch
                                 break :file error.UnrecognizedFormat),
@@ -6068,7 +6068,7 @@ fn dirReadWindows(userdata: ?*anyopaque, dr: *Dir.Reader, buffer: []Dir.Entry) D
         }
 
         const name_buf = dr.buffer[name_index..];
-        const name_wtf8_len = std.unicode.wtf16LeToWtf8(name_buf, name_wtf16le);
+        const name_wtf8_len = std.unicode.wtf16ToWtf8(name_buf, name_wtf16le, .little);
         const name_wtf8 = name_buf[0..name_wtf8_len];
         name_index += name_wtf8_len;
 
@@ -6242,7 +6242,7 @@ fn realPathWindowsBuf(h_file: windows.HANDLE, out_buffer: []u8, wtf16_buffer: []
     if (len > out_buffer.len)
         return error.NameTooLong;
 
-    return std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
+    return std.unicode.wtf16ToWtf8(out_buffer, wide_slice, .little);
 }
 
 /// Specifies how to format volume path in the result of `GetFinalPathNameByHandle`.
@@ -8214,7 +8214,7 @@ fn dirReadLinkWindows(dir: Dir, sub_path: []const u8, buffer: []u8) Dir.ReadLink
     const len = std.unicode.calcWtf8Len(result_w);
     if (len > buffer.len) return error.NameTooLong;
 
-    return std.unicode.wtf16LeToWtf8(buffer, result_w);
+    return std.unicode.wtf16ToWtf8(buffer, result_w, .little);
 }
 
 fn parseReadLinkPath(path: []const u16, is_relative: bool, out_buffer: []u16) error{NameTooLong}![]u16 {
@@ -10579,7 +10579,7 @@ fn processExecutablePath(userdata: ?*anyopaque, out_buffer: []u8) process.Execut
             if (len > out_buffer.len)
                 return error.NameTooLong;
 
-            const end_index = std.unicode.wtf16LeToWtf8(out_buffer, wide_slice);
+            const end_index = std.unicode.wtf16ToWtf8(out_buffer, wide_slice, .little);
             return end_index;
         },
         else => return error.OperationUnsupported,
@@ -13588,7 +13588,7 @@ fn netInterfaceName(userdata: ?*anyopaque, interface: net.Interface) net.Interfa
             else => |err| return windows.unexpectedError(err),
         }
         var name: [3 * net.Interface.Name.max_len]u8 = undefined;
-        return .fromSlice(name[0..std.unicode.wtf16LeToWtf8(&name, std.mem.sliceTo(&name_w, 0))]);
+        return .fromSlice(name[0..std.unicode.wtf16ToWtf8(&name, std.mem.sliceTo(&name_w, 0), .little)]);
     }
 
     if (builtin.link_libc) {
@@ -14866,7 +14866,7 @@ const LookupDnsWindows = struct {
                 const name_wtf16 = std.mem.span(
                     @as([*:0]const windows.WCHAR, @ptrCast(@alignCast(record.pName))),
                 );
-                const len = std.unicode.wtf16LeToWtf8(buf, name_wtf16);
+                const len = std.unicode.wtf16ToWtf8(buf, name_wtf16, .little);
                 try lookup_dns.resolved.putOne(t_io, .{
                     .canonical_name = .{ .bytes = buf[0..len] },
                 });
@@ -16634,7 +16634,7 @@ fn argvToScriptCommandLineWindows(
     // Note that we don't do any escaping/mitigations for this argument, since the relevant
     // characters (", %, etc) are illegal in file paths and this function should only be called
     // with script paths that have been verified to exist.
-    try std.unicode.wtf16LeToWtf8ArrayList(&buf, script_path);
+    try std.unicode.wtf16ToWtf8ArrayList(&buf, script_path, .little);
     buf.appendAssumeCapacity('"');
 
     for (script_args) |arg| {
@@ -16869,7 +16869,7 @@ fn testArgvToCommandLineWindows(argv: []const []const u8, expected_cmd_line: []c
     const cmd_line_w = try argvToCommandLineWindows(std.testing.allocator, argv);
     defer std.testing.allocator.free(cmd_line_w);
 
-    const cmd_line = try std.unicode.wtf16LeToWtf8Alloc(std.testing.allocator, cmd_line_w);
+    const cmd_line = try std.unicode.wtf16ToWtf8Alloc(std.testing.allocator, cmd_line_w, .little);
     defer std.testing.allocator.free(cmd_line);
 
     try std.testing.expectEqualStrings(expected_cmd_line, cmd_line);

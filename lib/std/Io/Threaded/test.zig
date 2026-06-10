@@ -537,7 +537,7 @@ test "getWin32PathType vs RtlDetermineDosPathNameType_U" {
         const wtf8_len = std.unicode.calcWtf8Len(path);
         try wtf8_buf.ensureTotalCapacity(std.testing.allocator, wtf8_len);
         wtf8_buf.items.len = wtf8_len;
-        std.debug.assert(std.unicode.wtf16LeToWtf8(wtf8_buf.items, path) == wtf8_len);
+        std.debug.assert(std.unicode.wtf16ToWtf8(wtf8_buf.items, path, .little) == wtf8_len);
 
         const windows_type = RtlDetermineDosPathNameType_U(path);
         const wtf16_type = std.fs.path.getWin32PathType(u16, path);

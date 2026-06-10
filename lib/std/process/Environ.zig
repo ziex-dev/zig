@@ -209,7 +209,7 @@ pub const Map = struct {
 
             while (view.ptr[i] != 0 and view.ptr[i] != '=') : (i += 1) {}
             const key_w = view.ptr[key_start..i];
-            const key = try unicode.wtf16LeToWtf8Alloc(map.allocator, key_w);
+            const key = try unicode.wtf16ToWtf8Alloc(map.allocator, key_w, .little);
             errdefer map.allocator.free(key);
 
             if (view.ptr[i] == '=') i += 1;
@@ -217,7 +217,7 @@ pub const Map = struct {
             const value_start = i;
             while (view.ptr[i] != 0) : (i += 1) {}
             const value_w = view.ptr[value_start..i];
-            const value = try unicode.wtf16LeToWtf8Alloc(map.allocator, value_w);
+            const value = try unicode.wtf16ToWtf8Alloc(map.allocator, value_w, .little);
             errdefer map.allocator.free(value);
 
             i += 1; // skip over null byte
@@ -939,9 +939,9 @@ test Map {
         try testing.expectEqualStrings("something else", env.get("кириллица").?);
 
         // and WTF-8 that's not valid UTF-8
-        const wtf8_with_surrogate_pair = try unicode.wtf16LeToWtf8Alloc(gpa, &[_]u16{
+        const wtf8_with_surrogate_pair = try unicode.wtf16ToWtf8Alloc(gpa, &[_]u16{
             mem.nativeToLittle(u16, 0xD83D), // unpaired high surrogate
-        });
+        }, .little);
         defer gpa.free(wtf8_with_surrogate_pair);
 
         try env.put(wtf8_with_surrogate_pair, wtf8_with_surrogate_pair);

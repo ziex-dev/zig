@@ -160,7 +160,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
                 => {
                     var buf = @field(args, field_name).value_buf;
                     const entry: *const std.os.windows.UNICODE_STRING = @ptrCast(table[i + 1].EntryContext);
-                    const len = try std.unicode.utf16LeToUtf8(buf, entry.slice());
+                    const len = try std.unicode.utf16ToUtf8(buf, entry.slice(), .little);
                     buf[len] = 0;
                 },
 

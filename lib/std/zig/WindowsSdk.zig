@@ -417,7 +417,7 @@ const Registry = struct {
             const data_wtf16 = std.mem.trimEnd(u16, data_wtf16_with_nul, L("\x00"));
             switch (result_encoding) {
                 .wtf16 => return gpa.dupe(u16, data_wtf16),
-                .wtf8 => return std.unicode.wtf16LeToWtf8Alloc(gpa, data_wtf16),
+                .wtf8 => return std.unicode.wtf16ToWtf8Alloc(gpa, data_wtf16, .little),
             }
         }
 
@@ -507,7 +507,7 @@ pub const Installation = struct {
             }
 
             const path_w = std.mem.trimEnd(u16, path_w_maybe_with_trailing_slash, L("\\/"));
-            break :path try std.unicode.wtf16LeToWtf8Alloc(gpa, path_w);
+            break :path try std.unicode.wtf16ToWtf8Alloc(gpa, path_w, .little);
         };
         errdefer gpa.free(path);
 
@@ -581,7 +581,7 @@ pub const Installation = struct {
             }
 
             const path_w = std.mem.trimEnd(u16, path_w_maybe_with_trailing_slash, L("\\/"));
-            break :path try std.unicode.wtf16LeToWtf8Alloc(gpa, path_w);
+            break :path try std.unicode.wtf16ToWtf8Alloc(gpa, path_w, .little);
         };
         errdefer gpa.free(path);
 
@@ -604,7 +604,7 @@ pub const Installation = struct {
             var version: std.array_list.Managed(u8) = try .initCapacity(gpa, version_without_0.len + 2);
             errdefer version.deinit();
 
-            try std.unicode.wtf16LeToWtf8ArrayList(&version, version_without_0);
+            try std.unicode.wtf16ToWtf8ArrayList(&version, version_without_0, .little);
             try version.appendSlice(".0");
 
             break :version try version.toOwnedSlice();

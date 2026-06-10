@@ -202,7 +202,7 @@ pub fn getName(self: Thread, buffer_ptr: *[max_name_len:0]u8) GetNameError!?[]co
             )) {
                 .SUCCESS => {
                     const string: *const windows.UNICODE_STRING = @ptrCast(&buf);
-                    const len = std.unicode.wtf16LeToWtf8(buffer, string.slice());
+                    const len = std.unicode.wtf16ToWtf8(buffer, string.slice(), .little);
                     return if (len > 0) buffer[0..len] else null;
                 },
                 .NOT_IMPLEMENTED => return error.Unsupported,

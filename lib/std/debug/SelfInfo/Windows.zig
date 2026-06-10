@@ -54,7 +54,7 @@ pub fn getModuleName(si: *SelfInfo, io: Io, address: usize) Error![]const u8 {
     defer si.lock.unlockShared(io);
     const module = try si.findModule(gpa, address);
     return module.name orelse {
-        const name = try std.unicode.wtf16LeToWtf8Alloc(gpa, module.entry.BaseDllName.slice());
+        const name = try std.unicode.wtf16ToWtf8Alloc(gpa, module.entry.BaseDllName.slice(), .little);
         module.name = name;
         return name;
     };

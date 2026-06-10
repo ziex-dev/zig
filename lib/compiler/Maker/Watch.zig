@@ -530,7 +530,7 @@ const Os = switch (builtin.os.tag) {
             var offset: usize = 0;
             while (true) {
                 const notify: *windows.FILE.NOTIFY.INFORMATION = @ptrCast(@alignCast(&dir.buffer[offset]));
-                const file_name = file_name_buf[0..std.unicode.wtf16LeToWtf8(&file_name_buf, notify.fileName())];
+                const file_name = file_name_buf[0..std.unicode.wtf16ToWtf8(&file_name_buf, notify.fileName(), .little)];
                 if (dir.reaction_set.getPtr(".")) |glob_set|
                     any_dirty = markStepSetDirty(maker, glob_set, any_dirty);
                 if (dir.reaction_set.getPtr(file_name)) |step_set|

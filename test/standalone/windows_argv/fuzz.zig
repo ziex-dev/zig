@@ -53,7 +53,7 @@ pub fn main(init: std.process.Init) !void {
         const exit_code = try spawnVerify(verify_path_w, cmd_line_w);
         if (exit_code != 0) {
             std.debug.print(">>> found discrepancy <<<\n", .{});
-            const cmd_line_wtf8 = try std.unicode.wtf16LeToWtf8Alloc(gpa, cmd_line_w);
+            const cmd_line_wtf8 = try std.unicode.wtf16ToWtf8Alloc(gpa, cmd_line_w, .little);
             defer gpa.free(cmd_line_wtf8);
             std.debug.print("\"{f}\"\n\n", .{std.zig.fmtString(cmd_line_wtf8)});
 

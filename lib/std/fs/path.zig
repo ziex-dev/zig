@@ -680,7 +680,7 @@ fn testWindowsParsePathHarmony(wtf8: []const u8) !void {
     const wtf16_parsed = parsePathWindows(u16, wtf16);
 
     var wtf8_buf: [256]u8 = undefined;
-    const wtf16_root_as_wtf8_len = std.unicode.wtf16LeToWtf8(&wtf8_buf, wtf16_parsed.root);
+    const wtf16_root_as_wtf8_len = std.unicode.wtf16ToWtf8(&wtf8_buf, wtf16_parsed.root, .little);
     const wtf16_root_as_wtf8 = wtf8_buf[0..wtf16_root_as_wtf8_len];
 
     try std.testing.expectEqual(wtf8_parsed.kind, wtf16_parsed.kind);

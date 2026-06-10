@@ -153,7 +153,7 @@ pub fn main(init: std.process.Init) !void {
 
     _ = std.mem.replace(u16, something_subdir_abs_path, utf16Literal("\\", .little), utf16Literal("\\\\\\\\", .little), denormed_something_subdir_abs_path);
 
-    const denormed_something_subdir_wtf8 = try std.unicode.wtf16LeToWtf8Alloc(gpa, denormed_something_subdir_abs_path);
+    const denormed_something_subdir_wtf8 = try std.unicode.wtf16ToWtf8Alloc(gpa, denormed_something_subdir_abs_path, .little);
     defer gpa.free(denormed_something_subdir_wtf8);
 
     // clear the path to ensure that the match comes from the cwd

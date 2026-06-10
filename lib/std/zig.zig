@@ -646,7 +646,7 @@ pub fn readSourceFileToEndAlloc(gpa: Allocator, file_reader: *Io.File.Reader) ![
     // If the file starts with a UTF-16 little endian BOM, translate it to UTF-8
     if (mem.startsWith(u8, buffer.items, "\xff\xfe")) {
         if (buffer.items.len % 2 != 0) return error.InvalidEncoding;
-        return std.unicode.utf16LeToUtf8AllocZ(gpa, @ptrCast(@alignCast(buffer.items))) catch |err| switch (err) {
+        return std.unicode.utf16ToUtf8AllocZ(gpa, @ptrCast(@alignCast(buffer.items)), .little) catch |err| switch (err) {
             error.InvalidUtf16 => error.UnsupportedEncoding,
             else => |e| return e,
         };
