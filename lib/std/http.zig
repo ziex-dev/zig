@@ -35,8 +35,8 @@ pub const Method = enum {
     /// Actual behavior from servers may vary and should still be checked
     pub fn requestHasBody(m: Method) bool {
         return switch (m) {
-            .POST, .PUT, .PATCH => true,
-            .GET, .HEAD, .DELETE, .CONNECT, .OPTIONS, .TRACE => false,
+            .GET, .HEAD, .POST, .PUT, .DELETE, .OPTIONS, .PATCH => true,
+            .CONNECT, .TRACE => false,
         };
     }
 
