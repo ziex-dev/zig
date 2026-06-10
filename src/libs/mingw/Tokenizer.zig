@@ -10,26 +10,17 @@ pub fn init(buf: []const u8, source: Source.Id) Tokenizer {
 
 buf: []const u8,
 index: u32 = 0,
-line: usize = 0,
 source: Source.Id,
 
 pub const Token = struct {
     pub const Id = enum {
-        ampersand,
-        asterisk,
         bang,
-        char_literal,
-        colon,
-        comma,
-        ellipsis,
         eof,
         equal_equal,
         hash,
         hash_hash,
-        macro_ws,
         macro_param,
         identifier,
-        invalid,
         keyword_if,
         keyword_ifndef,
         keyword_ifdef,
@@ -42,19 +33,12 @@ pub const Token = struct {
         keyword_undef,
         keyword_error,
         l_paren,
-        placemarker,
-        minus,
         nl,
-        period,
-        plus_plus,
         pp_num,
         pipe_pipe,
-        question_mark,
         r_paren,
         semicolon,
-        slash,
         string_literal,
-        unterminated_char_literal,
         whitespace,
         one,
         zero,
@@ -86,11 +70,6 @@ pub const Token = struct {
         }
     };
 
-    pub const Location = enum {
-        generated,
-        source,
-    };
-
     const all_kws = std.StaticStringMap(Id).initComptime(.{
         .{ "define", .keyword_define },
         .{ "defined", .keyword_defined },
@@ -109,8 +88,6 @@ pub const Token = struct {
     source: Source.Id,
     start: u32 = 0,
     end: u32 = 0,
-    line: usize = 0,
-    loc: Location,
 
     fn getTokenId(str: []const u8) Id {
         return all_kws.get(str) orelse .identifier;
@@ -120,15 +97,10 @@ pub const Token = struct {
 pub fn next(self: *Tokenizer) Token {
     var state: enum {
         start,
-        whitespace,
+        cr,
         string_literal,
-        char_literal_start,
-        char_literal,
         identifier,
         equal,
-        plus,
-        period,
-        period2,
         slash,
         line_comment,
         hash,
@@ -143,10 +115,13 @@ pub fn next(self: *Tokenizer) Token {
         const c = self.buf[self.index];
         switch (state) {
             .start => switch (c) {
+                '\r' => {
+                    id = .nl;
+                    state = .cr;
+                },
                 '\n' => {
                     id = .nl;
                     self.index += 1;
-                    self.line += 1;
                     break;
                 },
                 '!' => {
@@ -158,12 +133,7 @@ pub fn next(self: *Tokenizer) Token {
                     id = .string_literal;
                     state = .string_literal;
                 },
-                '\'' => {
-                    id = .char_literal;
-                    state = .char_literal_start;
-                },
                 '|' => state = .pipe,
-                'a'...'z', 'A'...'Z', '_' => state = .identifier,
                 '=' => state = .equal,
                 '(' => {
                     id = .l_paren;
@@ -180,47 +150,22 @@ pub fn next(self: *Tokenizer) Token {
                     self.index += 1;
                     break;
                 },
-                ',' => {
-                    id = .comma;
-                    self.index += 1;
-                    break;
-                },
-                '?' => {
-                    id = .question_mark;
-                    self.index += 1;
-                    break;
-                },
-                ':' => {
-                    id = .colon;
-                    self.index += 1;
-                    break;
-                },
-                '*' => {
-                    id = .asterisk;
-                    self.index += 1;
-                    break;
-                },
-                '+' => state = .plus,
-                '.' => state = .period,
-                '-' => {
-                    id = .minus;
-                    self.index += 1;
-                    break;
-                },
                 '/' => state = .slash,
-                '&' => {
-                    id = .ampersand;
-                    self.index += 1;
-                    break;
-                },
                 '#' => state = .hash,
                 '0'...'9' => state = .pp_num,
-                ' ' => state = .whitespace,
-                else => {
-                    id = .invalid;
+                ' ' => {
+                    id = .whitespace;
                     self.index += 1;
                     break;
                 },
+                else => state = .identifier,
+            },
+            .cr => switch (c) {
+                '\n' => {
+                    self.index += 1;
+                    break;
+                },
+                else => break,
             },
             .pipe => switch (c) {
                 '|' => {
@@ -241,33 +186,9 @@ pub fn next(self: *Tokenizer) Token {
                     break;
                 },
             },
-            .whitespace => {
-                id = .whitespace;
-                break;
-            },
             .string_literal => switch (c) {
                 '"' => {
                     self.index += 1;
-                    break;
-                },
-                else => {},
-            },
-            .char_literal_start => switch (c) {
-                '\n' => {
-                    id = .unterminated_char_literal;
-                    break;
-                },
-                else => {
-                    state = .char_literal;
-                },
-            },
-            .char_literal => switch (c) {
-                '\'' => {
-                    self.index += 1;
-                    break;
-                },
-                '\n' => {
-                    id = .unterminated_char_literal;
                     break;
                 },
                 else => {},
@@ -287,33 +208,10 @@ pub fn next(self: *Tokenizer) Token {
                 },
                 else => unreachable,
             },
-            .plus => switch (c) {
-                '+' => {
-                    id = .plus_plus;
-                    self.index += 1;
-                    break;
-                },
-                else => unreachable,
-            },
-            .period => switch (c) {
-                '.' => state = .period2,
-                else => {
-                    id = .period;
-                    break;
-                },
-            },
-            .period2 => switch (c) {
-                '.' => {
-                    id = .ellipsis;
-                    self.index += 1;
-                    break;
-                },
-                else => unreachable,
-            },
             .slash => switch (c) {
                 '/' => state = .line_comment,
                 else => {
-                    id = .slash;
+                    id = .identifier;
                     break;
                 },
             },
@@ -325,16 +223,7 @@ pub fn next(self: *Tokenizer) Token {
                 else => {},
             },
             .pp_num => switch (c) {
-                'a'...'d',
-                'A'...'D',
-                'f'...'o',
-                'F'...'O',
-                'q'...'z',
-                'Q'...'Z',
-                '0'...'9',
-                '_',
-                '.',
-                => {},
+                '0'...'9' => {},
                 else => {
                     id = .pp_num;
                     break;
@@ -343,12 +232,8 @@ pub fn next(self: *Tokenizer) Token {
         }
     } else if (self.index == self.buf.len) {
         switch (state) {
-            .start, .line_comment => {},
+            .start, .line_comment, .cr => {},
             .identifier => id = Token.getTokenId(self.buf[start..self.index]),
-            .char_literal, .char_literal_start => id = .unterminated_char_literal,
-            .whitespace => id = .whitespace,
-            .slash => id = .slash,
-            .period => id = .period,
             .hash => id = .hash,
             .pp_num => id = .pp_num,
             else => unreachable,
@@ -359,9 +244,7 @@ pub fn next(self: *Tokenizer) Token {
         .id = id,
         .start = start,
         .end = self.index,
-        .line = self.line,
         .source = self.source,
-        .loc = .source,
     };
 }
 
@@ -376,6 +259,7 @@ pub fn nextNoWSComments(self: *Tokenizer) Token {
     while (tok.id == .whitespace) tok = self.next();
     return tok;
 }
+
 fn expectToken(expected: Token.Id, actual: Token) !void {
     try std.testing.expectEqual(expected, actual.id);
 }
@@ -384,22 +268,16 @@ fn testToken(buf: []const u8, expected: Token.Id) !void {
     var tokenizer = Tokenizer.init(buf, Source.generated);
     const t = tokenizer.next();
     try expectToken(expected, t);
+    try expectToken(.eof, tokenizer.next());
 }
 
 test "tokens" {
     try testToken("TEST", .identifier);
     try testToken("__x86_64__", .identifier);
-    try testToken("&", .ampersand);
     try testToken("122", .pp_num);
-    try testToken("*", .asterisk);
-    try testToken("'c'", .char_literal);
-    try testToken(":", .colon);
-    try testToken(",", .comma);
-    try testToken("...", .ellipsis);
     try testToken("==", .equal_equal);
     try testToken("#", .hash);
     try testToken("##", .hash_hash);
-    try testToken("`", .invalid);
     try testToken("undef", .keyword_undef);
     try testToken("||", .pipe_pipe);
     try testToken("!", .bang);
@@ -412,17 +290,12 @@ test "tokens" {
     try testToken("ifdef", .keyword_ifdef);
     try testToken("ifndef", .keyword_ifndef);
     try testToken("(", .l_paren);
-    try testToken("-", .minus);
     try testToken("\n", .nl);
-    try testToken(".", .period);
-    try testToken("++", .plus_plus);
+    try testToken("\r", .nl);
+    try testToken("\r\n", .nl);
     try testToken("5", .pp_num);
-    try testToken("?", .question_mark);
     try testToken(")", .r_paren);
-    try testToken(";", .semicolon);
-    try testToken("/", .slash);
     try testToken("\"str\"", .string_literal);
-    try testToken("'c", .unterminated_char_literal);
     try testToken(" ", .whitespace);
 }
 
@@ -488,6 +361,5 @@ test "preprocessor keywords" {
         .nl,
         .hash,
         .keyword_error,
-        .nl,
     });
 }

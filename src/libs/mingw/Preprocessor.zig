@@ -133,26 +133,8 @@ fn defineBuiltinValue(pp: *Preprocessor, name: []const u8, value: []const u8, id
     const end = pp.generated_tokens.items.len;
 
     const token_list = try pp.arena.alloc(Token, 1);
-    token_list[0] = .{ .loc = .generated, .source = Source.generated, .id = id, .start = @intCast(start), .end = @intCast(end) };
+    token_list[0] = .{ .source = Source.generated, .id = id, .start = @intCast(start), .end = @intCast(end) };
     try pp.defines.putNoClobber(pp.gpa, name, .{
-        .is_func = false,
-        .param = "",
-        .tokens = token_list,
-    });
-}
-
-fn defineCdecl(pp: *Preprocessor) !void {
-    if (pp.target.abi != .gnu) {
-        return;
-    }
-
-    const start = pp.generated_tokens.items.len;
-    try pp.generated_tokens.appendSlice("__attribute__((__cdecl__))");
-    const end = pp.generated_tokens.items.len;
-
-    const token_list = try pp.arena.alloc(Token, 1);
-    token_list[0] = .{ .loc = .generated, .source = Source.generated, .id = .identifier, .start = @intCast(start), .end = @intCast(end) };
-    try pp.defines.putNoClobber(pp.gpa, "__cdecl", .{
         .is_func = false,
         .param = "",
         .tokens = token_list,
@@ -278,7 +260,7 @@ fn include(pp: *Preprocessor, tokenizer: *Tokenizer) anyerror!void {
 
     _ = try pp.preprocessFileExtra(src);
     if (pp.tokens.items(.id)[pp.tokens.len - 1] != .nl) {
-        try pp.addToken(.{ .id = .nl, .loc = .generated, .source = Source.generated });
+        try pp.addToken(.{ .id = .nl, .source = Source.generated });
     }
 }
 
@@ -364,7 +346,7 @@ fn defineFn(
             else => {
                 if (need_ws) {
                     need_ws = false;
-                    try pp.token_buf.append(gpa, .{ .id = .macro_ws, .source = Source.generated, .loc = .generated });
+                    try pp.token_buf.append(gpa, .{ .id = .whitespace, .source = Source.generated });
                 }
 
                 if (tok.id.isMacroIdentifier()) {
@@ -389,13 +371,12 @@ fn defineFn(
 }
 
 fn expandToken(pp: *const Preprocessor, tok: Token) []const u8 {
-    if (tok.loc != .generated) assert(tok.source < 100);
-    return switch (tok.loc) {
-        .source => blk: {
+    return switch (tok.source) {
+        Source.generated => pp.generated_tokens.items,
+        else => blk: {
             const src = pp.sources.values()[tok.source];
             break :blk src.buf;
         },
-        .generated => pp.generated_tokens.items,
     }[@intCast(tok.start)..@intCast(tok.end)];
 }
 
@@ -439,9 +420,8 @@ fn skip(
             }
         } else if (tokenizer.buf[tokenizer.index] == '\n') {
             line_start = true;
-            tokenizer.line += 1;
             tokenizer.index += 1;
-            try pp.addToken(.{ .id = .nl, .line = tokenizer.line, .source = Source.generated, .loc = .generated });
+            try pp.addToken(.{ .id = .nl, .source = Source.generated });
         } else {
             line_start = false;
             tokenizer.index += 1;
@@ -460,10 +440,10 @@ fn expr(pp: *Preprocessor, tokenizer: *Tokenizer) !bool {
     defer pp.tokens.len = token_state;
 
     pp.top_expansion_buf.items.len = 0;
-    const eof = while (true) {
+    while (true) {
         const tok = tokenizer.next();
         switch (tok.id) {
-            .nl, .eof => break tok,
+            .nl, .eof => break,
             .whitespace => if (pp.top_expansion_buf.items.len == 0) continue,
             else => {},
         }
@@ -473,31 +453,24 @@ fn expr(pp: *Preprocessor, tokenizer: *Tokenizer) !bool {
         try pp.expandMacroExhaustive(tokenizer, &pp.top_expansion_buf, 0, pp.top_expansion_buf.items.len, false, .expr);
     }
     try pp.ensureUnusedTokenCapacity(pp.top_expansion_buf.items.len);
-    std.mem.doNotOptimizeAway(eof);
     var i: usize = 0;
     const items = pp.top_expansion_buf.items;
     while (i < items.len) : (i += 1) {
         var tok = items[i];
         switch (tok.id) {
             .string_literal,
-            .plus_plus,
-            .ellipsis,
             .semicolon,
             .hash_hash,
             => unreachable,
-            .macro_ws, .whitespace => continue,
-            else => if (tok.id.isMacroIdentifier()) {
-                if (tok.id == .keyword_defined) {
-                    i += try pp.handleKeywordDefined(&tok, items[i + 1 ..]);
-                } else {
-                    std.debug.panic("Error: undefined macro '{s}'\n", .{pp.expandToken(tok)});
-                }
+            .whitespace => continue,
+            else => if (tok.id == .keyword_defined) {
+                i += try pp.handleKeywordDefined(&tok, items[i + 1 ..]);
             },
         }
         pp.addTokenAssumeCapacity(tok);
     }
 
-    try pp.addToken(.{ .id = .eof, .source = Source.generated, .loc = .generated });
+    try pp.addToken(.{ .id = .eof, .source = Source.generated });
     return pp.evalExpression(token_state);
 }
 
@@ -529,7 +502,7 @@ const TokenIterator = struct {
     fn nextNoWS(self: *TokenIterator) ?Token {
         while (self.i < self.toks.len) : (self.i += 1) {
             const tok = self.toks[self.i];
-            if (tok.id == .whitespace or tok.id == .macro_ws) continue;
+            if (tok.id == .whitespace) continue;
 
             self.i += 1;
             return tok;
@@ -563,15 +536,12 @@ fn expandMacro(pp: *Preprocessor, tokenizer: *Tokenizer, tok: Token) !void {
     pp.top_expansion_buf.items.len = 0;
     try pp.top_expansion_buf.append(gpa, tok);
     try pp.expandMacroExhaustive(tokenizer, &pp.top_expansion_buf, 0, 1, true, .non_expr);
-    try pp.addTokensFromExpandBuf(pp.top_expansion_buf.items, .{ .id = .nl, .source = Source.generated, .loc = .generated });
+    try pp.addTokensFromExpandBuf(pp.top_expansion_buf.items, .{ .id = .nl, .source = Source.generated });
 }
 
 fn addTokensFromExpandBuf(pp: *Preprocessor, tokens: []Token, tokenizer_nl: Token) !void {
     try pp.ensureUnusedTokenCapacity(tokens.len);
     for (tokens) |tok| {
-        if (tok.id == .placemarker) {
-            continue;
-        }
         pp.addTokenAssumeCapacity(tok);
     }
     try pp.ensureUnusedTokenCapacity(pp.add_expansion_nl);
@@ -697,7 +667,7 @@ fn collectMacroArgument(
     while (true) {
         const tok = try nextBufToken(pp, tokenizer, buf, start_idx, end_idx, extend_buf);
         switch (tok.id) {
-            .nl, .whitespace, .macro_ws => {},
+            .nl, .whitespace => {},
             .l_paren => break,
             else => unreachable,
         }
@@ -720,8 +690,8 @@ fn collectMacroArgument(
                     parens -= 1;
                 }
             },
-            .nl, .whitespace => try argument.append(gpa, .{ .id = .macro_ws, .source = Source.generated, .loc = .generated }),
-            .eof, .comma => unreachable,
+            .nl, .whitespace => try argument.append(gpa, .{ .id = .whitespace, .source = Source.generated }),
+            .eof => unreachable,
             else => try argument.append(gpa, tok),
         }
     }
@@ -754,7 +724,7 @@ fn expandFuncMacro(
                 tok_i += 1;
                 const tok_next = func_macro.tokens[tok_i];
                 const next = switch (tok_next.id) {
-                    .macro_ws => continue,
+                    .whitespace => continue,
                     .hash_hash => continue,
                     .macro_param => arg,
                     else => &[1]Token{tok_next},
@@ -765,7 +735,6 @@ fn expandFuncMacro(
             .macro_param => {
                 try buf.appendSlice(gpa, expanded_arg);
             },
-            .comma => unreachable,
             else => try buf.append(gpa, tok),
         }
     }
@@ -780,14 +749,14 @@ fn pasteTokens(
 ) !void {
     const gpa = pp.gpa;
     const lhs = while (lhs_toks.pop()) |lhs| {
-        if (lhs.id != .macro_ws) break lhs;
+        if (lhs.id != .whitespace) break lhs;
     } else {
         return lhs_toks.appendSlice(gpa, rhs_toks);
     };
 
     var rhs_rest: u32 = 1;
     const rhs = for (rhs_toks) |rhs| {
-        if (rhs.id != .macro_ws) break rhs;
+        if (rhs.id != .whitespace) break rhs;
         rhs_rest += 1;
     } else {
         return lhs_toks.appendAssumeCapacity(lhs);
@@ -807,12 +776,8 @@ fn pasteTokens(
     };
     const pasted_token = tmp_tokenizer.nextNoWS();
     const next = tmp_tokenizer.nextNoWS();
-    const pasted_id = if (lhs.id == .placemarker and rhs.id == .placemarker)
-        .placemarker
-    else
-        pasted_token.id;
 
-    try lhs_toks.append(gpa, pp.makeGeneratedToken(start, end, pasted_id));
+    try lhs_toks.append(gpa, pp.makeGeneratedToken(start, end, pasted_token.id));
     assert(next.id == .nl or next.id == .eof);
 
     return lhs_toks.appendSlice(gpa, rhs_toks[rhs_rest..]);
@@ -836,7 +801,7 @@ fn nextBufToken(
             try buf.append(pp.gpa, tok);
             return tok;
         }
-        return .{ .id = .eof, .loc = .generated, .source = Source.generated };
+        return .{ .id = .eof, .source = Source.generated };
     }
 
     return buf.items[start_idx.*];
@@ -850,7 +815,6 @@ fn makeGeneratedToken(
 ) Token {
     const pasted_token: Token = .{
         .id = id,
-        .loc = .generated,
         .source = Source.generated,
         .start = @intCast(start),
         .end = @intCast(end),
@@ -895,73 +859,13 @@ fn checkIncludeDir(
 
 pub fn addSourceFromPath(pp: *Preprocessor, path: []const u8) !Source {
     if (pp.sources.get(path)) |src| return src;
-    const file = try std.Io.Dir.cwd().openFile(pp.io, path, .{});
-    defer file.close(pp.io);
-
-    const contents = try pp.getFileContents(file);
-    errdefer pp.gpa.free(contents);
-    return addSourceFromBuffer(pp.gpa, pp, path, contents);
-}
-
-fn getFileContents(pp: *Preprocessor, file: std.Io.File) ![]u8 {
-    var buf: [4096]u8 = undefined;
-    var reader = file.reader(pp.io, &buf);
-
-    var allocating: std.Io.Writer.Allocating = .init(pp.gpa);
-    defer allocating.deinit();
-    if (reader.getSize()) |size| {
-        try allocating.ensureUnusedCapacity(@intCast(size));
-    } else |_| {}
-
-    var remaining: std.Io.Limit = .limited(std.math.maxInt(u32));
-    while (remaining.nonzero()) {
-        const n = reader.interface.stream(&allocating.writer, remaining) catch |e| switch (e) {
-            error.EndOfStream => return allocating.toOwnedSlice(),
-            error.WriteFailed => return error.OutOfMemory,
-            error.ReadFailed => return reader.err.?,
-        };
-        remaining = remaining.subtract(n).?;
-    }
-    return allocating.toOwnedSlice();
-}
-
-fn addSourceFromBuffer(gpa: Allocator, pp: *Preprocessor, path: []const u8, buf: []u8) !Source {
     try pp.sources.ensureUnusedCapacity(pp.gpa, 1);
+
+    const contents = try std.Io.Dir.cwd().readFileAlloc(pp.io, path, pp.gpa, .limited(std.math.maxInt(u32)));
+    errdefer pp.gpa.free(contents);
+
     const duped_path = try pp.gpa.dupe(u8, path);
     errdefer pp.gpa.free(duped_path);
-
-    var contents = buf;
-    var cr = false;
-
-    var i: usize = 0;
-    for (buf) |byte| {
-        contents[i] = byte;
-        switch (byte) {
-            '\r' => {
-                cr = true;
-                contents[i] = '\n';
-                i += 1;
-            },
-            '\n' => {
-                if (!cr) {
-                    i += 1;
-                }
-                cr = false;
-            },
-            else => {
-                i += 1;
-                cr = false;
-            },
-        }
-    }
-
-    if (i != contents.len) {
-        var list: std.ArrayList(u8) = .{
-            .items = contents[0..i],
-            .capacity = contents.len,
-        };
-        contents = try list.toOwnedSlice(gpa);
-    }
 
     const src: Source = .{
         .buf = contents,
@@ -984,7 +888,6 @@ fn evalExpression(
     const ids: []Token.Id = ss.items(.id);
     const starts: []u32 = ss.items(.start);
     const ends: []u32 = ss.items(.end);
-    const locs: []Token.Location = ss.items(.loc);
     const srcs: []usize = ss.items(.source);
 
     var toks = try pp.gpa.alloc(Token, len);
@@ -993,7 +896,6 @@ fn evalExpression(
     for (0..len) |i| {
         toks[i] = .{
             .id = ids[i],
-            .loc = locs[i],
             .source = srcs[i],
             .start = starts[i],
             .end = ends[i],
@@ -1085,10 +987,10 @@ pub fn prettyPrintTokens(pp: *Preprocessor, w: *std.Io.Writer) !void {
                         if (!last_nl) try w.writeByte('\n');
                         try w.flush();
                         return;
-                    } else if (id != .whitespace and id != .macro_ws) {
+                    } else if (id != .whitespace) {
                         if (newlines < 2) break;
 
-                        i = @intCast((j - 1) - @intFromBool(tok_ids[j - 1] == .whitespace or tok_ids[j - 1] == .macro_ws));
+                        i = @intCast((j - 1) - @intFromBool(tok_ids[j - 1] == .whitespace));
                         if (!last_nl) try w.writeAll("\n");
                         continue :outer;
                     }
@@ -1097,14 +999,6 @@ pub fn prettyPrintTokens(pp: *Preprocessor, w: *std.Io.Writer) !void {
                 try w.writeAll("\n");
             },
             .whitespace => {
-                var slice = pp.expandToken(cur);
-                while (std.mem.findScalar(u8, slice, '\n')) |some| {
-                    slice = slice[some + 1 ..];
-                }
-                for (slice) |_| try w.writeByte(' ');
-                last_nl = false;
-            },
-            .macro_ws => {
                 try w.writeByte(' ');
                 last_nl = false;
             },
