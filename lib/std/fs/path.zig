@@ -715,7 +715,7 @@ fn parseUNC(comptime T: type, path: []const T) WindowsUNC(T) {
     assert(path.len >= 2 and PathType.windows.isSep(T, path[0]) and PathType.windows.isSep(T, path[1]));
     const any_sep = switch (T) {
         u8 => "/\\",
-        u16 => std.unicode.wtf8ToWtf16LeStringLiteral("/\\"),
+        u16 => std.unicode.wtf8ToWtf16StringLiteral("/\\", .little),
         else => @compileError("only u8 (WTF-8) and u16 (WTF-16LE) are supported"),
     };
     // For the server, the first path separator after the initial two is always
@@ -2681,10 +2681,10 @@ test getWin32PathType {
 
     // Non-ASCII code point that is encoded as one WTF-16 code unit is considered a valid drive letter
     try std.testing.expectEqual(.drive_absolute, getWin32PathType(u8, "€:\\"));
-    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("€:\\")));
+    try std.testing.expectEqual(.drive_absolute, getWin32PathType(u16, std.unicode.wtf8ToWtf16StringLiteral("€:\\", .little)));
     try std.testing.expectEqual(.drive_relative, getWin32PathType(u8, "€:"));
-    try std.testing.expectEqual(.drive_relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("€:")));
+    try std.testing.expectEqual(.drive_relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16StringLiteral("€:", .little)));
     // But code points that are encoded as two WTF-16 code units are not
     try std.testing.expectEqual(.relative, getWin32PathType(u8, "\u{10000}:\\"));
-    try std.testing.expectEqual(.relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16LeStringLiteral("\u{10000}:\\")));
+    try std.testing.expectEqual(.relative, getWin32PathType(u16, std.unicode.wtf8ToWtf16StringLiteral("\u{10000}:\\", .little)));
 }

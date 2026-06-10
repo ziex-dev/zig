@@ -3884,7 +3884,7 @@ pub fn hasCommonNtPrefix(comptime T: type, path: []const T) bool {
     const expected_wtf8_prefix = "\\??\\";
     const expected_prefix = switch (T) {
         u8 => expected_wtf8_prefix,
-        u16 => std.unicode.wtf8ToWtf16LeStringLiteral(expected_wtf8_prefix),
+        u16 => std.unicode.wtf8ToWtf16StringLiteral(expected_wtf8_prefix, .little),
         else => @compileError("unsupported type: " ++ @typeName(T)),
     };
     return mem.startsWith(T, path, expected_prefix);
@@ -5974,7 +5974,7 @@ pub const KERNEL_USER_TIMES = extern struct {
 pub fn wtf8ToWtf16Le(wtf16le: []u16, wtf8: []const u8) error{ BadPathName, NameTooLong }!usize {
     // Each u8 in UTF-8/WTF-8 correlates to at most one u16 in UTF-16LE/WTF-16LE.
     if (wtf16le.len < wtf8.len) {
-        const utf16_len = std.unicode.calcUtf16LeLenImpl(wtf8, .can_encode_surrogate_half) catch
+        const utf16_len = std.unicode.calcWtf16Len(wtf8) catch
             return error.BadPathName;
         if (utf16_len > wtf16le.len)
             return error.NameTooLong;

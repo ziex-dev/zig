@@ -14068,7 +14068,7 @@ fn processSetCurrentPath(userdata: ?*anyopaque, path: []const u8) process.SetCur
 
     if (is_windows) {
         var path_w_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
-        const len = std.unicode.calcWtf16LeLen(path) catch return error.InvalidWtf8;
+        const len = std.unicode.calcWtf16Len(path) catch return error.InvalidWtf8;
         if (len > path_w_buf.len) return error.NameTooLong;
         const path_w_len = std.unicode.wtf8ToWtf16Le(&path_w_buf, path) catch |err| switch (err) {
             error.InvalidWtf8 => unreachable, // already validated
@@ -14927,7 +14927,7 @@ const WindowsEnvironStrings = struct {
             i += 1; // skip over null byte
 
             inline for (@typeInfo(WindowsEnvironStrings).@"struct".field_names) |field_name| {
-                const field_name_w = comptime std.unicode.wtf8ToWtf16LeStringLiteral(field_name);
+                const field_name_w = comptime std.unicode.wtf8ToWtf16StringLiteral(field_name, .little);
                 if (windows.eqlIgnoreCaseWtf16(key_w, field_name_w)) @field(result, field_name) = value_w;
             }
         }

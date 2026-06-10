@@ -7,7 +7,7 @@ const Dir = std.Io.Dir;
 const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
 const Environ = std.process.Environ;
-const L = std.unicode.wtf8ToWtf16LeStringLiteral;
+const L = std.unicode.wtf8ToWtf16StringLiteral;
 const is_32_bit = @bitSizeOf(usize) == 32;
 
 windows10sdk: ?Installation,
@@ -38,12 +38,12 @@ pub fn find(
     defer registry.deinit();
 
     // If this key doesn't exist, neither the Win 8 SDK nor the Win 10 SDK is installed
-    const roots_key = registry.openSoftwareKey(.{ .root = .local_machine, .wow64 = .wow64_32 }, L(windows_kits_reg_key)) catch |err| switch (err) {
+    const roots_key = registry.openSoftwareKey(.{ .root = .local_machine, .wow64 = .wow64_32 }, L(windows_kits_reg_key, .little)) catch |err| switch (err) {
         error.KeyNotFound => return error.NotFound,
     };
     defer roots_key.close();
 
-    const windows10sdk = Installation.find(gpa, io, &registry, roots_key, L("KitsRoot10"), "", L("v10.0")) catch |err| switch (err) {
+    const windows10sdk = Installation.find(gpa, io, &registry, roots_key, L("KitsRoot10", .little), "", L("v10.0", .little)) catch |err| switch (err) {
         error.InstallationNotFound => null,
         error.PathTooLong => null,
         error.VersionTooLong => null,

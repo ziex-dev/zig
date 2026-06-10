@@ -594,7 +594,7 @@ pub fn containsUnempty(environ: Environ, gpa: Allocator, key: []const u8) Contai
 /// * `createMap`
 pub inline fn containsConstant(environ: Environ, comptime key: []const u8) bool {
     if (native_os == .windows) {
-        const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
+        const key_w = comptime unicode.wtf8ToWtf16StringLiteral(key, .little);
         return getWindows(environ, key_w) != null;
     } else {
         return getPosix(environ, key) != null;
@@ -612,7 +612,7 @@ pub inline fn containsConstant(environ: Environ, comptime key: []const u8) bool 
 /// * `createMap`
 pub inline fn containsUnemptyConstant(environ: Environ, comptime key: []const u8) bool {
     if (native_os == .windows) {
-        const key_w = comptime unicode.wtf8ToWtf16LeStringLiteral(key);
+        const key_w = comptime unicode.wtf8ToWtf16StringLiteral(key, .little);
         const value = getWindows(environ, key_w) orelse return false;
         return value.len != 0;
     } else {

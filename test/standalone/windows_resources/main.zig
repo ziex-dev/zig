@@ -4,7 +4,7 @@ const w = std.os.windows;
 
 pub fn main() !void {
     if (builtin.os.tag == .windows) {
-        const name = std.unicode.wtf8ToWtf16LeStringLiteral("FOO");
+        const name = std.unicode.wtf8ToWtf16StringLiteral("FOO", .little);
         const RT_RCDATA = MAKEINTRESOURCEW(10);
         const handle = FindResourceW(null, name, RT_RCDATA) orelse {
             std.debug.print("unable to find resource: {t}\n", .{w.GetLastError()});
