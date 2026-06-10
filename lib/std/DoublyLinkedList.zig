@@ -134,6 +134,9 @@ pub fn popLast(list: *DoublyLinkedList) ?*Node {
     return last;
 }
 
+/// Deprecated in favor of `popLast`
+pub const pop = popLast;
+
 /// Remove and return a pointer to the first node in the list.
 pub fn popFirst(list: *DoublyLinkedList) ?*Node {
     const first = list.first orelse return null;
