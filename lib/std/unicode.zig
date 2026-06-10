@@ -615,7 +615,7 @@ pub const Utf16View = struct {
 };
 
 pub const Utf16Iterator = struct {
-    bytes: []const u8,
+    bytes: []const u8 align(2),
     endian: Endian,
     i: usize,
 
