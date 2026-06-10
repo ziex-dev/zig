@@ -2457,10 +2457,10 @@ test tokenizeScalar {
 
     var it16 = tokenizeScalar(
         u16,
-        std.unicode.utf8ToUtf16StringLiteral("hello", .native_endian),
+        std.unicode.utf8ToUtf16StringLiteral("hello", native_endian),
         ' ',
     );
-    try testing.expect(eql(u16, it16.next().?, std.unicode.utf8ToUtf16StringLiteral("hello", .native_endian)));
+    try testing.expect(eql(u16, it16.next().?, std.unicode.utf8ToUtf16StringLiteral("hello", native_endian)));
     try testing.expect(it16.next() == null);
 }
 
