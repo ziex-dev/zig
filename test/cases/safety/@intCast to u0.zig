@@ -9,7 +9,7 @@ pub fn panic(message: []const u8, stack_trace: ?*std.builtin.StackTrace, _: ?usi
 }
 
 pub fn main() !void {
-    bar(1, 1);
+    bar(1, -1);
     return error.TestFailed;
 }
 
