@@ -77,7 +77,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
     const next_cpu = try std.fmt.bufPrint(&next_cpu_buf, "{d}", .{core});
 
     var subkey: [max_cpu_buf + 1]u16 = undefined;
-    const subkey_len = try std.unicode.utf8ToUtf16Le(&subkey, next_cpu);
+    const subkey_len = try std.unicode.utf8ToUtf16(&subkey, next_cpu, .little);
     subkey[subkey_len] = 0;
 
     table[0] = .{
@@ -119,7 +119,7 @@ fn getCpuInfoFromRegistry(core: usize, args: anytype) !void {
         };
 
         var key_buf: [max_value_len / 2 + 1]u16 = undefined;
-        const key_len = try std.unicode.utf8ToUtf16Le(&key_buf, @field(args, field_name).key);
+        const key_len = try std.unicode.utf8ToUtf16(&key_buf, @field(args, field_name).key, .little);
         key_buf[key_len] = 0;
 
         table[i + 1] = .{

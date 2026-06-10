@@ -10106,7 +10106,7 @@ fn stringLiteral(p: *Parser) Error!Result {
                         var utf16_buf: [2]u16 = undefined;
                         var utf8_buf: [4]u8 = undefined;
                         const utf8_written = std.unicode.utf8Encode(c, &utf8_buf) catch unreachable;
-                        const utf16_written = std.unicode.utf8ToUtf16Le(&utf16_buf, utf8_buf[0..utf8_written]) catch unreachable;
+                        const utf16_written = std.unicode.utf8ToUtf16(&utf16_buf, utf8_buf[0..utf8_written], .little) catch unreachable;
                         const bytes = std.mem.sliceAsBytes(utf16_buf[0..utf16_written]);
                         p.strings.appendSliceAssumeCapacity(bytes);
                     },
@@ -10129,7 +10129,7 @@ fn stringLiteral(p: *Parser) Error!Result {
                         const capacity_slice: []align(@alignOf(u16)) u8 = @alignCast(p.strings.allocatedSlice()[literal_start..]);
                         const dest_len = std.mem.alignBackward(usize, capacity_slice.len, 2);
                         const dest = std.mem.bytesAsSlice(u16, capacity_slice[0..dest_len]);
-                        const words_written = std.unicode.utf8ToUtf16Le(dest, view.bytes) catch unreachable;
+                        const words_written = std.unicode.utf8ToUtf16(dest, view.bytes, .little) catch unreachable;
                         p.strings.resize(gpa, p.strings.items.len + words_written * 2) catch unreachable;
                     },
                     .@"4" => {

@@ -21,7 +21,7 @@ pub fn main(init: std.process.Init) !void {
 
     const tmp_absolute_path = try tmp_dir.realPathFileAlloc(io, ".", gpa);
     defer gpa.free(tmp_absolute_path);
-    const tmp_absolute_path_w = try std.unicode.utf8ToUtf16LeAllocZ(gpa, tmp_absolute_path);
+    const tmp_absolute_path_w = try std.unicode.utf8ToUtf16AllocZ(gpa, tmp_absolute_path, .little);
     defer gpa.free(tmp_absolute_path_w);
     const cwd_absolute_path = try Io.Dir.cwd().realPathFileAlloc(io, ".", gpa);
     defer gpa.free(cwd_absolute_path);

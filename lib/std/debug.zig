@@ -502,7 +502,7 @@ pub fn defaultPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
             const uefi = std.os.uefi;
 
             var utf16_buffer: [1000]u16 = undefined;
-            const len_minus_3 = std.unicode.utf8ToUtf16Le(&utf16_buffer, msg) catch 0;
+            const len_minus_3 = std.unicode.utf8ToUtf16(&utf16_buffer, msg, .little) catch 0;
             utf16_buffer[len_minus_3..][0..3].* = .{ '\r', '\n', 0 };
             const len = len_minus_3 + 3;
             const exit_msg = utf16_buffer[0 .. len - 1 :0];
