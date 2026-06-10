@@ -3,11 +3,11 @@ const Io = std.Io;
 const time = std.time;
 const unicode = std.unicode;
 
-fn utf16LeValidateSlice(input: []const u8) void {
+fn utf16LeValidateSlice(input: []const u16) void {
     _ = std.mem.doNotOptimizeAway(unicode.utf16ValidateSlice(input, .little));
 }
 
-fn utf16LeCountCodepoints(input: []const u8) void {
+fn utf16LeCountCodepoints(input: []const u16) void {
     const s = unicode.Utf16View.initUnchecked(input, .little);
     _ = std.mem.doNotOptimizeAway(s.countCodepoints());
 }
@@ -27,8 +27,13 @@ fn benchTime(io: Io) i96 {
     return Io.Clock.awake.now(io).nanoseconds;
 }
 
-fn benchmark(comptime function: fn ([]const u8) void, buf: []const u8, io: Io) u64 {
-    const bytes = N * buf.len;
+fn benchmark(
+    comptime T: type,
+    comptime function: fn ([]const T) void,
+    buf: []const T,
+    io: Io,
+) u64 {
+    const bytes = N * (buf.len * @sizeOf(T));
 
     const start = benchTime(io);
     var i: usize = 0;
@@ -57,13 +62,13 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("Utf8View.countCodepoints: short ASCII strings\n", .{});
     try stdout.flush();
     {
-        const throughput = benchmark(utf8CountCodepoints, "abc", io);
+        const throughput = benchmark(u8, utf8CountCodepoints, "abc", io);
         try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
     try stdout.print("Utf8View.countCodepoints: short Unicode strings\n", .{});
     try stdout.flush();
     {
-        const throughput = benchmark(utf8CountCodepoints, "ŌŌŌ", io);
+        const throughput = benchmark(u8, utf8CountCodepoints, "ŌŌŌ", io);
         try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
 
@@ -72,7 +77,7 @@ pub fn main(init: std.process.Init) !void {
     {
         const part = "hello";
         const buf: [128][part.len]u8 = @splat(part.*);
-        const throughput = benchmark(utf8CountCodepoints, @ptrCast(&buf), io);
+        const throughput = benchmark(u8, utf8CountCodepoints, @ptrCast(&buf), io);
         try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
 
@@ -81,7 +86,7 @@ pub fn main(init: std.process.Init) !void {
     {
         const part = "こんにちは";
         const buf: [16][part.len]u8 = @splat(part.*);
-        const throughput = benchmark(utf8CountCodepoints, @ptrCast(&buf), io);
+        const throughput = benchmark(u8, utf8CountCodepoints, @ptrCast(&buf), io);
         try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
 
@@ -90,7 +95,7 @@ pub fn main(init: std.process.Init) !void {
     {
         const part = "Hyvää huomenta";
         const buf: [16][part.len]u8 = @splat(part.*);
-        const throughput = benchmark(utf8CountCodepoints, @ptrCast(&buf), io);
+        const throughput = benchmark(u8, utf8CountCodepoints, @ptrCast(&buf), io);
         try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
     try stdout.flush();
@@ -98,9 +103,9 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("utf16ValidateSlice: mixed ASCII/Unicode strings\n", .{});
     try stdout.flush();
     {
-        const part = "\x61\x00\x62\x00\x63\x00\x3c\xd8\x0e\xdf";
-        const buf: [16][part.len]u8 = @splat(part.*);
-        const throughput = benchmark(utf16LeValidateSlice, @ptrCast(&buf), io);
+        const part = unicode.utf8ToUtf16StringLiteral("abc🌎", .little);
+        const buf: [16][part.len]u16 = @splat(part.*);
+        const throughput = benchmark(u16, utf16LeValidateSlice, @ptrCast(&buf), io);
         try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
     try stdout.flush();
@@ -108,9 +113,9 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("Utf16View.countCodepoints: mixed ASCII/Unicode strings\n", .{});
     try stdout.flush();
     {
-        const part = "\x61\x00\x62\x00\x63\x00\x3c\xd8\x0e\xdf";
-        const buf: [16][part.len]u8 = @splat(part.*);
-        const throughput = benchmark(utf16LeCountCodepoints, @ptrCast(&buf), io);
+        const part = unicode.utf8ToUtf16StringLiteral("abc🌎", .little);
+        const buf: [16][part.len]u16 = @splat(part.*);
+        const throughput = benchmark(u16, utf16LeCountCodepoints, @ptrCast(&buf), io);
         try stdout.print("  count: {:5} MiB/s\n", .{throughput / (1 * MiB)});
     }
     try stdout.flush();
