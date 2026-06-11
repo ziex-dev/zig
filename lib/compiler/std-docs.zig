@@ -132,31 +132,56 @@ const Context = struct {
 };
 
 fn serveRequest(request: *std.http.Server.Request, context: *Context) !void {
-    if (std.mem.eql(u8, request.head.target, "/") or
-        std.mem.eql(u8, request.head.target, "/debug") or
-        std.mem.eql(u8, request.head.target, "/debug/"))
-    {
-        try serveDocsFile(request, context, "docs/index.html", "text/html");
-    } else if (std.mem.eql(u8, request.head.target, "/main.js") or
-        std.mem.eql(u8, request.head.target, "/debug/main.js"))
-    {
-        try serveDocsFile(request, context, "docs/main.js", "application/javascript");
-    } else if (std.mem.eql(u8, request.head.target, "/main.wasm")) {
-        try serveWasm(request, context, .ReleaseFast);
-    } else if (std.mem.eql(u8, request.head.target, "/debug/main.wasm")) {
-        try serveWasm(request, context, .Debug);
-    } else if (std.mem.eql(u8, request.head.target, "/sources.tar") or
-        std.mem.eql(u8, request.head.target, "/debug/sources.tar"))
-    {
-        try serveSourcesTar(request, context);
-    } else {
-        try request.respond("not found", .{
-            .status = .not_found,
-            .extra_headers = &.{
-                .{ .name = "content-type", .value = "text/plain" },
-            },
-        });
+    const Response = enum {
+        index_html,
+        main_js,
+        main_wasm_fast,
+        main_wasm_debug,
+        sources_tar,
+        app_webmanifest,
+        pwa_js,
+        zig_mark_svg,
+    };
+
+    const branches = .{ // zig fmt: off
+        .{ "/",                  Response.index_html      },
+        .{ "/debug",             Response.index_html      },
+        .{ "/debug/",            Response.index_html      },
+        .{ "/main.js",           Response.main_js         },
+        .{ "/debug/main.js",     Response.main_js         },
+        .{ "/main.wasm",         Response.main_wasm_fast  },
+        .{ "/debug/main.wasm",   Response.main_wasm_debug },
+        .{ "/sources.tar",       Response.sources_tar     },
+        .{ "/debug/sources.tar", Response.sources_tar     },
+        .{ "/app.webmanifest",   Response.app_webmanifest },
+        .{ "/pwa.js",            Response.pwa_js          },
+        .{ "/zig-mark.svg",      Response.zig_mark_svg    },
+    }; // zig fmt: on
+
+    inline for (branches) |branch| {
+        const path = branch[0];
+        const file = branch[1];
+        if (std.mem.eql(u8, request.head.target, path)) {
+            switch (file) {
+                .index_html => try serveDocsFile(request, context, "docs/index.html", "text/html"),
+                .main_js => try serveDocsFile(request, context, "docs/main.js", "application/javascript"),
+                .main_wasm_fast => try serveWasm(request, context, .ReleaseFast),
+                .main_wasm_debug => try serveWasm(request, context, .Debug),
+                .sources_tar => try serveSourcesTar(request, context),
+                .app_webmanifest => try serveDocsFile(request, context, "docs/app.webmanifest", "application/manifest+json"),
+                .pwa_js => try serveDocsFile(request, context, "docs/pwa.js", "application/javascript"),
+                .zig_mark_svg => try serveDocsFile(request, context, "docs/zig-mark.svg", "image/svg+xml"),
+            }
+            return;
+        }
     }
+
+    try request.respond("not found", .{
+        .status = .not_found,
+        .extra_headers = &.{
+            .{ .name = "content-type", .value = "text/plain" },
+        },
+    });
 }
 
 const cache_control_header: std.http.Header = .{

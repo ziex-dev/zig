@@ -1,0 +1,15 @@
+{
+  "short_name": "Zig",
+  "name": "Zig",
+  "icons": [
+    {
+      "src": "zig-mark.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "transparent",
+  "background_color": "transparent"
+}

@@ -4813,7 +4813,13 @@ fn docsCopyFallible(comp: *Compilation) anyerror!void {
     };
     defer out_dir.close(io);
 
-    for (&[_][]const u8{ "docs/main.js", "docs/index.html" }) |sub_path| {
+    for (&[_][]const u8{
+        "docs/pwa.js",
+        "docs/main.js",
+        "docs/index.html",
+        "docs/zig-mark.svg",
+        "docs/app.webmanifest",
+    }) |sub_path| {
         const basename = fs.path.basename(sub_path);
         comp.dirs.zig_lib.handle.copyFile(sub_path, out_dir, basename, io, .{}) catch |err|
             return comp.lockAndSetMiscFailure(.docs_copy, "unable to copy {s}: {t}", .{ sub_path, err });
