@@ -102,6 +102,35 @@ pub fn clone(
     ) callconv(.c) usize, @ptrCast(&syscall_bits.clone))(func, stack, flags, arg, ptid, tp, ctid);
 }
 
+pub const clone_args = extern struct {
+    flags: u64,
+    pidfd: u64,
+    child_tid: u64,
+    parent_tid: u64,
+    exit_signal: u64,
+    stack: u64,
+    stack_size: u64,
+    tls: u64,
+    set_tid: u64,
+    set_tid_size: u64,
+    cgroup: u64,
+};
+
+pub fn clone3(
+    cl_args: *const clone_args,
+    size: usize,
+    func: *const fn (arg: usize) callconv(.c) u8,
+    arg: usize,
+) usize {
+    // Can't directly call a naked function; cast to C calling convention first.
+    return @as(*const fn (
+        cl_args: *const clone_args,
+        size: usize,
+        func: *const fn (arg: usize) callconv(.c) u8,
+        arg: usize,
+    ) callconv(.c) usize, @ptrCast(&syscall_bits.clone3))(cl_args, size, func, arg);
+}
+
 pub const ARCH = arch_bits.ARCH;
 pub const SC = arch_bits.SC;
 pub const VDSO = arch_bits.VDSO;

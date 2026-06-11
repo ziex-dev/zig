@@ -143,6 +143,32 @@ pub fn clone() callconv(.naked) u64 {
     );
 }
 
+pub fn clone3() callconv(.naked) u64 {
+    asm volatile (
+        \\      movl $435,%%eax // SYS_clone3
+        \\      movq %%rcx,%%r8
+        \\      syscall
+        \\      testq %%rax,%%rax
+        \\      jz 1f
+        \\      retq
+        \\
+        \\1:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined %%rip
+    );
+    asm volatile (
+        \\      xorl %%ebp,%%ebp
+        \\
+        \\      movq %%r8,%%rdi
+        \\      callq *%%rdx
+        \\      movl %%eax,%%edi
+        \\      movl $60,%%eax // SYS_exit
+        \\      syscall
+        \\
+    );
+}
+
 pub const restore = restore_rt;
 
 pub fn restore_rt() callconv(.naked) noreturn {

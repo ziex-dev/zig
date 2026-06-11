@@ -150,6 +150,7 @@ pub fn syscall6(
 }
 
 pub const clone = arm.clone;
+pub const clone3 = arm.clone3;
 
 pub const restore = arm.restore;
 

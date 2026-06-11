@@ -185,6 +185,40 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\  pushl %%ebx
+        \\  pushl %%esi
+        \\  movl 12(%%esp),%%ebx
+        \\  movl 16(%%esp),%%ecx
+        \\  movl 20(%%esp),%%edx
+        \\  movl 24(%%esp),%%esi
+        \\  movl $435,%%eax // SYS_clone3
+        \\  int $128
+        \\  testl %%eax,%%eax
+        \\  jz 1f
+        \\  popl %%esi
+        \\  popl %%ebx
+        \\  retl
+        \\
+        \\1:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\  .cfi_undefined %%eip
+    );
+    asm volatile (
+        \\  xorl %%ebp,%%ebp
+        \\
+        \\  andl $-16,%%esp
+        \\  subl $12,%%esp
+        \\  pushl %%esi
+        \\  calll *%%edx
+        \\  movl %%eax,%%ebx
+        \\  movl $1,%%eax // SYS_exit
+        \\  int $128
+    );
+}
+
 pub fn restore() callconv(.naked) noreturn {
     switch (builtin.zig_backend) {
         .stage2_c => asm volatile (
