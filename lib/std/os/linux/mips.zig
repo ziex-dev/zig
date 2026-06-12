@@ -256,6 +256,51 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\      // Stash arg in $t9; the kernel clobbers $a3 with the error flag,
+        \\      // and $t9 (unlike the other temporaries on 32-bit kernels) is
+        \\      // saved into pt_regs on syscall entry, so it is duplicated into
+        \\      // the child.
+        \\      move $t9, $a3
+        \\      li $v0, 4435 // SYS_clone3
+        \\      syscall
+        \\
+        \\      beq $a3, $zero, 1f
+        \\      nop
+        \\      // error: negate errno
+        \\      subu $v0, $zero, $v0
+        \\1:
+        \\      beq $v0, $zero, 2f
+        \\      nop
+        \\      // parent (or error)
+        \\      jr $ra
+        \\      nop
+        \\
+        \\      // child
+        \\2:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined $ra
+    );
+    asm volatile (
+        \\      move $fp, $zero
+        \\      move $ra, $zero
+        \\
+        \\      // o32 requires the caller to reserve the 16-byte argument-home
+        \\      // area for the callee.
+        \\      subu $sp, $sp, 16
+        \\      move $a0, $t9
+        \\      move $t9, $a2
+        \\      jalr $t9
+        \\      nop
+        \\
+        \\      move $a0, $v0
+        \\      li $v0, 4001 // SYS_exit
+        \\      syscall
+    );
+}
+
 pub const VDSO = struct {
     pub const CGT_SYM = "__vdso_clock_gettime";
     pub const CGT_VER = "LINUX_2.6";

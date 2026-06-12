@@ -4401,10 +4401,9 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
 
     // Use clone3 to perform process cloning with shared VM and VFORK semantic to reduce overhead
     // if possible. This is not compatible with `start_suspended`.
-    var use_fork = !linux.has_clone3 or options.start_suspended;
+    var use_fork = options.start_suspended;
 
-    // Guard with has_clone so that it's not evaluated if there's no clone3
-    if (linux.has_clone3 and !use_fork) {
+    if (!use_fork) {
         child_options.child_result = .{ .inplace = {} };
         // stack-smashing protection may have higher overhead than allocation.
         // 0x8000 is large enough.

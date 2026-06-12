@@ -258,6 +258,72 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\ save %%sp, -96, %%sp
+        \\
+        \\ // clone3() on SPARC can fail with EFAULT if %%sp points to uncommitted memory, so flush
+        \\ // all register windows up to this point to ensure that the kernel has enough committed
+        \\ // memory for its stack frame.
+        \\ save %%sp, -96, %%sp
+        \\ t 0x3
+        \\ restore
+        \\
+        \\ # Save the func pointer and the arg pointer
+        \\ mov %%i2, %%g2
+        \\ mov %%i3, %%g3
+        \\
+        \\ # Set up and invoke the syscall
+        \\ mov 435, %%g1 // SYS_clone3
+        \\ mov %%i0, %%o0
+        \\ mov %%i1, %%o1
+        \\ t 0x10
+        \\
+        \\ # Check for error
+        \\ bcs 1f
+        \\  nop
+        \\ # Unlike the legacy clone(), clone3() uses the generic kernel return
+        \\ # value convention: 0 is returned in the child, the child pid in the
+        \\ # parent. (%%o1 is not set, so the SunOS-style check cannot be used.)
+        \\ tst %%o0
+        \\ be 3f
+        \\  nop
+        \\
+        \\ # Parent process, return the child pid
+        \\ mov %%o0, %%i0
+        \\ ret
+        \\  restore
+        \\
+        \\1:
+        \\ # The syscall failed
+        \\ sub %%g0, %%o0, %%i0
+        \\ ret
+        \\  restore
+        \\
+        \\3:
+        \\ # Child process
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\ .cfi_undefined %%i7
+    );
+    asm volatile (
+        \\ # The kernel gave us bare stack + stack_size in %%sp; apply the stack
+        \\ # bias and reserve the register window save area so that a window
+        \\ # overflow in func does not spill above the top of the stack.
+        \\ sub %%sp, 96 + 2047, %%sp
+        \\
+        \\ mov %%g0, %%fp
+        \\ mov %%g0, %%i7
+        \\
+        \\ # call func(arg)
+        \\ call %%g2
+        \\  mov %%g3, %%o0
+        \\ # Exit
+        \\ mov 1, %%g1 // SYS_exit
+        \\ t 0x10
+    );
+}
+
 pub const restore = restore_rt;
 
 // Need to use C ABI here instead of naked

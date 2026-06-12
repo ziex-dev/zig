@@ -170,6 +170,50 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    if (builtin.abi != .call0) asm volatile (
+        \\ entry sp, 16
+    );
+    asm volatile (
+        \\ mov a9, a4
+        \\ mov a10, a5
+        \\
+        \\ // syscall args: cl_args in a6, size already in a3
+        \\ mov a6, a2
+        \\ movi a2, 435 // SYS_clone3
+        \\ syscall
+    );
+    if (builtin.abi == .call0) asm volatile (
+        \\ beqz a2, 1f
+        \\ // parent
+        \\ ret
+        \\
+        \\ // child
+        \\1:
+        \\ movi a15, 0
+        \\ movi a0, 0
+        \\
+        \\ mov a2, a10
+        \\ callx0 a9
+    ) else asm volatile (
+        \\ beqz a2, 1f
+        \\ // parent
+        \\ retw
+        \\
+        \\ // child
+        \\1:
+        \\ movi a7, 0
+        \\ movi a0, 0
+        \\
+        \\ mov a6, a10
+        \\ callx4 a9
+    );
+    asm volatile (
+        \\ movi a2, 118 // SYS_exit
+        \\ syscall
+    );
+}
+
 pub const restore = restore_rt;
 
 pub fn restore_rt() callconv(.naked) noreturn {

@@ -149,6 +149,31 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\      ori r12, r0, 435 // SYS_clone3
+        \\      brki r14, 0x8
+        \\      beqi r3, 1f
+        \\
+        \\      // parent
+        \\      rtsd r15, 8
+        \\       nop
+        \\
+        \\      // child
+        \\1:
+        \\      ori r15, r0, 0
+        \\      ori r19, r0, 0
+        \\
+        \\      addi r5, r8, 0
+        \\      brald r15, r7
+        \\       nop
+        \\
+        \\      addi r5, r3, 0
+        \\      ori r12, r0, 1 // SYS_exit
+        \\      brki r14, 0x8
+    );
+}
+
 pub fn restore() callconv(.naked) noreturn {
     asm volatile (
         \\ brki r14, 0x8

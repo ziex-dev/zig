@@ -15187,14 +15187,14 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
 
     // Use clone3 to perform process cloning with shared VM and VFORK semantic to reduce overhead
     // if possible. This is not compatible with `start_suspended`.
-    var use_fork = native_os != .linux or !std.os.linux.has_clone3 or options.start_suspended;
+    var use_fork = native_os != .linux or options.start_suspended;
 
     {
         // Cancellation is impossible in child process.
         const prev = swapCancelProtection(t, .blocked);
         defer _ = swapCancelProtection(t, prev);
-        // Guard with has_clone so that it's not evaluated if there's no clone3
-        if (native_os == .linux and std.os.linux.has_clone3 and !use_fork) {
+        // Guard with .linux so that it's not evaluated if it's not linux
+        if (native_os == .linux and !use_fork) {
             const linux = std.os.linux;
             child_options.child_result = .{ .inplace = {} };
             // stack-smashing protection may have higher overhead than allocation.

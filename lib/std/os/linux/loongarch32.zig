@@ -155,6 +155,32 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\      ori $a7, $zero, 435 // SYS_clone3
+        \\      syscall 0
+        \\
+        \\      beq $a0, $zero, 1f
+        \\      // parent
+        \\      jirl $zero, $ra, 0
+        \\
+        \\      // child
+        \\1:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined 1
+    );
+    asm volatile (
+        \\      move $fp, $zero
+        \\      move $ra, $zero
+        \\
+        \\      move $a0, $a3
+        \\      jirl $ra, $a2, 0
+        \\      ori $a7, $zero, 93 // SYS_exit
+        \\      syscall 0
+    );
+}
+
 pub const time_t = i64;
 
 pub const VDSO = struct {

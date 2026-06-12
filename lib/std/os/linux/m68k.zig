@@ -162,6 +162,45 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\      // Save callee-saved register.
+        \\      move.l %%d2, -(%%sp) // sp -= 4
+        \\
+        \\      // Save func and arg in registers, which are duplicated into
+        \\      // the child; the child cannot read them from its new stack.
+        \\      move.l 4+12(%%sp), %%a0
+        \\      move.l 4+16(%%sp), %%a1
+        \\
+        \\      move.l #435, %%d0 // SYS_clone3
+        \\      move.l 4+4(%%sp), %%d1
+        \\      move.l 4+8(%%sp), %%d2
+        \\      trap #0
+        \\
+        \\      tst.l %%d0
+        \\      beq 1f
+        \\      // parent
+        \\      move.l (%%sp)+, %%d2 // sp += 4
+        \\      rts
+        \\
+        \\      // child
+        \\1:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined %%pc
+    );
+    asm volatile (
+        \\      suba.l %%fp, %%fp
+        \\
+        \\      move.l %%a1, -(%%sp)
+        \\      jsr (%%a0)
+        \\
+        \\      move.l %%d0, %%d1
+        \\      move.l #1, %%d0 // SYS_exit
+        \\      trap #0
+    );
+}
+
 pub const restore = restore_rt;
 
 pub fn restore_rt() callconv(.naked) noreturn {

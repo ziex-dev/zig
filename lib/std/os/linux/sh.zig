@@ -208,6 +208,53 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\      // 435 does not fit in the 8-bit mov immediate
+        \\      mov.l 2f, r3 ! SYS_clone3
+        \\      trapa #31
+        \\      or r0, r0
+        \\      or r0, r0
+        \\      or r0, r0
+        \\      or r0, r0
+        \\      or r0, r0
+        \\
+        \\      cmp/eq #0, r0
+        \\      bt 1f
+        \\
+        \\      // parent
+        \\      rts
+        \\       nop
+        \\
+        \\      .align 2
+        \\2:
+        \\      .long 435
+        \\
+        \\      // child
+        \\1:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined pr
+    );
+    asm volatile (
+        \\      mov #0, r0
+        \\      lds r0, pr
+        \\      mov r0, r14
+        \\
+        \\      mov r7, r4
+        \\      jsr @r6
+        \\       nop
+        \\
+        \\      mov #1, r3 ! SYS_exit
+        \\      trapa #31
+        \\      or r0, r0
+        \\      or r0, r0
+        \\      or r0, r0
+        \\      or r0, r0
+        \\      or r0, r0
+    );
+}
+
 pub fn restore() callconv(.naked) noreturn {
     asm volatile (
         \\ trapa #31

@@ -246,6 +246,58 @@ pub fn clone() callconv(.naked) u64 {
     );
 }
 
+pub fn clone3() callconv(.naked) u64 {
+    asm volatile (
+        \\      # save func and arg in callee-saved registers; the kernel
+        \\      # does not preserve volatile registers across sc
+        \\      stdu 29, -32(1)
+        \\      std 30, 8(1)
+        \\      mr 29, 5
+        \\      mr 30, 6
+        \\
+        \\      li 0, 435 // SYS_clone3
+        \\      sc
+        \\
+        \\      # if error, negate return (errno)
+        \\      bns+ 1f
+        \\      neg 3, 3
+        \\
+        \\1:
+        \\      cmpwi cr7, 3, 0
+        \\      beq cr7, 2f
+        \\
+        \\      # parent (or error): restore and return
+        \\      ld 29, 0(1)
+        \\      ld 30, 8(1)
+        \\      addi 1, 1, 32
+        \\      blr
+        \\
+        \\      // child
+        \\2:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined lr
+    );
+    asm volatile (
+        \\      # create an initial stack frame; the callee saves lr in the
+        \\      # caller's frame, and the kernel gave us bare stack + stack_size
+        \\      li 0, 0
+        \\      stdu 0, -32(1)
+        \\
+        \\      li 31, 0
+        \\      mtlr 0
+        \\
+        \\      # ELFv2 requires r12 to hold the entry address at indirect calls
+        \\      mr 3, 30
+        \\      mr 12, 29
+        \\      mtctr 12
+        \\      bctrl
+        \\
+        \\      li 0, 1 // SYS_exit
+        \\      sc
+    );
+}
+
 pub fn restore() callconv(.naked) noreturn {
     switch (builtin.zig_backend) {
         .stage2_c => asm volatile (

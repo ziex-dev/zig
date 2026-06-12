@@ -210,6 +210,45 @@ pub fn clone() callconv(.naked) u64 {
     );
 }
 
+pub fn clone3() callconv(.naked) u64 {
+    asm volatile (
+        \\      // Stash arg; the kernel clobbers $a3 with the error flag.
+        \\      move $a4, $a3
+        \\      li $v0, 5435 // SYS_clone3
+        \\      syscall
+        \\
+        \\      beq $a3, $zero, 1f
+        \\      nop
+        \\      // error: negate errno
+        \\      dsubu $v0, $zero, $v0
+        \\1:
+        \\      beq $v0, $zero, 2f
+        \\      nop
+        \\      // parent (or error)
+        \\      jr $ra
+        \\      nop
+        \\
+        \\      // child
+        \\2:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined $ra
+    );
+    asm volatile (
+        \\      move $fp, $zero
+        \\      move $ra, $zero
+        \\
+        \\      move $a0, $a4
+        \\      move $t9, $a2
+        \\      jalr $t9
+        \\      nop
+        \\
+        \\      move $a0, $v0
+        \\      li $v0, 5058 // SYS_exit
+        \\      syscall
+    );
+}
+
 pub const VDSO = struct {
     pub const CGT_SYM = "__vdso_clock_gettime";
     pub const CGT_VER = "LINUX_2.6";

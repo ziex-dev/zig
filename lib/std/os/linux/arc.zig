@@ -150,6 +150,31 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\      mov r8, 435 // SYS_clone3
+        \\      trap_s 0
+        \\      cmp r0, 0
+        \\      beq 1f
+        \\      j [blink]
+        \\      // Child
+        \\1:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined blink
+    );
+    asm volatile (
+        \\      mov fp, 0
+        \\      mov blink, 0
+        \\
+        \\      mov r0, r3
+        \\      jl [r2]
+        \\
+        \\      mov r8, 93 // SYS_exit
+        \\      trap_s 0
+    );
+}
+
 pub const restore = restore_rt;
 
 pub fn restore_rt() callconv(.naked) noreturn {

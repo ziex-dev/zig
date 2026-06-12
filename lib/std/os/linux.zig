@@ -81,8 +81,6 @@ pub const socketcall = syscall_bits.socketcall;
 pub const syscall_pipe = syscall_bits.syscall_pipe;
 pub const syscall_fork = syscall_bits.syscall_fork;
 
-pub const has_clone3 = @hasDecl(syscall_bits, "clone3");
-
 pub fn clone(
     func: *const fn (arg: usize) callconv(.c) u8,
     stack: usize,

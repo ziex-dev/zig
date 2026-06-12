@@ -141,6 +141,29 @@ pub fn clone() callconv(.naked) u32 {
     );
 }
 
+pub fn clone3() callconv(.naked) u32 {
+    asm volatile (
+        \\      r6 = #435 // SYS_clone3
+        \\      trap0(#1)
+        \\
+        \\      p0 = cmp.eq(r0, #0)
+        \\      if (!p0) jumpr r31
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined r31
+    );
+    asm volatile (
+        \\      r30 = #0
+        \\      r31 = #0
+        \\
+        \\      r0 = r3
+        \\      callr r2
+        \\
+        \\      r6 = #93 // SYS_exit
+        \\      trap0(#1)
+    );
+}
+
 pub const time_t = i64;
 
 pub const VDSO = void;

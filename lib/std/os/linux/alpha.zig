@@ -337,6 +337,36 @@ pub fn clone() callconv(.naked) u64 {
     );
 }
 
+pub fn clone3() callconv(.naked) u64 {
+    asm volatile (
+        \\      // The kernel clobbers $19 (a3) with the error flag, so save arg in $20,
+        \\      // which is preserved across callsys and duplicated into the child.
+        \\      mov $19, $20
+        \\      ldi $0, 545 // SYS_clone3
+        \\      callsys
+        \\      beq $19, 1f
+        \\      negq $0, $0
+        \\      ret
+        \\1:
+        \\      beq $0, 2f
+        \\      ret
+        \\2:
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined $26
+    );
+    asm volatile (
+        \\      mov 0, $15
+        \\
+        \\      mov $20, $16
+        \\      jsr $26, ($18)
+        \\
+        \\      mov $0, $16
+        \\      ldi $0, 1 // SYS_exit
+        \\      callsys
+    );
+}
+
 pub fn restore() noreturn {
     asm volatile (
     // v0 = $0, a0 = $16, sp = $30

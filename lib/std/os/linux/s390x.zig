@@ -173,6 +173,38 @@ pub fn clone() callconv(.naked) u64 {
     );
 }
 
+pub fn clone3() callconv(.naked) u64 {
+    asm volatile (
+        \\      lghi %%r1, 435 // SYS_clone3
+        \\      svc 0
+        \\
+        \\      ltgr %%r2, %%r2
+        \\      bnzr %%r14
+        \\
+        \\      // child
+    );
+    if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
+        \\      .cfi_undefined %%r14
+    );
+    asm volatile (
+        \\      # create an initial stack frame; the callee saves registers in
+        \\      # the caller's 160-byte save area, and the kernel gave us bare
+        \\      # stack + stack_size
+        \\      nill %%r15, 0xfff8
+        \\      aghi %%r15, -160
+        \\      lghi %%r0, 0
+        \\      stg %%r0, 0(%%r15)
+        \\
+        \\      lghi %%r11, 0
+        \\      lghi %%r14, 0
+        \\
+        \\      lgr %%r2, %%r5
+        \\      basr %%r14, %%r4
+        \\
+        \\      svc 1 // SYS_exit
+    );
+}
+
 pub fn restore() callconv(.naked) noreturn {
     asm volatile (
         \\svc 0
