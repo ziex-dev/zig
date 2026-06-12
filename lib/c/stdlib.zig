@@ -26,6 +26,9 @@ comptime {
         symbol(&atol, "atol");
         symbol(&atoll, "atoll");
 
+        symbol(&strtof, "strtof");
+        symbol(&strtod, "strtod");
+        symbol(&strtold, "strtold");
         symbol(&strtol, "strtol");
         symbol(&strtoll, "strtoll");
         symbol(&strtoul, "strtoul");
@@ -103,6 +106,23 @@ fn asciiToInteger(comptime T: type, buf: [*:0]const u8) T {
     if (current[0] == '-') return parseDigitsWithSignGenericCharacter(T, u8, current + 1, null, 10, .neg) catch std.math.minInt(T);
     if (current[0] == '+') current += 1;
     return parseDigitsWithSignGenericCharacter(T, u8, current, null, 10, .pos) catch std.math.maxInt(T);
+}
+
+fn strtof(noalias c_str: [*:0]const c_char, noalias _: ?*[*:0]const c_char) callconv(.c) f32 {
+    return std.fmt.parseFloat(f32, std.mem.span(@as([*:0]const u8, @ptrCast(c_str)))) catch return 0.0;
+}
+
+fn strtod(noalias c_str: [*:0]const c_char, noalias _: ?*[*:0]const c_char) callconv(.c) f64 {
+    return std.fmt.parseFloat(f64, std.mem.span(@as([*:0]const u8, @ptrCast(c_str)))) catch return 0.0;
+}
+
+fn strtold(noalias c_str: [*:0]const c_char, noalias p: ?*[*:0]const c_char) callconv(.c) c_longdouble {
+    return switch (@typeInfo(c_longdouble).float.bits) {
+        64 => strtod(c_str, p),
+        80 => std.fmt.parseFloat(f80, std.mem.span(@as([*:0]const u8, @ptrCast(c_str)))) catch return 0.0,
+        128 => std.fmt.parseFloat(f128, std.mem.span(@as([*:0]const u8, @ptrCast(c_str)))) catch return 0.0,
+        else => unreachable,
+    };
 }
 
 fn strtol(noalias str: [*:0]const c_char, noalias str_end: ?*[*:0]const c_char, base: c_int) callconv(.c) c_long {

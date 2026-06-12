@@ -1471,7 +1471,6 @@ const src_files = [_][]const u8{
     "musl/src/stdlib/ecvt.c",
     "musl/src/stdlib/fcvt.c",
     "musl/src/stdlib/gcvt.c",
-    "musl/src/stdlib/strtod.c",
     "musl/src/stdlib/wcstod.c",
     "musl/src/stdlib/wcstol.c",
     "musl/src/string/strerror_r.c",

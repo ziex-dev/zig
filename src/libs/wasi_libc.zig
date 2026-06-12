@@ -1019,7 +1019,6 @@ const libc_top_half_src_files = [_][]const u8{
     "wasi/libc-top-half/musl/src/stdio/vsscanf.c",
     "wasi/libc-top-half/musl/src/stdio/vswprintf.c",
     "wasi/libc-top-half/musl/src/stdio/vswscanf.c",
-    "wasi/libc-top-half/musl/src/stdlib/strtod.c",
     "wasi/libc-top-half/musl/src/stdlib/wcstod.c",
     "wasi/libc-top-half/musl/src/stdlib/wcstol.c",
     "wasi/libc-top-half/musl/src/thread/pthread_attr_get.c",
