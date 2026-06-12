@@ -118,10 +118,12 @@ pub fn categorize(decl: *const Decl) Walk.Category {
 
 /// Looks up a direct child of `decl` by name.
 pub fn get_child(decl: *const Decl, name: []const u8) ?Decl.Index {
+    const file_index = decl.file;
+    const parent_ast_node = decl.ast_node;
     switch (decl.categorize()) {
         .alias => |aliasee| return aliasee.get().get_child(name),
         .namespace, .container => |node| {
-            const file = decl.file.get();
+            const file = file_index.get();
             const scope = file.scopes.get(node) orelse return null;
             const child_node = scope.get_child(name) orelse return null;
             return file.node_decls.get(child_node);
@@ -129,7 +131,10 @@ pub fn get_child(decl: *const Decl, name: []const u8) ?Decl.Index {
         .type_function => {
             // Find a decl with this function as the parent, with a name matching `name`
             for (Walk.decls.items, 0..) |*candidate, i| {
-                if (candidate.parent != .none and candidate.parent.get() == decl and std.mem.eql(u8, candidate.extra_info().name, name)) {
+                if (candidate.parent != .none and candidate.parent.get().ast_node == parent_ast_node and
+                    candidate.parent.get().file == file_index and
+                    std.mem.eql(u8, candidate.extra_info().name, name))
+                {
                     return @enumFromInt(i);
                 }
             }
@@ -142,13 +147,16 @@ pub fn get_child(decl: *const Decl, name: []const u8) ?Decl.Index {
 
 /// If the type function returns another type function, return the index of that type function.
 pub fn get_type_fn_return_type_fn(decl: *const Decl) ?Decl.Index {
+    const file_index = decl.file;
+    const ast_node = decl.ast_node;
     if (decl.get_type_fn_return_expr()) |return_expr| {
-        const ast = decl.file.get_ast();
+        const ast = file_index.get_ast();
         var buffer: [1]Ast.Node.Index = undefined;
         const call = ast.fullCall(&buffer, return_expr) orelse return null;
         const token = ast.nodeMainToken(call.ast.fn_expr);
         const name = ast.tokenSlice(token);
-        if (decl.lookup(name)) |function_decl| {
+        const d = file_index.get().node_decls.get(ast_node) orelse return null;
+        if (d.get().lookup(name)) |function_decl| {
             return function_decl;
         }
     }
@@ -157,11 +165,13 @@ pub fn get_type_fn_return_type_fn(decl: *const Decl) ?Decl.Index {
 
 /// Gets the expression after the `return` keyword in a type function declaration.
 pub fn get_type_fn_return_expr(decl: *const Decl) ?Ast.Node.Index {
+    const file_index = decl.file;
+    const ast_node = decl.ast_node;
     switch (decl.categorize()) {
         .type_function => {
-            const ast = decl.file.get_ast();
+            const ast = file_index.get_ast();
 
-            const body_node = ast.nodeData(decl.ast_node).node_and_node[1];
+            const body_node = ast.nodeData(ast_node).node_and_node[1];
 
             var buf: [2]Ast.Node.Index = undefined;
             const statements = ast.blockStatements(&buf, body_node) orelse return null;
@@ -179,13 +189,16 @@ pub fn get_type_fn_return_expr(decl: *const Decl) ?Ast.Node.Index {
 
 /// Looks up a decl by name accessible in `decl`'s namespace.
 pub fn lookup(decl: *const Decl, name: []const u8) ?Decl.Index {
+    const file_index = decl.file;
+    const parent = decl.parent;
     const namespace_node = switch (decl.categorize()) {
         .namespace, .container => |node| node,
-        else => decl.parent.get().ast_node,
+        else => parent.get().ast_node,
     };
-    const file = decl.file.get();
+    const file = file_index.get();
+    const ast = file_index.get_ast();
     const scope = file.scopes.get(namespace_node) orelse return null;
-    const resolved_node = scope.lookup(&file.ast, name) orelse return null;
+    const resolved_node = scope.lookup(ast, name) orelse return null;
     return file.node_decls.get(resolved_node);
 }
 

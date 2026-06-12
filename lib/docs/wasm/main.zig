@@ -97,6 +97,10 @@ export fn query_exec(ignore_case: bool) [*]Decl.Index {
 const max_matched_items = 1000;
 
 fn query_exec_fallible(query: []const u8, ignore_case: bool) !void {
+    // Decls are only discovered when a file is lazily parsed, so a complete
+    // search requires all files to have been parsed.
+    Walk.ensureAllFilesParsed();
+
     const Score = packed struct(u32) {
         points: u16,
         segments: u16,
@@ -198,7 +202,11 @@ fn query_exec_fallible(query: []const u8, ignore_case: bool) !void {
                 const a_file_path = a_decl.get().file.path();
                 const b_file_path = b_decl.get().file.path();
                 // This neglects to check the local namespace inside the file.
-                return std.mem.lessThan(u8, b_file_path, a_file_path);
+                if (!std.mem.eql(u8, a_file_path, b_file_path))
+                    return std.mem.lessThan(u8, b_file_path, a_file_path);
+                // Decl indexes depend on the order files were lazily parsed,
+                // so tie-break on the AST node to keep results deterministic.
+                return @intFromEnum(a_decl.get().ast_node) < @intFromEnum(b_decl.get().ast_node);
             }
         }
     } = .{};
@@ -385,17 +393,16 @@ export fn decl_params(decl_index: Decl.Index) Slice(Ast.Node.Index) {
 }
 
 fn decl_fields_fallible(decl_index: Decl.Index) ![]Ast.Node.Index {
-    const decl = decl_index.get();
-    const ast = decl.file.get_ast();
+    const ast = decl_index.get().file.get_ast();
 
-    switch (decl.categorize()) {
+    switch (decl_index.get().categorize()) {
         .type_function => {
             // If the type function returns a reference to another type function, get the fields from there
-            if (decl.get_type_fn_return_type_fn()) |function_decl| {
+            if (decl_index.get().get_type_fn_return_type_fn()) |function_decl| {
                 return decl_fields_fallible(function_decl);
             }
             // If the type function returns a container, such as a `struct`, read that container's fields
-            if (decl.get_type_fn_return_expr()) |return_expr| {
+            if (decl_index.get().get_type_fn_return_expr()) |return_expr| {
                 switch (ast.nodeTag(return_expr)) {
                     .container_decl, .container_decl_trailing, .container_decl_two, .container_decl_two_trailing, .container_decl_arg, .container_decl_arg_trailing => {
                         return ast_decl_fields_fallible(ast, return_expr);
@@ -406,7 +413,7 @@ fn decl_fields_fallible(decl_index: Decl.Index) ![]Ast.Node.Index {
             return &.{};
         },
         else => {
-            const value_node = decl.value_node() orelse return &.{};
+            const value_node = decl_index.get().value_node() orelse return &.{};
             return ast_decl_fields_fallible(ast, value_node);
         },
     }
@@ -608,11 +615,11 @@ export fn decl_file_path(decl_index: Decl.Index) String {
 }
 
 export fn decl_category_name(decl_index: Decl.Index) String {
-    const decl = decl_index.get();
-    const ast = decl.file.get_ast();
-    const name = switch (decl.categorize()) {
+    const ast = decl_index.get().file.get_ast();
+    const ast_node = decl_index.get().ast_node;
+    const name = switch (decl_index.get().categorize()) {
         .namespace, .container => |node| {
-            if (ast.nodeTag(decl.ast_node) == .root)
+            if (ast.nodeTag(ast_node) == .root)
                 return String.init("struct");
             string_result.clearRetainingCapacity();
             var buf: [2]Ast.Node.Index = undefined;
@@ -789,6 +796,7 @@ export fn decl_type_html(decl_index: Decl.Index) String {
 const Oom = error{OutOfMemory};
 
 fn unpackInner(tar_bytes: []u8) !void {
+    Walk.tar_bytes = tar_bytes; // store for lazy loading
     var reader: std.Io.Reader = .fixed(tar_bytes);
     var file_name_buffer: [1024]u8 = undefined;
     var link_name_buffer: [1024]u8 = undefined;
@@ -813,8 +821,9 @@ fn unpackInner(tar_bytes: []u8) !void {
                         {
                             gop.value_ptr.* = file;
                         }
-                        const file_bytes = tar_bytes[reader.seek..][0..@intCast(tar_file.size)];
-                        assert(file == try Walk.add_file(file_name, file_bytes));
+                        const offset = reader.seek;
+                        const size: usize = @intCast(tar_file.size);
+                        assert(file == try Walk.addFile(file_name, offset, size));
                     }
                 } else {
                     log.warn("skipping: '{s}' - the tar creation should have done that", .{
@@ -865,6 +874,10 @@ export fn find_decl() Decl.Index {
     const result = Decl.find(input_string.items);
     if (result != .none) return result;
 
+    // The fallback scan below can only see decls of files that have already
+    // been parsed.
+    Walk.ensureAllFilesParsed();
+
     const g = struct {
         var match_fqn: ArrayList(u8) = .empty;
     };
@@ -890,16 +903,16 @@ export fn get_aliasee() Decl.Index {
 export fn categorize_decl(decl_index: Decl.Index, resolve_alias_count: usize) Walk.Category.Tag {
     global_aliasee = .none;
     var chase_alias_n = resolve_alias_count;
-    var decl = decl_index.get();
+    var current = decl_index;
     while (true) {
-        const result = decl.categorize();
+        const result = current.get().categorize();
         switch (result) {
             .alias => |new_index| {
                 assert(new_index != .none);
                 global_aliasee = new_index;
                 if (chase_alias_n > 0) {
                     chase_alias_n -= 1;
-                    decl = new_index.get();
+                    current = new_index;
                     continue;
                 }
             },
@@ -910,10 +923,8 @@ export fn categorize_decl(decl_index: Decl.Index, resolve_alias_count: usize) Wa
 }
 
 export fn type_fn_members(parent: Decl.Index, include_private: bool) Slice(Decl.Index) {
-    const decl = parent.get();
-
     // If the type function returns another type function, get the members of that function
-    if (decl.get_type_fn_return_type_fn()) |function_decl| {
+    if (parent.get().get_type_fn_return_type_fn()) |function_decl| {
         return namespace_members(function_decl, include_private);
     }
 
