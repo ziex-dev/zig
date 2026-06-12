@@ -761,3 +761,133 @@ pub fn extract(dest: Io.Dir, fr: *File.Reader, options: ExtractOptions) !void {
         }
     }
 }
+
+const testing = std.testing;
+
+test "extractTo store" {
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "test.zip",
+        .data = @embedFile("zip/testdata/test_store.zip"),
+    });
+
+    var file = try tmp.dir.openFile(io, "test.zip", .{});
+    defer file.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+
+    var iter = try Iterator.init(&reader);
+    const entry = (try iter.next()) orelse return error.TestFailed;
+
+    var output: [256]u8 = undefined;
+    var filename_buf: [256]u8 = undefined;
+    try entry.extractTo(&reader, &filename_buf, &output);
+
+    try testing.expectEqualStrings("hello world", output[0..@intCast(entry.uncompressed_size)]);
+}
+
+test "extractTo deflate" {
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "test.zip",
+        .data = @embedFile("zip/testdata/test_deflate.zip"),
+    });
+
+    var file = try tmp.dir.openFile(io, "test.zip", .{});
+    defer file.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+
+    var iter = try Iterator.init(&reader);
+    const entry = (try iter.next()) orelse return error.TestFailed;
+
+    var output: [256]u8 = undefined;
+    var filename_buf: [256]u8 = undefined;
+    try entry.extractTo(&reader, &filename_buf, &output);
+
+    try testing.expectEqualStrings("hello world", output[0..@intCast(entry.uncompressed_size)]);
+}
+
+test "extractTo directory error" {
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "test.zip",
+        .data = @embedFile("zip/testdata/test_directory.zip"),
+    });
+
+    var file = try tmp.dir.openFile(io, "test.zip", .{});
+    defer file.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+
+    var iter = try Iterator.init(&reader);
+    const entry = (try iter.next()) orelse return error.TestFailed;
+
+    var output: [256]u8 = undefined;
+    var filename_buf: [256]u8 = undefined;
+    try testing.expectError(
+        error.ZipExtractingDirToMem,
+        entry.extractTo(&reader, &filename_buf, &output),
+    );
+}
+
+test "extractTo output buffer too small" {
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "test.zip",
+        .data = @embedFile("zip/testdata/test_store.zip"),
+    });
+
+    var file = try tmp.dir.openFile(io, "test.zip", .{});
+    defer file.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+
+    var iter = try Iterator.init(&reader);
+    const entry = (try iter.next()) orelse return error.TestFailed;
+
+    var output: [1]u8 = undefined;
+    var filename_buf: [256]u8 = undefined;
+    try testing.expectError(
+        error.ZipInsufficientBuffer,
+        entry.extractTo(&reader, &filename_buf, &output),
+    );
+}
+
+test "extractTo filename buffer too small" {
+    const io = testing.io;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.writeFile(io, .{
+        .sub_path = "test.zip",
+        .data = @embedFile("zip/testdata/test_store.zip"),
+    });
+
+    var file = try tmp.dir.openFile(io, "test.zip", .{});
+    defer file.close(io);
+    var read_buf: [4096]u8 = undefined;
+    var reader = file.reader(io, &read_buf);
+
+    var iter = try Iterator.init(&reader);
+    const entry = (try iter.next()) orelse return error.TestFailed;
+
+    var output: [256]u8 = undefined;
+    var filename_buf: [1]u8 = undefined;
+    try testing.expectError(
+        error.ZipInsufficientBuffer,
+        entry.extractTo(&reader, &filename_buf, &output),
+    );
+}
