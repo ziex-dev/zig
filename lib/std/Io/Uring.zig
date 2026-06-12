@@ -4296,7 +4296,7 @@ fn childFn(arg: usize) callconv(.c) u8 {
     return 1;
 }
 
-const prog_fileno = @max(linux.STDIN_FILENO, linux.STDOUT_FILENO, linux.STDERR_FILENO);
+const prog_fileno = @max(linux.STDIN_FILENO, linux.STDOUT_FILENO, linux.STDERR_FILENO) + 1;
 
 const Spawned = struct {
     pid: pid_t,
