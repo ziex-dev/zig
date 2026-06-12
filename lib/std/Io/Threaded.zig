@@ -15000,9 +15000,95 @@ fn processSpawnUnsupported(userdata: ?*anyopaque, options: process.SpawnOptions)
     return error.OperationUnsupported;
 }
 
+const prog_fileno = @max(posix.STDIN_FILENO, posix.STDOUT_FILENO, posix.STDERR_FILENO) + 1;
+
+const ChildResultPassingTag = enum {
+    pipe,
+    inplace,
+};
+const ChildResultPassing = union(ChildResultPassingTag) {
+    pipe: posix.fd_t,
+    inplace: ForkBailError!void,
+};
+const ChildOptions = struct {
+    stdin_pipe: posix.fd_t,
+    stdout_pipe: posix.fd_t,
+    stderr_pipe: posix.fd_t,
+    dev_null_fd: posix.fd_t,
+    prog_pipe: posix.fd_t,
+    child_result: ChildResultPassing,
+    argv_buf: [:null]?[*:0]const u8,
+    env_block: process.Environ.Block,
+    PATH: []const u8,
+    spawn: process.SpawnOptions,
+};
+fn childFn(arg: usize) callconv(.c) u8 {
+    const options: *ChildOptions = @ptrFromInt(arg);
+    const ep1 = &options.*.child_result;
+
+    setUpChildIo(options.*.spawn.stdin, options.*.stdin_pipe, posix.STDIN_FILENO, options.*.dev_null_fd) catch |err| return forkBail(ep1, err);
+    setUpChildIo(options.*.spawn.stdout, options.*.stdout_pipe, posix.STDOUT_FILENO, options.*.dev_null_fd) catch |err| return forkBail(ep1, err);
+    setUpChildIo(options.*.spawn.stderr, options.*.stderr_pipe, posix.STDERR_FILENO, options.*.dev_null_fd) catch |err| return forkBail(ep1, err);
+
+    switch (options.*.spawn.cwd) {
+        .inherit => {},
+        .dir => |cwd| {
+            fchdir(cwd.handle) catch |err| return forkBail(ep1, err);
+        },
+        .path => |cwd| {
+            chdir(cwd) catch |err| return forkBail(ep1, err);
+        },
+    }
+
+    // Must happen after fchdir above, the cwd file descriptor might be
+    // equal to prog_fileno and be clobbered by this dup2 call.
+    if (options.*.prog_pipe != -1) dup2(options.*.prog_pipe, prog_fileno) catch |err| return forkBail(ep1, err);
+
+    if (options.*.spawn.gid) |gid| {
+        switch (posix.errno(posix.system.setregid(gid, gid))) {
+            .SUCCESS => {},
+            .AGAIN => return forkBail(ep1, error.ResourceLimitReached),
+            .INVAL => return forkBail(ep1, error.InvalidUserId),
+            .PERM => return forkBail(ep1, error.PermissionDenied),
+            else => return forkBail(ep1, error.Unexpected),
+        }
+    }
+
+    if (options.*.spawn.uid) |uid| {
+        switch (posix.errno(posix.system.setreuid(uid, uid))) {
+            .SUCCESS => {},
+            .AGAIN => return forkBail(ep1, error.ResourceLimitReached),
+            .INVAL => return forkBail(ep1, error.InvalidUserId),
+            .PERM => return forkBail(ep1, error.PermissionDenied),
+            else => return forkBail(ep1, error.Unexpected),
+        }
+    }
+
+    if (options.*.spawn.pgid) |pid| {
+        switch (posix.errno(posix.system.setpgid(0, pid))) {
+            .SUCCESS => {},
+            .ACCES => return forkBail(ep1, error.ProcessAlreadyExec),
+            .INVAL => return forkBail(ep1, error.InvalidProcessGroupId),
+            .PERM => return forkBail(ep1, error.PermissionDenied),
+            else => return forkBail(ep1, error.Unexpected),
+        }
+    }
+
+    if (options.*.spawn.start_suspended) {
+        switch (posix.errno(posix.system.kill(0, .STOP))) {
+            .SUCCESS => {},
+            .PERM => return forkBail(ep1, error.PermissionDenied),
+            else => return forkBail(ep1, error.Unexpected),
+        }
+    }
+
+    const err = posixExecv(options.*.spawn.expand_arg0, options.*.argv_buf.ptr[0].?, options.*.argv_buf.ptr, options.*.env_block, options.*.PATH);
+    return forkBail(ep1, err);
+}
+
 const Spawned = struct {
     pid: posix.pid_t,
-    err_fd: posix.fd_t,
+    child_result: ForkBailError!void,
     stdin: ?File,
     stdout: ?File,
     stderr: ?File,
@@ -15066,9 +15152,6 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     const argv_buf = try arena.allocSentinel(?[*:0]const u8, options.argv.len, null);
     for (options.argv, 0..) |arg, i| argv_buf[i] = (try arena.dupeSentinel(u8, arg, 0)).ptr;
 
-    const prog_fileno = 3;
-    comptime assert(@max(posix.STDIN_FILENO, posix.STDOUT_FILENO, posix.STDERR_FILENO) + 1 == prog_fileno);
-
     const env_block = env_block: {
         const prog_fd: i32 = if (prog_pipe[1] == -1) -1 else prog_fileno;
         if (options.environ_map) |environ_map| break :env_block try environ_map.createPosixBlock(arena, .{
@@ -15081,92 +15164,85 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
 
     // This pipe communicates to the parent errors in the child between `fork` and `execvpe`.
     // It is closed by the child (via CLOEXEC) without writing if `execvpe` succeeds.
-    const err_pipe = try pipe2(.{ .CLOEXEC = true });
+    var err_pipe = [2]posix.fd_t{ -1, -1 };
     errdefer destroyPipe(err_pipe);
 
     t.scanEnviron(); // for PATH
     const PATH = t.environ.string.PATH orelse default_PATH;
 
-    const pid_result: posix.pid_t = fork: {
-        const rc = posix.system.fork();
-        switch (posix.errno(rc)) {
-            .SUCCESS => break :fork @intCast(rc),
-            .AGAIN => return error.SystemResources,
-            .NOMEM => return error.SystemResources,
-            .NOSYS => return error.OperationUnsupported,
-            else => |err| return posix.unexpectedErrno(err),
-        }
+    var child_options: ChildOptions = .{
+        .stdin_pipe = stdin_pipe[0],
+        .stdout_pipe = stdout_pipe[1],
+        .stderr_pipe = stderr_pipe[1],
+        .dev_null_fd = dev_null_fd,
+        .prog_pipe = prog_pipe[1],
+        .child_result = undefined,
+        .argv_buf = argv_buf,
+        .env_block = env_block,
+        .PATH = PATH,
+        .spawn = options,
     };
 
-    if (pid_result == 0) {
-        defer comptime unreachable; // We are the child.
-        if (Thread.current) |current_thread| current_thread.cancel_protection = .blocked;
-        const ep1 = err_pipe[1];
+    var pid_result: posix.pid_t = undefined;
 
-        setUpChildIo(options.stdin, stdin_pipe[0], posix.STDIN_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
-        setUpChildIo(options.stdout, stdout_pipe[1], posix.STDOUT_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
-        setUpChildIo(options.stderr, stderr_pipe[1], posix.STDERR_FILENO, dev_null_fd) catch |err| forkBail(ep1, err);
+    // Use clone3 to perform process cloning with shared VM and VFORK semantic to reduce overhead
+    // if possible. This is not compatible with `start_suspended`.
+    var use_fork = native_os != .linux or !std.os.linux.has_clone3 or options.start_suspended;
 
-        switch (options.cwd) {
-            .inherit => {},
-            .dir => |cwd| {
-                fchdir(cwd.handle) catch |err| forkBail(ep1, err);
-            },
-            .path => |cwd| {
-                chdir(cwd) catch |err| forkBail(ep1, err);
-            },
-        }
-
-        // Must happen after fchdir above, the cwd file descriptor might be
-        // equal to prog_fileno and be clobbered by this dup2 call.
-        if (prog_pipe[1] != -1) dup2(prog_pipe[1], prog_fileno) catch |err| forkBail(ep1, err);
-
-        if (options.gid) |gid| {
-            switch (posix.errno(posix.system.setregid(gid, gid))) {
-                .SUCCESS => {},
-                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
-                .INVAL => forkBail(ep1, error.InvalidUserId),
-                .PERM => forkBail(ep1, error.PermissionDenied),
-                else => forkBail(ep1, error.Unexpected),
+    {
+        // Cancellation is impossible in child process.
+        const prev = swapCancelProtection(t, .blocked);
+        defer _ = swapCancelProtection(t, prev);
+        // Guard with has_clone so that it's not evaluated if there's no clone3
+        if (native_os == .linux and std.os.linux.has_clone3 and !use_fork) {
+            const linux = std.os.linux;
+            child_options.child_result = .{ .inplace = {} };
+            // stack-smashing protection may have higher overhead than allocation.
+            // 0x8000 is large enough.
+            const stack_size = 0x8000;
+            // On aarch64, stack address must be a multiple of 16.
+            const stack = try arena.alignedAlloc(u8, .@"16", stack_size);
+            defer arena.free(stack);
+            const clone_args = std.mem.zeroInit(linux.clone_args, .{
+                .flags = linux.CLONE.VM | linux.CLONE.VFORK | linux.CLONE.CLEAR_SIGHAND,
+                .exit_signal = @intFromEnum(linux.SIG.CHLD),
+                .stack = @intFromPtr(stack.ptr),
+                .stack_size = stack_size,
+            });
+            const rc = linux.clone3(&clone_args, @sizeOf(linux.clone_args), childFn, @intFromPtr(&child_options));
+            switch (linux.errno(rc)) {
+                .SUCCESS => pid_result = @intCast(rc),
+                .AGAIN => return error.SystemResources,
+                .NOMEM => return error.SystemResources,
+                .NOSYS, .INVAL, .PERM => use_fork = true, // Retry with the fork path. Some unsupported kernel versions returns EINVAL or EPERM
+                else => |err| return posix.unexpectedErrno(err),
             }
         }
-
-        if (options.uid) |uid| {
-            switch (posix.errno(posix.system.setreuid(uid, uid))) {
-                .SUCCESS => {},
-                .AGAIN => forkBail(ep1, error.ResourceLimitReached),
-                .INVAL => forkBail(ep1, error.InvalidUserId),
-                .PERM => forkBail(ep1, error.PermissionDenied),
-                else => forkBail(ep1, error.Unexpected),
+        if (use_fork) {
+            err_pipe = try pipe2(.{ .CLOEXEC = true });
+            child_options.child_result = .{ .pipe = err_pipe[1] };
+            const rc = posix.system.fork();
+            switch (posix.errno(rc)) {
+                .SUCCESS => {
+                    pid_result = @intCast(rc);
+                    if (pid_result == 0) {
+                        defer comptime unreachable; // We are the child.
+                        const exit = if (builtin.link_libc) std.c._exit else if (native_os == .linux and !builtin.single_threaded) std.os.linux.exit_group else posix.system.exit;
+                        exit(childFn(@intFromPtr(&child_options)));
+                    }
+                },
+                .AGAIN => return error.SystemResources,
+                .NOMEM => return error.SystemResources,
+                .NOSYS => return error.OperationUnsupported,
+                else => |err| return posix.unexpectedErrno(err),
             }
         }
-
-        if (options.pgid) |pid| {
-            switch (posix.errno(posix.system.setpgid(0, pid))) {
-                .SUCCESS => {},
-                .ACCES => forkBail(ep1, error.ProcessAlreadyExec),
-                .INVAL => forkBail(ep1, error.InvalidProcessGroupId),
-                .PERM => forkBail(ep1, error.PermissionDenied),
-                else => forkBail(ep1, error.Unexpected),
-            }
-        }
-
-        if (options.start_suspended) {
-            switch (posix.errno(posix.system.kill(0, .STOP))) {
-                .SUCCESS => {},
-                .PERM => forkBail(ep1, error.PermissionDenied),
-                else => forkBail(ep1, error.Unexpected),
-            }
-        }
-
-        const err = posixExecv(options.expand_arg0, argv_buf.ptr[0].?, argv_buf.ptr, env_block, PATH);
-        forkBail(ep1, err);
     }
 
-    const pid: posix.pid_t = @intCast(pid_result); // We are the parent.
+    const pid = pid_result; // We are the parent.
     errdefer comptime unreachable; // The child is forked; we must not error from now on
 
-    closeFd(err_pipe[1]); // make sure only the child holds the write end open
+    if (err_pipe[1] != -1) closeFd(err_pipe[1]); // make sure only the child holds the write end open
 
     if (options.stdin == .pipe) closeFd(stdin_pipe[0]);
     if (options.stdout == .pipe) closeFd(stdout_pipe[1]);
@@ -15175,9 +15251,37 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     if (prog_pipe[1] != -1) closeFd(prog_pipe[1]);
     options.progress_node.setIpcFile(t, .{ .handle = prog_pipe[0], .flags = .{ .nonblocking = true } });
 
+    var child_result: ForkBailError!void = undefined;
+    switch (child_options.child_result) {
+        .pipe => {
+            defer closeFd(err_pipe[0]);
+
+            // Wait for the child to report any errors in or before `execvpe`.
+            if (readIntFd(err_pipe[0])) |child_err_int| {
+                child_result = @errorCast(@errorFromInt(child_err_int));
+            } else |read_err| {
+                switch (read_err) {
+                    error.EndOfStream => {
+                        // Write end closed by CLOEXEC at the time of the `execvpe` call,
+                        // indicating success.
+                    },
+                    else => {
+                        // Problem reading the error from the error reporting pipe. We
+                        // don't know if the child is alive or dead. Better to assume it is
+                        // alive so the resource does not risk being leaked.
+                    },
+                }
+                child_result = {};
+            }
+        },
+        .inplace => |result| {
+            child_result = result;
+        },
+    }
+
     return .{
         .pid = pid,
-        .err_fd = err_pipe[0],
+        .child_result = child_result,
         .stdin = switch (options.stdin) {
             .pipe => .{ .handle = stdin_pipe[1], .flags = .{ .nonblocking = false } },
             else => null,
@@ -15236,24 +15340,7 @@ fn getDevNullFd(t: *Threaded) !posix.fd_t {
 fn processSpawnPosix(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
     const spawned = try spawnPosix(t, options);
-    defer closeFd(spawned.err_fd);
-
-    // Wait for the child to report any errors in or before `execvpe`.
-    if (readIntFd(spawned.err_fd)) |child_err_int| {
-        const child_err: process.SpawnError = @errorCast(@errorFromInt(child_err_int));
-        return child_err;
-    } else |read_err| switch (read_err) {
-        error.EndOfStream => {
-            // Write end closed by CLOEXEC at the time of the `execvpe` call,
-            // indicating success.
-        },
-        else => {
-            // Problem reading the error from the error reporting pipe. We
-            // don't know if the child is alive or dead. Better to assume it is
-            // alive so the resource does not risk being leaked.
-        },
-    }
-
+    try spawned.child_result;
     return .{
         .id = spawned.pid,
         .thread_handle = {},
@@ -15520,22 +15607,13 @@ fn childCleanupPosix(child: *process.Child) void {
 /// Errors that can occur between fork() and execv()
 const ForkBailError = process.SpawnError || process.ReplaceError;
 
-/// Child of fork calls this to report an error to the fork parent. Then the
-/// child exits.
-fn forkBail(fd: posix.fd_t, err: ForkBailError) noreturn {
-    writeIntFd(fd, @as(ErrInt, @intFromError(err))) catch {};
-    // If we're linking libc, some naughty applications may have registered atexit handlers
-    // which we really do not want to run in the fork child. I caught LLVM doing this and
-    // it caused a deadlock instead of doing an exit syscall. In the words of Avril Lavigne,
-    // "Why'd you have to go and make things so complicated?"
-    if (builtin.link_libc) {
-        // The `_exit` function does nothing but make the exit syscall, unlike `exit`.
-        std.c._exit(1);
-    } else if (native_os == .linux and !builtin.single_threaded) {
-        std.os.linux.exit_group(1);
-    } else {
-        posix.system.exit(1);
+/// Child of fork calls this to report an error to the fork parent.
+fn forkBail(result_passing: *ChildResultPassing, err: ForkBailError) u8 {
+    switch (result_passing.*) {
+        .pipe => |fd| writeIntFd(fd, @as(ErrInt, @intFromError(err))) catch {},
+        .inplace => |*result| result.* = err,
     }
+    return 1;
 }
 
 fn writeIntFd(fd: posix.fd_t, value: ErrInt) !void {
