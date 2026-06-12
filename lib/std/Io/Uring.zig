@@ -4260,35 +4260,15 @@ fn processReplacePath(
 fn processSpawn(userdata: ?*anyopaque, options: process.SpawnOptions) process.SpawnError!process.Child {
     const ev: *Evented = @ptrCast(@alignCast(userdata));
     const spawned = try ev.spawn(options);
-    var cancel_region: CancelRegion = .initBlocked();
-    defer cancel_region.deinit();
-    defer ev.closeAsync(spawned.err_fd);
-
-    // Wait for the child to report any errors in or before `execvpe`.
-    var child_err: ForkBailError = undefined;
-    ev.readAll(&cancel_region, spawned.err_fd, @ptrCast(&child_err)) catch |read_err| {
-        switch (read_err) {
-            error.Canceled => unreachable, // blocked
-            error.EndOfStream => {
-                // Write end closed by CLOEXEC at the time of the `execvpe` call,
-                // indicating success.
-            },
-            else => {
-                // Problem reading the error from the error reporting pipe. We
-                // don't know if the child is alive or dead. Better to assume it is
-                // alive so the resource does not risk being leaked.
-            },
-        }
-        return .{
-            .id = spawned.pid,
-            .thread_handle = {},
-            .stdin = spawned.stdin,
-            .stdout = spawned.stdout,
-            .stderr = spawned.stderr,
-            .request_resource_usage_statistics = options.request_resource_usage_statistics,
-        };
+    try spawned.child_result;
+    return .{
+        .id = spawned.pid,
+        .thread_handle = {},
+        .stdin = spawned.stdin,
+        .stdout = spawned.stdout,
+        .stderr = spawned.stderr,
+        .request_resource_usage_statistics = options.request_resource_usage_statistics,
     };
-    return child_err;
 }
 
 fn processSpawnPath(
@@ -4303,11 +4283,24 @@ fn processSpawnPath(
     @panic("TODO processSpawnPath");
 }
 
+// The helper function to be run in child process before execve
+fn childFn(arg: usize) callconv(.c) u8 {
+    const options: *ChildOptions = @ptrFromInt(arg);
+    // Note that the parent uring is no longer accessible, so we must no longer reference `ev`.
+    var sync: CancelRegion.Sync = .{ .cancel_region = .initBlocked() };
+    const err = setUpChild(&sync, options.*);
+    switch (options.*.child_result) {
+        .pipe => |err_pipe| writeAllSync(&sync, err_pipe, @ptrCast(&err)) catch {},
+        .inplace => |*result| result.* = err,
+    }
+    return 1;
+}
+
 const prog_fileno = @max(linux.STDIN_FILENO, linux.STDOUT_FILENO, linux.STDERR_FILENO);
 
 const Spawned = struct {
     pid: pid_t,
-    err_fd: fd_t,
+    child_result: ForkBailError!void,
     stdin: ?File,
     stdout: ?File,
     stderr: ?File,
@@ -4385,47 +4378,79 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
 
     // This pipe communicates to the parent errors in the child between `fork` and `execvpe`.
     // It is closed by the child (via CLOEXEC) without writing if `execvpe` succeeds.
-    const err_pipe: [2]fd_t = try pipe2(.{ .CLOEXEC = true });
+    var err_pipe = [2]fd_t{ -1, -1 };
     errdefer ev.destroyPipe(err_pipe);
 
     try ev.scanEnviron(); // for PATH
     const PATH = ev.environ.string.PATH orelse default_PATH;
 
-    const pid_result: pid_t = fork: {
+    var child_options: ChildOptions = .{
+        .stdin_pipe = stdin_pipe[0],
+        .stdout_pipe = stdout_pipe[1],
+        .stderr_pipe = stderr_pipe[1],
+        .dev_null_fd = dev_null_fd,
+        .prog_pipe = prog_pipe[1],
+        .child_result = undefined,
+        .argv_buf = argv_buf,
+        .env_block = env_block,
+        .PATH = PATH,
+        .spawn = options,
+    };
+
+    var pid_result: pid_t = undefined;
+
+    // Use clone3 to perform process cloning with shared VM and VFORK semantic to reduce overhead
+    // if possible. This is not compatible with `start_suspended`.
+    var use_fork = !linux.has_clone3 or options.start_suspended;
+
+    // Guard with has_clone so that it's not evaluated if there's no clone3
+    if (linux.has_clone3 and !use_fork) {
+        child_options.child_result = .{ .inplace = {} };
+        // stack-smashing protection may have higher overhead than allocation.
+        // 0x8000 is large enough.
+        const stack_size = 0x8000;
+        // On aarch64, stack address must be a multiple of 16.
+        const stack = try arena.alignedAlloc(u8, .@"16", stack_size);
+        defer arena.free(stack);
+        const clone_args = std.mem.zeroInit(linux.clone_args, .{
+            .flags = linux.CLONE.VM | linux.CLONE.VFORK | linux.CLONE.CLEAR_SIGHAND,
+            .exit_signal = @intFromEnum(linux.SIG.CHLD),
+            .stack = @intFromPtr(stack.ptr),
+            .stack_size = stack_size,
+        });
+        const rc = linux.clone3(&clone_args, @sizeOf(linux.clone_args), childFn, @intFromPtr(&child_options));
+        switch (linux.errno(rc)) {
+            .SUCCESS => pid_result = @intCast(rc),
+            .AGAIN => return error.SystemResources,
+            .NOMEM => return error.SystemResources,
+            .NOSYS, .INVAL, .PERM => use_fork = true, // Retry with the fork path. Some unsupported kernel versions returns EINVAL or EPERM
+            else => |err| return unexpectedErrno(err),
+        }
+    }
+    if (use_fork) {
+        err_pipe = try pipe2(.{ .CLOEXEC = true });
+        child_options.child_result = .{ .pipe = err_pipe[1] };
         const rc = linux.fork();
         switch (linux.errno(rc)) {
-            .SUCCESS => break :fork @intCast(rc),
+            .SUCCESS => {
+                pid_result = @intCast(rc);
+                if (pid_result == 0) {
+                    defer comptime unreachable; // We are the child.
+                    const exit = if (builtin.single_threaded) linux.exit else linux.exit_group;
+                    exit(childFn(@intFromPtr(&child_options)));
+                }
+            },
             .AGAIN => return error.SystemResources,
             .NOMEM => return error.SystemResources,
             .NOSYS => return error.OperationUnsupported,
             else => |err| return unexpectedErrno(err),
         }
-    };
-
-    if (pid_result == 0) {
-        defer comptime unreachable; // We are the child.
-        // Note that the parent uring is no longer accessible, so we must no longer reference `ev`.
-        var sync: CancelRegion.Sync = .{ .cancel_region = .initBlocked() };
-        const err = setUpChild(&sync, .{
-            .stdin_pipe = stdin_pipe[0],
-            .stdout_pipe = stdout_pipe[1],
-            .stderr_pipe = stderr_pipe[1],
-            .dev_null_fd = dev_null_fd,
-            .prog_pipe = prog_pipe[1],
-            .argv_buf = argv_buf,
-            .env_block = env_block,
-            .PATH = PATH,
-            .spawn = options,
-        });
-        writeAllSync(&sync, err_pipe[1], @ptrCast(&err)) catch {};
-        const exit = if (builtin.single_threaded) linux.exit else linux.exit_group;
-        exit(1);
     }
 
-    const pid: pid_t = @intCast(pid_result); // We are the parent.
+    const pid = pid_result; // We are the parent.
     errdefer comptime unreachable; // The child is forked; we must not error from now on
 
-    ev.closeAsync(err_pipe[1]); // make sure only the child holds the write end open
+    if (err_pipe[1] != -1) ev.closeAsync(err_pipe[1]); // make sure only the child holds the write end open
 
     if (options.stdin == .pipe) ev.closeAsync(stdin_pipe[0]);
     if (options.stdout == .pipe) ev.closeAsync(stdout_pipe[1]);
@@ -4435,9 +4460,39 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
 
     options.progress_node.setIpcFile(ev, .{ .handle = prog_pipe[0], .flags = .{ .nonblocking = true } });
 
+    var child_result: ForkBailError!void = undefined;
+    switch (child_options.child_result) {
+        .pipe => {
+            defer ev.closeAsync(err_pipe[0]);
+            var cancel_region_blocked: CancelRegion = .initBlocked();
+            defer cancel_region_blocked.deinit();
+            var child_err: ForkBailError = undefined;
+            if (ev.readAll(&cancel_region_blocked, err_pipe[0], @ptrCast(&child_err))) {
+                child_result = child_err;
+            } else |read_err| {
+                switch (read_err) {
+                    error.Canceled => unreachable, // blocked
+                    error.EndOfStream => {
+                        // Write end closed by CLOEXEC at the time of the `execvpe` call,
+                        // indicating success.
+                    },
+                    else => {
+                        // Problem reading the error from the error reporting pipe. We
+                        // don't know if the child is alive or dead. Better to assume it is
+                        // alive so the resource does not risk being leaked.
+                    },
+                }
+                child_result = {};
+            }
+        },
+        .inplace => |result| {
+            child_result = result;
+        },
+    }
+
     return .{
         .pid = pid,
-        .err_fd = err_pipe[0],
+        .child_result = child_result,
         .stdin = switch (options.stdin) {
             .pipe => .{ .handle = stdin_pipe[1], .flags = .{ .nonblocking = false } },
             else => null,
@@ -4475,17 +4530,27 @@ fn destroyPipe(ev: *Evented, pipe: [2]fd_t) void {
 /// Errors that can occur between fork() and execv()
 const ForkBailError = process.SetCurrentDirError || ChdirError ||
     process.SpawnError || process.ReplaceError;
-fn setUpChild(sync: *CancelRegion.Sync, options: struct {
+const ChildResultPassingTag = enum {
+    pipe,
+    inplace,
+};
+const ChildResultPassing = union(ChildResultPassingTag) {
+    pipe: fd_t,
+    inplace: ForkBailError!void,
+};
+const ChildOptions = struct {
     stdin_pipe: fd_t,
     stdout_pipe: fd_t,
     stderr_pipe: fd_t,
     dev_null_fd: fd_t,
     prog_pipe: fd_t,
+    child_result: ChildResultPassing,
     argv_buf: [:null]?[*:0]const u8,
     env_block: process.Environ.Block,
     PATH: []const u8,
     spawn: process.SpawnOptions,
-}) ForkBailError {
+};
+fn setUpChild(sync: *CancelRegion.Sync, options: ChildOptions) ForkBailError {
     try setUpChildIo(
         sync,
         options.spawn.stdin,
