@@ -291,22 +291,24 @@ pub fn buildImportLib(comp: *Compilation, lib_name: []const u8) !void {
         };
     }
 
-    var pp: Preprocessor = .{
-        .io = io,
-        .gpa = gpa,
-        .arena = arena,
-        .include_dir = include_dir,
-        .target = target,
-    };
-    defer pp.deinit();
-    try pp.preprocess(def_file_path);
-
     const members = members: {
-        var aw: Io.Writer.Allocating = .init(gpa);
-        errdefer aw.deinit();
-        try pp.prettyPrintTokens(&aw.writer);
+        const input = pp: {
+            var aw: Io.Writer.Allocating = .init(gpa);
+            errdefer aw.deinit();
 
-        const input = try aw.toOwnedSliceSentinel(0);
+            var pp_arena = std.heap.ArenaAllocator.init(gpa);
+            defer pp_arena.deinit();
+            var pp: Preprocessor = .{
+                .io = io,
+                .arena = pp_arena.allocator(),
+                .include_dir = include_dir,
+                .target = target,
+            };
+            try pp.preprocess(def_file_path);
+            try pp.prettyPrintTokens(&aw.writer);
+
+            break :pp try aw.toOwnedSliceSentinel(0);
+        };
         defer gpa.free(input);
 
         const machine_type = target.toCoffMachine();
