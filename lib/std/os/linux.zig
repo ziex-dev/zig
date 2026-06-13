@@ -123,7 +123,8 @@ pub fn clone3(
     arg: usize,
 ) usize {
     // Can't directly call a naked function; cast to C calling convention first.
-    return @as(*const fn (
+    // This casting fails in stage2_c; return ENOSYS for this backend.
+    return if (builtin.zig_backend == .stage2_c) @bitCast(-@as(isize, @intFromEnum(E.NOSYS))) else @as(*const fn (
         cl_args: *const clone_args,
         size: usize,
         func: *const fn (arg: usize) callconv(.c) u8,
