@@ -155,7 +155,12 @@ pub fn classifyWindows(ty: Type, zcu: *Zcu, target: *const std.Target, ctx: Cont
             128 => if (ctx == .arg) .memory else .sse,
             else => unreachable,
         },
-        .vector => .sse,
+        .vector => switch (ty.vectorLen(zcu)) {
+            1 => classifyWindows(ty.childType(zcu), zcu, target, ctx),
+            // vectors with more than one element are rounded up to the size of a vector register
+            // and the smallest vector register is already more than 8 bytes
+            else => if (ctx == .arg) .memory else .sse,
+        },
 
         .type,
         .comptime_float,
