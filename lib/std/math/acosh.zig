@@ -41,24 +41,29 @@ fn acosh32(x: f32) f32 {
     }
 }
 
-fn acosh64(x: f64) f64 {
-    const u = @as(u64, @bitCast(x));
-    const e = (u >> 52) & 0x7FF;
+pub fn acosh64(x: f64) f64 {
+    const ln2: f64 = 6.93147180559945286227e-01; // 0x3FE62E42, 0xFEFA39EF
 
-    if ((u >> 63) != 0) {
-        return math.nan(f64);
-    }
-    // |x| < 2, invalid if x < 1 or nan
-    if (e < 0x3FF + 1) {
-        return math.log1p(x - 1 + @sqrt((x - 1) * (x - 1) + 2 * (x - 1)));
-    }
-    // |x| < 0x1p26
-    else if (e < 0x3FF + 26) {
-        return @log(2 * x - 1 / (x + @sqrt(x * x - 1)));
-    }
-    // |x| >= 0x1p26 or nan
-    else {
-        return @log(x) + 0.693147180559945309417232121458176568;
+    const bits: u64 = @bitCast(x);
+    const hx: i32 = @bitCast(@as(u32, @truncate(bits >> 32))); // high 32 bits as signed
+    const lx: u32 = @truncate(bits); // low 32 bits
+
+    if (hx < 0x3FF00000) { // x < 1
+        return (x - x) / (x - x); // return NaN
+    } else if (hx >= 0x41B00000) { // x > 2**28
+        if (hx >= 0x7FF00000) { // x is inf or NaN
+            return x + x;
+        } else {
+            return @log(x) + ln2; // acosh64(huge) = log(2x)
+        }
+    } else if (hx == 0x3FF00000 and lx == 0) { // x == 1.0
+        return 0.0; // acosh64(1) = 0
+    } else if (hx > 0x40000000) { // 2**28 > x > 2
+        const t = x * x;
+        return @log(2.0 * x - 1.0 / (x + @sqrt(t - 1.0)));
+    } else { // 1 < x < 2
+        const t = x - 1.0;
+        return math.log1p(t + @sqrt(2.0 * t + t * t));
     }
 }
 
