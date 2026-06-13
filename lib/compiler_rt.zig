@@ -654,22 +654,41 @@ inline fn negXi2(comptime T: type, a: T) T {
 }
 
 pub fn memset(dest: ?[*]u8, c: u8, len: usize) callconv(.c) ?[*]u8 {
-    @setRuntimeSafety(false);
+    const n = std.simd.suggestVectorLength(u8) orelse @sizeOf(usize);
 
-    if (len != 0) {
-        var d = dest.?;
-        var n = len;
-        while (true) {
-            d[0] = c;
-            n -= 1;
-            if (n == 0) break;
-            d += 1;
+    if (len <= n * 2) {
+        // If len <= 2*n, then write entire range in 2 writes, using largest vector write available
+        // There is some overlap in the write, but it is faster than writing individual bytes
+        switch (@bitSizeOf(usize) - @clz(len)) {
+            0 => {},
+            1 => dest.?[0] = c,
+            inline 2...@ctz(@as(usize, n)) + 2 => |bits| {
+                const vec_bits = bits - 1;
+                const vec_bytes = @min(n, 1 << vec_bits);
+                dest.?[0..vec_bytes].* = @splat(c);
+                dest.?[len - vec_bytes ..][0..vec_bytes].* = @splat(c);
+            },
+            else => unreachable,
         }
+        return dest;
     }
+    // Iterating over a slice instead of a pointer offset will cause llvm to
+    // automatically unroll the loop for x86_64 (as of zig-0.16)
+    // Example: https://godbolt.org/z/q1fzv6Ksb
+    //
+    // Longer writes are written to aligned addresses as it is up to 20%
+    // faster if the memory is already loaded into L1 cache
+    // (see https://codeberg.org/ziglang/zig/issues/32091#issuecomment-17283716)
+    const start = std.mem.alignForward(usize, @intFromPtr(dest.?), n) - @intFromPtr(dest.?);
+    const end = std.mem.alignBackward(usize, @intFromPtr(dest.? + len), n) - @intFromPtr(dest.?);
+    const vec_slice: []@Vector(n, u8) = @ptrCast(@alignCast(dest.?[start..end]));
+
+    dest.?[0..n].* = @splat(c);
+    for (vec_slice) |*i| i.* = @splat(c);
+    dest.?[len - n ..][0..n].* = @splat(c);
 
     return dest;
 }
-
 pub fn __memset(dest: ?[*]u8, c: u8, n: usize, dest_n: usize) callconv(.c) ?[*]u8 {
     if (dest_n < n)
         @panic("buffer overflow");
