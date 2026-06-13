@@ -151,27 +151,27 @@ pub fn clone() callconv(.naked) u64 {
 
 pub fn clone3() callconv(.naked) u64 {
     asm volatile (
-        \\      mov x8,#435 // SYS_clone3
-        \\      svc #0
+        \\ mov x8,#435 // SYS_clone3
+        \\ svc #0
         \\
-        \\      cbz x0,1f
-        \\      // parent
-        \\      ret
+        \\ cbz x0,1f
+        \\ // parent
+        \\ ret
         \\
-        \\      // child
+        \\ // child
         \\1:
     );
     if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
-        \\     .cfi_undefined lr
+        \\ .cfi_undefined lr
     );
     asm volatile (
-        \\      mov fp, 0
-        \\      mov lr, 0
+        \\ mov fp, 0
+        \\ mov lr, 0
         \\
-        \\      mov x0,x3
-        \\      blr x2
-        \\      mov x8,#93 // SYS_exit
-        \\      svc #0
+        \\ mov x0,x3
+        \\ blr x2
+        \\ mov x8,#93 // SYS_exit
+        \\ svc #0
     );
 }
 

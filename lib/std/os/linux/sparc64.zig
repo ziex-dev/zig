@@ -268,38 +268,38 @@ pub fn clone3() callconv(.naked) u64 {
         \\ flushw
         \\ restore
         \\
-        \\ # Save the func pointer and the arg pointer
+        \\ // Save the func pointer and the arg pointer
         \\ mov %%i2, %%g2
         \\ mov %%i3, %%g3
         \\
-        \\ # Set up and invoke the syscall
+        \\ // Set up and invoke the syscall
         \\ mov 435, %%g1 // SYS_clone3
         \\ mov %%i0, %%o0
         \\ mov %%i1, %%o1
         \\ t 0x6d
         \\
-        \\ # Check for error
+        \\ // Check for error
         \\ bcs,pn %%xcc, 1f
         \\  nop
-        \\ # Unlike the legacy clone(), clone3() uses the generic kernel return
-        \\ # value convention: 0 is returned in the child, the child pid in the
-        \\ # parent. (%%o1 is not set, so the SunOS-style check cannot be used.)
+        \\ // Unlike the legacy clone(), clone3() uses the generic kernel return
+        \\ // value convention: 0 is returned in the child, the child pid in the
+        \\ // parent. (%%o1 is not set, so the SunOS-style check cannot be used.)
         \\ brz %%o0, 3f
         \\  nop
         \\
-        \\ # Parent process, return the child pid
+        \\ // Parent process, return the child pid
         \\ mov %%o0, %%i0
         \\ ret
         \\  restore
         \\
         \\1:
-        \\ # The syscall failed
+        \\ // The syscall failed
         \\ sub %%g0, %%o0, %%i0
         \\ ret
         \\  restore
         \\
         \\3:
-        \\ # Child process
+        \\ // Child process
     );
     if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
         \\ .cfi_undefined %%i7

@@ -147,24 +147,24 @@ pub fn clone() callconv(.naked) u32 {
 
 pub fn clone3() callconv(.naked) u32 {
     asm volatile (
-        \\    stmfd sp!,{r7}
-        \\    mov r7, #0x1B0
-        \\    orr r7, r7, #3 // SYS_clone3
-        \\    svc 0
-        \\    tst r0,r0
-        \\    beq 1f
-        \\    ldmfd sp!,{r7}
-        \\    bx lr
+        \\ stmfd sp!,{r7}
+        \\ mov r7, #0x1B0
+        \\ orr r7, r7, #3 // SYS_clone3
+        \\ svc 0
+        \\ tst r0,r0
+        \\ beq 1f
+        \\ ldmfd sp!,{r7}
+        \\ bx lr
         \\
-        \\    // https://github.com/llvm/llvm-project/issues/115891
+        \\ // https://github.com/llvm/llvm-project/issues/115891
         \\1:  mov r7, #0
-        \\    mov r11, #0
-        \\    mov lr, #0
+        \\ mov r11, #0
+        \\ mov lr, #0
         \\
-        \\    mov r0,r3
-        \\    blx r2
-        \\    mov r7,#1 // SYS_exit
-        \\    svc 0
+        \\ mov r0,r3
+        \\ blx r2
+        \\ mov r7,#1 // SYS_exit
+        \\ svc 0
     );
 }
 

@@ -145,26 +145,26 @@ pub fn clone() callconv(.naked) u32 {
 
 pub fn clone3() callconv(.naked) u32 {
     asm volatile (
-        \\      movl $0x400001B3, %%eax // SYS_clone3
-        \\      mov %%rcx, %%r8
-        \\      syscall
-        \\      test %%eax, %%eax
-        \\      jz 1f
-        \\      ret
+        \\ movl $0x400001B3, %%eax // SYS_clone3
+        \\ mov %%rcx, %%r8
+        \\ syscall
+        \\ test %%eax, %%eax
+        \\ jz 1f
+        \\ ret
         \\
         \\1:
     );
     if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
-        \\      .cfi_undefined %%rip
+        \\ .cfi_undefined %%rip
     );
     asm volatile (
-        \\      xor %%ebp, %%ebp
+        \\ xor %%ebp, %%ebp
         \\
-        \\      mov %%r8d, %%edi
-        \\      call *%%rdx
-        \\      mov %%eax, %%edi
-        \\      movl $0x4000003C, %%eax // SYS_exit
-        \\      syscall
+        \\ mov %%r8d, %%edi
+        \\ call *%%rdx
+        \\ mov %%eax, %%edi
+        \\ movl $0x4000003C, %%eax // SYS_exit
+        \\ syscall
         \\
     );
 }

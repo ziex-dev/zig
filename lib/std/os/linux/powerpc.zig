@@ -263,51 +263,51 @@ pub fn clone() callconv(.naked) u32 {
 
 pub fn clone3() callconv(.naked) u32 {
     asm volatile (
-        \\      # save func and arg in callee-saved registers; the kernel
-        \\      # does not preserve volatile registers across sc
-        \\      stwu 29, -16(1)
-        \\      stw 30, 4(1)
-        \\      mr 29, 5
-        \\      mr 30, 6
+        \\ // save func and arg in callee-saved registers; the kernel
+        \\ // does not preserve volatile registers across sc
+        \\ stwu 29, -16(1)
+        \\ stw 30, 4(1)
+        \\ mr 29, 5
+        \\ mr 30, 6
         \\
-        \\      li 0, 435 // SYS_clone3
-        \\      sc
+        \\ li 0, 435 // SYS_clone3
+        \\ sc
         \\
-        \\      # if error, negate return (errno)
-        \\      bns+ 1f
-        \\      neg 3, 3
+        \\ // if error, negate return (errno)
+        \\ bns+ 1f
+        \\ neg 3, 3
         \\
         \\1:
-        \\      cmpwi cr7, 3, 0
-        \\      beq cr7, 2f
+        \\ cmpwi cr7, 3, 0
+        \\ beq cr7, 2f
         \\
-        \\      # parent (or error): restore and return
-        \\      lwz 29, 0(1)
-        \\      lwz 30, 4(1)
-        \\      addi 1, 1, 16
-        \\      blr
+        \\ // parent (or error): restore and return
+        \\ lwz 29, 0(1)
+        \\ lwz 30, 4(1)
+        \\ addi 1, 1, 16
+        \\ blr
         \\
-        \\      // child
+        \\ // child
         \\2:
     );
     if (builtin.unwind_tables != .none or !builtin.strip_debug_info) asm volatile (
-        \\      .cfi_undefined lr
+        \\ .cfi_undefined lr
     );
     asm volatile (
-        \\      # create an initial stack frame; the callee saves lr in the
-        \\      # caller's frame, and the kernel gave us bare stack + stack_size
-        \\      li 0, 0
-        \\      stwu 0, -16(1)
+        \\ // create an initial stack frame; the callee saves lr in the
+        \\ // caller's frame, and the kernel gave us bare stack + stack_size
+        \\ li 0, 0
+        \\ stwu 0, -16(1)
         \\
-        \\      li 31, 0
-        \\      mtlr 0
+        \\ li 31, 0
+        \\ mtlr 0
         \\
-        \\      mr 3, 30
-        \\      mtctr 29
-        \\      bctrl
+        \\ mr 3, 30
+        \\ mtctr 29
+        \\ bctrl
         \\
-        \\      li 0, 1 // SYS_exit
-        \\      sc
+        \\ li 0, 1 // SYS_exit
+        \\ sc
     );
 }
 
