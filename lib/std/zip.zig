@@ -574,129 +574,6 @@ pub const Iterator = struct {
             };
             try file_writer.end();
         }
-
-        pub fn extractTo(
-            self: Entry,
-            stream: *File.Reader,
-            options: ExtractOptions,
-            filename_buf: []u8,
-            output_buffer: []u8,
-        ) !void {
-            if (filename_buf.len < self.filename_len)
-                return error.ZipInsufficientBuffer;
-            if (output_buffer.len < self.uncompressed_size)
-                return error.ZipInsufficientBuffer;
-            switch (self.compression_method) {
-                .store, .deflate => {},
-                else => return error.UnsupportedCompressionMethod,
-            }
-            const filename = filename_buf[0..self.filename_len];
-            {
-                try stream.seekTo(self.header_zip_offset + @sizeOf(CentralDirectoryFileHeader));
-                try stream.interface.readSliceAll(filename);
-            }
-            // All entries that end in '/' are directories
-            if (filename[filename.len - 1] == '/') {
-                return error.ZipExtractingDirToMem;
-            }
-
-            const local_data_header_offset: u64 = local_data_header_offset: {
-                const local_header = blk: {
-                    try stream.seekTo(self.file_offset);
-                    break :blk try stream.interface.takeStruct(LocalFileHeader, .little);
-                };
-                if (!std.mem.eql(u8, &local_header.signature, &local_file_header_sig))
-                    return error.ZipBadFileOffset;
-                if (local_header.version_needed_to_extract != self.version_needed_to_extract)
-                    return error.ZipMismatchVersionNeeded;
-                if (local_header.last_modification_time != self.last_modification_time)
-                    return error.ZipMismatchModTime;
-                if (local_header.last_modification_date != self.last_modification_date)
-                    return error.ZipMismatchModDate;
-
-                if (@as(u16, @bitCast(local_header.flags)) != @as(u16, @bitCast(self.flags)))
-                    return error.ZipMismatchFlags;
-                if (local_header.crc32 != 0 and local_header.crc32 != self.crc32)
-                    return error.ZipMismatchCrc32;
-                var extents: FileExtents = .{
-                    .uncompressed_size = local_header.uncompressed_size,
-                    .compressed_size = local_header.compressed_size,
-                    .local_file_header_offset = 0,
-                };
-                if (local_header.extra_len > 0) {
-                    var extra_buf: [std.math.maxInt(u16)]u8 = undefined;
-                    const extra = extra_buf[0..local_header.extra_len];
-
-                    {
-                        try stream.seekTo(self.file_offset + @sizeOf(LocalFileHeader) + local_header.filename_len);
-                        try stream.interface.readSliceAll(extra);
-                    }
-
-                    var extra_offset: usize = 0;
-                    while (extra_offset + 4 <= local_header.extra_len) {
-                        const header_id = std.mem.readInt(u16, extra[extra_offset..][0..2], .little);
-                        const data_size = std.mem.readInt(u16, extra[extra_offset..][2..4], .little);
-                        const end = extra_offset + 4 + data_size;
-                        if (end > local_header.extra_len)
-                            return error.ZipBadExtraFieldSize;
-                        const data = extra[extra_offset + 4 .. end];
-                        switch (@as(ExtraHeader, @enumFromInt(header_id))) {
-                            .zip64_info => try readZip64FileExtents(LocalFileHeader, local_header, &extents, data),
-                            else => {}, // ignore
-                        }
-                        extra_offset = end;
-                    }
-                }
-
-                if (extents.compressed_size != 0 and
-                    extents.compressed_size != self.compressed_size)
-                    return error.ZipMismatchCompLen;
-                if (extents.uncompressed_size != 0 and
-                    extents.uncompressed_size != self.uncompressed_size)
-                    return error.ZipMismatchUncompLen;
-
-                if (local_header.filename_len != self.filename_len)
-                    return error.ZipMismatchFilenameLen;
-
-                break :local_data_header_offset @as(u64, local_header.filename_len) +
-                    @as(u64, local_header.extra_len);
-            };
-
-            if (options.allow_backslashes) {
-                std.mem.replaceScalar(u8, filename, '\\', '/');
-            } else {
-                if (std.mem.findScalar(u8, filename, '\\')) |_|
-                    return error.ZipFilenameHasBackslash;
-            }
-
-            if (isBadFilename(filename))
-                return error.ZipBadFilename;
-
-            // TODO limit based on self.compressed_size
-
-            switch (self.compression_method) {
-                .store => {
-                    stream.interface.readSliceAll(buffer) catch |err| switch (err) {
-
-                    }
-                    stream.interface.streamExact64(&file_writer.interface, self.uncompressed_size) catch |err| switch (err) {
-                        error.ReadFailed => return stream.err.?,
-                        error.WriteFailed => return file_writer.err.?,
-                        error.EndOfStream => return error.ZipDecompressTruncated,
-                    };
-                },
-                .deflate => {
-                    var flate_buffer: [flate.max_window_len]u8 = undefined;
-                    var decompress: flate.Decompress = .init(&stream.interface, .raw, &flate_buffer);
-                    decompress.reader.streamExact64(&file_writer.interface, self.uncompressed_size) catch |err| switch (err) {
-                        error.ReadFailed => return stream.err.?,
-                        error.WriteFailed => return file_writer.err orelse decompress.err.?,
-                        error.EndOfStream => return error.ZipDecompressTruncated,
-                    };
-                },
-                else => return error.UnsupportedCompressionMethod,
-            }
-        }
     };
 };
 
@@ -764,130 +641,82 @@ pub fn extract(dest: Io.Dir, fr: *File.Reader, options: ExtractOptions) !void {
 
 const testing = std.testing;
 
-test "extractTo store" {
+test "extractTo" {
     const io = testing.io;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.writeFile(io, .{
         .sub_path = "test.zip",
-        .data = @embedFile("zip/testdata/test_store.zip"),
+        .data = @embedFile("zip/testdata/test.zip"),
     });
 
     var file = try tmp.dir.openFile(io, "test.zip", .{});
     defer file.close(io);
-    var read_buf: [4096]u8 = undefined;
+    var read_buf: [512]u8 = undefined;
     var reader = file.reader(io, &read_buf);
 
+    const Expected = struct {
+        contents: []const u8,
+        compression: CompressionMethod,
+    };
+    const expected_map = std.StaticStringMap(Expected).initComptime(.{
+        .{ "deflate.txt", Expected{ .contents = "aaaaaaaaaaaaaaaaaaaaaaaa\n", .compression = .deflate } },
+        .{ "store.txt", Expected{ .contents = "hello world\n", .compression = .store } },
+        .{ "dir/", Expected{ .contents = "", .compression = .store } },
+    });
+
     var iter = try Iterator.init(&reader);
-    const entry = (try iter.next()) orelse return error.TestFailed;
-
-    var output: [256]u8 = undefined;
-    var filename_buf: [256]u8 = undefined;
-    try entry.extractTo(&reader, &filename_buf, &output);
-
-    try testing.expectEqualStrings("hello world", output[0..@intCast(entry.uncompressed_size)]);
+    var num_entries: usize = 0;
+    while (try iter.next()) |entry| {
+        var filename_buf: [256]u8 = undefined;
+        const filename = try entry.getFilename(&reader, &filename_buf, .{});
+        const expected = expected_map.get(filename) orelse {
+            std.debug.print("found unexpected filename: {f}\n", .{std.ascii.hexEscape(filename, .lower)});
+            return error.UnexpectedFilename;
+        };
+        var buf: [256]u8 = undefined;
+        var w: Writer = .fixed(&buf);
+        try entry.extractTo(&reader, &w);
+        try testing.expectEqualStrings(expected.contents, w.buffered());
+        try testing.expectEqual(expected.compression, entry.compression_method);
+        num_entries += 1;
+    }
+    try testing.expectEqual(expected_map.kvs.len, num_entries);
 }
 
-test "extractTo deflate" {
+test "output buffers too small" {
     const io = testing.io;
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();
 
     try tmp.dir.writeFile(io, .{
         .sub_path = "test.zip",
-        .data = @embedFile("zip/testdata/test_deflate.zip"),
+        .data = @embedFile("zip/testdata/test.zip"),
     });
 
     var file = try tmp.dir.openFile(io, "test.zip", .{});
     defer file.close(io);
-    var read_buf: [4096]u8 = undefined;
+    var read_buf: [512]u8 = undefined;
     var reader = file.reader(io, &read_buf);
 
     var iter = try Iterator.init(&reader);
-    const entry = (try iter.next()) orelse return error.TestFailed;
+    var num_entries: usize = 0;
+    while (try iter.next()) |entry| {
+        try testing.expectError(
+            error.ZipInsufficientBuffer,
+            entry.getFilename(&reader, &.{}, .{}),
+        );
 
-    var output: [256]u8 = undefined;
-    var filename_buf: [256]u8 = undefined;
-    try entry.extractTo(&reader, &filename_buf, &output);
+        if (entry.uncompressed_size <= 1) continue;
 
-    try testing.expectEqualStrings("hello world", output[0..@intCast(entry.uncompressed_size)]);
-}
-
-test "extractTo directory error" {
-    const io = testing.io;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "test.zip",
-        .data = @embedFile("zip/testdata/test_directory.zip"),
-    });
-
-    var file = try tmp.dir.openFile(io, "test.zip", .{});
-    defer file.close(io);
-    var read_buf: [4096]u8 = undefined;
-    var reader = file.reader(io, &read_buf);
-
-    var iter = try Iterator.init(&reader);
-    const entry = (try iter.next()) orelse return error.TestFailed;
-
-    var output: [256]u8 = undefined;
-    var filename_buf: [256]u8 = undefined;
-    try testing.expectError(
-        error.ZipExtractingDirToMem,
-        entry.extractTo(&reader, &filename_buf, &output),
-    );
-}
-
-test "extractTo output buffer too small" {
-    const io = testing.io;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "test.zip",
-        .data = @embedFile("zip/testdata/test_store.zip"),
-    });
-
-    var file = try tmp.dir.openFile(io, "test.zip", .{});
-    defer file.close(io);
-    var read_buf: [4096]u8 = undefined;
-    var reader = file.reader(io, &read_buf);
-
-    var iter = try Iterator.init(&reader);
-    const entry = (try iter.next()) orelse return error.TestFailed;
-
-    var output: [1]u8 = undefined;
-    var filename_buf: [256]u8 = undefined;
-    try testing.expectError(
-        error.ZipInsufficientBuffer,
-        entry.extractTo(&reader, &filename_buf, &output),
-    );
-}
-
-test "extractTo filename buffer too small" {
-    const io = testing.io;
-    var tmp = testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    try tmp.dir.writeFile(io, .{
-        .sub_path = "test.zip",
-        .data = @embedFile("zip/testdata/test_store.zip"),
-    });
-
-    var file = try tmp.dir.openFile(io, "test.zip", .{});
-    defer file.close(io);
-    var read_buf: [4096]u8 = undefined;
-    var reader = file.reader(io, &read_buf);
-
-    var iter = try Iterator.init(&reader);
-    const entry = (try iter.next()) orelse return error.TestFailed;
-
-    var output: [256]u8 = undefined;
-    var filename_buf: [1]u8 = undefined;
-    try testing.expectError(
-        error.ZipInsufficientBuffer,
-        entry.extractTo(&reader, &filename_buf, &output),
-    );
+        var buf: [1]u8 = undefined;
+        var w: Writer = .fixed(&buf);
+        try testing.expectError(
+            error.WriteFailed,
+            entry.extractTo(&reader, &w),
+        );
+        num_entries += 1;
+    }
+    try std.testing.expect(num_entries > 0);
 }
