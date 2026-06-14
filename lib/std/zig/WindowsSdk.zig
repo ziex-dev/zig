@@ -24,7 +24,7 @@ const product_version_max_length = version_major_minor_max_length + ".65535".len
 
 /// Convert a WTF-8 string literal to WTF-16LE
 fn L(comptime wtf8: []const u8) *const [std.unicode.calcWtf16Len(wtf8) catch |err| @compileError(err):0]u16 {
-    return std.unicode.utf8ToUtf16StringLiteral(utf8, .little);
+    return std.unicode.wtf8ToWtf16StringLiteral(wtf8, .little);
 }
 
 /// Find path and version of Windows 10 SDK and Windows 8.1 SDK, and find path to MSVC's `lib/` directory.
