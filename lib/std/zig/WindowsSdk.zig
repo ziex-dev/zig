@@ -47,7 +47,7 @@ pub fn find(
     };
     defer roots_key.close();
 
-    const windows10sdk = Installation.find(gpa, io, &registry, roots_key, L("KitsRoot10", .little), "", L("v10.0", .little)) catch |err| switch (err) {
+    const windows10sdk = Installation.find(gpa, io, &registry, roots_key, L("KitsRoot10"), "", L("v10.0")) catch |err| switch (err) {
         error.InstallationNotFound => null,
         error.PathTooLong => null,
         error.VersionTooLong => null,
