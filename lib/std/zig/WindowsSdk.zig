@@ -7,7 +7,6 @@ const Dir = std.Io.Dir;
 const Writer = std.Io.Writer;
 const Allocator = std.mem.Allocator;
 const Environ = std.process.Environ;
-const L = std.unicode.wtf8ToWtf16StringLiteral;
 const is_32_bit = @bitSizeOf(usize) == 32;
 
 windows10sdk: ?Installation,
@@ -22,6 +21,11 @@ const windows_kits_reg_key = "Microsoft\\Windows Kits\\Installed Roots";
 const version_major_minor_max_length = "255.255".len;
 // ProductVersion in registry (created by Visual Studio installer) probably also follows this rule
 const product_version_max_length = version_major_minor_max_length + ".65535".len;
+
+/// Convert a WTF-8 string literal to WTF-16LE
+fn L(comptime wtf8: []const u8) *const [std.unicode.calcWtf16Len(wtf8) catch |err| @compileError(err):0]u16 {
+    return std.unicode.utf8ToUtf16StringLiteral(utf8, .little);
+}
 
 /// Find path and version of Windows 10 SDK and Windows 8.1 SDK, and find path to MSVC's `lib/` directory.
 /// Caller owns the result's fields.
@@ -38,7 +42,7 @@ pub fn find(
     defer registry.deinit();
 
     // If this key doesn't exist, neither the Win 8 SDK nor the Win 10 SDK is installed
-    const roots_key = registry.openSoftwareKey(.{ .root = .local_machine, .wow64 = .wow64_32 }, L(windows_kits_reg_key, .little)) catch |err| switch (err) {
+    const roots_key = registry.openSoftwareKey(.{ .root = .local_machine, .wow64 = .wow64_32 }, L(windows_kits_reg_key)) catch |err| switch (err) {
         error.KeyNotFound => return error.NotFound,
     };
     defer roots_key.close();
