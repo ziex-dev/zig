@@ -8864,12 +8864,7 @@ fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
             .code = windows.IOCTL.CONDRV.ISSUE_USER_IO,
             .in = @ptrCast(&get_console_mode.request(file, 0, .{}, 0, .{})),
         })).u.Status) {
-            .SUCCESS => {
-                if (get_console_mode.Data & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0)
-                    return true
-                else
-                    return false;
-            },
+            .SUCCESS => return (get_console_mode.Data & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0),
             .CANCELLED => unreachable,
             .INVALID_HANDLE => return isCygwinPty(file),
             else => return false,
@@ -8879,7 +8874,6 @@ fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
     if (native_os == .wasi) return false;
 
     if (try isTty(file)) {
-
         if (file.handle == posix.STDOUT_FILENO or file.handle == posix.STDERR_FILENO) {
             t.scanEnviron();
             if (t.environ.string.TERM) |term| {
