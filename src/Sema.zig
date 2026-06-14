@@ -27037,11 +27037,9 @@ fn elemPtrOneLayerOnly(
                 return .fromValue(try ptr_val.ptrElem(index, pt));
             }
 
-            try sema.checkLogicalPtrOperation(block, src, indexable_ty);
-
             const result_ty = try indexable_ty.elemPtrType(maybe_index, pt);
 
-            try sema.validateRuntimeElemAccess(block, elem_index_src, result_ty, indexable_ty, indexable_src);
+            try sema.validateRuntimeElemAccess(block, elem_index_src, result_ty, indexable_src);
             try sema.validateRuntimeValue(block, indexable_src, indexable);
 
             if (child_ty.abiSize(zcu) == 0) {
@@ -27104,7 +27102,7 @@ fn elemVal(
                         return sema.analyzeLoad(block, src, .fromValue(elem_ptr_val), indexable_src);
                     }
 
-                    try sema.validateRuntimeElemAccess(block, elem_index_src, child_ty, indexable_ty, src);
+                    try sema.validateRuntimeElemAccess(block, elem_index_src, child_ty, src);
                     switch (child_ty.classify(zcu)) {
                         .runtime => {},
                         .one_possible_value => return .fromValue((try child_ty.onePossibleValue(pt)).?),
@@ -27153,11 +27151,9 @@ fn validateRuntimeElemAccess(
     block: *Block,
     elem_index_src: LazySrcLoc,
     elem_ty: Type,
-    parent_ty: Type,
     parent_src: LazySrcLoc,
 ) CompileError!void {
-    const pt = sema.pt;
-    const zcu = pt.zcu;
+    const zcu = sema.pt.zcu;
 
     if (elem_ty.comptimeOnly(zcu)) {
         const msg = msg: {
@@ -27173,14 +27169,6 @@ fn validateRuntimeElemAccess(
             break :msg msg;
         };
         return sema.failWithOwnedErrorMsg(block, msg);
-    }
-
-    if (zcu.intern_pool.indexToKey(parent_ty.toIntern()) == .ptr_type) {
-        const target = zcu.getTarget();
-        const as = parent_ty.ptrAddressSpace(zcu);
-        if (target_util.shouldBlockPointerOps(target, as)) {
-            return sema.fail(block, elem_index_src, "cannot access element of logical pointer '{f}'", .{parent_ty.fmt(pt)});
-        }
     }
 }
 
@@ -27252,7 +27240,7 @@ fn tupleField(
         return Air.internedToRef((try tuple_val.fieldValue(pt, field_index)).toIntern());
     }
 
-    try sema.validateRuntimeElemAccess(block, field_index_src, field_ty, tuple_ty, tuple_src);
+    try sema.validateRuntimeElemAccess(block, field_index_src, field_ty, tuple_src);
 
     return block.addStructFieldVal(tuple, field_index, field_ty);
 }
@@ -27307,7 +27295,7 @@ fn elemValArray(
         if (try elem_ty.onePossibleValue(pt)) |opv| return .fromValue(opv);
     }
 
-    try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ty, array_ty, array_src);
+    try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ty, array_src);
     try sema.validateRuntimeValue(block, array_src, array);
 
     if (oob_safety and block.wantSafety()) {
@@ -27410,7 +27398,7 @@ fn elemPtrVector(
     };
 
     if (!init) {
-        try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ty, vector_ty, vector_ptr_src);
+        try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ty, vector_ptr_src);
         try sema.validateRuntimeValue(block, vector_ptr_src, vector_ptr);
     }
 
@@ -27483,7 +27471,7 @@ fn elemPtrArray(
     }
 
     if (!init) {
-        try sema.validateRuntimeElemAccess(block, elem_index_src, array_ty.childType(zcu), array_ty, array_ptr_src);
+        try sema.validateRuntimeElemAccess(block, elem_index_src, array_ty.childType(zcu), array_ptr_src);
         try sema.validateRuntimeValue(block, array_ptr_src, array_ptr);
     }
 
@@ -27546,7 +27534,7 @@ fn elemValSlice(
 
     if (try elem_ty.onePossibleValue(pt)) |opv| return .fromValue(opv);
 
-    try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ty, slice_ty, slice_src);
+    try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ty, slice_src);
     try sema.validateRuntimeValue(block, slice_src, slice);
 
     if (oob_safety and block.wantSafety()) {
@@ -27606,7 +27594,7 @@ fn elemPtrSlice(
         }
     }
 
-    try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ptr_ty, slice_ty, slice_src);
+    try sema.validateRuntimeElemAccess(block, elem_index_src, elem_ptr_ty, slice_src);
     try sema.validateRuntimeValue(block, slice_src, slice);
 
     if (oob_safety and block.wantSafety()) {
