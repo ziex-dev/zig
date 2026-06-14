@@ -61,6 +61,7 @@ comptime {
         symbol(&acos, "acos");
         symbol(&acoshf, "acoshf");
         symbol(&asin, "asin");
+        symbol(&asinf, "asinf");
         symbol(&atan, "atan");
         symbol(&cbrt, "cbrt");
         symbol(&cbrtf, "cbrtf");
@@ -108,6 +109,10 @@ fn acoshf(x: f32) callconv(.c) f32 {
 }
 
 fn asin(x: f64) callconv(.c) f64 {
+    return math.asin(x);
+}
+
+fn asinf(x: f32) callconv(.c) f32 {
     return math.asin(x);
 }
 
