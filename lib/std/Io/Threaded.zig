@@ -6780,7 +6780,7 @@ pub const Wtf8ToPrefixedFileWError = Wtf16ToPrefixedFileWError;
 /// https://wtf-8.codeberg.page/
 pub fn sliceToPrefixedFileW(dir: ?windows.HANDLE, path: []const u8, options: Wtf16ToPrefixedFileWOptions) Wtf8ToPrefixedFileWError!WindowsPathSpace {
     var temp_path: WindowsPathSpace = undefined;
-    temp_path.len = std.unicode.wtf8ToWtf16Le(&temp_path.data, path) catch |err| switch (err) {
+    temp_path.len = std.unicode.wtf8ToWtf16(&temp_path.data, path, .little) catch |err| switch (err) {
         error.InvalidWtf8 => return error.BadPathName,
     };
     temp_path.data[temp_path.len] = 0;
@@ -13494,7 +13494,7 @@ fn netInterfaceNameResolve(
         try Thread.checkCancel();
         var name_w: [net.Interface.Name.max_len:0]windows.WCHAR = undefined;
         name_w[
-            std.unicode.wtf8ToWtf16Le(&name_w, name.toSlice()) catch |err| switch (err) {
+            std.unicode.wtf8ToWtf16(&name_w, name.toSlice(), .little) catch |err| switch (err) {
                 error.InvalidWtf8 => return error.InterfaceNotFound,
             }
         ] = 0;
@@ -13763,7 +13763,7 @@ fn netLookupFallible(
         };
         var host_name_w: [HostName.max_len:0]windows.WCHAR = undefined;
         host_name_w[
-            std.unicode.wtf8ToWtf16Le(&host_name_w, name) catch |err| switch (err) {
+            std.unicode.wtf8ToWtf16(&host_name_w, name, .little) catch |err| switch (err) {
                 error.InvalidWtf8 => return error.UnknownHostName,
             }
         ] = 0;
@@ -13999,7 +13999,8 @@ fn processCurrentPath(userdata: ?*anyopaque, buffer: []u8) process.CurrentPathEr
         assert(n <= wtf16le_buf.len);
         const wtf16le_slice = wtf16le_buf[0..n];
         var end_index: usize = 0;
-        var it = std.unicode.Wtf16LeIterator.init(wtf16le_slice);
+        const view = std.unicode.Wtf16View.init(wtf16le_slice, .little);
+        var it = view.iterator();
         while (it.nextCodepoint()) |codepoint| {
             const seq_len = std.unicode.utf8CodepointSequenceLength(codepoint) catch unreachable;
             if (end_index + seq_len >= buffer.len)
@@ -14070,7 +14071,7 @@ fn processSetCurrentPath(userdata: ?*anyopaque, path: []const u8) process.SetCur
         var path_w_buf: [windows.PATH_MAX_WIDE]u16 = undefined;
         const len = std.unicode.calcWtf16Len(path) catch return error.InvalidWtf8;
         if (len > path_w_buf.len) return error.NameTooLong;
-        const path_w_len = std.unicode.wtf8ToWtf16Le(&path_w_buf, path) catch |err| switch (err) {
+        const path_w_len = std.unicode.wtf8ToWtf16(&path_w_buf, path, .little) catch |err| switch (err) {
             error.InvalidWtf8 => unreachable, // already validated
         };
         const path_w = path_w_buf[0..path_w_len];
@@ -15735,7 +15736,7 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
                 break :cwd_w dir_path_buffer[0..dir_path.len :0];
             },
             .path => |cwd| {
-                break :cwd_w try std.unicode.wtf8ToWtf16LeAllocZ(arena, cwd);
+                break :cwd_w try std.unicode.wtf8ToWtf16AllocZ(arena, cwd, .little);
             },
         }
     };
@@ -15763,7 +15764,7 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
         // If the app name is absolute, then we need to use its dirname as the cwd
         if (app_name_is_absolute) {
             const dir = Dir.path.dirname(app_name_wtf8).?;
-            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, dir);
+            break :x try std.unicode.wtf8ToWtf16AllocZ(arena, dir, .little);
         } else if (cwd_w) |cwd| {
             break :x cwd;
         } else {
@@ -15781,11 +15782,11 @@ fn processSpawnWindows(userdata: ?*anyopaque, options: process.SpawnOptions) pro
     const maybe_app_dirname_wtf8 = if (!app_name_is_absolute) Dir.path.dirname(app_name_wtf8) else null;
     const app_dirname_w: ?[:0]u16 = x: {
         if (maybe_app_dirname_wtf8) |app_dirname_wtf8| {
-            break :x try std.unicode.wtf8ToWtf16LeAllocZ(arena, app_dirname_wtf8);
+            break :x try std.unicode.wtf8ToWtf16AllocZ(arena, app_dirname_wtf8, .little);
         }
         break :x null;
     };
-    const app_name_w = try std.unicode.wtf8ToWtf16LeAllocZ(arena, app_basename_wtf8);
+    const app_name_w = try std.unicode.wtf8ToWtf16AllocZ(arena, app_basename_wtf8, .little);
 
     const flags: windows.CreateProcessFlags = .{
         .create_suspended = options.start_suspended,
@@ -16712,7 +16713,7 @@ fn argvToScriptCommandLineWindows(
 
     try buf.append('"');
 
-    return try std.unicode.wtf8ToWtf16LeAllocZ(allocator, buf.items);
+    return try std.unicode.wtf8ToWtf16AllocZ(allocator, buf.items, .little);
 }
 
 const ArgvToCommandLineError = error{ OutOfMemory, InvalidWtf8, InvalidArg0 };
@@ -16803,7 +16804,7 @@ fn argvToCommandLineWindows(
         }
     }
 
-    return try std.unicode.wtf8ToWtf16LeAllocZ(allocator, buf.items);
+    return try std.unicode.wtf8ToWtf16AllocZ(allocator, buf.items, .little);
 }
 
 test argvToCommandLineWindows {

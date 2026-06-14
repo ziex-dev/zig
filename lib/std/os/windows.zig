@@ -5979,7 +5979,7 @@ pub fn wtf8ToWtf16Le(wtf16le: []u16, wtf8: []const u8) error{ BadPathName, NameT
         if (utf16_len > wtf16le.len)
             return error.NameTooLong;
     }
-    return std.unicode.wtf8ToWtf16Le(wtf16le, wtf8) catch |err| switch (err) {
+    return std.unicode.wtf8ToWtf16(wtf16le, wtf8, .little) catch |err| switch (err) {
         error.InvalidWtf8 => return error.BadPathName,
     };
 }

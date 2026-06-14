@@ -667,7 +667,7 @@ test "Iterator.Windows" {
 }
 
 fn testIteratorWindows(cmd_line: []const u8, expected_args: []const []const u8) !void {
-    const cmd_line_w = try std.unicode.wtf8ToWtf16LeAllocZ(testing.allocator, cmd_line);
+    const cmd_line_w = try std.unicode.wtf8ToWtf16AllocZ(testing.allocator, cmd_line, .little);
     defer testing.allocator.free(cmd_line_w);
 
     // next

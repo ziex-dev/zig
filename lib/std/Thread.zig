@@ -88,7 +88,7 @@ pub fn setName(self: Thread, io: Io, name: []const u8) SetNameError!void {
             switch (windows.ntdll.NtSetInformationThread(
                 self.getHandle(),
                 .NameInformation,
-                &windows.UNICODE_STRING.init(buf[0..try std.unicode.wtf8ToWtf16Le(&buf, name)]),
+                &windows.UNICODE_STRING.init(buf[0..try std.unicode.wtf8ToWtf16(&buf, name, .little)]),
                 @sizeOf(windows.UNICODE_STRING),
             )) {
                 .SUCCESS => return,

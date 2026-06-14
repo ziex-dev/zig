@@ -8,6 +8,6 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(arena);
     if (args.len < 2) return error.NoDllPathSpecified;
     const dll_path = args[1];
-    const dll_path_w = try std.unicode.wtf8ToWtf16LeAllocZ(arena, dll_path);
+    const dll_path_w = try std.unicode.wtf8ToWtf16AllocZ(arena, dll_path, .little);
     _ = LoadLibraryW(dll_path_w) orelse return error.FailedToLoadDll;
 }

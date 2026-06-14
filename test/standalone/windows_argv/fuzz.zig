@@ -11,7 +11,7 @@ pub fn main(init: std.process.Init) !void {
     if (args.len < 2) return error.MissingArgs;
 
     const verify_path_wtf8 = args[1];
-    const verify_path_w = try std.unicode.wtf8ToWtf16LeAllocZ(gpa, verify_path_wtf8);
+    const verify_path_w = try std.unicode.wtf8ToWtf16AllocZ(gpa, verify_path_wtf8, .little);
     defer gpa.free(verify_path_w);
 
     const iterations: u64 = iterations: {

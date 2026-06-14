@@ -617,7 +617,7 @@ pub const Installation = struct {
     /// Check whether this version is enumerated in registry.
     fn isValidVersion(installation: Installation, roots_key: Registry.Key) bool {
         var version_buf: [product_version_max_length]u16 = undefined;
-        const version_len = std.unicode.wtf8ToWtf16Le(&version_buf, installation.version) catch return false;
+        const version_len = std.unicode.wtf8ToWtf16(&version_buf, installation.version, .little) catch return false;
         const version = version_buf[0..version_len];
         const options_key_name = "Installed Options";
         const buf_len = product_version_max_length + options_key_name.len + 2;
@@ -962,7 +962,7 @@ const MsvcLibDir = struct {
         const source_directories: []const u8 = source_directories: for (vs_versions) |vs_version| {
             const sub_path = blk: {
                 var buf: std.ArrayList(u16) = .initBuffer(&sub_path_buf);
-                buf.items.len += std.unicode.wtf8ToWtf16Le(buf.unusedCapacitySlice(), vs_version) catch unreachable;
+                buf.items.len += std.unicode.wtf8ToWtf16(buf.unusedCapacitySlice(), vs_version, .little) catch unreachable;
                 buf.appendSliceAssumeCapacity(L("\\privateregistry.bin"));
                 break :blk buf.items;
             };
@@ -989,7 +989,7 @@ const MsvcLibDir = struct {
 
                 var buf: std.ArrayList(u16) = .initBuffer(&key_path_buf);
                 buf.appendSliceAssumeCapacity(L("\\REGISTRY\\A\\"));
-                buf.items.len += std.unicode.wtf8ToWtf16Le(buf.unusedCapacitySlice(), guid_str) catch unreachable;
+                buf.items.len += std.unicode.wtf8ToWtf16(buf.unusedCapacitySlice(), guid_str, .little) catch unreachable;
                 break :blk buf.items;
             };
 
@@ -1035,7 +1035,7 @@ const MsvcLibDir = struct {
             const config_path = blk: {
                 var buf: std.ArrayList(u16) = .initBuffer(&key_path_buf);
                 buf.appendSliceAssumeCapacity(L("Software\\Microsoft\\VisualStudio\\"));
-                buf.items.len += std.unicode.wtf8ToWtf16Le(buf.unusedCapacitySlice(), vs_version) catch unreachable;
+                buf.items.len += std.unicode.wtf8ToWtf16(buf.unusedCapacitySlice(), vs_version, .little) catch unreachable;
                 buf.appendSliceAssumeCapacity(L("_Config"));
                 break :blk buf.items;
             };

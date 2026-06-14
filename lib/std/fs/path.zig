@@ -352,7 +352,7 @@ test isAbsolutePosix {
 
 fn testIsAbsoluteWindows(path: []const u8, expected_result: bool) !void {
     try testing.expectEqual(expected_result, isAbsoluteWindows(path));
-    const path_w = try std.unicode.wtf8ToWtf16LeAllocZ(std.testing.allocator, path);
+    const path_w = try std.unicode.wtf8ToWtf16AllocZ(std.testing.allocator, path, .little);
     defer std.testing.allocator.free(path_w);
     try testing.expectEqual(expected_result, isAbsoluteWindowsW(path_w));
     try testing.expectEqual(expected_result, isAbsoluteWindowsWtf16(path_w));
@@ -673,7 +673,7 @@ test parsePathWindows {
 
 fn testWindowsParsePathHarmony(wtf8: []const u8) !void {
     var wtf16_buf: [256]u16 = undefined;
-    const wtf16_len = try std.unicode.wtf8ToWtf16Le(&wtf16_buf, wtf8);
+    const wtf16_len = try std.unicode.wtf8ToWtf16(&wtf16_buf, wtf8, .little);
     const wtf16 = wtf16_buf[0..wtf16_len];
 
     const wtf8_parsed = parsePathWindows(u8, wtf8);
@@ -853,9 +853,9 @@ test compareDiskDesignators {
 
 fn testCompareDiskDesignators(expected_result: bool, kind: DiskDesignatorKind, p1: []const u8, p2: []const u8) !void {
     var wtf16_buf1: [256]u16 = undefined;
-    const w1_len = try std.unicode.wtf8ToWtf16Le(&wtf16_buf1, p1);
+    const w1_len = try std.unicode.wtf8ToWtf16(&wtf16_buf1, p1, .little);
     var wtf16_buf2: [256]u16 = undefined;
-    const w2_len = try std.unicode.wtf8ToWtf16Le(&wtf16_buf2, p2);
+    const w2_len = try std.unicode.wtf8ToWtf16(&wtf16_buf2, p2, .little);
     try std.testing.expectEqual(expected_result, compareDiskDesignators(u8, kind, p1, p2));
     try std.testing.expectEqual(expected_result, compareDiskDesignators(u16, kind, wtf16_buf1[0..w1_len], wtf16_buf2[0..w2_len]));
 }

@@ -474,10 +474,10 @@ pub const Map = struct {
         };
         for (map.keys(), map.values()) |key, value| {
             if (options.zig_progress_handle != null and eqlKeys(key, "ZIG_PROGRESS")) continue;
-            i += try unicode.wtf8ToWtf16Le(block[i..], key);
+            i += try unicode.wtf8ToWtf16(block[i..], key, .little);
             block[i] = '=';
             i += 1;
-            i += try unicode.wtf8ToWtf16Le(block[i..], value);
+            i += try unicode.wtf8ToWtf16(block[i..], value, .little);
             block[i] = 0;
             i += 1;
         }
