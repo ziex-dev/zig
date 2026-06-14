@@ -567,6 +567,56 @@ test {
     _ = &parseFloat;
 }
 
+pub fn parseTimeSuffixNs(buf: []const u8) !u64 {
+    const units: []const struct { []const u8, u64 } = &.{
+        .{ "ns", 1 },
+        .{ "nanosecond", 1 },
+        .{ "us", std.time.ns_per_us },
+        .{ "microsecond", std.time.ns_per_us },
+        .{ "ms", std.time.ns_per_ms },
+        .{ "millisecond", std.time.ns_per_ms },
+        .{ "s", std.time.ns_per_s },
+        .{ "second", std.time.ns_per_s },
+        .{ "m", std.time.ns_per_min },
+        .{ "minute", std.time.ns_per_min },
+        .{ "h", std.time.ns_per_hour },
+        .{ "hour", std.time.ns_per_hour },
+    };
+    const suffix_start_idx = std.mem.findAny(u8, buf, "abcdefghijklmnopqrstuvwxyz") orelse return error.FmtNoTimeSuffix;
+    if (suffix_start_idx == 0) return error.FmtNoTimeNumber;
+    const num_str = buf[0..suffix_start_idx];
+    const unit_str = buf[suffix_start_idx..];
+    const unit_factor: f64 = for (units) |unit_and_factor| {
+        if (std.mem.eql(u8, unit_str, unit_and_factor[0])) {
+            break @floatFromInt(unit_and_factor[1]);
+        }
+    } else return error.FmtInvalidTimeSuffix;
+    const num_parsed = std.fmt.parseFloat(f64, num_str) catch return error.FmtInvalidTimeNumber;
+    return std.math.lossyCast(u64, unit_factor * num_parsed);
+}
+
+test parseTimeSuffixNs {
+    try std.testing.expectEqual(100, try parseTimeSuffixNs("100ns"));
+    try std.testing.expectEqual(100, try parseTimeSuffixNs("100nanosecond"));
+    try std.testing.expectEqual(50_000, try parseTimeSuffixNs("50us"));
+    try std.testing.expectEqual(50_000, try parseTimeSuffixNs("50microsecond"));
+    try std.testing.expectEqual(10_000_000, try parseTimeSuffixNs("10ms"));
+    try std.testing.expectEqual(10_000_000, try parseTimeSuffixNs("10millisecond"));
+    try std.testing.expectEqual(5_000_000_000, try parseTimeSuffixNs("5s"));
+    try std.testing.expectEqual(5_000_000_000, try parseTimeSuffixNs("5second"));
+    try std.testing.expectEqual(120_000_000_000, try parseTimeSuffixNs("2m"));
+    try std.testing.expectEqual(120_000_000_000, try parseTimeSuffixNs("2minute"));
+    try std.testing.expectEqual(3_600_000_000_000, try parseTimeSuffixNs("1h"));
+    try std.testing.expectEqual(3_600_000_000_000, try parseTimeSuffixNs("1hour"));
+    try std.testing.expectEqual(1_500_000_000, try parseTimeSuffixNs("1.5s"));
+    try std.testing.expectEqual(0, try parseTimeSuffixNs("0s"));
+    try std.testing.expectError(error.FmtNoTimeSuffix, parseTimeSuffixNs("100"));
+    try std.testing.expectError(error.FmtInvalidTimeSuffix, parseTimeSuffixNs("100x"));
+    try std.testing.expectError(error.FmtNoTimeNumber, parseTimeSuffixNs("abcms"));
+    try std.testing.expectError(error.FmtInvalidTimeSuffix, parseTimeSuffixNs("10ms10"));
+    try std.testing.expectError(error.FmtNoTimeSuffix, parseTimeSuffixNs(""));
+}
+
 pub fn charToDigit(c: u8, base: u8) (error{InvalidCharacter}!u8) {
     const value = switch (c) {
         '0'...'9' => c - '0',

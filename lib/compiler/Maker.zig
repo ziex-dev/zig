@@ -239,40 +239,12 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.eql(u8, arg, "--skip-oom-steps")) {
                 skip_oom_steps = true;
             } else if (mem.eql(u8, arg, "--test-timeout")) {
-                const units: []const struct { []const u8, u64 } = &.{
-                    .{ "ns", 1 },
-                    .{ "nanosecond", 1 },
-                    .{ "us", std.time.ns_per_us },
-                    .{ "microsecond", std.time.ns_per_us },
-                    .{ "ms", std.time.ns_per_ms },
-                    .{ "millisecond", std.time.ns_per_ms },
-                    .{ "s", std.time.ns_per_s },
-                    .{ "second", std.time.ns_per_s },
-                    .{ "m", std.time.ns_per_min },
-                    .{ "minute", std.time.ns_per_min },
-                    .{ "h", std.time.ns_per_hour },
-                    .{ "hour", std.time.ns_per_hour },
-                };
                 const timeout_str = nextArgOrFatal(args, &arg_idx);
-                const num_end_idx = std.mem.findLastNone(u8, timeout_str, "abcdefghijklmnopqrstuvwxyz") orelse fatal(
-                    "invalid timeout {q}: expected unit (ns, us, ms, s, m, h)",
-                    .{timeout_str},
-                );
-                const num_str = timeout_str[0 .. num_end_idx + 1];
-                const unit_str = timeout_str[num_end_idx + 1 ..];
-                const unit_factor: f64 = for (units) |unit_and_factor| {
-                    if (std.mem.eql(u8, unit_str, unit_and_factor[0])) {
-                        break @floatFromInt(unit_and_factor[1]);
-                    }
-                } else fatal(
-                    "invalid timeout {q}: invalid unit {q} (expected ns, us, ms, s, m, h)",
-                    .{ timeout_str, unit_str },
-                );
-                const num_parsed = std.fmt.parseFloat(f64, num_str) catch |err| fatal(
-                    "invalid timeout {q}: invalid number {q} ({t})",
-                    .{ timeout_str, num_str, err },
-                );
-                test_timeout_ns = std.math.lossyCast(u64, unit_factor * num_parsed);
+                test_timeout_ns = std.fmt.parseTimeSuffixNs(timeout_str) catch |err|
+                    fatal(
+                        "invalid timeout {q}: {t}",
+                        .{ timeout_str, err },
+                    );
             } else if (mem.eql(u8, arg, "--search-prefix")) {
                 try graph.search_prefixes.append(arena, nextArgOrFatal(args, &arg_idx));
             } else if (mem.eql(u8, arg, "--libc")) {
