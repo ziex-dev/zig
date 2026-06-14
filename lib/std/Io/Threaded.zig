@@ -218,6 +218,7 @@ pub const Environ = struct {
             DEBUGINFOD_CACHE_PATH: ?[:0]const u8 = null,
             XDG_CACHE_HOME: ?[:0]const u8 = null,
             HOME: ?[:0]const u8 = null,
+            TERM: ?[:0]const u8 = null,
         },
     };
 
@@ -8800,9 +8801,8 @@ fn isTty(file: File) Io.Cancelable!bool {
 
 fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: File) File.EnableAnsiEscapeCodesError!void {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
 
-    if (!is_windows) return if (!try supportsAnsiEscapeCodes(file)) error.NotTerminalDevice;
+    if (!is_windows) return if (!try supportsAnsiEscapeCodes(t, file)) error.NotTerminalDevice;
 
     // For Windows Terminal, VT Sequences processing is enabled by default.
     const console: File = .{
@@ -8850,11 +8850,10 @@ fn fileEnableAnsiEscapeCodes(userdata: ?*anyopaque, file: File) File.EnableAnsiE
 
 fn fileSupportsAnsiEscapeCodes(userdata: ?*anyopaque, file: File) Io.Cancelable!bool {
     const t: *Threaded = @ptrCast(@alignCast(userdata));
-    _ = t;
-    return supportsAnsiEscapeCodes(file);
+    return supportsAnsiEscapeCodes(t, file);
 }
 
-fn supportsAnsiEscapeCodes(file: File) Io.Cancelable!bool {
+fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
     if (is_windows) {
         var get_console_mode = windows.CONSOLE.USER_IO.GET_MODE;
         switch ((try deviceIoControl(&.{
@@ -8873,7 +8872,20 @@ fn supportsAnsiEscapeCodes(file: File) Io.Cancelable!bool {
         }
     }
 
-    if (try isTty(file)) return true;
+    if (is_windows or native_os == .wasi) return false;
+
+    if (try isTty(file)) {
+        if (file.handle == posix.STDOUT_FILENO or file.handle == posix.STDERR_FILENO) {
+            t.scanEnviron();
+            if (t.environ.string.TERM) |term| {
+                if (std.mem.eql(u8, term, "dumb")) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
 
     return false;
 }
