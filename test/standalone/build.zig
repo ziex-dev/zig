@@ -49,6 +49,7 @@ pub fn build(b: *std.Build) void {
         "../../tools/update_freebsd_libc.zig",
         "../../tools/update_glibc.zig",
         "../../tools/update_mingw.zig",
+        "../../tools/check_mingw.zig",
         "../../tools/update_netbsd_libc.zig",
         "../../tools/update_openbsd_libc.zig",
     }) |tool_src_path| {
