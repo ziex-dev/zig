@@ -73,9 +73,18 @@ pub fn bytes(r: Random, buf: []u8) void {
     r.fillFn(r.ptr, buf);
 }
 
+/// Returns a random array of N elements of type E.
+///
+/// Note that the type E must be int or float.
 pub fn array(r: Random, comptime E: type, comptime N: usize) [N]E {
     var result: [N]E = undefined;
-    bytes(r, &result);
+    for (0..N) |i| {
+        result[i] = switch(@typeInfo(E)) {
+            .int => r.int(E),
+            .float => r.float(E),
+            else => @compileError("unexpected type E, expect int or float")
+        };
+    }
     return result;
 }
 
