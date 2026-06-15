@@ -343,35 +343,10 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.startsWith(u8, arg, "--fuzz=")) {
                 const value = arg["--fuzz=".len..];
                 if (value.len == 0) fatal("missing argument to --fuzz", .{});
-
-                const unit: u8 = value[value.len - 1];
-                const digits = switch (unit) {
-                    '0'...'9' => value,
-                    'K', 'M', 'G' => value[0 .. value.len - 1],
-                    else => fatal(
-                        "invalid argument to --fuzz, expected a positive number optionally suffixed by one of: [KMG]",
-                        .{},
-                    ),
-                };
-
-                const amount = std.fmt.parseInt(u64, digits, 10) catch {
-                    fatal(
-                        "invalid argument to --fuzz, expected a positive number optionally suffixed by one of: [KMG]",
-                        .{},
-                    );
-                };
-
-                const normalized_amount = std.math.mul(u64, amount, switch (unit) {
-                    else => unreachable,
-                    '0'...'9' => 1,
-                    'K' => 1000,
-                    'M' => 1_000_000,
-                    'G' => 1_000_000_000,
-                }) catch fatal("fuzzing limit amount overflows u64", .{});
-
+                const amount = std.fmt.parseIntSizeSuffix(value, 10) catch |err| fatal("invalid argument to --fuzz {q}: {t}", .{ value, err });
                 fuzz = .{
                     .limit = .{
-                        .amount = normalized_amount,
+                        .amount = amount,
                     },
                 };
                 graph.fuzzing = true;
