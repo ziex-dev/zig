@@ -8856,7 +8856,7 @@ fn fileSupportsAnsiEscapeCodes(userdata: ?*anyopaque, file: File) Io.Cancelable!
 fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
     if (is_windows) {
         var get_console_mode = windows.CONSOLE.USER_IO.GET_MODE;
-        switch ((try deviceIoControl(&.{
+        return switch ((try deviceIoControl(&.{
             .file = .{
                 .handle = windows.peb().ProcessParameters.ConsoleHandle,
                 .flags = .{ .nonblocking = false },
@@ -8864,11 +8864,11 @@ fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
             .code = windows.IOCTL.CONDRV.ISSUE_USER_IO,
             .in = @ptrCast(&get_console_mode.request(file, 0, .{}, 0, .{})),
         })).u.Status) {
-            .SUCCESS => return (get_console_mode.Data & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0),
+            .SUCCESS => get_console_mode.Data & windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0,
             .CANCELLED => unreachable,
-            .INVALID_HANDLE => return isCygwinPty(file),
-            else => return false,
-        }
+            .INVALID_HANDLE => isCygwinPty(file),
+            else => false,
+        };
     }
 
     if (native_os == .wasi) {
