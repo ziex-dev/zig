@@ -197,7 +197,7 @@ pub fn main(init: process.Init.Minimal) !void {
     var color: Color = .settingFromEnvironment(&graph.environ_map);
     var watch = false;
     var fuzz: ?Fuzz.Mode = null;
-    var debounce_interval_ns: u16 = 50;
+    var debounce_interval_ns: u64 = 1000 * 50;
     var webui_listen: ?Io.net.IpAddress = null;
     var debug_pkg_config = false;
     var run_args: ?[]const []const u8 = null;
