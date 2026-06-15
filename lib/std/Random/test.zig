@@ -472,3 +472,11 @@ test "Random weightedIndex" {
         try std.testing.expect(approxEqRel(f64, counts[2] * 2, counts[3], tolerance));
     }
 }
+
+test "Random array" {
+    var prng: DefaultPrng = .init(0);
+    const random = prng.random();
+    inline for (.{ u64, u8, u32, i16 }) |T| {
+        _ = random.array(T, 12);
+    }
+}
