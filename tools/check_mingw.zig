@@ -37,31 +37,6 @@ pub fn main(init: std.process.Init) !void {
             const pp_arena = target_arena.allocator();
             const file_path = try Dir.path.join(pp_arena, &.{ mingw_libcommon_path, entry.path });
 
-            const native = pp: {
-                var aw: Io.Writer.Allocating = .init(pp_arena);
-                errdefer aw.deinit();
-
-                var pp: Preprocessor = .{
-                    .io = io,
-                    .arena = pp_arena,
-                    .include_dir = mingw_include_path,
-                    .target = target,
-                };
-
-                pp.preprocess(file_path) catch |err| {
-                    std.log.err("error preprocessing file {s} for target {t}: {t}", .{ entry.path, target.cpu.arch, err });
-                    fail = true;
-                    continue;
-                };
-                pp.prettyPrintTokens(&aw.writer) catch |err| {
-                    std.log.err("error printing tokens for file {s} for target {t}: {t}", .{ entry.path, target.cpu.arch, err });
-                    fail = true;
-                    continue;
-                };
-
-                break :pp try aw.toOwnedSliceSentinel(0);
-            };
-
             const aro = pp: {
                 const target_triple = try target.zigTriple(pp_arena);
                 const target_arg = try std.fmt.allocPrint(pp_arena, "--target={s}", .{target_triple});
@@ -85,6 +60,31 @@ pub fn main(init: std.process.Init) !void {
                     std.process.exit(result.term.exited);
                 }
                 break :pp result.stdout;
+            };
+
+            const native = pp: {
+                var aw: Io.Writer.Allocating = .init(pp_arena);
+                errdefer aw.deinit();
+
+                var pp: Preprocessor = .{
+                    .io = io,
+                    .arena = pp_arena,
+                    .include_dir = mingw_include_path,
+                    .target = target,
+                };
+
+                pp.preprocess(file_path) catch |err| {
+                    std.log.err("error preprocessing file {s} for target {t}: {t}", .{ entry.path, target.cpu.arch, err });
+                    fail = true;
+                    continue;
+                };
+                pp.prettyPrintTokens(&aw.writer) catch |err| {
+                    std.log.err("error printing tokens for file {s} for target {t}: {t}", .{ entry.path, target.cpu.arch, err });
+                    fail = true;
+                    continue;
+                };
+
+                break :pp try aw.toOwnedSliceSentinel(0);
             };
 
             try std.testing.expectEqualStrings(aro, native);
