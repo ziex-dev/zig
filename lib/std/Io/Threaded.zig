@@ -15002,21 +15002,14 @@ fn processSpawnUnsupported(userdata: ?*anyopaque, options: process.SpawnOptions)
 
 const prog_fileno = @max(posix.STDIN_FILENO, posix.STDOUT_FILENO, posix.STDERR_FILENO) + 1;
 
-const ChildResultPassingTag = enum {
-    pipe,
-    inplace,
-};
-const ChildResultPassing = union(ChildResultPassingTag) {
-    pipe: posix.fd_t,
-    inplace: ForkBailError!void,
-};
+const inplace_success: posix.fd_t = std.math.minInt(posix.fd_t);
 const ChildOptions = struct {
     stdin_pipe: posix.fd_t,
     stdout_pipe: posix.fd_t,
     stderr_pipe: posix.fd_t,
     dev_null_fd: posix.fd_t,
     prog_pipe: posix.fd_t,
-    child_result: ChildResultPassing,
+    child_result: posix.fd_t,
     argv_buf: [:null]?[*:0]const u8,
     env_block: process.Environ.Block,
     PATH: []const u8,
@@ -15196,7 +15189,7 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
         // Guard with .linux so that it's not evaluated if it's not linux
         if (native_os == .linux and !use_fork) {
             const linux = std.os.linux;
-            child_options.child_result = .{ .inplace = {} };
+            child_options.child_result = inplace_success;
             // stack-smashing protection may have higher overhead than allocation.
             // 0x8000 is large enough.
             const stack_size = 0x8000;
@@ -15220,7 +15213,7 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
         }
         if (use_fork) {
             err_pipe = try pipe2(.{ .CLOEXEC = true });
-            child_options.child_result = .{ .pipe = err_pipe[1] };
+            child_options.child_result = err_pipe[1];
             const rc = posix.system.fork();
             switch (posix.errno(rc)) {
                 .SUCCESS => {
@@ -15252,31 +15245,31 @@ fn spawnPosix(t: *Threaded, options: process.SpawnOptions) process.SpawnError!Sp
     options.progress_node.setIpcFile(t, .{ .handle = prog_pipe[0], .flags = .{ .nonblocking = true } });
 
     var child_result: ForkBailError!void = undefined;
-    switch (child_options.child_result) {
-        .pipe => {
-            defer closeFd(err_pipe[0]);
+    if (child_options.child_result >= 0) {
+        defer closeFd(err_pipe[0]);
 
-            // Wait for the child to report any errors in or before `execvpe`.
-            if (readIntFd(err_pipe[0])) |child_err_int| {
-                child_result = @errorCast(@errorFromInt(child_err_int));
-            } else |read_err| {
-                switch (read_err) {
-                    error.EndOfStream => {
-                        // Write end closed by CLOEXEC at the time of the `execvpe` call,
-                        // indicating success.
-                    },
-                    else => {
-                        // Problem reading the error from the error reporting pipe. We
-                        // don't know if the child is alive or dead. Better to assume it is
-                        // alive so the resource does not risk being leaked.
-                    },
-                }
-                child_result = {};
+        // Wait for the child to report any errors in or before `execvpe`.
+        if (readIntFd(err_pipe[0])) |child_err_int| {
+            child_result = @errorCast(@errorFromInt(child_err_int));
+        } else |read_err| {
+            switch (read_err) {
+                error.EndOfStream => {
+                    // Write end closed by CLOEXEC at the time of the `execvpe` call,
+                    // indicating success.
+                },
+                else => {
+                    // Problem reading the error from the error reporting pipe. We
+                    // don't know if the child is alive or dead. Better to assume it is
+                    // alive so the resource does not risk being leaked.
+                },
             }
-        },
-        .inplace => |result| {
-            child_result = result;
-        },
+            child_result = {};
+        }
+    } else if (child_options.child_result == inplace_success) {
+        child_result = {};
+    } else {
+        const err_int: ErrInt = @intCast(-child_options.child_result);
+        child_result = @errorCast(@errorFromInt(err_int));
     }
 
     return .{
@@ -15608,10 +15601,13 @@ fn childCleanupPosix(child: *process.Child) void {
 const ForkBailError = process.SpawnError || process.ReplaceError;
 
 /// Child of fork calls this to report an error to the fork parent.
-fn forkBail(result_passing: *ChildResultPassing, err: ForkBailError) u8 {
-    switch (result_passing.*) {
-        .pipe => |fd| writeIntFd(fd, @as(ErrInt, @intFromError(err))) catch {},
-        .inplace => |*result| result.* = err,
+fn forkBail(result_passing: *posix.fd_t, err: ForkBailError) u8 {
+    if (result_passing.* >= 0) {
+        writeIntFd(result_passing.*, @as(ErrInt, @intFromError(err))) catch {};
+    } else {
+        // In clone3 path: perform inplace passing.
+        comptime assert(std.math.maxInt(ErrInt) <= std.math.maxInt(posix.fd_t));
+        result_passing.* = -@as(posix.fd_t, @intFromError(err));
     }
     return 1;
 }

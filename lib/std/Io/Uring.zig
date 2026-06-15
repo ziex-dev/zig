@@ -4289,9 +4289,12 @@ fn childFn(arg: usize) callconv(.c) u8 {
     // Note that the parent uring is no longer accessible, so we must no longer reference `ev`.
     var sync: CancelRegion.Sync = .{ .cancel_region = .initBlocked() };
     const err = setUpChild(&sync, options.*);
-    switch (options.*.child_result) {
-        .pipe => |err_pipe| writeAllSync(&sync, err_pipe, @ptrCast(&err)) catch {},
-        .inplace => |*result| result.* = err,
+    if (options.*.child_result >= 0) {
+        writeAllSync(&sync, options.*.child_result, @ptrCast(&err)) catch {};
+    } else {
+        // In clone3 path: perform inplace passing.
+        comptime assert(std.math.maxInt(ErrInt) <= std.math.maxInt(fd_t));
+        options.*.child_result = -@as(fd_t, @intFromError(err));
     }
     return 1;
 }
@@ -4404,7 +4407,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     var use_fork = options.start_suspended;
 
     if (!use_fork) {
-        child_options.child_result = .{ .inplace = {} };
+        child_options.child_result = inplace_success;
         // stack-smashing protection may have higher overhead than allocation.
         // 0x8000 is large enough.
         const stack_size = 0x8000;
@@ -4428,7 +4431,7 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     }
     if (use_fork) {
         err_pipe = try pipe2(.{ .CLOEXEC = true });
-        child_options.child_result = .{ .pipe = err_pipe[1] };
+        child_options.child_result = err_pipe[1];
         const rc = linux.fork();
         switch (linux.errno(rc)) {
             .SUCCESS => {
@@ -4460,33 +4463,33 @@ fn spawn(ev: *Evented, options: process.SpawnOptions) process.SpawnError!Spawned
     options.progress_node.setIpcFile(ev, .{ .handle = prog_pipe[0], .flags = .{ .nonblocking = true } });
 
     var child_result: ForkBailError!void = undefined;
-    switch (child_options.child_result) {
-        .pipe => {
-            defer ev.closeAsync(err_pipe[0]);
-            var cancel_region_blocked: CancelRegion = .initBlocked();
-            defer cancel_region_blocked.deinit();
-            var child_err: ForkBailError = undefined;
-            if (ev.readAll(&cancel_region_blocked, err_pipe[0], @ptrCast(&child_err))) {
-                child_result = child_err;
-            } else |read_err| {
-                switch (read_err) {
-                    error.Canceled => unreachable, // blocked
-                    error.EndOfStream => {
-                        // Write end closed by CLOEXEC at the time of the `execvpe` call,
-                        // indicating success.
-                    },
-                    else => {
-                        // Problem reading the error from the error reporting pipe. We
-                        // don't know if the child is alive or dead. Better to assume it is
-                        // alive so the resource does not risk being leaked.
-                    },
-                }
-                child_result = {};
+    if (child_options.child_result >= 0) {
+        defer ev.closeAsync(err_pipe[0]);
+        var cancel_region_blocked: CancelRegion = .initBlocked();
+        defer cancel_region_blocked.deinit();
+        var child_err: ForkBailError = undefined;
+        if (ev.readAll(&cancel_region_blocked, err_pipe[0], @ptrCast(&child_err))) {
+            child_result = child_err;
+        } else |read_err| {
+            switch (read_err) {
+                error.Canceled => unreachable, // blocked
+                error.EndOfStream => {
+                    // Write end closed by CLOEXEC at the time of the `execvpe` call,
+                    // indicating success.
+                },
+                else => {
+                    // Problem reading the error from the error reporting pipe. We
+                    // don't know if the child is alive or dead. Better to assume it is
+                    // alive so the resource does not risk being leaked.
+                },
             }
-        },
-        .inplace => |result| {
-            child_result = result;
-        },
+            child_result = {};
+        }
+    } else if (child_options.child_result == inplace_success) {
+        child_result = {};
+    } else {
+        const err_int: ErrInt = @intCast(-child_options.child_result);
+        child_result = @errorCast(@errorFromInt(err_int));
     }
 
     return .{
@@ -4529,21 +4532,15 @@ fn destroyPipe(ev: *Evented, pipe: [2]fd_t) void {
 /// Errors that can occur between fork() and execv()
 const ForkBailError = process.SetCurrentDirError || ChdirError ||
     process.SpawnError || process.ReplaceError;
-const ChildResultPassingTag = enum {
-    pipe,
-    inplace,
-};
-const ChildResultPassing = union(ChildResultPassingTag) {
-    pipe: fd_t,
-    inplace: ForkBailError!void,
-};
+const ErrInt = @Int(.unsigned, @bitSizeOf(anyerror));
+const inplace_success: fd_t = std.math.minInt(fd_t);
 const ChildOptions = struct {
     stdin_pipe: fd_t,
     stdout_pipe: fd_t,
     stderr_pipe: fd_t,
     dev_null_fd: fd_t,
     prog_pipe: fd_t,
-    child_result: ChildResultPassing,
+    child_result: fd_t,
     argv_buf: [:null]?[*:0]const u8,
     env_block: process.Environ.Block,
     PATH: []const u8,
