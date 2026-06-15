@@ -31,6 +31,7 @@ pub fn build(b: *std.Build) void {
     const tools_target = b.resolveTargetQuery(.{});
     for ([_][]const u8{
         // Alphabetically sorted. No need to build `tools/spirv/grammar.zig`.
+        "../../tools/check_mingw.zig",
         "../../tools/dump-cov.zig",
         "../../tools/fetch_them_macos_headers.zig",
         "../../tools/gen_macos_headers_c.zig",
@@ -49,7 +50,6 @@ pub fn build(b: *std.Build) void {
         "../../tools/update_freebsd_libc.zig",
         "../../tools/update_glibc.zig",
         "../../tools/update_mingw.zig",
-        "../../tools/check_mingw.zig",
         "../../tools/update_netbsd_libc.zig",
         "../../tools/update_openbsd_libc.zig",
     }) |tool_src_path| {
@@ -62,6 +62,14 @@ pub fn build(b: *std.Build) void {
                 .target = tools_target,
             }),
         });
+        if (std.mem.endsWith(u8, tool_src_path, "check_mingw.zig")) {
+            const mingw_preprocessor_mod = b.addModule("preprocessor", .{
+                .root_source_file = b.path("src/libs/mingw/Preprocessor.zig"),
+                .target = tools_target,
+            });
+            tool.root_module.addImport("preprocessor", mingw_preprocessor_mod);
+        }
+
         tools_tests_step.dependOn(&tool.step);
     }
     for ([_][]const u8{
