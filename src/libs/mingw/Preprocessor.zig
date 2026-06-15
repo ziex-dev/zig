@@ -166,7 +166,7 @@ fn preprocessFileExtra(pp: *Preprocessor, src: Source) !Token {
                     .keyword_ifdef => {
                         if_context.increment();
                         const macro_name = pp.expectMacroName(&tokenizer);
-                        expectNl(&tokenizer);
+                        skipToNl(&tokenizer);
                         if (pp.defines.get(macro_name) != null) {
                             if_context.set(.until_endif);
                         } else {
@@ -177,7 +177,7 @@ fn preprocessFileExtra(pp: *Preprocessor, src: Source) !Token {
                     .keyword_ifndef => {
                         if_context.increment();
                         const macro_name = pp.expectMacroName(&tokenizer);
-                        expectNl(&tokenizer);
+                        skipToNl(&tokenizer);
                         if (pp.defines.get(macro_name) == null) {
                             if_context.set(.until_endif);
                         } else {
@@ -198,7 +198,7 @@ fn preprocessFileExtra(pp: *Preprocessor, src: Source) !Token {
                         }
                     },
                     .keyword_else => {
-                        expectNl(&tokenizer);
+                        skipToNl(&tokenizer);
                         assert(if_context.level > 0);
                         switch (if_context.get()) {
                             .until_else => if_context.set(.until_endif_seen_else),
@@ -207,7 +207,7 @@ fn preprocessFileExtra(pp: *Preprocessor, src: Source) !Token {
                         }
                     },
                     .keyword_endif => {
-                        expectNl(&tokenizer);
+                        skipToNl(&tokenizer);
                         assert(if_context.level > 0);
                         if_context.decrement();
                     },
@@ -215,7 +215,7 @@ fn preprocessFileExtra(pp: *Preprocessor, src: Source) !Token {
                         const macro_name = tokenizer.nextNoWS();
                         assert(macro_name.id == .identifier);
                         pp.undefineMacro(macro_name);
-                        expectNl(&tokenizer);
+                        skipToNl(&tokenizer);
                     },
                     .keyword_include => {
                         try pp.include(&tokenizer);
@@ -253,7 +253,7 @@ fn findIncludeSource(
     first: Token,
 ) !Source {
     const filename_tok = first;
-    expectNl(tokenizer);
+    skipToNl(tokenizer);
     const tok_slice = pp.expandToken(filename_tok);
     assert(tok_slice.len >= 3);
     const filename = tok_slice[1 .. tok_slice.len - 1];
@@ -266,12 +266,11 @@ fn expectMacroName(pp: *const Preprocessor, tokenizer: *Tokenizer) []const u8 {
     return pp.expandToken(macro_name);
 }
 
-fn expectNl(tokenizer: *Tokenizer) void {
+fn skipToNl(tokenizer: *Tokenizer) void {
     while (true) {
         const tok = tokenizer.next();
         if (tok.id == .nl or tok.id == .eof) return;
         if (tok.id == .whitespace) continue;
-        unreachable;
     }
 }
 
@@ -316,7 +315,6 @@ fn defineFn(
     var need_ws = false;
     while (true) {
         tok = tokenizer.next();
-        if (tok.id == .r_paren) break;
         switch (tok.id) {
             .nl, .eof => break,
             .whitespace => need_ws = pp.token_buf.items.len != 0,
