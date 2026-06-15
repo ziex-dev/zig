@@ -373,7 +373,7 @@ pub const Utf8View = struct {
 
             while (i + chunk_len <= s.bytes.len) {
                 const chunk: Chunk = s.bytes[i..][0..chunk_len].*;
-                const ascii = chunk <= @as(Chunk, @splat(128));
+                const ascii = chunk < @as(Chunk, @splat(0x80));
                 // ASCII fast path
                 if (@reduce(.And, ascii)) {
                     count += chunk_len;
