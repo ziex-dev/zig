@@ -8871,7 +8871,13 @@ fn supportsAnsiEscapeCodes(t: *Threaded, file: File) Io.Cancelable!bool {
         }
     }
 
-    if (native_os == .wasi) return false;
+    if (native_os == .wasi) {
+        // WASI sanitizes stdout when fd is a tty so ANSI escape codes
+        // will not be interpreted as actual cursor commands, and
+        // stderr is always sanitized.
+
+        return false;
+    }
 
     if (try isTty(file)) {
         if (file.handle == posix.STDOUT_FILENO or file.handle == posix.STDERR_FILENO) {
