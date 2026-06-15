@@ -567,7 +567,7 @@ test {
     _ = &parseFloat;
 }
 
-pub fn parseTimeSuffixNs(buf: []const u8) !u64 {
+pub fn parseTimeSuffix(buf: []const u8, output_unit_ns: u64) !u64 {
     const units: []const struct { []const u8, u64 } = &.{
         .{ "ns", 1 },
         .{ "nanosecond", 1 },
@@ -592,29 +592,38 @@ pub fn parseTimeSuffixNs(buf: []const u8) !u64 {
         }
     } else return error.FmtInvalidTimeSuffix;
     const num_parsed = std.fmt.parseFloat(f64, num_str) catch return error.FmtInvalidTimeNumber;
-    return std.math.lossyCast(u64, unit_factor * num_parsed);
+    const output_unit: f64 = @floatFromInt(output_unit_ns);
+    return std.math.lossyCast(u64, unit_factor / output_unit * num_parsed);
 }
 
-test parseTimeSuffixNs {
-    try std.testing.expectEqual(100, try parseTimeSuffixNs("100ns"));
-    try std.testing.expectEqual(100, try parseTimeSuffixNs("100nanosecond"));
-    try std.testing.expectEqual(50_000, try parseTimeSuffixNs("50us"));
-    try std.testing.expectEqual(50_000, try parseTimeSuffixNs("50microsecond"));
-    try std.testing.expectEqual(10_000_000, try parseTimeSuffixNs("10ms"));
-    try std.testing.expectEqual(10_000_000, try parseTimeSuffixNs("10millisecond"));
-    try std.testing.expectEqual(5_000_000_000, try parseTimeSuffixNs("5s"));
-    try std.testing.expectEqual(5_000_000_000, try parseTimeSuffixNs("5second"));
-    try std.testing.expectEqual(120_000_000_000, try parseTimeSuffixNs("2m"));
-    try std.testing.expectEqual(120_000_000_000, try parseTimeSuffixNs("2minute"));
-    try std.testing.expectEqual(3_600_000_000_000, try parseTimeSuffixNs("1h"));
-    try std.testing.expectEqual(3_600_000_000_000, try parseTimeSuffixNs("1hour"));
-    try std.testing.expectEqual(1_500_000_000, try parseTimeSuffixNs("1.5s"));
-    try std.testing.expectEqual(0, try parseTimeSuffixNs("0s"));
-    try std.testing.expectError(error.FmtNoTimeSuffix, parseTimeSuffixNs("100"));
-    try std.testing.expectError(error.FmtInvalidTimeSuffix, parseTimeSuffixNs("100x"));
-    try std.testing.expectError(error.FmtNoTimeNumber, parseTimeSuffixNs("abcms"));
-    try std.testing.expectError(error.FmtInvalidTimeSuffix, parseTimeSuffixNs("10ms10"));
-    try std.testing.expectError(error.FmtNoTimeSuffix, parseTimeSuffixNs(""));
+test parseTimeSuffix {
+    // nanosecond output
+    try std.testing.expectEqual(100, try parseTimeSuffix("100ns", 1));
+    try std.testing.expectEqual(100, try parseTimeSuffix("100nanosecond", 1));
+    try std.testing.expectEqual(50_000, try parseTimeSuffix("50us", 1));
+    try std.testing.expectEqual(50_000, try parseTimeSuffix("50microsecond", 1));
+    try std.testing.expectEqual(10_000_000, try parseTimeSuffix("10ms", 1));
+    try std.testing.expectEqual(10_000_000, try parseTimeSuffix("10millisecond", 1));
+    try std.testing.expectEqual(5_000_000_000, try parseTimeSuffix("5s", 1));
+    try std.testing.expectEqual(5_000_000_000, try parseTimeSuffix("5second", 1));
+    try std.testing.expectEqual(120_000_000_000, try parseTimeSuffix("2m", 1));
+    try std.testing.expectEqual(120_000_000_000, try parseTimeSuffix("2minute", 1));
+    try std.testing.expectEqual(3_600_000_000_000, try parseTimeSuffix("1h", 1));
+    try std.testing.expectEqual(3_600_000_000_000, try parseTimeSuffix("1hour", 1));
+    try std.testing.expectEqual(1_500_000_000, try parseTimeSuffix("1.5s", 1));
+    try std.testing.expectEqual(0, try parseTimeSuffix("0s", 1));
+
+    // millisecond output
+    try std.testing.expectEqual(5_000, try parseTimeSuffix("5s", std.time.ns_per_ms));
+    try std.testing.expectEqual(1_500, try parseTimeSuffix("1.5s", std.time.ns_per_ms));
+    try std.testing.expectEqual(10, try parseTimeSuffix("10ms", std.time.ns_per_ms));
+
+    // errors
+    try std.testing.expectError(error.FmtNoTimeSuffix, parseTimeSuffix("100", 1));
+    try std.testing.expectError(error.FmtInvalidTimeSuffix, parseTimeSuffix("100x", 1));
+    try std.testing.expectError(error.FmtInvalidTimeSuffix, parseTimeSuffix("10ms10", 1));
+    try std.testing.expectError(error.FmtNoTimeNumber, parseTimeSuffix("abcms", 1));
+    try std.testing.expectError(error.FmtNoTimeSuffix, parseTimeSuffix("", 1));
 }
 
 pub fn charToDigit(c: u8, base: u8) (error{InvalidCharacter}!u8) {

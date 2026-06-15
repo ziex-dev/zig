@@ -197,7 +197,7 @@ pub fn main(init: process.Init.Minimal) !void {
     var color: Color = .settingFromEnvironment(&graph.environ_map);
     var watch = false;
     var fuzz: ?Fuzz.Mode = null;
-    var debounce_interval_ns: u64 = 1000 * 50;
+    var debounce_interval_ms: u16 = 50;
     var webui_listen: ?Io.net.IpAddress = null;
     var debug_pkg_config = false;
     var run_args: ?[]const []const u8 = null;
@@ -240,7 +240,7 @@ pub fn main(init: process.Init.Minimal) !void {
                 skip_oom_steps = true;
             } else if (mem.eql(u8, arg, "--test-timeout")) {
                 const timeout_str = nextArgOrFatal(args, &arg_idx);
-                test_timeout_ns = std.fmt.parseTimeSuffixNs(timeout_str) catch |err|
+                test_timeout_ns = std.fmt.parseTimeSuffix(timeout_str, 1) catch |err|
                     fatal(
                         "invalid timeout {q}: {t}",
                         .{ timeout_str, err },
@@ -291,11 +291,12 @@ pub fn main(init: process.Init.Minimal) !void {
             } else if (mem.eql(u8, arg, "--debounce")) {
                 const next_arg = nextArg(args, &arg_idx) orelse
                     fatalWithHint("expected u16 after {q}", .{arg});
-                debounce_interval_ns = std.fmt.parseTimeSuffixNs(next_arg) catch |err|
+                const parsed_time = std.fmt.parseTimeSuffix(next_arg, std.time.ns_per_ms) catch |err|
                     fatal(
                         "invalid debounce {q}: {t}",
                         .{ next_arg, err },
                     );
+                debounce_interval_ms = std.math.cast(u16, parsed_time) orelse fatal("debounce interval too large", .{});
             } else if (mem.eql(u8, arg, "--webui")) {
                 if (webui_listen == null) webui_listen = .{ .ip6 = .loopback(0) };
             } else if (mem.startsWith(u8, arg, "--webui=")) {
@@ -636,7 +637,7 @@ pub fn main(init: process.Init.Minimal) !void {
         }) catch &caption_buf;
         var debouncing_node = main_progress_node.start(caption, 0);
         var in_debounce = false;
-        while (true) switch (try w.wait(if (in_debounce) .{ .ns = debounce_interval_ns } else .none)) {
+        while (true) switch (try w.wait(if (in_debounce) .{ .ms = debounce_interval_ms } else .none)) {
             .timeout => {
                 assert(in_debounce);
                 debouncing_node.end();
